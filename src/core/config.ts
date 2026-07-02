@@ -25,6 +25,17 @@ export const SCOPE_REVEAL_THRESHOLD = 0.92;
 export const WEAPON_SWITCH_DURATION = 0.35;
 export const WEAPON_HOLSTER_DROP = 0.35;
 
+export const TARGET_HEALTH = 40;
+export const TARGET_RADIUS = 0.5;
+export const TARGET_HEAD_RADIUS = 0.18;
+export const HEADSHOT_MULTIPLIER = 3;
+
+export const ENEMY_HEALTH = 60;
+export const ENEMY_RADIUS = 0.45;
+export const ENEMY_HEIGHT = 1.7;
+export const ENEMY_SPEED = 2.5;
+export const ENEMY_STOP_DISTANCE = 3;
+
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;
 export const TERRAIN_OCTAVES = 4;

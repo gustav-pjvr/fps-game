@@ -26,7 +26,7 @@ export class PhysicsWorld {
     this.colliderToEntity.delete(collider.handle);
   }
 
-  getEntity(collider: RAPIER.Collider): Entity | undefined {
-    return this.colliderToEntity.get(collider.handle);
+  getEntity(colliderHandle: number): Entity | undefined {
+    return this.colliderToEntity.get(colliderHandle);
   }
 }

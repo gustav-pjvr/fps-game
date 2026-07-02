@@ -5,6 +5,7 @@ import { InputManager } from '../input/InputManager.ts';
 import { Loop } from './Loop.ts';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
+import { EntityManager } from '../entities/EntityManager.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
@@ -15,9 +16,15 @@ import { ScopeOverlay } from '../ui/scope.ts';
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
 const REFERENCE_BOX_COLORS = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
+const TARGET_RING_RADIUS = 15;
+const TARGET_COUNT = 5;
+const ENEMY_RING_RADIUS = 25;
+const ENEMY_COUNT = 3;
 
 export class Game {
   private readonly loop: Loop;
+  private readonly entityManager: EntityManager;
+  private score = 0;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -29,6 +36,7 @@ export class Game {
     private readonly impactMarkers: ImpactMarkers,
     private readonly hud: Hud,
   ) {
+    this.entityManager = new EntityManager(renderer.scene, physics, () => this.onEnemyKilled());
     this.loop = new Loop(this.update, this.render);
   }
 
@@ -60,11 +68,18 @@ export class Game {
     );
     const hud = new Hud(hudRoot);
 
-    return new Game(renderer, input, physics, player, chunkManager, weaponManager, impactMarkers, hud);
+    const game = new Game(renderer, input, physics, player, chunkManager, weaponManager, impactMarkers, hud);
+    Game.spawnEncounters(game.entityManager);
+
+    return game;
   }
 
   start(): void {
     this.loop.start();
+  }
+
+  private onEnemyKilled(): void {
+    this.score += 1;
   }
 
   private static addLighting(scene: THREE.Scene): void {
@@ -97,14 +112,33 @@ export class Game {
     }
   }
 
+  private static spawnEncounters(entityManager: EntityManager): void {
+    for (let i = 0; i < TARGET_COUNT; i++) {
+      const angle = (i / TARGET_COUNT) * Math.PI * 2;
+      const x = SPAWN_X + Math.cos(angle) * TARGET_RING_RADIUS;
+      const z = SPAWN_Z + Math.sin(angle) * TARGET_RING_RADIUS;
+      entityManager.spawnTarget(new THREE.Vector3(x, sampleHeight(x, z) + 1, z));
+    }
+
+    for (let i = 0; i < ENEMY_COUNT; i++) {
+      const angle = (i / ENEMY_COUNT) * Math.PI * 2 + 0.5;
+      const x = SPAWN_X + Math.cos(angle) * ENEMY_RING_RADIUS;
+      const z = SPAWN_Z + Math.sin(angle) * ENEMY_RING_RADIUS;
+      entityManager.spawnEnemy(new THREE.Vector3(x, sampleHeight(x, z) + 1, z));
+    }
+  }
+
   private readonly update = (dt: number): void => {
     this.player.update(dt, this.input);
     this.physics.step(dt);
     this.chunkManager.update(this.player.position.x, this.player.position.z);
     this.weaponManager.update(dt, this.input, this.player);
+    this.entityManager.update(dt, this.player.position);
     this.impactMarkers.update(dt);
+
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
     this.hud.setWeaponName(this.weaponManager.weaponName);
+    this.hud.setScore(this.score);
   };
 
   private readonly render = (_alpha: number): void => {

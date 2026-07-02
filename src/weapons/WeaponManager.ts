@@ -3,6 +3,7 @@ import { Weapon } from './Weapon.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
 import { createPlaceholderWeaponMesh, WEAPON_ADS_POSITION, WEAPON_HIP_POSITION } from './viewModel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
+import { isDamageable } from '../combat/damage.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import type { Action } from '../input/actions.ts';
@@ -173,6 +174,10 @@ export class WeaponManager {
     const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE);
     if (hit) {
       this.onImpact(hit.point);
+      const target = this.physics.getEntity(hit.colliderHandle);
+      if (isDamageable(target)) {
+        target.takeDamage(this.active.weapon.definition.damage, hit.colliderHandle);
+      }
     }
 
     player.addRecoil(recoilKick);
