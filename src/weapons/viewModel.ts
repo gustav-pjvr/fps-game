@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 
+export const WEAPON_HIP_POSITION = new THREE.Vector3(0.25, -0.22, -0.5);
+export const WEAPON_ADS_POSITION = new THREE.Vector3(0, -0.14, -0.35);
+
 /**
  * Procedural placeholder view model (no .glb asset wired up yet — see PLAN.md's free-asset
  * pipeline, e.g. Kenney.nl). Swapping in a real model later means loading it via GLTFLoader
@@ -23,6 +26,6 @@ export function createPlaceholderWeaponMesh(): THREE.Group {
   grip.position.set(0, -0.13, 0.08);
   group.add(grip);
 
-  group.position.set(0.25, -0.22, -0.5);
+  group.position.copy(WEAPON_HIP_POSITION);
   return group;
 }

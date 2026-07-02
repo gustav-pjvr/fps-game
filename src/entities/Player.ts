@@ -4,6 +4,7 @@ import { allocateEntityId, type Entity } from './Entity.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import {
+  CAMERA_FOV,
   EYE_OFFSET,
   GRAVITY,
   JUMP_SPEED,
@@ -66,9 +67,11 @@ export class Player implements Entity {
   }
 
   private applyLook(input: InputManager): void {
+    // Scale sensitivity by the current zoom ratio so aiming feels consistent while ADS narrows the FOV.
+    const sensitivity = MOUSE_SENSITIVITY * (this.camera.fov / CAMERA_FOV);
     const { dx, dy } = input.consumeLookDelta();
-    this.yaw -= dx * MOUSE_SENSITIVITY;
-    this.pitch -= dy * MOUSE_SENSITIVITY;
+    this.yaw -= dx * sensitivity;
+    this.pitch -= dy * sensitivity;
     this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch));
   }
 

@@ -19,6 +19,9 @@ export const SPRINT_MULTIPLIER = 1.6;
 export const JUMP_SPEED = 6.5;
 export const RECOIL_DECAY = 8;
 
+export const ADS_LERP_SPEED = 12;
+export const SCOPE_REVEAL_THRESHOLD = 0.92;
+
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;
 export const TERRAIN_OCTAVES = 4;

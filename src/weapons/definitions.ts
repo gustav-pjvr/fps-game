@@ -7,6 +7,12 @@ export interface WeaponDefinition {
   readonly reloadTime: number;
   readonly spreadRadians: number;
   readonly recoilKick: number;
+  /** Camera FOV while fully aimed down sights (lower = more zoom). */
+  readonly adsFov: number;
+  /** Spread while fully aimed, as a fraction of hip-fire spread. */
+  readonly adsSpreadMultiplier: number;
+  /** Full-screen scope overlay at full ADS (sniper-style) vs. a plain FOV zoom (pistol/rifle-style). */
+  readonly hasScope: boolean;
 }
 
 export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
@@ -19,5 +25,8 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     reloadTime: 1.2,
     spreadRadians: 0.01,
     recoilKick: 0.015,
+    adsFov: 55,
+    adsSpreadMultiplier: 0.4,
+    hasScope: false,
   },
 };

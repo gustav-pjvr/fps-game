@@ -10,6 +10,7 @@ import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
 import { Hud } from '../ui/hud.ts';
+import { ScopeOverlay } from '../ui/scope.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
@@ -49,7 +50,8 @@ export class Game {
     const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
-    const weaponManager = new WeaponManager(renderer.camera, physics, 'pistol', (point) =>
+    const scopeOverlay = new ScopeOverlay(hudRoot);
+    const weaponManager = new WeaponManager(renderer.camera, physics, 'pistol', scopeOverlay, (point) =>
       impactMarkers.spawn(point),
     );
     const hud = new Hud(hudRoot);
