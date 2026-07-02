@@ -35,6 +35,13 @@ export const ENEMY_RADIUS = 0.45;
 export const ENEMY_HEIGHT = 1.7;
 export const ENEMY_SPEED = 2.5;
 export const ENEMY_STOP_DISTANCE = 3;
+export const ENEMY_ATTACK_RANGE = 3;
+export const ENEMY_ATTACK_DAMAGE = 8;
+export const ENEMY_ATTACK_INTERVAL = 1;
+
+export const PLAYER_HEALTH = 100;
+
+export const HIT_MARKER_DURATION = 0.2;
 
 /** Visual-only travel speed for tracers - the hit itself is already resolved instantly via raycast. */
 export const TRACER_SPEED = 150;

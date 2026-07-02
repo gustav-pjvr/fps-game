@@ -2,6 +2,8 @@ export class Hud {
   private readonly ammoElement: HTMLDivElement;
   private readonly weaponNameElement: HTMLDivElement;
   private readonly scoreElement: HTMLDivElement;
+  private readonly healthFillElement: HTMLDivElement;
+  private readonly healthTextElement: HTMLDivElement;
 
   constructor(root: HTMLElement) {
     const crosshair = document.createElement('div');
@@ -16,6 +18,22 @@ export class Hud {
       ' text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
     this.scoreElement.textContent = 'Score: 0';
     root.appendChild(this.scoreElement);
+
+    const healthTrack = document.createElement('div');
+    healthTrack.style.cssText =
+      'position:absolute; bottom:24px; left:32px; width:180px; height:14px;' +
+      ' background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;';
+    this.healthFillElement = document.createElement('div');
+    this.healthFillElement.style.cssText =
+      'height:100%; width:100%; background:#3ecf5f; transition:width 0.15s, background 0.15s;';
+    healthTrack.appendChild(this.healthFillElement);
+    root.appendChild(healthTrack);
+
+    this.healthTextElement = document.createElement('div');
+    this.healthTextElement.style.cssText =
+      'position:absolute; bottom:42px; left:32px; font-size:0.8rem; text-shadow:0 1px 3px #000;' +
+      ' font-variant-numeric:tabular-nums;';
+    root.appendChild(this.healthTextElement);
 
     this.weaponNameElement = document.createElement('div');
     this.weaponNameElement.style.cssText =
@@ -40,5 +58,12 @@ export class Hud {
 
   setScore(score: number): void {
     this.scoreElement.textContent = `Score: ${score}`;
+  }
+
+  setHealth(current: number, max: number): void {
+    const ratio = Math.max(0, Math.min(1, current / max));
+    this.healthFillElement.style.width = `${ratio * 100}%`;
+    this.healthFillElement.style.background = ratio > 0.5 ? '#3ecf5f' : ratio > 0.25 ? '#e0a930' : '#e03b30';
+    this.healthTextElement.textContent = `${Math.ceil(current)} HP`;
   }
 }

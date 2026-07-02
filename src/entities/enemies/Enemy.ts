@@ -1,10 +1,14 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { allocateEntityId, type Entity } from '../Entity.ts';
+import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import {
+  ENEMY_ATTACK_DAMAGE,
+  ENEMY_ATTACK_INTERVAL,
+  ENEMY_ATTACK_RANGE,
   ENEMY_HEALTH,
   ENEMY_HEIGHT,
   ENEMY_RADIUS,
@@ -23,6 +27,7 @@ export class Enemy implements Entity, Damageable {
 
   private health = ENEMY_HEALTH;
   private dead = false;
+  private attackCooldown = 0;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
   private readonly headCollider: RAPIER.Collider;
@@ -78,9 +83,11 @@ export class Enemy implements Entity, Damageable {
     if (this.health <= 0) this.dead = true;
   }
 
-  update(dt: number, targetPosition: THREE.Vector3): void {
+  update(dt: number, player: Player): void {
     if (this.dead) return;
+    if (this.attackCooldown > 0) this.attackCooldown -= dt;
 
+    const targetPosition = player.position;
     const current = this.rigidBody.translation();
     const toTarget = new THREE.Vector3(targetPosition.x - current.x, 0, targetPosition.z - current.z);
     const distance = toTarget.length();
@@ -91,6 +98,9 @@ export class Enemy implements Entity, Damageable {
       toTarget.normalize().multiplyScalar(ENEMY_SPEED * dt);
       nextX += toTarget.x;
       nextZ += toTarget.z;
+    } else if (distance <= ENEMY_ATTACK_RANGE && this.attackCooldown <= 0 && !player.isDead) {
+      player.takeDamage(ENEMY_ATTACK_DAMAGE);
+      this.attackCooldown = ENEMY_ATTACK_INTERVAL;
     }
 
     const nextY = sampleHeight(nextX, nextZ) + ENEMY_HEIGHT / 2;

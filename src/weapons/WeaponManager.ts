@@ -42,7 +42,7 @@ export class WeaponManager {
     private readonly physics: PhysicsWorld,
     definitionIds: string[],
     private readonly scopeOverlay: ScopeOverlay,
-    private readonly onImpact: (point: THREE.Vector3) => void,
+    private readonly onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
   ) {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
@@ -194,8 +194,9 @@ export class WeaponManager {
     this.onTracer(muzzleWorld, tracerEnd);
 
     if (hit) {
-      this.onImpact(hit.point);
       const target = this.physics.getEntity(hit.colliderHandle);
+      const isEntityHit = isDamageable(target);
+      this.onImpact(hit.point, isEntityHit);
       if (isDamageable(target)) {
         target.takeDamage(this.active.weapon.definition.damage, hit.colliderHandle);
       }

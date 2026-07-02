@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
+import type { Player } from './Player.ts';
 import { Target } from './enemies/Target.ts';
 import { Enemy } from './enemies/Enemy.ts';
 
@@ -7,7 +8,7 @@ interface ManagedEntity {
   readonly mesh: THREE.Object3D;
   readonly isDead: boolean;
   dispose(): void;
-  update?(dt: number, targetPosition: THREE.Vector3): void;
+  update?(dt: number, player: Player): void;
 }
 
 /** Owns spawned targets/enemies: advances moving ones, and cleans up + reports kills once they die. */
@@ -32,12 +33,12 @@ export class EntityManager {
     this.entities.push(enemy);
   }
 
-  update(dt: number, playerPosition: THREE.Vector3): void {
+  update(dt: number, player: Player): void {
     for (let i = this.entities.length - 1; i >= 0; i--) {
       const entity = this.entities[i];
       if (!entity) continue;
 
-      entity.update?.(dt, playerPosition);
+      entity.update?.(dt, player);
 
       if (entity.isDead) {
         this.scene.remove(entity.mesh);

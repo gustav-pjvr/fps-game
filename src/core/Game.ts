@@ -14,9 +14,12 @@ import { Tracers } from '../combat/Tracers.ts';
 import { Hud } from '../ui/hud.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
+import { HitMarker } from '../ui/hitMarker.ts';
+import { DeathScreen } from '../ui/deathScreen.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
+const SPAWN_HEIGHT_OFFSET = 2;
 const REFERENCE_BOX_COLORS = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
 const TARGET_RING_RADIUS = 15;
 const TARGET_COUNT = 5;
@@ -26,6 +29,7 @@ const ENEMY_COUNT = 3;
 export class Game {
   private readonly loop: Loop;
   private readonly entityManager: EntityManager;
+  private readonly deathScreen: DeathScreen;
   private score = 0;
 
   private constructor(
@@ -39,8 +43,11 @@ export class Game {
     private readonly tracers: Tracers,
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
+    private readonly hitMarker: HitMarker,
+    hudRoot: HTMLElement,
   ) {
     this.entityManager = new EntityManager(renderer.scene, physics, () => this.onEnemyKilled());
+    this.deathScreen = new DeathScreen(hudRoot, () => this.respawn());
     this.loop = new Loop(this.update, this.render);
   }
 
@@ -58,18 +65,22 @@ export class Game {
       chunkManager.update(SPAWN_X, SPAWN_Z);
     }
 
-    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + 2;
+    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const tracers = new Tracers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
+    const hitMarker = new HitMarker(hudRoot);
     const weaponManager = new WeaponManager(
       renderer.camera,
       physics,
       ['pistol', 'sniper'],
       scopeOverlay,
-      (point) => impactMarkers.spawn(point),
+      (point, isEntityHit) => {
+        impactMarkers.spawn(point, isEntityHit);
+        if (isEntityHit) hitMarker.trigger();
+      },
       (start, end) => tracers.spawn(start, end),
     );
     const hud = new Hud(hudRoot);
@@ -87,6 +98,8 @@ export class Game {
       tracers,
       hud,
       hotbar,
+      hitMarker,
+      hudRoot,
     );
     Game.spawnEncounters(game.entityManager);
 
@@ -99,6 +112,12 @@ export class Game {
 
   private onEnemyKilled(): void {
     this.score += 1;
+  }
+
+  private respawn(): void {
+    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
+    this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
+    this.deathScreen.hide();
   }
 
   private static addLighting(scene: THREE.Scene): void {
@@ -148,17 +167,31 @@ export class Game {
   }
 
   private readonly update = (dt: number): void => {
-    this.player.update(dt, this.input);
-    this.physics.step(dt);
-    this.chunkManager.update(this.player.position.x, this.player.position.z);
-    this.weaponManager.update(dt, this.input, this.player);
-    this.entityManager.update(dt, this.player.position);
+    const wasDead = this.player.isDead;
+
+    if (this.player.isDead) {
+      // Keep draining look input so it doesn't build up a stale jump in camera angle on respawn.
+      this.input.consumeLookDelta();
+    } else {
+      this.player.update(dt, this.input);
+      this.physics.step(dt);
+      this.chunkManager.update(this.player.position.x, this.player.position.z);
+      this.weaponManager.update(dt, this.input, this.player);
+      this.entityManager.update(dt, this.player);
+    }
+
     this.impactMarkers.update(dt);
     this.tracers.update(dt);
+    this.hitMarker.update(dt);
+
+    if (this.player.isDead && !wasDead) {
+      this.deathScreen.show(this.score);
+    }
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
     this.hud.setWeaponName(this.weaponManager.weaponName);
     this.hud.setScore(this.score);
+    this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
 

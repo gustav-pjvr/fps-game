@@ -10,6 +10,7 @@ import {
   JUMP_SPEED,
   MAX_PITCH,
   MOUSE_SENSITIVITY,
+  PLAYER_HEALTH,
   PLAYER_HEIGHT,
   PLAYER_MOVE_SPEED,
   PLAYER_RADIUS,
@@ -29,6 +30,7 @@ export class Player implements Entity {
   private recoilPitch = 0;
   private verticalVelocity = 0;
   private grounded = false;
+  private health = PLAYER_HEALTH;
 
   constructor(
     physics: PhysicsWorld,
@@ -64,6 +66,31 @@ export class Player implements Entity {
   /** Temporary upward camera kick that decays back to the player's held aim over time. */
   addRecoil(kick: number): void {
     this.recoilPitch += kick;
+  }
+
+  get currentHealth(): number {
+    return this.health;
+  }
+
+  get maxHealth(): number {
+    return PLAYER_HEALTH;
+  }
+
+  get isDead(): boolean {
+    return this.health <= 0;
+  }
+
+  takeDamage(amount: number): void {
+    if (this.isDead) return;
+    this.health = Math.max(0, this.health - amount);
+  }
+
+  respawn(position: THREE.Vector3): void {
+    this.health = PLAYER_HEALTH;
+    this.verticalVelocity = 0;
+    this.recoilPitch = 0;
+    this.rigidBody.setNextKinematicTranslation({ x: position.x, y: position.y, z: position.z });
+    this.rigidBody.setTranslation({ x: position.x, y: position.y, z: position.z }, true);
   }
 
   private applyLook(input: InputManager): void {
