@@ -191,7 +191,9 @@ export class WeaponManager {
     // camera has no parent, so .position IS the world position - avoids reading a stale
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
     const origin = this.camera.position.clone();
-    const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE);
+    // camera.position sits inside the player's own capsule (EYE_OFFSET is well within its
+    // radius/height), so without excluding it every shot immediately self-hit at distance 0.
+    const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE, player.ownCollider);
 
     const muzzleWorld = this.active.viewModel.position
       .clone()

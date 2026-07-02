@@ -48,4 +48,13 @@ export class EntityManager {
       }
     }
   }
+
+  get count(): number {
+    return this.entities.length;
+  }
+
+  /** Debug/test helper - world positions of everything currently alive. */
+  getLiveEntityPositions(): THREE.Vector3[] {
+    return this.entities.map((entity) => entity.mesh.position.clone());
+  }
 }

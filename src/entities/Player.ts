@@ -93,6 +93,18 @@ export class Player implements Entity {
     this.rigidBody.setTranslation({ x: position.x, y: position.y, z: position.z }, true);
   }
 
+  /** Debug/test helper - snaps yaw/pitch to face a world point directly, bypassing mouse input. */
+  debugLookAt(target: THREE.Vector3): void {
+    const eye = this.position.clone();
+    eye.y += EYE_OFFSET;
+    const dx = target.x - eye.x;
+    const dz = target.z - eye.z;
+    const dy = target.y - eye.y;
+    const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+    this.yaw = Math.atan2(-dx, -dz);
+    this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, Math.atan2(dy, horizontalDistance)));
+  }
+
   private applyLook(input: InputManager): void {
     // Scale sensitivity by the current zoom ratio so aiming feels consistent while ADS narrows the FOV.
     const sensitivity = MOUSE_SENSITIVITY * (this.camera.fov / CAMERA_FOV);
@@ -148,5 +160,10 @@ export class Player implements Entity {
   get position(): THREE.Vector3 {
     const t = this.rigidBody.translation();
     return new THREE.Vector3(t.x, t.y, t.z);
+  }
+
+  /** So hitscan can exclude the shooter's own capsule - camera.position sits inside it, which was self-hitting. */
+  get ownCollider(): RAPIER.Collider {
+    return this.collider;
   }
 }

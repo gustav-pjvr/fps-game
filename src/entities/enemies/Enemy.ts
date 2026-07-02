@@ -23,6 +23,7 @@ const HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - HEAD_RADIUS;
 /** Minimal moving enemy: walks toward the player, grounded to terrain height each step. */
 export class Enemy implements Entity, Damageable {
   readonly id = allocateEntityId();
+  readonly isDamageableTarget = true;
   readonly mesh: THREE.Group;
 
   private health = ENEMY_HEALTH;

@@ -16,6 +16,8 @@ import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
+import { castHitscan } from '../combat/hitscan.ts';
+import { isDamageable } from '../combat/damage.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
@@ -25,6 +27,26 @@ const TARGET_RING_RADIUS = 15;
 const TARGET_COUNT = 5;
 const ENEMY_RING_RADIUS = 25;
 const ENEMY_COUNT = 3;
+
+/** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond aiming. */
+export interface GameDebugApi {
+  getScore(): number;
+  getPlayerHealth(): number;
+  getPlayerPosition(): { x: number; y: number; z: number };
+  getAmmo(): number;
+  getWeaponName(): string;
+  getEntityCount(): number;
+  isPointerLocked(): boolean;
+  lookAt(x: number, y: number, z: number): void;
+  getLiveEntityPositions(): { x: number; y: number; z: number }[];
+  raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
+}
+
+declare global {
+  interface Window {
+    __gameDebug?: GameDebugApi;
+  }
+}
 
 export class Game {
   private readonly loop: Loop;
@@ -49,6 +71,37 @@ export class Game {
     this.entityManager = new EntityManager(renderer.scene, physics, () => this.onEnemyKilled());
     this.deathScreen = new DeathScreen(hudRoot, () => this.respawn());
     this.loop = new Loop(this.update, this.render);
+    this.installDebugApi();
+  }
+
+  private installDebugApi(): void {
+    window.__gameDebug = {
+      getScore: () => this.score,
+      getPlayerHealth: () => this.player.currentHealth,
+      getPlayerPosition: () => {
+        const p = this.player.position;
+        return { x: p.x, y: p.y, z: p.z };
+      },
+      getAmmo: () => this.weaponManager.ammo,
+      getWeaponName: () => this.weaponManager.weaponName,
+      getEntityCount: () => this.entityManager.count,
+      isPointerLocked: () => this.input.isLocked,
+      lookAt: (x, y, z) => this.player.debugLookAt(new THREE.Vector3(x, y, z)),
+      getLiveEntityPositions: () =>
+        this.entityManager.getLiveEntityPositions().map((p) => ({ x: p.x, y: p.y, z: p.z })),
+      raycastForward: () => {
+        const origin = this.renderer.camera.position.clone();
+        const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.renderer.camera.quaternion);
+        const hit = castHitscan(this.physics, origin, direction, 500);
+        if (!hit) return { hit: false };
+        return {
+          hit: true,
+          isEntity: isDamageable(this.physics.getEntity(hit.colliderHandle)),
+          distance: hit.distance,
+          point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+        };
+      },
+    };
   }
 
   static async create(container: HTMLElement, blocker: HTMLElement, hudRoot: HTMLElement): Promise<Game> {

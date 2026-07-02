@@ -10,6 +10,7 @@ const HEAD_OFFSET_Y = TARGET_RADIUS + TARGET_HEAD_RADIUS - 0.05;
 /** Static shootable dummy: a body sphere plus a smaller head sphere for headshot detection. */
 export class Target implements Entity, Damageable {
   readonly id = allocateEntityId();
+  readonly isDamageableTarget = true;
   readonly mesh: THREE.Group;
 
   private health = TARGET_HEALTH;

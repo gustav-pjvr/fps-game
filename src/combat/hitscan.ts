@@ -14,12 +14,13 @@ export function castHitscan(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   maxDistance: number,
+  excludeCollider?: RAPIER.Collider,
 ): HitscanResult | null {
   const ray = new RAPIER.Ray(
     { x: origin.x, y: origin.y, z: origin.z },
     { x: direction.x, y: direction.y, z: direction.z },
   );
-  const hit = physics.world.castRayAndGetNormal(ray, maxDistance, true);
+  const hit = physics.world.castRayAndGetNormal(ray, maxDistance, true, undefined, undefined, excludeCollider);
   if (!hit) return null;
 
   const point = new THREE.Vector3(
