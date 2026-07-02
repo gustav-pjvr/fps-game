@@ -5,6 +5,13 @@ import { InputManager } from '../input/InputManager.ts';
 import { Loop } from './Loop.ts';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
+import { Chunk } from '../world/Chunk.ts';
+import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { TERRAIN_CHUNK_SIZE, TERRAIN_RESOLUTION } from './config.ts';
+
+const SPAWN_X = 0;
+const SPAWN_Z = 8;
+const REFERENCE_BOX_COLORS = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
 
 export class Game {
   private readonly loop: Loop;
@@ -23,9 +30,10 @@ export class Game {
     const input = new InputManager(renderer.canvas, blocker);
     const physics = await PhysicsWorld.create();
 
-    Game.buildPlaceholderScene(renderer.scene, physics);
+    Game.buildWorld(renderer.scene, physics);
 
-    const player = new Player(physics, renderer.camera, new THREE.Vector3(0, 3, 8));
+    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + 2;
+    const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
 
     return new Game(renderer, input, physics, player);
   }
@@ -34,7 +42,7 @@ export class Game {
     this.loop.start();
   }
 
-  private static buildPlaceholderScene(scene: THREE.Scene, physics: PhysicsWorld): void {
+  private static buildWorld(scene: THREE.Scene, physics: PhysicsWorld): void {
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
 
@@ -43,38 +51,30 @@ export class Game {
     sun.castShadow = true;
     scene.add(sun);
 
-    const groundSize = 200;
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(groundSize, groundSize),
-      new THREE.MeshStandardMaterial({ color: 0x4a7a3a }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    scene.add(ground);
+    const terrainMaterial = new THREE.MeshStandardMaterial({ color: 0x4a7a3a });
+    const chunk = new Chunk(physics, terrainMaterial, {
+      originX: -TERRAIN_CHUNK_SIZE / 2,
+      originZ: -TERRAIN_CHUNK_SIZE / 2,
+      size: TERRAIN_CHUNK_SIZE,
+      resolution: TERRAIN_RESOLUTION,
+    });
+    scene.add(chunk.mesh);
 
-    const groundBody = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    physics.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(groundSize / 2, 0.1, groundSize / 2).setTranslation(0, -0.1, 0),
-      groundBody,
-    );
-
-    const boxColors = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
-    for (let i = 0; i < boxColors.length; i++) {
+    for (let i = 0; i < REFERENCE_BOX_COLORS.length; i++) {
       const size = 2;
-      const x = Math.cos((i / boxColors.length) * Math.PI * 2) * 10;
-      const z = Math.sin((i / boxColors.length) * Math.PI * 2) * 10 - 5;
+      const x = Math.cos((i / REFERENCE_BOX_COLORS.length) * Math.PI * 2) * 10;
+      const z = Math.sin((i / REFERENCE_BOX_COLORS.length) * Math.PI * 2) * 10;
+      const y = sampleHeight(x, z) + size / 2;
 
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(size, size, size),
-        new THREE.MeshStandardMaterial({ color: boxColors[i] }),
+        new THREE.MeshStandardMaterial({ color: REFERENCE_BOX_COLORS[i] }),
       );
-      box.position.set(x, size / 2, z);
+      box.position.set(x, y, z);
       box.castShadow = true;
       scene.add(box);
 
-      const boxBody = physics.world.createRigidBody(
-        RAPIER.RigidBodyDesc.fixed().setTranslation(x, size / 2, z),
-      );
+      const boxBody = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
       physics.world.createCollider(RAPIER.ColliderDesc.cuboid(size / 2, size / 2, size / 2), boxBody);
     }
   }
