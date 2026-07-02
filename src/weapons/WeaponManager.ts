@@ -170,7 +170,9 @@ export class WeaponManager {
     direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
     direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
 
-    const origin = this.camera.getWorldPosition(new THREE.Vector3());
+    // camera has no parent, so .position IS the world position - avoids reading a stale
+    // matrixWorld (only refreshed during render(), which runs after this fires each tick).
+    const origin = this.camera.position.clone();
     const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE);
     if (hit) {
       this.onImpact(hit.point);
