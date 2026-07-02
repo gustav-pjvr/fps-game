@@ -12,6 +12,8 @@ import type { ScopeOverlay } from '../ui/scope.ts';
 import {
   ADS_LERP_SPEED,
   CAMERA_FOV,
+  RELOAD_DIP,
+  RELOAD_TILT_ANGLE,
   SCOPE_REVEAL_THRESHOLD,
   WEAPON_HOLSTER_DROP,
   WEAPON_SWITCH_DURATION,
@@ -165,6 +167,12 @@ export class WeaponManager {
 
     if (!this.switching) {
       this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
+
+      // Dip + tilt the weapon while reloading, peaking at the midpoint and settling back to
+      // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
+      const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);
+      this.active.viewModel.position.y -= RELOAD_DIP * reloadCurve;
+      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve;
     }
 
     const scopeShouldShow = hasScope && this.aimAmount >= SCOPE_REVEAL_THRESHOLD;

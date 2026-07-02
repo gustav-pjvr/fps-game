@@ -18,6 +18,12 @@ export class Weapon {
     return this.reloading;
   }
 
+  /** 0 at the start of a reload, 1 when it completes - drives the view-model reload cue. */
+  get reloadProgress(): number {
+    if (!this.reloading) return 0;
+    return 1 - Math.max(0, this.reloadTimeRemaining) / this.definition.reloadTime;
+  }
+
   update(dt: number): void {
     if (this.cooldown > 0) {
       this.cooldown -= dt;

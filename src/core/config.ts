@@ -24,6 +24,8 @@ export const SCOPE_REVEAL_THRESHOLD = 0.92;
 
 export const WEAPON_SWITCH_DURATION = 0.35;
 export const WEAPON_HOLSTER_DROP = 0.35;
+export const RELOAD_TILT_ANGLE = 0.5;
+export const RELOAD_DIP = 0.08;
 
 export const TARGET_HEALTH = 40;
 export const TARGET_RADIUS = 0.5;
