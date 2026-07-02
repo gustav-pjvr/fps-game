@@ -7,5 +7,4 @@ if (!app || !blocker) {
   throw new Error('Required root elements (#app, #blocker) are missing from index.html');
 }
 
-const game = new Game(app, blocker);
-game.start();
+Game.create(app, blocker).then((game) => game.start());

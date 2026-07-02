@@ -1,34 +1,40 @@
+import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Renderer } from './Renderer.ts';
 import { InputManager } from '../input/InputManager.ts';
 import { Loop } from './Loop.ts';
-import { FREE_FLY_SPEED, MAX_PITCH, MOUSE_SENSITIVITY } from './config.ts';
+import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
+import { Player } from '../entities/Player.ts';
 
 export class Game {
-  private readonly renderer: Renderer;
-  private readonly input: InputManager;
   private readonly loop: Loop;
 
-  private yaw = 0;
-  private pitch = 0;
-
-  constructor(container: HTMLElement, blocker: HTMLElement) {
-    this.renderer = new Renderer(container);
-    this.input = new InputManager(this.renderer.canvas, blocker);
-    this.buildPlaceholderScene();
-
-    this.renderer.camera.position.set(0, 2, 8);
-
+  private constructor(
+    private readonly renderer: Renderer,
+    private readonly input: InputManager,
+    private readonly physics: PhysicsWorld,
+    private readonly player: Player,
+  ) {
     this.loop = new Loop(this.update, this.render);
+  }
+
+  static async create(container: HTMLElement, blocker: HTMLElement): Promise<Game> {
+    const renderer = new Renderer(container);
+    const input = new InputManager(renderer.canvas, blocker);
+    const physics = await PhysicsWorld.create();
+
+    Game.buildPlaceholderScene(renderer.scene, physics);
+
+    const player = new Player(physics, renderer.camera, new THREE.Vector3(0, 3, 8));
+
+    return new Game(renderer, input, physics, player);
   }
 
   start(): void {
     this.loop.start();
   }
 
-  private buildPlaceholderScene(): void {
-    const { scene } = this.renderer;
-
+  private static buildPlaceholderScene(scene: THREE.Scene, physics: PhysicsWorld): void {
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
 
@@ -37,49 +43,45 @@ export class Game {
     sun.castShadow = true;
     scene.add(sun);
 
+    const groundSize = 200;
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(200, 200),
+      new THREE.PlaneGeometry(groundSize, groundSize),
       new THREE.MeshStandardMaterial({ color: 0x4a7a3a }),
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
 
+    const groundBody = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    physics.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(groundSize / 2, 0.1, groundSize / 2).setTranslation(0, -0.1, 0),
+      groundBody,
+    );
+
     const boxColors = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
     for (let i = 0; i < boxColors.length; i++) {
+      const size = 2;
+      const x = Math.cos((i / boxColors.length) * Math.PI * 2) * 10;
+      const z = Math.sin((i / boxColors.length) * Math.PI * 2) * 10 - 5;
+
       const box = new THREE.Mesh(
-        new THREE.BoxGeometry(2, 2, 2),
+        new THREE.BoxGeometry(size, size, size),
         new THREE.MeshStandardMaterial({ color: boxColors[i] }),
       );
-      box.position.set(Math.cos((i / boxColors.length) * Math.PI * 2) * 10, 1, Math.sin((i / boxColors.length) * Math.PI * 2) * 10 - 5);
+      box.position.set(x, size / 2, z);
       box.castShadow = true;
       scene.add(box);
+
+      const boxBody = physics.world.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed().setTranslation(x, size / 2, z),
+      );
+      physics.world.createCollider(RAPIER.ColliderDesc.cuboid(size / 2, size / 2, size / 2), boxBody);
     }
   }
 
   private readonly update = (dt: number): void => {
-    const { dx, dy } = this.input.consumeLookDelta();
-    this.yaw -= dx * MOUSE_SENSITIVITY;
-    this.pitch -= dy * MOUSE_SENSITIVITY;
-    this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch));
-
-    const camera = this.renderer.camera;
-    camera.quaternion.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
-
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-    const speed = FREE_FLY_SPEED * (this.input.isActionActive('sprint') ? 2.5 : 1) * dt;
-
-    const move = new THREE.Vector3();
-    if (this.input.isActionActive('moveForward')) move.add(forward);
-    if (this.input.isActionActive('moveBackward')) move.sub(forward);
-    if (this.input.isActionActive('moveRight')) move.add(right);
-    if (this.input.isActionActive('moveLeft')) move.sub(right);
-
-    if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(speed);
-      camera.position.add(move);
-    }
+    this.player.update(dt, this.input);
+    this.physics.step(dt);
   };
 
   private readonly render = (_alpha: number): void => {
