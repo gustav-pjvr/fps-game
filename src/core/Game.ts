@@ -5,9 +5,8 @@ import { InputManager } from '../input/InputManager.ts';
 import { Loop } from './Loop.ts';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
-import { Chunk } from '../world/Chunk.ts';
+import { ChunkManager } from '../world/ChunkManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
-import { TERRAIN_CHUNK_SIZE, TERRAIN_RESOLUTION } from './config.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
@@ -21,6 +20,7 @@ export class Game {
     private readonly input: InputManager,
     private readonly physics: PhysicsWorld,
     private readonly player: Player,
+    private readonly chunkManager: ChunkManager,
   ) {
     this.loop = new Loop(this.update, this.render);
   }
@@ -30,19 +30,26 @@ export class Game {
     const input = new InputManager(renderer.canvas, blocker);
     const physics = await PhysicsWorld.create();
 
-    Game.buildWorld(renderer.scene, physics);
+    Game.addLighting(renderer.scene);
+    Game.addReferenceBoxes(renderer.scene, physics);
+
+    const chunkManager = new ChunkManager(renderer.scene, physics);
+    // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
+    for (let i = 0; i < 30; i++) {
+      chunkManager.update(SPAWN_X, SPAWN_Z);
+    }
 
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + 2;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
 
-    return new Game(renderer, input, physics, player);
+    return new Game(renderer, input, physics, player, chunkManager);
   }
 
   start(): void {
     this.loop.start();
   }
 
-  private static buildWorld(scene: THREE.Scene, physics: PhysicsWorld): void {
+  private static addLighting(scene: THREE.Scene): void {
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
 
@@ -50,16 +57,9 @@ export class Game {
     sun.position.set(20, 30, 10);
     sun.castShadow = true;
     scene.add(sun);
+  }
 
-    const terrainMaterial = new THREE.MeshStandardMaterial({ color: 0x4a7a3a });
-    const chunk = new Chunk(physics, terrainMaterial, {
-      originX: -TERRAIN_CHUNK_SIZE / 2,
-      originZ: -TERRAIN_CHUNK_SIZE / 2,
-      size: TERRAIN_CHUNK_SIZE,
-      resolution: TERRAIN_RESOLUTION,
-    });
-    scene.add(chunk.mesh);
-
+  private static addReferenceBoxes(scene: THREE.Scene, physics: PhysicsWorld): void {
     for (let i = 0; i < REFERENCE_BOX_COLORS.length; i++) {
       const size = 2;
       const x = Math.cos((i / REFERENCE_BOX_COLORS.length) * Math.PI * 2) * 10;
@@ -82,6 +82,7 @@ export class Game {
   private readonly update = (dt: number): void => {
     this.player.update(dt, this.input);
     this.physics.step(dt);
+    this.chunkManager.update(this.player.position.x, this.player.position.z);
   };
 
   private readonly render = (_alpha: number): void => {

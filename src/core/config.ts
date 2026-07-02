@@ -25,3 +25,7 @@ export const TERRAIN_BASE_FREQUENCY = 0.015;
 export const TERRAIN_LACUNARITY = 2.0;
 export const TERRAIN_PERSISTENCE = 0.5;
 export const TERRAIN_AMPLITUDE = 8;
+
+export const VIEW_RADIUS_CHUNKS = 2;
+export const UNLOAD_RADIUS_CHUNKS = 3;
+export const MAX_CHUNK_GENERATIONS_PER_TICK = 2;
