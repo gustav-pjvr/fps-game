@@ -44,9 +44,11 @@ export class Weapon {
     return true;
   }
 
-  startReload(): void {
-    if (this.reloading || this.ammoInMagazine === this.definition.magazineSize) return;
+  /** Returns whether a reload actually began (false if already reloading or magazine already full). */
+  startReload(): boolean {
+    if (this.reloading || this.ammoInMagazine === this.definition.magazineSize) return false;
     this.reloading = true;
     this.reloadTimeRemaining = this.definition.reloadTime;
+    return true;
   }
 }

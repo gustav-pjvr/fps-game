@@ -1,3 +1,4 @@
+import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
@@ -46,6 +47,8 @@ export class WeaponManager {
     private readonly scopeOverlay: ScopeOverlay,
     private readonly onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
+    private readonly onFire: (weaponId: string) => void,
+    private readonly onReloadStart: () => void,
   ) {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -101,11 +104,14 @@ export class WeaponManager {
 
     if (this.switching) return;
 
-    if (input.consumeJustPressed('fire') && this.active.weapon.tryFire()) {
-      this.fireHitscan(player);
+    const firePressed = this.active.weapon.definition.automatic
+      ? input.isActionActive('fire')
+      : input.consumeJustPressed('fire');
+    if (firePressed && this.active.weapon.tryFire()) {
+      this.fireShot(player);
     }
-    if (input.consumeJustPressed('reload')) {
-      this.active.weapon.startReload();
+    if (input.consumeJustPressed('reload') && this.active.weapon.startReload()) {
+      this.onReloadStart();
     }
   }
 
@@ -180,26 +186,39 @@ export class WeaponManager {
     this.active.viewModel.visible = !scopeShouldShow;
   }
 
-  private fireHitscan(player: Player): void {
-    const { spreadRadians, adsSpreadMultiplier, recoilKick } = this.active.weapon.definition;
+  /** One trigger pull - fires pelletCount independent rays (shotguns; 1 for everything else) but a single recoil kick. */
+  private fireShot(player: Player): void {
+    const { pelletCount, recoilKick } = this.active.weapon.definition;
+
+    // camera has no parent, so .position IS the world position - avoids reading a stale
+    // matrixWorld (only refreshed during render(), which runs after this fires each tick).
+    const origin = this.camera.position.clone();
+    const muzzleWorld = this.active.viewModel.position
+      .clone()
+      .add(this.active.muzzleLocalOffset)
+      .applyQuaternion(this.camera.quaternion)
+      .add(origin);
+
+    for (let i = 0; i < pelletCount; i++) {
+      this.firePellet(origin, muzzleWorld, player.ownCollider);
+    }
+
+    this.onFire(this.active.weapon.definition.id);
+    player.addRecoil(recoilKick);
+  }
+
+  private firePellet(origin: THREE.Vector3, muzzleWorld: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
+    const { spreadRadians, adsSpreadMultiplier, damage } = this.active.weapon.definition;
     const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
 
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
     direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
 
-    // camera has no parent, so .position IS the world position - avoids reading a stale
-    // matrixWorld (only refreshed during render(), which runs after this fires each tick).
-    const origin = this.camera.position.clone();
     // camera.position sits inside the player's own capsule (EYE_OFFSET is well within its
     // radius/height), so without excluding it every shot immediately self-hit at distance 0.
-    const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE, player.ownCollider);
+    const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE, excludeCollider);
 
-    const muzzleWorld = this.active.viewModel.position
-      .clone()
-      .add(this.active.muzzleLocalOffset)
-      .applyQuaternion(this.camera.quaternion)
-      .add(origin);
     const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(HITSCAN_RANGE));
     this.onTracer(muzzleWorld, tracerEnd);
 
@@ -208,10 +227,8 @@ export class WeaponManager {
       const isEntityHit = isDamageable(target);
       this.onImpact(hit.point, isEntityHit);
       if (isDamageable(target)) {
-        target.takeDamage(this.active.weapon.definition.damage, hit.colliderHandle);
+        target.takeDamage(damage, hit.colliderHandle);
       }
     }
-
-    player.addRecoil(recoilKick);
   }
 }

@@ -18,6 +18,7 @@ import { HitMarker } from '../ui/hitMarker.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
+import { SoundEngine } from '../audio/SoundEngine.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
@@ -40,6 +41,7 @@ export interface GameDebugApi {
   lookAt(x: number, y: number, z: number): void;
   getLiveEntityPositions(): { x: number; y: number; z: number }[];
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
+  getCameraFov(): number;
 }
 
 declare global {
@@ -101,6 +103,7 @@ export class Game {
           point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
         };
       },
+      getCameraFov: () => this.renderer.camera.fov,
     };
   }
 
@@ -118,8 +121,14 @@ export class Game {
       chunkManager.update(SPAWN_X, SPAWN_Z);
     }
 
+    const sound = new SoundEngine();
+    document.addEventListener('click', () => sound.resume(), { once: true });
+
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
-    const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
+    const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z), {
+      onDamaged: () => sound.playPlayerHurt(),
+      onFootstep: () => sound.playFootstep(),
+    });
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const tracers = new Tracers(renderer.scene);
@@ -128,13 +137,18 @@ export class Game {
     const weaponManager = new WeaponManager(
       renderer.camera,
       physics,
-      ['pistol', 'sniper'],
+      ['pistol', 'rifle', 'shotgun', 'sniper'],
       scopeOverlay,
       (point, isEntityHit) => {
         impactMarkers.spawn(point, isEntityHit);
-        if (isEntityHit) hitMarker.trigger();
+        if (isEntityHit) {
+          hitMarker.trigger();
+          sound.playHitConfirm();
+        }
       },
       (start, end) => tracers.spawn(start, end),
+      (weaponId) => sound.playGunshot(weaponId),
+      () => sound.playReloadClick(),
     );
     const hud = new Hud(hudRoot);
     const hotbar = new Hotbar(hudRoot);

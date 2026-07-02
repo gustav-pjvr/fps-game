@@ -1,7 +1,27 @@
-# Playtest Notes — v1 (Phases 0-7) + Phase 8
+# Playtest Notes — v1 (Phases 0-7) + Phase 8 + Content Pass
 
 Feedback from the first playtest, triaged into: real bugs, missing pieces that belong in v1's
 own combat loop, and things that were deliberately deferred past v1 per PLAN.md.
+
+## Content pass (post-Phase 8) — what changed and one deliberate non-change
+
+Added: Assault Rifle (automatic, data-driven via a new `automatic` flag - holding fire uses
+`isActionActive` instead of edge-triggered `consumeJustPressed`) and Shotgun (`pelletCount: 8`,
+each pellet an independent hitscan ray within a wide spread cone, one recoil kick per trigger
+pull not per pellet). Enemy AI gained idle/wander (stays within `ENEMY_WANDER_RADIUS` of spawn)
+vs. chase (only once the player is within `ENEMY_DETECTION_RANGE`, with a wider `ENEMY_LEASH_RANGE`
+for hysteresis) instead of always beelining from anywhere on the map. Sound design is fully
+procedural (Web Audio synthesis in `src/audio/SoundEngine.ts` - noise bursts + oscillators, no
+audio files) for gunshots (per-weapon timbre), footsteps, hit confirmation, reload, and taking
+damage.
+
+**Deliberately did not tune ADS numbers** (`ADS_LERP_SPEED`, sensitivity-by-zoom-ratio) in this
+pass - there's no concrete feedback yet on how it actually feels post-fix (the original "aim
+doesn't work well" report predates the self-hit bug fix and the hit-confirmation additions, both
+of which likely explain most of it). Guessing at number changes without data risks being a
+placebo fix. Extended the Playwright suite instead (ADS FOV narrows/restores, automatic fire,
+enemy wander-vs-chase) so there's a harness to verify actual tuning changes against once real
+feedback comes in.
 
 ## Update — root cause of "enemies don't get killed" found (via Playwright, post-Phase 8)
 

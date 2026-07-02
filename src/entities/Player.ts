@@ -6,6 +6,7 @@ import type { InputManager } from '../input/InputManager.ts';
 import {
   CAMERA_FOV,
   EYE_OFFSET,
+  FOOTSTEP_DISTANCE,
   GRAVITY,
   JUMP_SPEED,
   MAX_PITCH,
@@ -17,6 +18,11 @@ import {
   RECOIL_DECAY,
   SPRINT_MULTIPLIER,
 } from '../core/config.ts';
+
+export interface PlayerSoundHooks {
+  onDamaged: () => void;
+  onFootstep: () => void;
+}
 
 export class Player implements Entity {
   readonly id = allocateEntityId();
@@ -31,11 +37,13 @@ export class Player implements Entity {
   private verticalVelocity = 0;
   private grounded = false;
   private health = PLAYER_HEALTH;
+  private footstepAccumulator = 0;
 
   constructor(
     physics: PhysicsWorld,
     private readonly camera: THREE.PerspectiveCamera,
     spawnPosition: THREE.Vector3,
+    private readonly sounds: PlayerSoundHooks,
   ) {
     const cylinderHalfHeight = PLAYER_HEIGHT / 2 - PLAYER_RADIUS;
 
@@ -83,6 +91,7 @@ export class Player implements Entity {
   takeDamage(amount: number): void {
     if (this.isDead) return;
     this.health = Math.max(0, this.health - amount);
+    this.sounds.onDamaged();
   }
 
   respawn(position: THREE.Vector3): void {
@@ -141,6 +150,14 @@ export class Player implements Entity {
     this.grounded = this.controller.computedGrounded();
     if (this.grounded && this.verticalVelocity < 0) {
       this.verticalVelocity = 0;
+    }
+
+    if (this.grounded) {
+      this.footstepAccumulator += Math.sqrt(computed.x * computed.x + computed.z * computed.z);
+      if (this.footstepAccumulator >= FOOTSTEP_DISTANCE) {
+        this.footstepAccumulator -= FOOTSTEP_DISTANCE;
+        this.sounds.onFootstep();
+      }
     }
 
     const current = this.rigidBody.translation();

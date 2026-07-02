@@ -18,6 +18,7 @@ export const PLAYER_MOVE_SPEED = 5;
 export const SPRINT_MULTIPLIER = 1.6;
 export const JUMP_SPEED = 6.5;
 export const RECOIL_DECAY = 8;
+export const FOOTSTEP_DISTANCE = 2.2;
 
 export const ADS_LERP_SPEED = 12;
 export const SCOPE_REVEAL_THRESHOLD = 0.92;
@@ -40,6 +41,12 @@ export const ENEMY_STOP_DISTANCE = 3;
 export const ENEMY_ATTACK_RANGE = 3;
 export const ENEMY_ATTACK_DAMAGE = 8;
 export const ENEMY_ATTACK_INTERVAL = 1;
+export const ENEMY_DETECTION_RANGE = 18;
+export const ENEMY_LEASH_RANGE = 26;
+export const ENEMY_WANDER_RADIUS = 6;
+export const ENEMY_WANDER_SPEED = ENEMY_SPEED * 0.4;
+export const ENEMY_WANDER_INTERVAL = 3;
+export const ENEMY_WANDER_STOP_DISTANCE = 0.4;
 
 export const PLAYER_HEALTH = 100;
 
