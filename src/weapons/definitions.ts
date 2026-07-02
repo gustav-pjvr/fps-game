@@ -13,6 +13,9 @@ export interface WeaponDefinition {
   readonly adsSpreadMultiplier: number;
   /** Full-screen scope overlay at full ADS (sniper-style) vs. a plain FOV zoom (pistol/rifle-style). */
   readonly hasScope: boolean;
+  /** Placeholder view-model look, until real .glb models exist. */
+  readonly viewModelColor: number;
+  readonly barrelLength: number;
 }
 
 export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
@@ -28,6 +31,8 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     adsFov: 55,
     adsSpreadMultiplier: 0.4,
     hasScope: false,
+    viewModelColor: 0x2a2a2a,
+    barrelLength: 0.22,
   },
   sniper: {
     id: 'sniper',
@@ -41,5 +46,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     adsFov: 15,
     adsSpreadMultiplier: 0.02,
     hasScope: true,
+    viewModelColor: 0x14301a,
+    barrelLength: 0.6,
   },
 };

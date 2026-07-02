@@ -36,6 +36,11 @@ export const ENEMY_HEIGHT = 1.7;
 export const ENEMY_SPEED = 2.5;
 export const ENEMY_STOP_DISTANCE = 3;
 
+/** Visual-only travel speed for tracers - the hit itself is already resolved instantly via raycast. */
+export const TRACER_SPEED = 150;
+export const TRACER_LENGTH = 0.6;
+export const TRACER_COLOR = 0xfff2a8;
+
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;
 export const TERRAIN_OCTAVES = 4;

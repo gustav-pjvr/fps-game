@@ -24,6 +24,7 @@ const SLOT_ACTIONS: Action[] = ['weaponSlot1', 'weaponSlot2', 'weaponSlot3', 'we
 interface WeaponSlot {
   weapon: Weapon;
   viewModel: THREE.Object3D;
+  muzzleLocalOffset: THREE.Vector3;
 }
 
 export class WeaponManager {
@@ -42,6 +43,7 @@ export class WeaponManager {
     definitionIds: string[],
     private readonly scopeOverlay: ScopeOverlay,
     private readonly onImpact: (point: THREE.Vector3) => void,
+    private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
   ) {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -49,10 +51,10 @@ export class WeaponManager {
       const definition = WEAPON_DEFINITIONS[id];
       if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
-      const viewModel = createPlaceholderWeaponMesh();
-      viewModel.visible = false;
-      camera.add(viewModel);
-      return { weapon: new Weapon(definition), viewModel };
+      const { group, muzzleLocalOffset } = createPlaceholderWeaponMesh(definition);
+      group.visible = false;
+      camera.add(group);
+      return { weapon: new Weapon(definition), viewModel: group, muzzleLocalOffset };
     });
 
     const first = this.slots[0];
@@ -79,6 +81,14 @@ export class WeaponManager {
 
   get weaponName(): string {
     return this.active.weapon.definition.name;
+  }
+
+  get weaponSlotNames(): string[] {
+    return this.slots.map((slot) => slot.weapon.definition.name);
+  }
+
+  get activeWeaponIndex(): number {
+    return this.activeIndex;
   }
 
   update(dt: number, input: InputManager, player: Player): void {
@@ -174,6 +184,15 @@ export class WeaponManager {
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
     const origin = this.camera.position.clone();
     const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE);
+
+    const muzzleWorld = this.active.viewModel.position
+      .clone()
+      .add(this.active.muzzleLocalOffset)
+      .applyQuaternion(this.camera.quaternion)
+      .add(origin);
+    const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(HITSCAN_RANGE));
+    this.onTracer(muzzleWorld, tracerEnd);
+
     if (hit) {
       this.onImpact(hit.point);
       const target = this.physics.getEntity(hit.colliderHandle);

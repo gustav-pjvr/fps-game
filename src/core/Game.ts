@@ -10,7 +10,9 @@ import { ChunkManager } from '../world/ChunkManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
+import { Tracers } from '../combat/Tracers.ts';
 import { Hud } from '../ui/hud.ts';
+import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 
 const SPAWN_X = 0;
@@ -34,7 +36,9 @@ export class Game {
     private readonly chunkManager: ChunkManager,
     private readonly weaponManager: WeaponManager,
     private readonly impactMarkers: ImpactMarkers,
+    private readonly tracers: Tracers,
     private readonly hud: Hud,
+    private readonly hotbar: Hotbar,
   ) {
     this.entityManager = new EntityManager(renderer.scene, physics, () => this.onEnemyKilled());
     this.loop = new Loop(this.update, this.render);
@@ -58,6 +62,7 @@ export class Game {
     const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
+    const tracers = new Tracers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
     const weaponManager = new WeaponManager(
       renderer.camera,
@@ -65,10 +70,24 @@ export class Game {
       ['pistol', 'sniper'],
       scopeOverlay,
       (point) => impactMarkers.spawn(point),
+      (start, end) => tracers.spawn(start, end),
     );
     const hud = new Hud(hudRoot);
+    const hotbar = new Hotbar(hudRoot);
+    hotbar.setSlots(weaponManager.weaponSlotNames);
 
-    const game = new Game(renderer, input, physics, player, chunkManager, weaponManager, impactMarkers, hud);
+    const game = new Game(
+      renderer,
+      input,
+      physics,
+      player,
+      chunkManager,
+      weaponManager,
+      impactMarkers,
+      tracers,
+      hud,
+      hotbar,
+    );
     Game.spawnEncounters(game.entityManager);
 
     return game;
@@ -135,10 +154,12 @@ export class Game {
     this.weaponManager.update(dt, this.input, this.player);
     this.entityManager.update(dt, this.player.position);
     this.impactMarkers.update(dt);
+    this.tracers.update(dt);
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
     this.hud.setWeaponName(this.weaponManager.weaponName);
     this.hud.setScore(this.score);
+    this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
 
   private readonly render = (_alpha: number): void => {
