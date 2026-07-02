@@ -24,6 +24,7 @@ export class InputManager {
     document.addEventListener('mousemove', this.onMouseMove);
     document.addEventListener('mousedown', this.onMouseDown);
     document.addEventListener('mouseup', this.onMouseUp);
+    document.addEventListener('wheel', this.onWheel, { passive: true });
     document.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -94,6 +95,11 @@ export class InputManager {
     if (action) this.activeActions.delete(action);
   };
 
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (!this.locked) return;
+    this.justPressedActions.add(event.deltaY > 0 ? 'weaponNext' : 'weaponPrev');
+  };
+
   dispose(): void {
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('pointerlockerror', this.onPointerLockError);
@@ -102,5 +108,6 @@ export class InputManager {
     document.removeEventListener('mousemove', this.onMouseMove);
     document.removeEventListener('mousedown', this.onMouseDown);
     document.removeEventListener('mouseup', this.onMouseUp);
+    document.removeEventListener('wheel', this.onWheel);
   }
 }

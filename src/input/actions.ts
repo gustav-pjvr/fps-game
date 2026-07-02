@@ -7,7 +7,13 @@ export type Action =
   | 'sprint'
   | 'fire'
   | 'aim'
-  | 'reload';
+  | 'reload'
+  | 'weaponSlot1'
+  | 'weaponSlot2'
+  | 'weaponSlot3'
+  | 'weaponSlot4'
+  | 'weaponNext'
+  | 'weaponPrev';
 
 export const KEY_BINDINGS: Record<string, Action> = {
   KeyW: 'moveForward',
@@ -17,4 +23,8 @@ export const KEY_BINDINGS: Record<string, Action> = {
   Space: 'jump',
   ShiftLeft: 'sprint',
   KeyR: 'reload',
+  Digit1: 'weaponSlot1',
+  Digit2: 'weaponSlot2',
+  Digit3: 'weaponSlot3',
+  Digit4: 'weaponSlot4',
 };

@@ -51,8 +51,12 @@ export class Game {
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
-    const weaponManager = new WeaponManager(renderer.camera, physics, 'pistol', scopeOverlay, (point) =>
-      impactMarkers.spawn(point),
+    const weaponManager = new WeaponManager(
+      renderer.camera,
+      physics,
+      ['pistol', 'sniper'],
+      scopeOverlay,
+      (point) => impactMarkers.spawn(point),
     );
     const hud = new Hud(hudRoot);
 
@@ -100,6 +104,7 @@ export class Game {
     this.weaponManager.update(dt, this.input, this.player);
     this.impactMarkers.update(dt);
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
+    this.hud.setWeaponName(this.weaponManager.weaponName);
   };
 
   private readonly render = (_alpha: number): void => {

@@ -29,4 +29,17 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     adsSpreadMultiplier: 0.4,
     hasScope: false,
   },
+  sniper: {
+    id: 'sniper',
+    name: 'Sniper Rifle',
+    damage: 90,
+    fireRate: 0.8,
+    magazineSize: 5,
+    reloadTime: 2.4,
+    spreadRadians: 0.02,
+    recoilKick: 0.05,
+    adsFov: 15,
+    adsSpreadMultiplier: 0.02,
+    hasScope: true,
+  },
 };
