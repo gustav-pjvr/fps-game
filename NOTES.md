@@ -1,7 +1,30 @@
-# Playtest Notes — v1 (Phases 0-7)
+# Playtest Notes — v1 (Phases 0-7) + Phase 8
 
 Feedback from the first playtest, triaged into: real bugs, missing pieces that belong in v1's
 own combat loop, and things that were deliberately deferred past v1 per PLAN.md.
+
+## Update — root cause of "enemies don't get killed" found (via Playwright, post-Phase 8)
+
+Added a Playwright e2e suite (`e2e/`) so tests could be run directly instead of reasoning from
+code. The very first "aim at a target and kill it" test failed - and the cause was a genuine,
+previously-undiscovered bug, not a missed-shot/no-feedback issue as guessed below:
+
+**`WeaponManager.fireHitscan()`'s ray origin (`camera.position`) sits inside the player's own
+capsule collider**, so without an exclusion filter the ray immediately self-hit at distance 0
+on every shot. `isDamageable()` was a pure structural check ("has a `takeDamage` function"), and
+`Player` also grew a `takeDamage()` method in Phase 8 for its own health system - so the player
+satisfied that check and got hit by their own gunfire, every single shot, since Phase 8 was
+added. Shots never reached real targets/enemies at all.
+
+Fixed: `castHitscan()` now takes an `excludeCollider` param (Rapier's own
+`filterExcludeCollider`), and `Damageable` now uses a nominal `isDamageableTarget: true` marker
+instead of structural typing, so `Player` can't accidentally match it again just by having a
+same-shaped method. See commit for full detail.
+
+This means the *pre-Phase-8* "enemies don't get killed" report (below) can't have had this exact
+cause (Player didn't have `takeDamage` yet), but it's the same symptom and this bug would have
+made it persist regardless of any other fix. Worth actually playtesting again now that both the
+original hit-feedback gap (Phase 8) and this self-hit bug are gone.
 
 ## Bugs found (investigated after feedback)
 
