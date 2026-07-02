@@ -12,6 +12,7 @@ import {
   PLAYER_HEIGHT,
   PLAYER_MOVE_SPEED,
   PLAYER_RADIUS,
+  RECOIL_DECAY,
   SPRINT_MULTIPLIER,
 } from '../core/config.ts';
 
@@ -24,6 +25,7 @@ export class Player implements Entity {
 
   private yaw = 0;
   private pitch = 0;
+  private recoilPitch = 0;
   private verticalVelocity = 0;
   private grounded = false;
 
@@ -55,6 +57,12 @@ export class Player implements Entity {
   update(dt: number, input: InputManager): void {
     this.applyLook(input);
     this.applyMovement(dt, input);
+    this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
+  }
+
+  /** Temporary upward camera kick that decays back to the player's held aim over time. */
+  addRecoil(kick: number): void {
+    this.recoilPitch += kick;
   }
 
   private applyLook(input: InputManager): void {
@@ -101,7 +109,8 @@ export class Player implements Entity {
     };
     this.rigidBody.setNextKinematicTranslation(next);
 
-    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    const effectivePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + this.recoilPitch));
+    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw, 0, 'YXZ'));
     this.camera.position.set(next.x, next.y + EYE_OFFSET, next.z);
     this.camera.quaternion.copy(lookQuat);
   }

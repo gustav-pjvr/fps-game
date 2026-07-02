@@ -17,6 +17,7 @@ export const EYE_OFFSET = 0.75;
 export const PLAYER_MOVE_SPEED = 5;
 export const SPRINT_MULTIPLIER = 1.6;
 export const JUMP_SPEED = 6.5;
+export const RECOIL_DECAY = 8;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;

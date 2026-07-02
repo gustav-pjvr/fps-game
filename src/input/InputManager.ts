@@ -7,6 +7,7 @@ const MOUSE_BUTTON_ACTIONS: Record<number, Action> = {
 
 export class InputManager {
   private readonly activeActions = new Set<Action>();
+  private readonly justPressedActions = new Set<Action>();
   private lookDeltaX = 0;
   private lookDeltaY = 0;
   private locked = false;
@@ -34,6 +35,13 @@ export class InputManager {
     return this.activeActions.has(action);
   }
 
+  /** True at most once per key/button press — for semi-auto fire, reload, jump-once, etc. */
+  consumeJustPressed(action: Action): boolean {
+    const wasPressed = this.justPressedActions.has(action);
+    this.justPressedActions.delete(action);
+    return wasPressed;
+  }
+
   consumeLookDelta(): { dx: number; dy: number } {
     const delta = { dx: this.lookDeltaX, dy: this.lookDeltaY };
     this.lookDeltaX = 0;
@@ -46,6 +54,7 @@ export class InputManager {
     this.blocker.style.display = this.locked ? 'none' : 'flex';
     if (!this.locked) {
       this.activeActions.clear();
+      this.justPressedActions.clear();
     }
   };
 
@@ -56,7 +65,9 @@ export class InputManager {
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!this.locked) return;
     const action = KEY_BINDINGS[event.code];
-    if (action) this.activeActions.add(action);
+    if (!action) return;
+    if (!this.activeActions.has(action)) this.justPressedActions.add(action);
+    this.activeActions.add(action);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent): void => {
@@ -73,7 +84,9 @@ export class InputManager {
   private readonly onMouseDown = (event: MouseEvent): void => {
     if (!this.locked) return;
     const action = MOUSE_BUTTON_ACTIONS[event.button];
-    if (action) this.activeActions.add(action);
+    if (!action) return;
+    if (!this.activeActions.has(action)) this.justPressedActions.add(action);
+    this.activeActions.add(action);
   };
 
   private readonly onMouseUp = (event: MouseEvent): void => {

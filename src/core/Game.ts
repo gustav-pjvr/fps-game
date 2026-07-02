@@ -7,6 +7,9 @@ import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { WeaponManager } from '../weapons/WeaponManager.ts';
+import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
+import { Hud } from '../ui/hud.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
@@ -21,11 +24,14 @@ export class Game {
     private readonly physics: PhysicsWorld,
     private readonly player: Player,
     private readonly chunkManager: ChunkManager,
+    private readonly weaponManager: WeaponManager,
+    private readonly impactMarkers: ImpactMarkers,
+    private readonly hud: Hud,
   ) {
     this.loop = new Loop(this.update, this.render);
   }
 
-  static async create(container: HTMLElement, blocker: HTMLElement): Promise<Game> {
+  static async create(container: HTMLElement, blocker: HTMLElement, hudRoot: HTMLElement): Promise<Game> {
     const renderer = new Renderer(container);
     const input = new InputManager(renderer.canvas, blocker);
     const physics = await PhysicsWorld.create();
@@ -42,7 +48,13 @@ export class Game {
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + 2;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
 
-    return new Game(renderer, input, physics, player, chunkManager);
+    const impactMarkers = new ImpactMarkers(renderer.scene);
+    const weaponManager = new WeaponManager(renderer.camera, physics, 'pistol', (point) =>
+      impactMarkers.spawn(point),
+    );
+    const hud = new Hud(hudRoot);
+
+    return new Game(renderer, input, physics, player, chunkManager, weaponManager, impactMarkers, hud);
   }
 
   start(): void {
@@ -83,6 +95,9 @@ export class Game {
     this.player.update(dt, this.input);
     this.physics.step(dt);
     this.chunkManager.update(this.player.position.x, this.player.position.z);
+    this.weaponManager.update(dt, this.input, this.player);
+    this.impactMarkers.update(dt);
+    this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
   };
 
   private readonly render = (_alpha: number): void => {
