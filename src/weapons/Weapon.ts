@@ -51,4 +51,12 @@ export class Weapon {
     this.reloadTimeRemaining = this.definition.reloadTime;
     return true;
   }
+
+  /** Instant full refill, cancelling any in-progress reload - for the practice-reset feature, not gameplay. */
+  refillAmmo(): void {
+    this.ammoInMagazine = this.definition.magazineSize;
+    this.reloading = false;
+    this.reloadTimeRemaining = 0;
+    this.cooldown = 0;
+  }
 }

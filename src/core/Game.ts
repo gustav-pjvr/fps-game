@@ -212,6 +212,20 @@ export class Game {
     this.deathScreen.hide();
   }
 
+  /** Practice-reset (T key): fresh targets/enemies, full ammo on every weapon, full health, score
+   * back to 0 - a clean slate without needing a page reload. Works even while dead. */
+  private resetPlay(): void {
+    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
+    this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
+    this.weaponManager.resetAllAmmo();
+    this.entityManager.clearAll();
+    Game.spawnEncounters(this.entityManager);
+    this.impactMarkers.clear();
+    this.tracers.clear();
+    this.scoreState.value = 0;
+    this.deathScreen.hide();
+  }
+
   private static addLighting(scene: THREE.Scene): void {
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
@@ -260,6 +274,10 @@ export class Game {
   }
 
   private readonly update = (dt: number): void => {
+    if (this.input.consumeJustPressed('resetPlay')) {
+      this.resetPlay();
+    }
+
     const wasDead = this.player.isDead;
 
     if (this.player.isDead) {

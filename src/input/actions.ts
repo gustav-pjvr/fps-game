@@ -13,7 +13,8 @@ export type Action =
   | 'weaponSlot3'
   | 'weaponSlot4'
   | 'weaponNext'
-  | 'weaponPrev';
+  | 'weaponPrev'
+  | 'resetPlay';
 
 export const KEY_BINDINGS: Record<string, Action> = {
   KeyW: 'moveForward',
@@ -27,4 +28,5 @@ export const KEY_BINDINGS: Record<string, Action> = {
   Digit2: 'weaponSlot2',
   Digit3: 'weaponSlot3',
   Digit4: 'weaponSlot4',
+  KeyT: 'resetPlay',
 };

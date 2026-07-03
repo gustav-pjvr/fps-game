@@ -105,6 +105,13 @@ export class WeaponManager {
     return this.active.weapon.isReloading;
   }
 
+  /** Instant full refill for every carried weapon, not just the active one - practice-reset feature. */
+  resetAllAmmo(): void {
+    for (const slot of this.slots) {
+      slot.weapon.refillAmmo();
+    }
+  }
+
   get weaponName(): string {
     return this.active.weapon.definition.name;
   }

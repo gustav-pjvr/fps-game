@@ -47,4 +47,11 @@ export class Tracers {
       }
     }
   }
+
+  clear(): void {
+    for (const tracer of this.active) {
+      this.scene.remove(tracer.mesh);
+    }
+    this.active.length = 0;
+  }
 }

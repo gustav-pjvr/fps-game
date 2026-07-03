@@ -45,4 +45,11 @@ export class ImpactMarkers {
       }
     }
   }
+
+  clear(): void {
+    for (const marker of this.active) {
+      this.scene.remove(marker.mesh);
+    }
+    this.active.length = 0;
+  }
 }

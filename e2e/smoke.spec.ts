@@ -179,3 +179,39 @@ test('enemies wander near spawn instead of beelining when the player is far away
   // would have closed most of the ~25 unit gap toward the stationary player by now.
   expect(drift).toBeLessThan(8);
 });
+
+test('pressing T resets ammo, entities, and score to a fresh state', async ({ page }) => {
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  // Kill one target to move score/entity-count off their initial values.
+  const target = (await page.evaluate(() => window.__gameDebug?.getLiveEntityPositions()))?.[0];
+  expect(target).toBeDefined();
+  if (!target) throw new Error('no live entities to aim at');
+  await page.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), target);
+  await page.waitForTimeout(100);
+  for (let i = 0; i < 2; i++) {
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+  }
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+
+  const scoreBefore = await page.evaluate(() => window.__gameDebug?.getScore());
+  const countBefore = await page.evaluate(() => window.__gameDebug?.getEntityCount());
+  const ammoBefore = await page.evaluate(() => window.__gameDebug?.getAmmo());
+  expect(scoreBefore).toBeGreaterThan(0);
+  expect(countBefore).toBeLessThan(8);
+  expect(ammoBefore).toBeLessThan(12);
+
+  await page.keyboard.press('KeyT');
+  await page.waitForTimeout(100);
+
+  expect(await page.evaluate(() => window.__gameDebug?.getScore())).toBe(0);
+  expect(await page.evaluate(() => window.__gameDebug?.getEntityCount())).toBe(8);
+  expect(await page.evaluate(() => window.__gameDebug?.getAmmo())).toBe(12);
+  expect(await page.evaluate(() => window.__gameDebug?.getPlayerHealth())).toBe(100);
+});

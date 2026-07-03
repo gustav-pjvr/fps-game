@@ -66,6 +66,15 @@ export class EntityManager {
     return this.entities.length;
   }
 
+  /** Despawns everything regardless of alive/dead state - practice-reset feature, not a kill. */
+  clearAll(): void {
+    for (const entity of this.entities) {
+      this.scene.remove(entity.mesh);
+      entity.dispose();
+    }
+    this.entities.length = 0;
+  }
+
   /** Debug/test helper - world positions of everything currently alive. */
   getLiveEntityPositions(): THREE.Vector3[] {
     return this.entities.map((entity) => entity.mesh.position.clone());
