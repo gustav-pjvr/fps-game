@@ -36,6 +36,18 @@ export class InputManager {
     return this.locked;
   }
 
+  /** Re-requests pointer lock - safe to call from a click handler (a valid user gesture) even if
+   * already locked, e.g. respawning without forcing a second "click to play" step. */
+  requestPointerLock(): void {
+    this.canvas.requestPointerLock();
+  }
+
+  /** Releases pointer lock so the OS cursor reappears - used on player death so death-screen
+   * buttons are actually clickable instead of aiming blind with a hidden cursor. */
+  releasePointerLock(): void {
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+  }
+
   isActionActive(action: Action): boolean {
     return this.activeActions.has(action);
   }

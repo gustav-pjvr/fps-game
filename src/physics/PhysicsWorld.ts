@@ -29,4 +29,10 @@ export class PhysicsWorld {
   getEntity(colliderHandle: number): Entity | undefined {
     return this.colliderToEntity.get(colliderHandle);
   }
+
+  /** RAPIER.World is backed by WASM linear memory, not GC'd JS heap - must be freed explicitly or
+   * repeated lobby <-> match cycles leak a whole physics world's worth of memory each time. */
+  dispose(): void {
+    this.world.free();
+  }
 }

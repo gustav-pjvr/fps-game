@@ -7,9 +7,11 @@ import { LoadingScreen } from '../ui/menu/LoadingScreen.ts';
 import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 
-/** Top-level state machine: lobby (with menu overlays) -> match setup -> loading -> gameplay. */
+/** Top-level state machine: lobby (with menu overlays) -> match setup -> loading -> gameplay,
+ * with gameplay able to hand control back to a fresh lobby via the death screen. */
 export class App {
   private lobby: LobbyScene | null = null;
+  private currentGame: Game | null = null;
   private readonly mainMenu: MainMenu;
   private readonly settingsPanel: SettingsPanel;
   private readonly inventoryPanel: InventoryPanel;
@@ -17,6 +19,7 @@ export class App {
   private playSetupModal: PlaySetupModal | null = null;
 
   private constructor(
+    private readonly lobbyContainer: HTMLElement,
     private readonly gameContainer: HTMLElement,
     private readonly blocker: HTMLElement,
     private readonly hudRoot: HTMLElement,
@@ -39,11 +42,15 @@ export class App {
     hudRoot: HTMLElement,
     overlayRoot: HTMLElement,
   ): Promise<App> {
-    const app = new App(gameContainer, blocker, hudRoot, overlayRoot);
-    app.lobby = await LobbyScene.create(lobbyContainer);
-    app.lobby.start();
-    app.mainMenu.show();
+    const app = new App(lobbyContainer, gameContainer, blocker, hudRoot, overlayRoot);
+    await app.enterLobby();
     return app;
+  }
+
+  private async enterLobby(): Promise<void> {
+    this.lobby = await LobbyScene.create(this.lobbyContainer);
+    this.lobby.start();
+    this.mainMenu.show();
   }
 
   private openPlaySetup(): void {
@@ -66,11 +73,26 @@ export class App {
     this.lobby?.dispose();
     this.lobby = null;
 
-    const game = await Game.create(this.gameContainer, this.blocker, this.hudRoot, config, (status, ratio) => {
-      this.loadingScreen.setProgress(status, ratio);
-    });
+    const game = await Game.create(
+      this.gameContainer,
+      this.blocker,
+      this.hudRoot,
+      config,
+      (status, ratio) => this.loadingScreen.setProgress(status, ratio),
+      () => void this.returnToLobby(),
+    );
 
     this.loadingScreen.hide();
+    this.currentGame = game;
     game.start();
+  }
+
+  /** Wired to the death screen's "Return to Lobby" button: tears down the match and rebuilds a
+   * fresh lobby scene so the player can change loadout/settings before starting another. */
+  private async returnToLobby(): Promise<void> {
+    this.currentGame?.dispose();
+    this.currentGame = null;
+    this.blocker.style.display = 'none';
+    await this.enterLobby();
   }
 }

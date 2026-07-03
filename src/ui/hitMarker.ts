@@ -27,4 +27,8 @@ export class HitMarker {
     this.timeRemaining -= dt;
     this.element.style.opacity = this.timeRemaining > 0 ? '1' : '0';
   }
+
+  dispose(): void {
+    this.element.remove();
+  }
 }

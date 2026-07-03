@@ -34,4 +34,8 @@ export class Hotbar {
       el.style.cssText = i === index ? SLOT_ACTIVE_STYLE : SLOT_STYLE;
     });
   }
+
+  dispose(): void {
+    this.container.remove();
+  }
 }

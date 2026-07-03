@@ -25,4 +25,8 @@ export class ScopeOverlay {
   setVisible(visible: boolean): void {
     this.element.style.display = visible ? 'block' : 'none';
   }
+
+  dispose(): void {
+    this.element.remove();
+  }
 }

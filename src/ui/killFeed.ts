@@ -27,4 +27,8 @@ export class KillFeed {
     this.timeRemaining -= dt;
     this.element.style.opacity = this.timeRemaining < FADE_DURATION ? String(this.timeRemaining / FADE_DURATION) : '1';
   }
+
+  dispose(): void {
+    this.element.remove();
+  }
 }

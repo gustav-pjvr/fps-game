@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { holdKey, lockPointer, waitForGameReady } from './helpers.ts';
+import { holdKey, killPlayerByEnemy, lockPointer, waitForGameReady } from './helpers.ts';
 
 test('loads without console errors and renders a canvas', async ({ page }) => {
   const errors: string[] = [];
@@ -214,4 +214,64 @@ test('pressing T resets ammo, entities, and score to a fresh state', async ({ pa
   expect(await page.evaluate(() => window.__gameDebug?.getEntityCount())).toBe(8);
   expect(await page.evaluate(() => window.__gameDebug?.getAmmo())).toBe(12);
   expect(await page.evaluate(() => window.__gameDebug?.getPlayerHealth())).toBe(100);
+});
+
+test('firing an empty magazine auto-reloads without pressing R', async ({ page }) => {
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  const fullAmmo = await page.evaluate(() => window.__gameDebug?.getAmmo());
+  expect(fullAmmo).toBe(12); // pistol magazine size
+
+  // Empty the magazine with spaced semi-auto clicks (fire rate 4/s -> 250ms cooldown).
+  for (let i = 0; i < 12; i++) {
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForTimeout(260);
+  }
+  expect(await page.evaluate(() => window.__gameDebug?.getAmmo())).toBe(0);
+
+  // One more trigger pull on an empty mag should start a reload automatically.
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__gameDebug?.getAmmo() === 12, { timeout: 3000 });
+});
+
+test('dying releases pointer lock and Respawn resets the match without leaving it', async ({ page }) => {
+  test.setTimeout(60000); // killPlayerByEnemy waits on real combat timing, longer than the 30s default
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  await killPlayerByEnemy(page);
+
+  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === false, { timeout: 3000 });
+  await expect(page.getByRole('button', { name: 'Respawn', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Respawn', exact: true }).click();
+
+  await page.waitForFunction(() => window.__gameDebug?.getPlayerHealth() === 100, { timeout: 3000 });
+  expect(await page.evaluate(() => window.__gameDebug?.getScore())).toBe(0);
+  expect(await page.evaluate(() => window.__gameDebug?.getEntityCount())).toBe(8);
+  expect(await page.evaluate(() => window.__gameDebug?.getAmmo())).toBe(12);
+  // Respawn re-requests pointer lock as part of the same click, so play can continue immediately.
+  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, { timeout: 3000 });
+});
+
+test('Return to Lobby after death tears down the match and shows the lobby again', async ({ page }) => {
+  test.setTimeout(60000); // killPlayerByEnemy waits on real combat timing, longer than the 30s default
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  await killPlayerByEnemy(page);
+  await expect(page.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Return to Lobby', exact: true }).click();
+
+  await page.waitForFunction(() => window.__gameDebug === undefined, { timeout: 5000 });
+  await expect(page.locator('#blocker')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'PLAY', exact: true })).toBeVisible();
 });

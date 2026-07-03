@@ -90,6 +90,7 @@ export class Game {
     private readonly deathScreen: DeathScreen,
     private readonly weaponCaption: WeaponCaption,
     private readonly killFeed: KillFeed,
+    private readonly scopeOverlay: ScopeOverlay,
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
   ) {
@@ -147,6 +148,7 @@ export class Game {
     hudRoot: HTMLElement,
     matchConfig: MatchConfig,
     onProgress?: (status: string, ratio: number) => void,
+    onReturnToLobby?: () => void,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
     const renderer = new Renderer(container);
@@ -162,7 +164,7 @@ export class Game {
       chunkManager.update(SPAWN_X, SPAWN_Z);
     }
 
-    const sound = new SoundEngine();
+    const sound = await SoundEngine.create();
     document.addEventListener('click', () => sound.resume(), { once: true });
 
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
@@ -194,7 +196,7 @@ export class Game {
       },
       (start, end) => tracers.spawn(start, end),
       (weaponId) => sound.playGunshot(weaponId),
-      () => sound.playReloadClick(),
+      (weaponId) => sound.playReloadClick(weaponId),
     );
 
     onProgress?.('Loading combatants…', 0.1);
@@ -212,10 +214,14 @@ export class Game {
     hotbar.setSlots(weaponManager.weaponSlotNames);
     const weaponCaption = new WeaponCaption(hudRoot);
 
-    // DeathScreen's click handler needs to call game.respawn(), but `game` doesn't exist until
+    // DeathScreen's click handlers need to call back into `game`, but it doesn't exist until
     // after construction - same circular-dependency shape as scoreState above, forward-ref instead.
     const gameRef: { current: Game | null } = { current: null };
-    const deathScreen = new DeathScreen(hudRoot, () => gameRef.current?.respawn());
+    const deathScreen = new DeathScreen(
+      hudRoot,
+      () => gameRef.current?.resetPlay(),
+      () => onReturnToLobby?.(),
+    );
 
     const game = new Game(
       renderer,
@@ -233,6 +239,7 @@ export class Game {
       deathScreen,
       weaponCaption,
       killFeed,
+      scopeOverlay,
       scoreState,
       matchConfig,
     );
@@ -245,15 +252,29 @@ export class Game {
     this.loop.start();
   }
 
-  private respawn(): void {
-    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
-    this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
-    this.deathScreen.hide();
+  /** Tears down everything this Game instance owns - WebGL context, DOM-appended HUD/menu
+   * elements, and input listeners - so App can cleanly return to the lobby and later start a
+   * fresh match without leaking GL contexts or stacking duplicate HUD nodes. */
+  dispose(): void {
+    this.loop.stop();
+    this.input.dispose();
+    this.renderer.dispose();
+    this.hud.dispose();
+    this.hotbar.dispose();
+    this.hitMarker.dispose();
+    this.deathScreen.dispose();
+    this.weaponCaption.dispose();
+    this.killFeed.dispose();
+    this.scopeOverlay.dispose();
+    this.physics.dispose();
+    window.__gameDebug = undefined;
   }
 
-  /** Practice-reset (T key): fresh targets/enemies, full ammo on every weapon, full health, score
-   * back to 0 - a clean slate without needing a page reload. Works even while dead. Reuses the
-   * enemy/target counts chosen at match setup, not the class defaults. */
+  /** Practice-reset (T key, or the death screen's Respawn button): fresh targets/enemies, full
+   * ammo on every weapon, full health, score back to 0 - a clean slate without needing a page
+   * reload. Works even while dead. Reuses the enemy/target counts chosen at match setup, not the
+   * class defaults. Also re-requests pointer lock, since it may be the death screen calling this
+   * after releasePointerLock() freed the mouse to make its buttons clickable. */
   private resetPlay(): void {
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
@@ -264,6 +285,7 @@ export class Game {
     this.tracers.clear();
     this.scoreState.value = 0;
     this.deathScreen.hide();
+    this.input.requestPointerLock();
   }
 
   private static addLighting(scene: THREE.Scene): void {
@@ -372,6 +394,7 @@ export class Game {
 
     if (this.player.isDead && !wasDead) {
       this.deathScreen.show(this.scoreState.value);
+      this.input.releasePointerLock();
     }
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);

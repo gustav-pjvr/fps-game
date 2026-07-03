@@ -40,4 +40,8 @@ export class WeaponCaption {
     this.timeRemaining -= dt;
     this.container.style.opacity = this.timeRemaining < FADE_DURATION ? String(this.timeRemaining / FADE_DURATION) : '1';
   }
+
+  dispose(): void {
+    this.container.remove();
+  }
 }

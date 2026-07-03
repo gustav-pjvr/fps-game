@@ -1,20 +1,54 @@
 import { Settings } from '../settings/Settings.ts';
+import { WEAPON_SOUND_PATHS } from './weaponSounds.ts';
+
+async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, AudioBuffer>> {
+  const buffers = new Map<string, AudioBuffer>();
+  const entries = Object.entries(WEAPON_SOUND_PATHS).flatMap(([weaponId, paths]) => [
+    [`${weaponId}_shot`, paths.shot],
+    [`${weaponId}_reload`, paths.reload],
+  ]);
+
+  await Promise.all(
+    entries.map(async ([key, path]) => {
+      if (!key || !path) return;
+      try {
+        const response = await fetch(path);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        buffers.set(key, audioBuffer);
+      } catch (error) {
+        // Missing/corrupt sample for one weapon shouldn't break the rest - playGunshot/
+        // playReloadClick fall back to procedural synthesis when a key has no buffer.
+        console.warn(`Failed to load weapon sound "${key}" from ${path}`, error);
+      }
+    }),
+  );
+
+  return buffers;
+}
 
 /**
- * Procedural sound effects via Web Audio synthesis - no audio asset files, consistent with the
- * placeholder-visuals approach elsewhere. Swapping in real recorded SFX later (per PLAN.md's
- * free-asset pipeline, e.g. Freesound.org) means replacing these methods' internals; every
- * caller just calls play*() and doesn't know or care how the sound is produced.
+ * Weapon shot/reload sounds play real recorded samples (see weaponSounds.ts) with a procedural
+ * Web Audio synthesis fallback if a sample fails to load. Footstep/hit-confirm/player-hurt stay
+ * fully procedural - no recorded assets for those.
  */
 export class SoundEngine {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
+  private readonly buffers: Map<string, AudioBuffer>;
 
-  constructor() {
-    this.ctx = new AudioContext();
-    this.master = this.ctx.createGain();
+  private constructor(ctx: AudioContext, buffers: Map<string, AudioBuffer>) {
+    this.ctx = ctx;
+    this.buffers = buffers;
+    this.master = ctx.createGain();
     this.master.gain.value = Settings.getMasterVolume();
     this.master.connect(this.ctx.destination);
+  }
+
+  static async create(): Promise<SoundEngine> {
+    const ctx = new AudioContext();
+    const buffers = await loadWeaponSoundBuffers(ctx);
+    return new SoundEngine(ctx, buffers);
   }
 
   setMasterVolume(value: number): void {
@@ -27,6 +61,8 @@ export class SoundEngine {
   }
 
   playGunshot(weaponId: string): void {
+    if (this.playBuffer(`${weaponId}_shot`)) return;
+
     switch (weaponId) {
       case 'pistol':
         this.noiseBurst(0.09, 2200, 'lowpass', 0.5);
@@ -49,6 +85,11 @@ export class SoundEngine {
     }
   }
 
+  playReloadClick(weaponId: string): void {
+    if (this.playBuffer(`${weaponId}_reload`)) return;
+    this.noiseBurst(0.03, 3000, 'highpass', 0.18);
+  }
+
   playFootstep(): void {
     this.noiseBurst(0.06, 300, 'lowpass', 0.12);
   }
@@ -57,13 +98,21 @@ export class SoundEngine {
     this.tone(1100, 0.06, 0.22, 'sine');
   }
 
-  playReloadClick(): void {
-    this.noiseBurst(0.03, 3000, 'highpass', 0.18);
-  }
-
   playPlayerHurt(): void {
     this.noiseBurst(0.15, 250, 'lowpass', 0.4);
     this.tone(140, 0.15, 0.3, 'sawtooth');
+  }
+
+  /** Plays a preloaded recorded sample by key - returns false (does nothing) if it never loaded. */
+  private playBuffer(key: string): boolean {
+    const buffer = this.buffers.get(key);
+    if (!buffer) return false;
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.master);
+    source.start();
+    return true;
   }
 
   private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number): void {

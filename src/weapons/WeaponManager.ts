@@ -49,7 +49,7 @@ export class WeaponManager {
     private readonly onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
     private readonly onFire: (weaponId: string) => void,
-    private readonly onReloadStart: () => void,
+    private readonly onReloadStart: (weaponId: string) => void,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -64,7 +64,7 @@ export class WeaponManager {
     onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
     onFire: (weaponId: string) => void,
-    onReloadStart: () => void,
+    onReloadStart: (weaponId: string) => void,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -139,11 +139,16 @@ export class WeaponManager {
     const firePressed = this.active.weapon.definition.automatic
       ? input.isActionActive('fire')
       : input.consumeJustPressed('fire');
-    if (firePressed && this.active.weapon.tryFire()) {
-      this.fireShot(player);
+    if (firePressed) {
+      if (this.active.weapon.tryFire()) {
+        this.fireShot(player);
+      } else if (this.active.weapon.ammo <= 0 && this.active.weapon.startReload()) {
+        // Auto-reload: trying to fire an empty magazine starts a reload without needing manual R.
+        this.onReloadStart(this.active.weapon.definition.id);
+      }
     }
     if (input.consumeJustPressed('reload') && this.active.weapon.startReload()) {
-      this.onReloadStart();
+      this.onReloadStart(this.active.weapon.definition.id);
     }
   }
 
