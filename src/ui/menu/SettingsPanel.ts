@@ -16,15 +16,20 @@ export class SettingsPanel {
     this.refreshKeyLabels();
   };
 
-  constructor(root: HTMLElement, onClose: () => void) {
+  /** onVolumeChange lets the caller push volume changes into a live AudioContext GainNode in real
+   * time - Settings.setMasterVolume() alone only persists the value for the *next* SoundEngine to
+   * read at construction, it never touches an already-running one. Omit when there's no live
+   * audio to update (e.g. the lobby, which has no SoundEngine). */
+  constructor(root: HTMLElement, onClose: () => void, onVolumeChange?: (value: number) => void) {
     this.overlay = createOverlay();
 
     const panel = createPanel();
     panel.style.width = '420px';
     panel.appendChild(createPanelTitle('SETTINGS'));
-    panel.appendChild(this.buildSliderRow('Master Volume', Settings.getMasterVolume(), 0, 1, 0.01, (value) =>
-      Settings.setMasterVolume(value),
-    ));
+    panel.appendChild(this.buildSliderRow('Master Volume', Settings.getMasterVolume(), 0, 1, 0.01, (value) => {
+      Settings.setMasterVolume(value);
+      onVolumeChange?.(value);
+    }));
     panel.appendChild(this.buildSliderRow('Mouse Sensitivity', Settings.getMouseSensitivity(), 0.1, 3, 0.05, (value) =>
       Settings.setMouseSensitivity(value),
     ));

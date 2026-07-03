@@ -233,7 +233,7 @@ export class Game {
       onResetPlay: () => gameRef.current?.resetPlay(),
       onReturnToLobby: () => onReturnToLobby?.(),
     });
-    const settingsPanel = new SettingsPanel(hudRoot, () => settingsPanel.hide());
+    const settingsPanel = new SettingsPanel(hudRoot, () => settingsPanel.hide(), (value) => sound.setMasterVolume(value));
 
     const game = new Game(
       renderer,
