@@ -42,6 +42,7 @@ export interface GameDebugApi {
   getLiveEntityPositions(): { x: number; y: number; z: number }[];
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
   getCameraFov(): number;
+  getCameraChildrenDebug(): unknown[];
 }
 
 declare global {
@@ -50,11 +51,14 @@ declare global {
   }
 }
 
+/** Score lives in a shared mutable holder, not a Game field - EntityManager.create() (async) is
+ * awaited before a Game instance exists, so its onKilled callback can't close over `this`. */
+interface ScoreState {
+  value: number;
+}
+
 export class Game {
   private readonly loop: Loop;
-  private readonly entityManager: EntityManager;
-  private readonly deathScreen: DeathScreen;
-  private score = 0;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -62,23 +66,23 @@ export class Game {
     private readonly physics: PhysicsWorld,
     private readonly player: Player,
     private readonly chunkManager: ChunkManager,
+    private readonly entityManager: EntityManager,
     private readonly weaponManager: WeaponManager,
     private readonly impactMarkers: ImpactMarkers,
     private readonly tracers: Tracers,
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
-    hudRoot: HTMLElement,
+    private readonly deathScreen: DeathScreen,
+    private readonly scoreState: ScoreState,
   ) {
-    this.entityManager = new EntityManager(renderer.scene, physics, () => this.onEnemyKilled());
-    this.deathScreen = new DeathScreen(hudRoot, () => this.respawn());
     this.loop = new Loop(this.update, this.render);
     this.installDebugApi();
   }
 
   private installDebugApi(): void {
     window.__gameDebug = {
-      getScore: () => this.score,
+      getScore: () => this.scoreState.value,
       getPlayerHealth: () => this.player.currentHealth,
       getPlayerPosition: () => {
         const p = this.player.position;
@@ -104,6 +108,18 @@ export class Game {
         };
       },
       getCameraFov: () => this.renderer.camera.fov,
+      getCameraChildrenDebug: () =>
+        this.renderer.camera.children.map((child) => ({
+          type: child.type,
+          visible: child.visible,
+          position: { x: child.position.x, y: child.position.y, z: child.position.z },
+          childCount: child.children.length,
+          grandchildInfo: child.children.map((gc) => ({
+            type: gc.type,
+            visible: gc.visible,
+            scale: { x: gc.scale.x, y: gc.scale.y, z: gc.scale.z },
+          })),
+        })),
     };
   }
 
@@ -130,11 +146,17 @@ export class Game {
       onFootstep: () => sound.playFootstep(),
     });
 
+    const scoreState: ScoreState = { value: 0 };
+    const entityManager = await EntityManager.create(renderer.scene, physics, () => {
+      scoreState.value += 1;
+    });
+    Game.spawnEncounters(entityManager);
+
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const tracers = new Tracers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
     const hitMarker = new HitMarker(hudRoot);
-    const weaponManager = new WeaponManager(
+    const weaponManager = await WeaponManager.create(
       renderer.camera,
       physics,
       ['pistol', 'rifle', 'shotgun', 'sniper'],
@@ -154,31 +176,34 @@ export class Game {
     const hotbar = new Hotbar(hudRoot);
     hotbar.setSlots(weaponManager.weaponSlotNames);
 
+    // DeathScreen's click handler needs to call game.respawn(), but `game` doesn't exist until
+    // after construction - same circular-dependency shape as scoreState above, forward-ref instead.
+    const gameRef: { current: Game | null } = { current: null };
+    const deathScreen = new DeathScreen(hudRoot, () => gameRef.current?.respawn());
+
     const game = new Game(
       renderer,
       input,
       physics,
       player,
       chunkManager,
+      entityManager,
       weaponManager,
       impactMarkers,
       tracers,
       hud,
       hotbar,
       hitMarker,
-      hudRoot,
+      deathScreen,
+      scoreState,
     );
-    Game.spawnEncounters(game.entityManager);
+    gameRef.current = game;
 
     return game;
   }
 
   start(): void {
     this.loop.start();
-  }
-
-  private onEnemyKilled(): void {
-    this.score += 1;
   }
 
   private respawn(): void {
@@ -222,7 +247,8 @@ export class Game {
       const angle = (i / TARGET_COUNT) * Math.PI * 2;
       const x = SPAWN_X + Math.cos(angle) * TARGET_RING_RADIUS;
       const z = SPAWN_Z + Math.sin(angle) * TARGET_RING_RADIUS;
-      entityManager.spawnTarget(new THREE.Vector3(x, sampleHeight(x, z) + 1, z));
+      const y = sampleHeight(x, z) + 1;
+      entityManager.spawnTarget(new THREE.Vector3(x, y, z), new THREE.Vector3(SPAWN_X, y, SPAWN_Z));
     }
 
     for (let i = 0; i < ENEMY_COUNT; i++) {
@@ -252,12 +278,12 @@ export class Game {
     this.hitMarker.update(dt);
 
     if (this.player.isDead && !wasDead) {
-      this.deathScreen.show(this.score);
+      this.deathScreen.show(this.scoreState.value);
     }
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
     this.hud.setWeaponName(this.weaponManager.weaponName);
-    this.hud.setScore(this.score);
+    this.hud.setScore(this.scoreState.value);
     this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };

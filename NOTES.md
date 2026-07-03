@@ -1,7 +1,53 @@
-# Playtest Notes — v1 (Phases 0-7) + Phase 8 + Content Pass
+# Playtest Notes — v1 (Phases 0-7) + Phase 8 + Content Pass + Real Assets
 
 Feedback from the first playtest, triaged into: real bugs, missing pieces that belong in v1's
 own combat loop, and things that were deliberately deferred past v1 per PLAN.md.
+
+## Real assets pass (step 2) — Kenney CC0 models, and a big rendering bug found by using them
+
+Sourced free CC0 assets per PLAN.md's asset pipeline instead of guessing at URLs: found current
+download links via web search + fetch, downloaded and inspected the actual zip contents rather
+than assuming file layout.
+
+- **Weapons**: Kenney "Blaster Kit" - blaster-h (pistol), blaster-e (rifle), blaster-p (shotgun),
+  blaster-f (sniper), target-large (replaces the placeholder sphere target). `viewModel.ts` is
+  now data-driven per weapon (path/scale/rotation in `WEAPON_MODEL_SPECS`), and `WeaponManager`
+  became an async factory (`WeaponManager.create`) since loading .glb files is async - same
+  pattern as `PhysicsWorld.create()`. Also downloaded `scope-large-a.glb` from the same pack as
+  a candidate scope attachment for the sniper's view model, but did not actually wire it in this
+  pass (the sniper's full scope-overlay UI from Phase 5 already covers "looking through a
+  scope"; the model attachment would only be a cosmetic addition visible before full ADS) -
+  it's sitting in `public/assets/models/weapons/` unused, worth picking up later.
+- **Enemies**: Kenney "Mini Characters" - character-male-a.glb, which comes rigged with 30+
+  animation clips. Enemy now uses `SkeletonUtils.clone` (not a plain `.clone()` - required for
+  skinned meshes, a plain clone shares the skeleton and breaks every instance but the first) and
+  an `AnimationMixer` crossfading between "idle" and "walk" clips based on movement state.
+- New `src/core/AssetLoader.ts`: caches `GLTFLoader.loadAsync()` promises per path so multiple
+  entities sharing a model (5 targets, 3 enemies) only fetch/parse it once.
+
+**Found via this work, not before it: the weapon view model was never actually rendering.**
+`camera.add(weaponGroup)` parents the gun to the camera object, but `Renderer.ts` never added
+the camera itself to the scene - `renderer.render(scene, camera)` only traverses the `scene`
+graph, so anything parented to a camera that sits outside that graph silently never renders,
+even though every other property (position, visible, scale) looks completely correct on
+inspection. This means **the placeholder box-gun was never visible either**, the whole time,
+across every prior phase and screenshot - it just wasn't obvious with primitive shapes bottom-
+right of frame the way it became obvious once a detailed, textured model was expected there and
+nothing showed up. Fixed with one line (`this.scene.add(this.camera)`) in `Renderer.ts`.
+
+Also found and fixed while wiring the real target model: the "bullseye" hit-bonus collider was
+initially placed **concentric** with the body collider (same center, smaller radius) - which is
+geometrically unreachable by any ray, since a smaller sphere fully enclosed in a larger one
+always has the outer sphere's surface as the closest intersection point. No ray could ever reach
+it. Fixed by offsetting it to protrude slightly toward the viewer instead.
+
+Verified all of this the same way as the self-hit bug: build a hypothesis, check it with a
+throwaway script against the live game (screenshots, scene-graph inspection via a temporary
+debug hook, a rotation comparison render), not by reasoning about Three.js/glTF conventions from
+memory. The target model's correct facing rotation in particular came out backwards from the
+first analytical guess (rotation.y = π/2 looked right on paper, was wrong in practice) and was
+only nailed down by rendering four candidate rotations side by side and reading off the one that
+actually showed the painted face.
 
 ## Content pass (post-Phase 8) — what changed and one deliberate non-change
 

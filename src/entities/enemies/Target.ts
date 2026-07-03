@@ -1,13 +1,26 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { allocateEntityId, type Entity } from '../Entity.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { HEADSHOT_MULTIPLIER, TARGET_HEAD_RADIUS, TARGET_HEALTH, TARGET_RADIUS } from '../../core/config.ts';
 
-const HEAD_OFFSET_Y = TARGET_RADIUS + TARGET_HEAD_RADIUS - 0.05;
+export const TARGET_MODEL_PATH = '/assets/models/weapons/target-large.glb';
 
-/** Static shootable dummy: a body sphere plus a smaller head sphere for headshot detection. */
+/** Kenney's target-large.glb (from the Blaster Kit) measures ~0.34 units across its face;
+ * scale it up so its visual radius matches TARGET_RADIUS, the invisible hit collider's size. */
+const MODEL_RADIUS = 0.17;
+const MODEL_SCALE = TARGET_RADIUS / MODEL_RADIUS;
+
+/** Offset the bullseye collider toward the face so it protrudes slightly in front of the body
+ * sphere. A sphere concentric with a larger sphere is geometrically unreachable by any ray -
+ * its surface is always behind the outer sphere's from the shooter's perspective, so it would
+ * never register a hit at all. */
+const BULLSEYE_PROTRUSION = 0.15;
+
+/** Static shootable dummy: real target-disc model, with a body collider plus a smaller
+ * "bullseye" collider at its center for a headshot-style damage bonus. */
 export class Target implements Entity, Damageable {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
@@ -16,25 +29,33 @@ export class Target implements Entity, Damageable {
   private health = TARGET_HEALTH;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
-  private readonly headCollider: RAPIER.Collider;
+  private readonly bullseyeCollider: RAPIER.Collider;
   private dead = false;
 
+  /** `facePoint` - the model's painted face is aimed toward this world point (e.g. the spawn
+   * point every target rings around), verified empirically: a fixed rotation for every target
+   * only happened to face correctly for the one at a specific ring angle - everywhere else it
+   * showed edge-on, since the model's face has a fixed local orientation, not one relative to
+   * the ring. */
   constructor(
     private readonly physics: PhysicsWorld,
     position: THREE.Vector3,
+    gltf: GLTF,
+    facePoint: THREE.Vector3,
   ) {
-    const bodyMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(TARGET_RADIUS, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xcc3333 }),
-    );
-    const headMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(TARGET_HEAD_RADIUS, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0xffcc88 }),
-    );
-    headMesh.position.y = HEAD_OFFSET_Y;
+    const dx = facePoint.x - position.x;
+    const dz = facePoint.z - position.z;
+    // Empirically verified: rotation.y = atan2(dx,dz) + PI/2 makes the model's face point
+    // toward (dx,dz) - see commit message for how this was derived from a render comparison.
+    const facingRotationY = Math.atan2(dx, dz) + Math.PI / 2;
+    const faceDir = new THREE.Vector2(dx, dz).normalize();
+
+    const model = gltf.scene.clone(true);
+    model.scale.setScalar(MODEL_SCALE);
+    model.rotation.y = facingRotationY;
 
     this.mesh = new THREE.Group();
-    this.mesh.add(bodyMesh, headMesh);
+    this.mesh.add(model);
     this.mesh.position.copy(position);
 
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z);
@@ -43,11 +64,15 @@ export class Target implements Entity, Damageable {
     this.bodyCollider = physics.world.createCollider(RAPIER.ColliderDesc.ball(TARGET_RADIUS), this.rigidBody);
     physics.registerCollider(this.bodyCollider, this);
 
-    this.headCollider = physics.world.createCollider(
-      RAPIER.ColliderDesc.ball(TARGET_HEAD_RADIUS).setTranslation(0, HEAD_OFFSET_Y, 0),
+    this.bullseyeCollider = physics.world.createCollider(
+      RAPIER.ColliderDesc.ball(TARGET_HEAD_RADIUS).setTranslation(
+        faceDir.x * BULLSEYE_PROTRUSION,
+        0,
+        faceDir.y * BULLSEYE_PROTRUSION,
+      ),
       this.rigidBody,
     );
-    physics.registerCollider(this.headCollider, this);
+    physics.registerCollider(this.bullseyeCollider, this);
   }
 
   get isDead(): boolean {
@@ -56,16 +81,16 @@ export class Target implements Entity, Damageable {
 
   takeDamage(amount: number, hitColliderHandle: number): void {
     if (this.dead) return;
-    const isHeadshot = hitColliderHandle === this.headCollider.handle;
-    this.health -= isHeadshot ? amount * HEADSHOT_MULTIPLIER : amount;
+    const isBullseye = hitColliderHandle === this.bullseyeCollider.handle;
+    this.health -= isBullseye ? amount * HEADSHOT_MULTIPLIER : amount;
     if (this.health <= 0) this.dead = true;
   }
 
   dispose(): void {
     this.physics.unregisterCollider(this.bodyCollider);
-    this.physics.unregisterCollider(this.headCollider);
+    this.physics.unregisterCollider(this.bullseyeCollider);
     this.physics.world.removeCollider(this.bodyCollider, true);
-    this.physics.world.removeCollider(this.headCollider, true);
+    this.physics.world.removeCollider(this.bullseyeCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
   }
 }

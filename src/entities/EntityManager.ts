@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Player } from './Player.ts';
-import { Target } from './enemies/Target.ts';
-import { Enemy } from './enemies/Enemy.ts';
+import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
+import { Enemy, ENEMY_MODEL_PATH } from './enemies/Enemy.ts';
+import { preloadGLTFs } from '../core/AssetLoader.ts';
 
 interface ManagedEntity {
   readonly mesh: THREE.Object3D;
@@ -15,20 +17,31 @@ interface ManagedEntity {
 export class EntityManager {
   private readonly entities: ManagedEntity[] = [];
 
-  constructor(
+  private constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly onKilled: () => void,
+    private readonly targetGltf: GLTF,
+    private readonly enemyGltf: GLTF,
   ) {}
 
-  spawnTarget(position: THREE.Vector3): void {
-    const target = new Target(this.physics, position);
+  static async create(scene: THREE.Scene, physics: PhysicsWorld, onKilled: () => void): Promise<EntityManager> {
+    const models = await preloadGLTFs([TARGET_MODEL_PATH, ENEMY_MODEL_PATH]);
+    const targetGltf = models.get(TARGET_MODEL_PATH);
+    const enemyGltf = models.get(ENEMY_MODEL_PATH);
+    if (!targetGltf || !enemyGltf) throw new Error('Failed to preload target/enemy models');
+
+    return new EntityManager(scene, physics, onKilled, targetGltf, enemyGltf);
+  }
+
+  spawnTarget(position: THREE.Vector3, facePoint: THREE.Vector3): void {
+    const target = new Target(this.physics, position, this.targetGltf, facePoint);
     this.scene.add(target.mesh);
     this.entities.push(target);
   }
 
   spawnEnemy(position: THREE.Vector3): void {
-    const enemy = new Enemy(this.physics, position);
+    const enemy = new Enemy(this.physics, position, this.enemyGltf);
     this.scene.add(enemy.mesh);
     this.entities.push(enemy);
   }

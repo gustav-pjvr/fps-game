@@ -2,9 +2,10 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
-import { createPlaceholderWeaponMesh, WEAPON_ADS_POSITION, WEAPON_HIP_POSITION } from './viewModel.ts';
+import { createWeaponViewModel, WEAPON_ADS_POSITION, WEAPON_HIP_POSITION, WEAPON_MODEL_SPECS } from './viewModel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
+import { loadGLTF } from '../core/AssetLoader.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import type { Action } from '../input/actions.ts';
@@ -40,30 +41,50 @@ export class WeaponManager {
   private switching = false;
   private pendingIndex: number | null = null;
 
-  constructor(
+  private constructor(
     private readonly camera: THREE.PerspectiveCamera,
     private readonly physics: PhysicsWorld,
-    definitionIds: string[],
+    slots: WeaponSlot[],
     private readonly scopeOverlay: ScopeOverlay,
     private readonly onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
     private readonly onFire: (weaponId: string) => void,
     private readonly onReloadStart: () => void,
   ) {
-    if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
-
-    this.slots = definitionIds.map((id) => {
-      const definition = WEAPON_DEFINITIONS[id];
-      if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
-
-      const { group, muzzleLocalOffset } = createPlaceholderWeaponMesh(definition);
-      group.visible = false;
-      camera.add(group);
-      return { weapon: new Weapon(definition), viewModel: group, muzzleLocalOffset };
-    });
-
+    this.slots = slots;
     const first = this.slots[0];
     if (first) first.viewModel.visible = true;
+  }
+
+  static async create(
+    camera: THREE.PerspectiveCamera,
+    physics: PhysicsWorld,
+    definitionIds: string[],
+    scopeOverlay: ScopeOverlay,
+    onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
+    onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
+    onFire: (weaponId: string) => void,
+    onReloadStart: () => void,
+  ): Promise<WeaponManager> {
+    if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
+
+    const slots = await Promise.all(
+      definitionIds.map(async (id) => {
+        const definition = WEAPON_DEFINITIONS[id];
+        if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
+
+        const spec = WEAPON_MODEL_SPECS[id];
+        if (!spec) throw new Error(`No model spec for weapon: ${id}`);
+        const gltf = await loadGLTF(spec.path);
+
+        const { group, muzzleLocalOffset } = createWeaponViewModel(definition, gltf);
+        group.visible = false;
+        camera.add(group);
+        return { weapon: new Weapon(definition), viewModel: group, muzzleLocalOffset };
+      }),
+    );
+
+    return new WeaponManager(camera, physics, slots, scopeOverlay, onImpact, onTracer, onFire, onReloadStart);
   }
 
   private get active(): WeaponSlot {

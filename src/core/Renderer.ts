@@ -23,6 +23,12 @@ export class Renderer {
       CAMERA_NEAR,
       CAMERA_FAR,
     );
+    // Weapon view models are parented to the camera (camera.add(...)) so they move/rotate with
+    // it for free. render(scene, camera) only traverses the scene graph, so without this the
+    // camera - and everything attached to it - sits outside that graph and never renders, even
+    // though it's used for the view/projection matrices. Scene has no transform of its own, so
+    // this doesn't change camera.position's meaning (still equals world position).
+    this.scene.add(this.camera);
 
     window.addEventListener('resize', this.onResize);
   }

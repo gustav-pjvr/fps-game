@@ -1,11 +1,9 @@
 import * as THREE from 'three';
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { WeaponDefinition } from './definitions.ts';
 
 export const WEAPON_HIP_POSITION = new THREE.Vector3(0.25, -0.22, -0.5);
 export const WEAPON_ADS_POSITION = new THREE.Vector3(0, -0.14, -0.35);
-
-const BODY_LENGTH = 0.35;
-const BARREL_RADIUS = 0.025;
 
 export interface WeaponViewModel {
   group: THREE.Group;
@@ -13,50 +11,43 @@ export interface WeaponViewModel {
   muzzleLocalOffset: THREE.Vector3;
 }
 
-/**
- * Procedural placeholder view model (no .glb asset wired up yet — see PLAN.md's free-asset
- * pipeline, e.g. Kenney.nl). Shape/color/barrel length are data-driven off the weapon
- * definition so different weapons are at least visually distinguishable until real models
- * exist. Swapping in a real model later means loading it via GLTFLoader and computing its
- * own muzzle offset instead - every caller already treats the mesh as an opaque Object3D.
- */
-export function createPlaceholderWeaponMesh(definition: WeaponDefinition): WeaponViewModel {
+interface WeaponModelSpec {
+  readonly path: string;
+  readonly scale: number;
+  /** Extra Y rotation (radians) in case a given model's barrel doesn't default to -Z forward. */
+  readonly rotationYOffset: number;
+}
+
+/** Kenney "Blaster Kit" (CC0) - see public/assets/credits/. Scale is tuned per-model to sit
+ * comfortably in first-person view; each model's own export scale/pivot varies. */
+export const WEAPON_MODEL_SPECS: Record<string, WeaponModelSpec> = {
+  pistol: { path: '/assets/models/weapons/blaster-h.glb', scale: 0.85, rotationYOffset: 0 },
+  rifle: { path: '/assets/models/weapons/blaster-e.glb', scale: 0.45, rotationYOffset: Math.PI },
+  shotgun: { path: '/assets/models/weapons/blaster-p.glb', scale: 0.7, rotationYOffset: 0 },
+  sniper: { path: '/assets/models/weapons/blaster-f.glb', scale: 0.55, rotationYOffset: 0 },
+};
+
+export function weaponModelPaths(): string[] {
+  return Object.values(WEAPON_MODEL_SPECS).map((spec) => spec.path);
+}
+
+export function createWeaponViewModel(definition: WeaponDefinition, gltf: GLTF): WeaponViewModel {
+  const spec = WEAPON_MODEL_SPECS[definition.id];
+  if (!spec) throw new Error(`No model spec for weapon: ${definition.id}`);
+
+  const model = gltf.scene.clone(true);
+  model.scale.setScalar(spec.scale);
+  model.rotation.y = spec.rotationYOffset;
+
   const group = new THREE.Group();
-  const material = new THREE.MeshStandardMaterial({
-    color: definition.viewModelColor,
-    roughness: 0.6,
-    metalness: 0.3,
-  });
-
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, BODY_LENGTH), material);
-  group.add(body);
-
-  const barrelCenterZ = -BODY_LENGTH / 2 - definition.barrelLength / 2;
-  const barrel = new THREE.Mesh(
-    new THREE.CylinderGeometry(BARREL_RADIUS, BARREL_RADIUS, definition.barrelLength, 12),
-    material,
-  );
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 0.02, barrelCenterZ);
-  group.add(barrel);
-
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.08), material);
-  grip.rotation.x = -0.3;
-  grip.position.set(0, -0.13, 0.08);
-  group.add(grip);
-
-  if (definition.hasScope) {
-    const scope = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.02, 0.02, 0.16, 10),
-      new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.4 }),
-    );
-    scope.rotation.x = Math.PI / 2;
-    scope.position.set(0, 0.09, -0.05);
-    group.add(scope);
-  }
-
+  group.add(model);
   group.position.copy(WEAPON_HIP_POSITION);
 
-  const muzzleLocalOffset = new THREE.Vector3(0, 0.02, barrelCenterZ - definition.barrelLength / 2);
+  // Forward-most point of the (scaled/rotated) model approximates the muzzle tip, assuming -Z
+  // is forward - blaster-e's pivot sits at the grip rather than centered, hence rotationYOffset
+  // flipping it so its barrel (originally +Z) points -Z like the others.
+  const box = new THREE.Box3().setFromObject(model);
+  const muzzleLocalOffset = new THREE.Vector3(0, (box.min.y + box.max.y) / 2, box.min.z);
+
   return { group, muzzleLocalOffset };
 }

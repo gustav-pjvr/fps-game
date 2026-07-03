@@ -1,5 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { allocateEntityId, type Entity } from '../Entity.ts';
 import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
@@ -23,8 +25,14 @@ import {
   HEADSHOT_MULTIPLIER,
 } from '../../core/config.ts';
 
+export const ENEMY_MODEL_PATH = '/assets/models/enemies/character-male-a.glb';
+
 const HEAD_RADIUS = ENEMY_RADIUS * 0.55;
 const HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - HEAD_RADIUS;
+
+/** Kenney's "Mini Characters" bind pose measures ~0.671 units tall, feet at local Y=0. */
+const MODEL_BIND_HEIGHT = 0.671;
+const MODEL_SCALE = ENEMY_HEIGHT / MODEL_BIND_HEIGHT;
 
 type EnemyState = 'idle' | 'chase';
 
@@ -33,6 +41,10 @@ type EnemyState = 'idle' | 'chase';
  * comes within ENEMY_DETECTION_RANGE, beelines for them and attacks in range, until they get
  * further than ENEMY_LEASH_RANGE away (a wider radius than detection, so it doesn't flicker
  * between states right at the detection boundary).
+ *
+ * Visuals are the real character-male-a.glb (Kenney "Mini Characters", CC0), animated with its
+ * bundled "idle"/"walk" clips. Hit detection still uses the same invisible capsule+ball
+ * colliders as before - the model is cosmetic only.
  */
 export class Enemy implements Entity, Damageable {
   readonly id = allocateEntityId();
@@ -50,27 +62,37 @@ export class Enemy implements Entity, Damageable {
   private readonly bodyCollider: RAPIER.Collider;
   private readonly headCollider: RAPIER.Collider;
 
+  private readonly mixer: THREE.AnimationMixer;
+  private readonly idleAction: THREE.AnimationAction | undefined;
+  private readonly walkAction: THREE.AnimationAction | undefined;
+  private isMoving = false;
+
   constructor(
     private readonly physics: PhysicsWorld,
     position: THREE.Vector3,
+    gltf: GLTF,
   ) {
     this.spawnPosition = position.clone();
     this.wanderTarget = position.clone();
 
-    const bodyMesh = new THREE.Mesh(
-      new THREE.CapsuleGeometry(ENEMY_RADIUS, ENEMY_HEIGHT - ENEMY_RADIUS * 2, 4, 8),
-      new THREE.MeshStandardMaterial({ color: 0x8833cc }),
-    );
-    const headMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(HEAD_RADIUS, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0xffcc88 }),
-    );
-    headMesh.position.y = HEAD_OFFSET_Y;
+    // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - a plain clone
+    // duplicates the mesh but not the skeleton bindings, leaving bones pointing at the shared
+    // original skeleton and breaking every clone but the first.
+    const model = cloneSkeleton(gltf.scene) as THREE.Group;
+    model.scale.setScalar(MODEL_SCALE);
+    model.position.y = -ENEMY_HEIGHT / 2; // model origin is at its feet; group origin is capsule-center
 
     this.mesh = new THREE.Group();
-    this.mesh.add(bodyMesh, headMesh);
+    this.mesh.add(model);
     this.mesh.position.copy(position);
     this.mesh.castShadow = true;
+
+    this.mixer = new THREE.AnimationMixer(model);
+    const idleClip = gltf.animations.find((clip) => clip.name === 'idle');
+    const walkClip = gltf.animations.find((clip) => clip.name === 'walk');
+    this.idleAction = idleClip ? this.mixer.clipAction(idleClip) : undefined;
+    this.walkAction = walkClip ? this.mixer.clipAction(walkClip) : undefined;
+    this.idleAction?.play();
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       position.x,
@@ -117,11 +139,17 @@ export class Enemy implements Entity, Damageable {
       this.state = 'idle';
     }
 
+    const wasMoving = this.isMoving;
+    this.isMoving = false;
+
     if (this.state === 'chase') {
       this.updateChase(dt, player, current, distanceToPlayer);
     } else {
       this.updateWander(dt, current);
     }
+
+    if (this.isMoving !== wasMoving) this.setMovingAnimation(this.isMoving);
+    this.mixer.update(dt);
   }
 
   private updateChase(
@@ -178,6 +206,7 @@ export class Enemy implements Entity, Damageable {
     const nextZ = current.z + (dz / distance) * step;
     this.applyPosition(nextX, nextZ);
     this.mesh.rotation.y = Math.atan2(dx, dz);
+    this.isMoving = true;
   }
 
   private faceToward(targetX: number, targetZ: number, current: { x: number; y: number; z: number }): void {
@@ -187,6 +216,13 @@ export class Enemy implements Entity, Damageable {
       this.mesh.rotation.y = Math.atan2(dx, dz);
     }
     this.applyPosition(current.x, current.z);
+  }
+
+  private setMovingAnimation(moving: boolean): void {
+    const next = moving ? this.walkAction : this.idleAction;
+    const previous = moving ? this.idleAction : this.walkAction;
+    previous?.fadeOut(0.2);
+    next?.reset().fadeIn(0.2).play();
   }
 
   private applyPosition(x: number, z: number): void {
