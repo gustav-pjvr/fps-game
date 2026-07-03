@@ -6,6 +6,7 @@ export class DeathScreen {
 
   constructor(root: HTMLElement, onRespawnClick: () => void, onReturnToLobbyClick: () => void) {
     this.element = document.createElement('div');
+    this.element.dataset.testid = 'death-screen';
     this.element.style.cssText =
       'position:absolute; inset:0; display:none; align-items:center; justify-content:center;' +
       ' flex-direction:column; gap:14px; background:rgba(40,0,0,0.55); color:#fff;' +

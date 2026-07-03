@@ -18,6 +18,8 @@ import { HitMarker } from '../ui/hitMarker.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { KillFeed } from '../ui/killFeed.ts';
+import { PauseMenu } from '../ui/menu/PauseMenu.ts';
+import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
@@ -91,6 +93,8 @@ export class Game {
     private readonly weaponCaption: WeaponCaption,
     private readonly killFeed: KillFeed,
     private readonly scopeOverlay: ScopeOverlay,
+    private readonly pauseMenu: PauseMenu,
+    private readonly settingsPanel: SettingsPanel,
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
   ) {
@@ -144,7 +148,6 @@ export class Game {
 
   static async create(
     container: HTMLElement,
-    blocker: HTMLElement,
     hudRoot: HTMLElement,
     matchConfig: MatchConfig,
     onProgress?: (status: string, ratio: number) => void,
@@ -152,7 +155,7 @@ export class Game {
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
     const renderer = new Renderer(container);
-    const input = new InputManager(renderer.canvas, blocker);
+    const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
     Game.addLighting(renderer.scene);
@@ -214,14 +217,23 @@ export class Game {
     hotbar.setSlots(weaponManager.weaponSlotNames);
     const weaponCaption = new WeaponCaption(hudRoot);
 
-    // DeathScreen's click handlers need to call back into `game`, but it doesn't exist until
-    // after construction - same circular-dependency shape as scoreState above, forward-ref instead.
+    // DeathScreen/PauseMenu click handlers need to call back into `game`, but it doesn't exist
+    // until after construction - same circular-dependency shape as scoreState above, forward-ref instead.
     const gameRef: { current: Game | null } = { current: null };
     const deathScreen = new DeathScreen(
       hudRoot,
       () => gameRef.current?.resetPlay(),
       () => onReturnToLobby?.(),
     );
+    // PauseMenu is created before SettingsPanel so the settings overlay (later DOM sibling)
+    // paints above it - opening Settings from the pause menu must show over it, not behind it.
+    const pauseMenu = new PauseMenu(hudRoot, {
+      onResume: () => input.requestPointerLock(),
+      onSettings: () => settingsPanel.show(),
+      onResetPlay: () => gameRef.current?.resetPlay(),
+      onReturnToLobby: () => onReturnToLobby?.(),
+    });
+    const settingsPanel = new SettingsPanel(hudRoot, () => settingsPanel.hide());
 
     const game = new Game(
       renderer,
@@ -240,6 +252,8 @@ export class Game {
       weaponCaption,
       killFeed,
       scopeOverlay,
+      pauseMenu,
+      settingsPanel,
       scoreState,
       matchConfig,
     );
@@ -266,6 +280,8 @@ export class Game {
     this.weaponCaption.dispose();
     this.killFeed.dispose();
     this.scopeOverlay.dispose();
+    this.pauseMenu.dispose();
+    this.settingsPanel.dispose();
     this.physics.dispose();
     window.__gameDebug = undefined;
   }
@@ -364,6 +380,16 @@ export class Game {
   }
 
   private readonly update = (dt: number): void => {
+    // Pointer lock is the single source of truth for "paused": pressing Escape forces the browser
+    // to release it (can't be prevented), and a freshly loaded match starts unlocked too - both
+    // cases should show the pause menu and freeze simulation. Death has its own overlay instead.
+    const isPaused = !this.input.isLocked && !this.player.isDead;
+    this.pauseMenu.setVisible(isPaused);
+    if (isPaused) {
+      this.input.consumeLookDelta();
+      return;
+    }
+
     if (this.input.consumeJustPressed('resetPlay')) {
       this.resetPlay();
     }

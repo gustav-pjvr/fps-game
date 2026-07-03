@@ -8,9 +8,10 @@ export async function waitForGameReady(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 20000 });
 }
 
-/** Clicks the "click to play" blocker to engage pointer lock, then waits for it to actually take effect. */
+/** Clicks the pause menu's Resume button (shown by default on a freshly loaded match, since it
+ * doubles as the "click to play" gate) to engage pointer lock, then waits for it to take effect. */
 export async function lockPointer(page: Page): Promise<void> {
-  await page.click('#blocker');
+  await page.getByRole('button', { name: 'Resume', exact: true }).click();
   await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, { timeout: 5000 });
 }
 
@@ -18,6 +19,19 @@ export async function holdKey(page: Page, key: string, durationMs: number): Prom
   await page.keyboard.down(key);
   await page.waitForTimeout(durationMs);
   await page.keyboard.up(key);
+}
+
+/** Simulates pressing Escape by releasing pointer lock directly (document.exitPointerLock()) and
+ * waits for the pause menu to appear. Game's pause logic reacts purely to pointer-lock state, not
+ * to a specific key, so this exercises the same production code path a real Escape press would -
+ * necessary because headless Chromium's CDP-driven synthetic keydown for 'Escape' does not reach
+ * the browser's native pointer-lock-release hatch (verified empirically: a real key.press('Escape')
+ * left document.pointerLockElement unchanged), which is an automation/environment limitation, not
+ * something Game.ts's Escape handling (or lack thereof) is responsible for. */
+export async function openPauseMenu(page: Page): Promise<void> {
+  await page.evaluate(() => document.exitPointerLock());
+  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === false, { timeout: 5000 });
+  await page.getByTestId('pause-menu').getByRole('button', { name: 'Resume', exact: true }).waitFor({ state: 'visible' });
 }
 
 /** Seeks the first live enemy (index 5 in the default 5-target/3-enemy match) and holds position

@@ -21,7 +21,6 @@ export class App {
   private constructor(
     private readonly lobbyContainer: HTMLElement,
     private readonly gameContainer: HTMLElement,
-    private readonly blocker: HTMLElement,
     private readonly hudRoot: HTMLElement,
     private readonly overlayRoot: HTMLElement,
   ) {
@@ -38,11 +37,10 @@ export class App {
   static async create(
     lobbyContainer: HTMLElement,
     gameContainer: HTMLElement,
-    blocker: HTMLElement,
     hudRoot: HTMLElement,
     overlayRoot: HTMLElement,
   ): Promise<App> {
-    const app = new App(lobbyContainer, gameContainer, blocker, hudRoot, overlayRoot);
+    const app = new App(lobbyContainer, gameContainer, hudRoot, overlayRoot);
     await app.enterLobby();
     return app;
   }
@@ -75,7 +73,6 @@ export class App {
 
     const game = await Game.create(
       this.gameContainer,
-      this.blocker,
       this.hudRoot,
       config,
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
@@ -92,7 +89,6 @@ export class App {
   private async returnToLobby(): Promise<void> {
     this.currentGame?.dispose();
     this.currentGame = null;
-    this.blocker.style.display = 'none';
     await this.enterLobby();
   }
 }

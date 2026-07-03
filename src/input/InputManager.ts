@@ -13,14 +13,7 @@ export class InputManager {
   private lookDeltaY = 0;
   private locked = false;
 
-  constructor(
-    private readonly canvas: HTMLCanvasElement,
-    private readonly blocker: HTMLElement,
-  ) {
-    // Blocker defaults to hidden (index.html) so it doesn't show over the lobby - gameplay only
-    // exists once InputManager is constructed, so this is the right place to reveal it.
-    this.blocker.style.display = 'flex';
-    this.blocker.addEventListener('click', () => this.canvas.requestPointerLock());
+  constructor(private readonly canvas: HTMLCanvasElement) {
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('pointerlockerror', this.onPointerLockError);
     document.addEventListener('keydown', this.onKeyDown);
@@ -68,7 +61,6 @@ export class InputManager {
 
   private readonly onPointerLockChange = (): void => {
     this.locked = document.pointerLockElement === this.canvas;
-    this.blocker.style.display = this.locked ? 'none' : 'flex';
     if (!this.locked) {
       this.activeActions.clear();
       this.justPressedActions.clear();

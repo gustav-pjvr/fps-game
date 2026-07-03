@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { holdKey, killPlayerByEnemy, lockPointer, waitForGameReady } from './helpers.ts';
+import { holdKey, killPlayerByEnemy, lockPointer, openPauseMenu, waitForGameReady } from './helpers.ts';
 
 test('loads without console errors and renders a canvas', async ({ page }) => {
   const errors: string[] = [];
@@ -21,7 +21,7 @@ test('pointer lock engages on click', async ({ page }) => {
 
   await lockPointer(page);
   expect(await page.evaluate(() => window.__gameDebug?.isPointerLocked())).toBe(true);
-  await expect(page.locator('#blocker')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeHidden();
 });
 
 test('WASD movement changes player position', async ({ page }) => {
@@ -247,10 +247,11 @@ test('dying releases pointer lock and Respawn resets the match without leaving i
   await killPlayerByEnemy(page);
 
   await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === false, { timeout: 3000 });
-  await expect(page.getByRole('button', { name: 'Respawn', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
+  const deathScreen = page.getByTestId('death-screen');
+  await expect(deathScreen.getByRole('button', { name: 'Respawn', exact: true })).toBeVisible();
+  await expect(deathScreen.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Respawn', exact: true }).click();
+  await deathScreen.getByRole('button', { name: 'Respawn', exact: true }).click();
 
   await page.waitForFunction(() => window.__gameDebug?.getPlayerHealth() === 100, { timeout: 3000 });
   expect(await page.evaluate(() => window.__gameDebug?.getScore())).toBe(0);
@@ -267,11 +268,74 @@ test('Return to Lobby after death tears down the match and shows the lobby again
   await lockPointer(page);
 
   await killPlayerByEnemy(page);
-  await expect(page.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
+  const deathScreen = page.getByTestId('death-screen');
+  await expect(deathScreen.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Return to Lobby', exact: true }).click();
+  await deathScreen.getByRole('button', { name: 'Return to Lobby', exact: true }).click();
 
   await page.waitForFunction(() => window.__gameDebug === undefined, { timeout: 5000 });
-  await expect(page.locator('#blocker')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'PLAY', exact: true })).toBeVisible();
+});
+
+test('Escape opens the pause menu and freezes the game; Resume continues it', async ({ page }) => {
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  await openPauseMenu(page);
+
+  const pauseMenu = page.getByTestId('pause-menu');
+  await expect(pauseMenu.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+  await expect(pauseMenu.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+  await expect(pauseMenu.getByRole('button', { name: 'Reset Play', exact: true })).toBeVisible();
+  await expect(pauseMenu.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
+
+  // Capture position only once pause has actually taken effect (not before openPauseMenu resolves) -
+  // otherwise ordinary physics settling in the gap before pause engages reads as false movement.
+  const duringPauseBefore = await page.evaluate(() => window.__gameDebug?.getPlayerPosition());
+  await holdKey(page, 'KeyW', 500);
+  const duringPauseAfter = await page.evaluate(() => window.__gameDebug?.getPlayerPosition());
+  expect(duringPauseAfter).toEqual(duringPauseBefore);
+
+  await pauseMenu.getByRole('button', { name: 'Resume', exact: true }).click();
+  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, { timeout: 3000 });
+
+  await holdKey(page, 'KeyW', 500);
+  const afterResume = await page.evaluate(() => window.__gameDebug?.getPlayerPosition());
+  expect(afterResume).not.toEqual(duringPauseAfter);
+});
+
+test('Reset Play in the pause menu resets the match and resumes play', async ({ page }) => {
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  // Fire a shot so ammo/score have room to diverge from defaults before resetting.
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.__gameDebug?.getAmmo())).toBe(11);
+
+  await openPauseMenu(page);
+  const pauseMenu = page.getByTestId('pause-menu');
+  await pauseMenu.getByRole('button', { name: 'Reset Play', exact: true }).click();
+
+  await page.waitForFunction(() => window.__gameDebug?.getAmmo() === 12, { timeout: 3000 });
+  expect(await page.evaluate(() => window.__gameDebug?.getScore())).toBe(0);
+  expect(await page.evaluate(() => window.__gameDebug?.getEntityCount())).toBe(8);
+  // Reset Play re-requests pointer lock, same as the death screen's Respawn button.
+  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, { timeout: 3000 });
+});
+
+test('Return to Lobby in the pause menu tears down the match and shows the lobby again', async ({ page }) => {
+  await page.goto('/');
+  await waitForGameReady(page);
+  await lockPointer(page);
+
+  await openPauseMenu(page);
+  const pauseMenu = page.getByTestId('pause-menu');
+  await pauseMenu.getByRole('button', { name: 'Return to Lobby', exact: true }).click();
+
+  await page.waitForFunction(() => window.__gameDebug === undefined, { timeout: 5000 });
   await expect(page.getByRole('button', { name: 'PLAY', exact: true })).toBeVisible();
 });
