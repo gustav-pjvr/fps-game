@@ -3,6 +3,25 @@
 Feedback from the first playtest, triaged into: real bugs, missing pieces that belong in v1's
 own combat loop, and things that were deliberately deferred past v1 per PLAN.md.
 
+## User-caught bug: rifle view model rendered backwards/tilted
+
+Reported with a screenshot after the Fable pass. `blaster-e`'s `rotationYOffset: Math.PI` was an
+unverified guess from the original asset-integration pass (its bounding box is asymmetric -
+pivot at the grip, not centered, unlike the other three blaster models) - I set a value that
+looked plausible on paper and never actually screenshotted that specific weapon closely enough
+to catch it being wrong. Same failure mode as the target-facing bug from the real-assets pass:
+trusting an analytical guess about a glTF export's axis convention instead of rendering it.
+
+Fixed properly this time - rendered all 4 rotation candidates from both a perspective angle and
+a top-down view, then confirmed directly in-game against the real first-person camera before
+committing. Correct value: `rotationYOffset: 0` (no rotation needed).
+
+While in there, found and fixed a second bug in the same function: the muzzle bounding box was
+computed *after* the view-model group was already positioned at `WEAPON_HIP_POSITION`, so that
+offset got baked into `muzzleLocalOffset` and then added *again* in `WeaponManager.fireShot()` -
+every weapon's tracer was starting from well behind the actual muzzle. Fixed by computing the
+box while the group is still at its default origin.
+
 ## Fable pass (step 3) — pilot passed, integrated, plus one added feature
 
 Ran the Section 8 pilot: asked Fable for 5 enemy archetype names/flavor lines and 4 weapon
