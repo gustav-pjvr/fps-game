@@ -1,11 +1,13 @@
-import { Game } from './core/Game.ts';
+import { App } from './core/App.ts';
 
-const app = document.getElementById('app');
+const lobbyRoot = document.getElementById('lobby');
+const gameRoot = document.getElementById('app');
 const blocker = document.getElementById('blocker');
 const hud = document.getElementById('hud');
+const overlay = document.getElementById('overlay');
 
-if (!app || !blocker || !hud) {
-  throw new Error('Required root elements (#app, #blocker, #hud) are missing from index.html');
+if (!lobbyRoot || !gameRoot || !blocker || !hud || !overlay) {
+  throw new Error('Required root elements (#lobby, #app, #blocker, #hud, #overlay) are missing from index.html');
 }
 
-Game.create(app, blocker, hud).then((game) => game.start());
+App.create(lobbyRoot, gameRoot, blocker, hud, overlay);

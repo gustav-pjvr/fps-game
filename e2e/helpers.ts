@@ -1,8 +1,11 @@
 import type { Page } from '@playwright/test';
 
-/** Waits for Game.create() to finish (WASM init, world seed, encounters spawned) - see Game.installDebugApi(). */
+/** Clicks through the lobby (Play -> Start Match with default counts) and waits for Game.create()
+ * to finish (WASM init, world seed, encounters spawned) - see Game.installDebugApi(). */
 export async function waitForGameReady(page: Page): Promise<void> {
-  await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 15000 });
+  await page.getByRole('button', { name: 'PLAY', exact: true }).click();
+  await page.getByRole('button', { name: 'Start Match', exact: true }).click();
+  await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 20000 });
 }
 
 /** Clicks the "click to play" blocker to engage pointer lock, then waits for it to actually take effect. */

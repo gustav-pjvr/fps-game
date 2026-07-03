@@ -1,0 +1,136 @@
+import { Settings } from '../../settings/Settings.ts';
+import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '../../input/actions.ts';
+import { createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+
+/** Lobby overlay: master volume, mouse sensitivity, and rebindable key bindings - all persisted via Settings. */
+export class SettingsPanel {
+  private readonly overlay: HTMLDivElement;
+  private listeningFor: Action | null = null;
+  private readonly keyButtons = new Map<Action, HTMLButtonElement>();
+
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (!this.listeningFor) return;
+    event.preventDefault();
+    Settings.rebindKey(this.listeningFor, event.code);
+    this.listeningFor = null;
+    this.refreshKeyLabels();
+  };
+
+  constructor(root: HTMLElement, onClose: () => void) {
+    this.overlay = createOverlay();
+
+    const panel = createPanel();
+    panel.style.width = '420px';
+    panel.appendChild(createPanelTitle('SETTINGS'));
+    panel.appendChild(this.buildSliderRow('Master Volume', Settings.getMasterVolume(), 0, 1, 0.01, (value) =>
+      Settings.setMasterVolume(value),
+    ));
+    panel.appendChild(this.buildSliderRow('Mouse Sensitivity', Settings.getMouseSensitivity(), 0.1, 3, 0.05, (value) =>
+      Settings.setMouseSensitivity(value),
+    ));
+    panel.appendChild(this.buildKeyBindSection());
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';
+    const resetButton = createButton('Reset Keys');
+    resetButton.addEventListener('click', () => {
+      Settings.resetKeyBindings();
+      this.refreshKeyLabels();
+    });
+    const closeButton = createButton('Close', 'primary');
+    closeButton.addEventListener('click', onClose);
+    footer.append(resetButton, closeButton);
+    panel.appendChild(footer);
+
+    this.overlay.appendChild(panel);
+    root.appendChild(this.overlay);
+    document.addEventListener('keydown', this.onKeyDown);
+  }
+
+  private buildSliderRow(
+    label: string,
+    initialValue: number,
+    min: number,
+    max: number,
+    step: number,
+    onChange: (value: number) => void,
+  ): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:18px;';
+
+    const labelEl = document.createElement('label');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    slider.value = String(initialValue);
+    slider.style.cssText = 'width:100%;';
+    slider.addEventListener('input', () => onChange(parseFloat(slider.value)));
+
+    row.append(labelEl, slider);
+    return row;
+  }
+
+  private buildKeyBindSection(): HTMLDivElement {
+    const section = document.createElement('div');
+    const heading = document.createElement('div');
+    heading.textContent = 'Key Bindings';
+    heading.style.cssText =
+      'font-size:0.85rem; opacity:0.8; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.05em;';
+    section.appendChild(heading);
+
+    for (const action of REBINDABLE_ACTIONS) {
+      const row = document.createElement('div');
+      row.style.cssText =
+        'display:flex; justify-content:space-between; align-items:center; padding:6px 0;' +
+        ' border-bottom:1px solid rgba(255,255,255,0.06);';
+
+      const label = document.createElement('span');
+      label.textContent = ACTION_LABELS[action];
+      label.style.cssText = 'font-size:0.9rem;';
+
+      const keyButton = document.createElement('button');
+      keyButton.style.cssText =
+        'min-width:90px; padding:6px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.15);' +
+        ' background:rgba(255,255,255,0.06); color:#eee; font-size:0.85rem; cursor:pointer;' +
+        ' font-variant-numeric:tabular-nums;';
+      keyButton.addEventListener('click', () => {
+        this.listeningFor = action;
+        keyButton.textContent = 'Press a key…';
+      });
+
+      this.keyButtons.set(action, keyButton);
+      row.append(label, keyButton);
+      section.appendChild(row);
+    }
+
+    this.refreshKeyLabels();
+    return section;
+  }
+
+  private refreshKeyLabels(): void {
+    const codeByAction = new Map<Action, string>();
+    for (const [code, action] of Object.entries(Settings.getKeyBindings())) codeByAction.set(action, code);
+    for (const [action, button] of this.keyButtons) {
+      const code = codeByAction.get(action);
+      button.textContent = code ? formatKeyCode(code) : '—';
+    }
+  }
+
+  show(): void {
+    this.overlay.style.display = 'flex';
+  }
+
+  hide(): void {
+    this.overlay.style.display = 'none';
+  }
+
+  dispose(): void {
+    document.removeEventListener('keydown', this.onKeyDown);
+    this.overlay.remove();
+  }
+}

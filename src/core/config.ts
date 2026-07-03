@@ -68,3 +68,7 @@ export const TERRAIN_AMPLITUDE = 8;
 export const VIEW_RADIUS_CHUNKS = 2;
 export const UNLOAD_RADIUS_CHUNKS = 3;
 export const MAX_CHUNK_GENERATIONS_PER_TICK = 2;
+
+export const DEFAULT_ENEMY_COUNT = 3;
+export const DEFAULT_TARGET_COUNT = 5;
+export const MAX_MATCH_ENTITY_COUNT = 50;

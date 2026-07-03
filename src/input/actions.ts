@@ -16,7 +16,7 @@ export type Action =
   | 'weaponPrev'
   | 'resetPlay';
 
-export const KEY_BINDINGS: Record<string, Action> = {
+export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   KeyW: 'moveForward',
   KeyS: 'moveBackward',
   KeyA: 'moveLeft',
@@ -30,3 +30,45 @@ export const KEY_BINDINGS: Record<string, Action> = {
   Digit4: 'weaponSlot4',
   KeyT: 'resetPlay',
 };
+
+/** Actions a player can rebind in the settings panel - excludes number keys/mouse, which stay fixed. */
+export const REBINDABLE_ACTIONS: Action[] = [
+  'moveForward',
+  'moveBackward',
+  'moveLeft',
+  'moveRight',
+  'jump',
+  'sprint',
+  'reload',
+  'resetPlay',
+];
+
+export const ACTION_LABELS: Record<Action, string> = {
+  moveForward: 'Move Forward',
+  moveBackward: 'Move Backward',
+  moveLeft: 'Move Left',
+  moveRight: 'Move Right',
+  jump: 'Jump',
+  sprint: 'Sprint',
+  fire: 'Fire',
+  aim: 'Aim',
+  reload: 'Reload',
+  weaponSlot1: 'Weapon Slot 1',
+  weaponSlot2: 'Weapon Slot 2',
+  weaponSlot3: 'Weapon Slot 3',
+  weaponSlot4: 'Weapon Slot 4',
+  weaponNext: 'Next Weapon',
+  weaponPrev: 'Previous Weapon',
+  resetPlay: 'Reset Match',
+};
+
+/** Human-readable key names for the few codes that don't read well as-is (KeyW -> W is fine; Space -> "Space" needed). */
+export function formatKeyCode(code: string): string {
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code === 'Space') return 'Space';
+  if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
+  if (code === 'ControlLeft' || code === 'ControlRight') return 'Ctrl';
+  if (code === 'AltLeft' || code === 'AltRight') return 'Alt';
+  return code;
+}

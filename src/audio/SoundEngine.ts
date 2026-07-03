@@ -1,3 +1,5 @@
+import { Settings } from '../settings/Settings.ts';
+
 /**
  * Procedural sound effects via Web Audio synthesis - no audio asset files, consistent with the
  * placeholder-visuals approach elsewhere. Swapping in real recorded SFX later (per PLAN.md's
@@ -11,8 +13,12 @@ export class SoundEngine {
   constructor() {
     this.ctx = new AudioContext();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.5;
+    this.master.gain.value = Settings.getMasterVolume();
     this.master.connect(this.ctx.destination);
+  }
+
+  setMasterVolume(value: number): void {
+    this.master.gain.value = Math.max(0, Math.min(1, value));
   }
 
   /** AudioContext starts suspended until a user gesture - call from any click/keydown handler. */

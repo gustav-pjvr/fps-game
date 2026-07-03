@@ -26,10 +26,21 @@ const SPAWN_X = 0;
 const SPAWN_Z = 8;
 const SPAWN_HEIGHT_OFFSET = 2;
 const REFERENCE_BOX_COLORS = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
-const TARGET_RING_RADIUS = 15;
-const TARGET_COUNT = 5;
-const ENEMY_RING_RADIUS = 25;
-const ENEMY_COUNT = 3;
+const TARGET_RING_BASE_RADIUS = 15;
+const ENEMY_RING_BASE_RADIUS = 25;
+/** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
+const RING_SPACING = 2.2;
+/** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
+const SPAWN_BATCH_SIZE = 4;
+
+export interface MatchConfig {
+  enemyCount: number;
+  targetCount: number;
+}
+
+function waitForNextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
 
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond aiming. */
 export interface GameDebugApi {
@@ -80,6 +91,7 @@ export class Game {
     private readonly weaponCaption: WeaponCaption,
     private readonly killFeed: KillFeed,
     private readonly scoreState: ScoreState,
+    private readonly matchConfig: MatchConfig,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
@@ -129,7 +141,14 @@ export class Game {
     };
   }
 
-  static async create(container: HTMLElement, blocker: HTMLElement, hudRoot: HTMLElement): Promise<Game> {
+  static async create(
+    container: HTMLElement,
+    blocker: HTMLElement,
+    hudRoot: HTMLElement,
+    matchConfig: MatchConfig,
+    onProgress?: (status: string, ratio: number) => void,
+  ): Promise<Game> {
+    onProgress?.('Initializing world…', 0);
     const renderer = new Renderer(container);
     const input = new InputManager(renderer.canvas, blocker);
     const physics = await PhysicsWorld.create();
@@ -154,16 +173,13 @@ export class Game {
 
     const killFeed = new KillFeed(hudRoot);
     const scoreState: ScoreState = { value: 0 };
-    const entityManager = await EntityManager.create(renderer.scene, physics, (label) => {
-      scoreState.value += 1;
-      killFeed.show(label);
-    });
-    Game.spawnEncounters(entityManager);
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const tracers = new Tracers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
     const hitMarker = new HitMarker(hudRoot);
+
+    onProgress?.('Loading weapons…', 0.05);
     const weaponManager = await WeaponManager.create(
       renderer.camera,
       physics,
@@ -180,6 +196,17 @@ export class Game {
       (weaponId) => sound.playGunshot(weaponId),
       () => sound.playReloadClick(),
     );
+
+    onProgress?.('Loading combatants…', 0.1);
+    const entityManager = await EntityManager.create(renderer.scene, physics, (label) => {
+      scoreState.value += 1;
+      killFeed.show(label);
+    });
+
+    await Game.spawnEncountersAsync(entityManager, matchConfig.targetCount, matchConfig.enemyCount, (status, spawnRatio) => {
+      onProgress?.(status, 0.15 + spawnRatio * 0.85);
+    });
+
     const hud = new Hud(hudRoot);
     const hotbar = new Hotbar(hudRoot);
     hotbar.setSlots(weaponManager.weaponSlotNames);
@@ -207,6 +234,7 @@ export class Game {
       weaponCaption,
       killFeed,
       scoreState,
+      matchConfig,
     );
     gameRef.current = game;
 
@@ -224,13 +252,14 @@ export class Game {
   }
 
   /** Practice-reset (T key): fresh targets/enemies, full ammo on every weapon, full health, score
-   * back to 0 - a clean slate without needing a page reload. Works even while dead. */
+   * back to 0 - a clean slate without needing a page reload. Works even while dead. Reuses the
+   * enemy/target counts chosen at match setup, not the class defaults. */
   private resetPlay(): void {
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
-    Game.spawnEncounters(this.entityManager);
+    void Game.spawnEncountersAsync(this.entityManager, this.matchConfig.targetCount, this.matchConfig.enemyCount);
     this.impactMarkers.clear();
     this.tracers.clear();
     this.scoreState.value = 0;
@@ -267,21 +296,49 @@ export class Game {
     }
   }
 
-  private static spawnEncounters(entityManager: EntityManager): void {
-    for (let i = 0; i < TARGET_COUNT; i++) {
-      const angle = (i / TARGET_COUNT) * Math.PI * 2;
-      const x = SPAWN_X + Math.cos(angle) * TARGET_RING_RADIUS;
-      const z = SPAWN_Z + Math.sin(angle) * TARGET_RING_RADIUS;
+  /** Ring radius that keeps a fixed base size for small counts but grows for large ones so spawns don't stack. */
+  private static ringRadius(count: number, baseRadius: number): number {
+    if (count <= 1) return baseRadius;
+    const spacingRadius = (count * RING_SPACING) / (Math.PI * 2);
+    return Math.max(baseRadius, spacingRadius);
+  }
+
+  /** Spawns the chosen number of targets/enemies in batches, yielding a frame between batches so
+   * large match sizes stay responsive and a loading screen can show real progress. */
+  private static async spawnEncountersAsync(
+    entityManager: EntityManager,
+    targetCount: number,
+    enemyCount: number,
+    onProgress?: (status: string, ratio: number) => void,
+  ): Promise<void> {
+    const total = targetCount + enemyCount;
+    let done = 0;
+    const report = (status: string): void => onProgress?.(status, total > 0 ? done / total : 1);
+
+    const targetRadius = Game.ringRadius(targetCount, TARGET_RING_BASE_RADIUS);
+    for (let i = 0; i < targetCount; i++) {
+      const angle = (i / targetCount) * Math.PI * 2;
+      const x = SPAWN_X + Math.cos(angle) * targetRadius;
+      const z = SPAWN_Z + Math.sin(angle) * targetRadius;
       const y = sampleHeight(x, z) + 1;
       entityManager.spawnTarget(new THREE.Vector3(x, y, z), new THREE.Vector3(SPAWN_X, y, SPAWN_Z));
+      done++;
+      report(`Placing targets… (${done}/${total})`);
+      if (done % SPAWN_BATCH_SIZE === 0) await waitForNextFrame();
     }
 
-    for (let i = 0; i < ENEMY_COUNT; i++) {
-      const angle = (i / ENEMY_COUNT) * Math.PI * 2 + 0.5;
-      const x = SPAWN_X + Math.cos(angle) * ENEMY_RING_RADIUS;
-      const z = SPAWN_Z + Math.sin(angle) * ENEMY_RING_RADIUS;
+    const enemyRadius = Game.ringRadius(enemyCount, ENEMY_RING_BASE_RADIUS);
+    for (let i = 0; i < enemyCount; i++) {
+      const angle = (i / enemyCount) * Math.PI * 2 + 0.5;
+      const x = SPAWN_X + Math.cos(angle) * enemyRadius;
+      const z = SPAWN_Z + Math.sin(angle) * enemyRadius;
       entityManager.spawnEnemy(new THREE.Vector3(x, sampleHeight(x, z) + 1, z));
+      done++;
+      report(`Deploying enemies… (${done}/${total})`);
+      if (done % SPAWN_BATCH_SIZE === 0) await waitForNextFrame();
     }
+
+    report('Ready');
   }
 
   private readonly update = (dt: number): void => {

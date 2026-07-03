@@ -50,5 +50,6 @@ export class Renderer {
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
     this.webgl.dispose();
+    this.webgl.domElement.remove();
   }
 }

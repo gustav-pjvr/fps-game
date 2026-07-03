@@ -1,4 +1,5 @@
-import { KEY_BINDINGS, type Action } from './actions.ts';
+import type { Action } from './actions.ts';
+import { Settings } from '../settings/Settings.ts';
 
 const MOUSE_BUTTON_ACTIONS: Record<number, Action> = {
   0: 'fire',
@@ -16,6 +17,9 @@ export class InputManager {
     private readonly canvas: HTMLCanvasElement,
     private readonly blocker: HTMLElement,
   ) {
+    // Blocker defaults to hidden (index.html) so it doesn't show over the lobby - gameplay only
+    // exists once InputManager is constructed, so this is the right place to reveal it.
+    this.blocker.style.display = 'flex';
     this.blocker.addEventListener('click', () => this.canvas.requestPointerLock());
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('pointerlockerror', this.onPointerLockError);
@@ -65,14 +69,14 @@ export class InputManager {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!this.locked) return;
-    const action = KEY_BINDINGS[event.code];
+    const action = Settings.getKeyBindings()[event.code];
     if (!action) return;
     if (!this.activeActions.has(action)) this.justPressedActions.add(action);
     this.activeActions.add(action);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent): void => {
-    const action = KEY_BINDINGS[event.code];
+    const action = Settings.getKeyBindings()[event.code];
     if (action) this.activeActions.delete(action);
   };
 
