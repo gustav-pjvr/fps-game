@@ -1,7 +1,39 @@
-# Playtest Notes — v1 (Phases 0-7) + Phase 8 + Content Pass + Real Assets
+# Playtest Notes — v1 (Phases 0-7) + Phase 8 + Content Pass + Real Assets + Fable Pass
 
 Feedback from the first playtest, triaged into: real bugs, missing pieces that belong in v1's
 own combat loop, and things that were deliberately deferred past v1 per PLAN.md.
+
+## Fable pass (step 3) — pilot passed, integrated, plus one added feature
+
+Ran the Section 8 pilot: asked Fable for 5 enemy archetype names/flavor lines and 4 weapon
+names/flavor lines for a grounded, wry (not cartoonish, not grimdark) tone. Output was genuinely
+good - tight, consistent voice, and the shotgun line ("Eight opinions, delivered all at once, at
+conversational range") directly references the actual `pelletCount: 8` mechanic without being
+told to. Cleared the bar for integration on the first try, no revision needed.
+
+Integrated:
+- Weapon `name`/new `description` field in `definitions.ts`: Kestrel P9 (pistol), VR-4 Fieldhand
+  (rifle), Hedgerow 12 (shotgun), Marchand Longview (sniper) - replacing the generic "Pistol"/
+  "Assault Rifle"/etc. labels. New `ui/weaponCaption.ts` shows name + flavor briefly on switch.
+- Enemy archetypes in `entities/enemies/archetypes.ts`: all 5 are recorded, but the game only
+  has one enemy *behavior* right now, so only one ("Rush Job" - its flavor line matches the
+  actual chase-aggressively behavior) is wired in as `ACTIVE_ENEMY_ARCHETYPE`. The other four
+  are unused, documented reference content for whenever enemy AI variety (a real behavioral
+  difference per type, not just a name swap) gets built - didn't fabricate fake variety just to
+  use all five names.
+- New `ui/killFeed.ts`: a top-center toast on every kill ("Target destroyed" / "Rush Job
+  eliminated"), which required threading a `killFeedLabel` through `EntityManager`'s `onKilled`
+  callback (previously just `() => void`, no info about what died).
+
+Found one layout bug while screenshotting the result: the weapon caption's two lines of text
+overlapped the hotbar underneath it (both were positioned independently without accounting for
+each other's height). Fixed by moving the caption from `bottom:100px` to `bottom:150px`.
+
+Also added a **practice-reset feature** (not from Fable - a separate ask): press **T** to
+respawn all targets/enemies at their ring positions, instantly refill every weapon's ammo
+(`Weapon.refillAmmo()`, new), teleport the player to spawn at full health, and zero the score -
+a clean restart without a page reload. Works from the death screen too, since the key check runs
+unconditionally at the top of `Game.update()` rather than being gated on alive/dead state.
 
 ## Real assets pass (step 2) — Kenney CC0 models, and a big rendering bug found by using them
 

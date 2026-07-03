@@ -24,6 +24,7 @@ const BULLSEYE_PROTRUSION = 0.15;
 export class Target implements Entity, Damageable {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
+  readonly killFeedLabel = 'Target destroyed';
   readonly mesh: THREE.Group;
 
   private health = TARGET_HEALTH;

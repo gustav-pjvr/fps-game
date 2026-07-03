@@ -47,14 +47,14 @@ test('weapon switching changes the active weapon name', async ({ page }) => {
   await lockPointer(page);
 
   const initialWeapon = await page.evaluate(() => window.__gameDebug?.getWeaponName());
-  expect(initialWeapon).toBe('Pistol');
+  expect(initialWeapon).toBe('Kestrel P9'); // pistol
 
   // Loadout order is pistol, rifle, shotgun, sniper (Game.create's definitionIds list).
   await page.keyboard.press('Digit4');
   // Weapon switch plays a holster/draw animation (WEAPON_SWITCH_DURATION) before the swap lands.
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Sniper Rifle', { timeout: 3000 });
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Marchand Longview', { timeout: 3000 });
 
-  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('Sniper Rifle');
+  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('Marchand Longview'); // sniper
 });
 
 test('assault rifle fires automatically while the trigger is held', async ({ page }) => {
@@ -63,7 +63,7 @@ test('assault rifle fires automatically while the trigger is held', async ({ pag
   await lockPointer(page);
 
   await page.keyboard.press('Digit2');
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Assault Rifle', { timeout: 3000 });
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'VR-4 Fieldhand', { timeout: 3000 });
 
   const fullAmmo = await page.evaluate(() => window.__gameDebug?.getAmmo());
   expect(fullAmmo).toBe(30);

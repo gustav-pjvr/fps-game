@@ -16,6 +16,8 @@ import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
+import { WeaponCaption } from '../ui/weaponCaption.ts';
+import { KillFeed } from '../ui/killFeed.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
@@ -59,6 +61,7 @@ interface ScoreState {
 
 export class Game {
   private readonly loop: Loop;
+  private lastActiveWeaponIndex: number;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -74,8 +77,11 @@ export class Game {
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
     private readonly deathScreen: DeathScreen,
+    private readonly weaponCaption: WeaponCaption,
+    private readonly killFeed: KillFeed,
     private readonly scoreState: ScoreState,
   ) {
+    this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
     this.installDebugApi();
   }
@@ -146,9 +152,11 @@ export class Game {
       onFootstep: () => sound.playFootstep(),
     });
 
+    const killFeed = new KillFeed(hudRoot);
     const scoreState: ScoreState = { value: 0 };
-    const entityManager = await EntityManager.create(renderer.scene, physics, () => {
+    const entityManager = await EntityManager.create(renderer.scene, physics, (label) => {
       scoreState.value += 1;
+      killFeed.show(label);
     });
     Game.spawnEncounters(entityManager);
 
@@ -175,6 +183,7 @@ export class Game {
     const hud = new Hud(hudRoot);
     const hotbar = new Hotbar(hudRoot);
     hotbar.setSlots(weaponManager.weaponSlotNames);
+    const weaponCaption = new WeaponCaption(hudRoot);
 
     // DeathScreen's click handler needs to call game.respawn(), but `game` doesn't exist until
     // after construction - same circular-dependency shape as scoreState above, forward-ref instead.
@@ -195,6 +204,8 @@ export class Game {
       hotbar,
       hitMarker,
       deathScreen,
+      weaponCaption,
+      killFeed,
       scoreState,
     );
     gameRef.current = game;
@@ -291,9 +302,16 @@ export class Game {
       this.entityManager.update(dt, this.player);
     }
 
+    if (this.weaponManager.activeWeaponIndex !== this.lastActiveWeaponIndex) {
+      this.lastActiveWeaponIndex = this.weaponManager.activeWeaponIndex;
+      this.weaponCaption.show(this.weaponManager.weaponName, this.weaponManager.weaponDescription);
+    }
+
     this.impactMarkers.update(dt);
     this.tracers.update(dt);
     this.hitMarker.update(dt);
+    this.weaponCaption.update(dt);
+    this.killFeed.update(dt);
 
     if (this.player.isDead && !wasDead) {
       this.deathScreen.show(this.scoreState.value);

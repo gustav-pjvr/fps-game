@@ -116,6 +116,10 @@ export class WeaponManager {
     return this.active.weapon.definition.name;
   }
 
+  get weaponDescription(): string {
+    return this.active.weapon.definition.description;
+  }
+
   get weaponSlotNames(): string[] {
     return this.slots.map((slot) => slot.weapon.definition.name);
   }

@@ -7,6 +7,7 @@ import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
+import { ACTIVE_ENEMY_ARCHETYPE } from './archetypes.ts';
 import {
   ENEMY_ATTACK_DAMAGE,
   ENEMY_ATTACK_INTERVAL,
@@ -49,6 +50,7 @@ type EnemyState = 'idle' | 'chase';
 export class Enemy implements Entity, Damageable {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
+  readonly killFeedLabel = `${ACTIVE_ENEMY_ARCHETYPE.name} eliminated`;
   readonly mesh: THREE.Group;
 
   private health = ENEMY_HEALTH;

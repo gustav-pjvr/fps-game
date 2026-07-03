@@ -9,6 +9,7 @@ import { preloadGLTFs } from '../core/AssetLoader.ts';
 interface ManagedEntity {
   readonly mesh: THREE.Object3D;
   readonly isDead: boolean;
+  readonly killFeedLabel: string;
   dispose(): void;
   update?(dt: number, player: Player): void;
 }
@@ -20,12 +21,16 @@ export class EntityManager {
   private constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
-    private readonly onKilled: () => void,
+    private readonly onKilled: (label: string) => void,
     private readonly targetGltf: GLTF,
     private readonly enemyGltf: GLTF,
   ) {}
 
-  static async create(scene: THREE.Scene, physics: PhysicsWorld, onKilled: () => void): Promise<EntityManager> {
+  static async create(
+    scene: THREE.Scene,
+    physics: PhysicsWorld,
+    onKilled: (label: string) => void,
+  ): Promise<EntityManager> {
     const models = await preloadGLTFs([TARGET_MODEL_PATH, ENEMY_MODEL_PATH]);
     const targetGltf = models.get(TARGET_MODEL_PATH);
     const enemyGltf = models.get(ENEMY_MODEL_PATH);
@@ -57,7 +62,7 @@ export class EntityManager {
         this.scene.remove(entity.mesh);
         entity.dispose();
         this.entities.splice(i, 1);
-        this.onKilled();
+        this.onKilled(entity.killFeedLabel);
       }
     }
   }

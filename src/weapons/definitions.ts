@@ -1,6 +1,7 @@
 export interface WeaponDefinition {
   readonly id: string;
   readonly name: string;
+  readonly description: string;
   /** Damage per pellet - for pelletCount 1 this is just "damage per shot". */
   readonly damage: number;
   readonly fireRate: number;
@@ -26,7 +27,8 @@ export interface WeaponDefinition {
 export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   pistol: {
     id: 'pistol',
-    name: 'Pistol',
+    name: 'Kestrel P9',
+    description: "Standard issue. Nobody's first choice, everybody's last one.",
     damage: 20,
     fireRate: 4,
     magazineSize: 12,
@@ -43,7 +45,8 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   rifle: {
     id: 'rifle',
-    name: 'Assault Rifle',
+    name: 'VR-4 Fieldhand',
+    description: 'Feeds all day without complaint. Hence the name.',
     damage: 15,
     fireRate: 10,
     magazineSize: 30,
@@ -60,7 +63,8 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   shotgun: {
     id: 'shotgun',
-    name: 'Shotgun',
+    name: 'Hedgerow 12',
+    description: 'Eight opinions, delivered all at once, at conversational range.',
     damage: 10,
     fireRate: 1.2,
     magazineSize: 6,
@@ -77,7 +81,8 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   sniper: {
     id: 'sniper',
-    name: 'Sniper Rifle',
+    name: 'Marchand Longview',
+    description: 'For settling arguments from a different postcode.',
     damage: 90,
     fireRate: 0.8,
     magazineSize: 5,
