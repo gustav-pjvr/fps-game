@@ -22,7 +22,7 @@ interface WeaponModelSpec {
  * comfortably in first-person view; each model's own export scale/pivot varies. */
 export const WEAPON_MODEL_SPECS: Record<string, WeaponModelSpec> = {
   pistol: { path: '/assets/models/weapons/blaster-h.glb', scale: 0.85, rotationYOffset: 0 },
-  rifle: { path: '/assets/models/weapons/blaster-e.glb', scale: 0.45, rotationYOffset: Math.PI },
+  rifle: { path: '/assets/models/weapons/blaster-e.glb', scale: 0.45, rotationYOffset: 0 },
   shotgun: { path: '/assets/models/weapons/blaster-p.glb', scale: 0.7, rotationYOffset: 0 },
   sniper: { path: '/assets/models/weapons/blaster-f.glb', scale: 0.55, rotationYOffset: 0 },
 };
@@ -41,13 +41,17 @@ export function createWeaponViewModel(definition: WeaponDefinition, gltf: GLTF):
 
   const group = new THREE.Group();
   group.add(model);
-  group.position.copy(WEAPON_HIP_POSITION);
 
-  // Forward-most point of the (scaled/rotated) model approximates the muzzle tip, assuming -Z
-  // is forward - blaster-e's pivot sits at the grip rather than centered, hence rotationYOffset
-  // flipping it so its barrel (originally +Z) points -Z like the others.
+  // Compute the box while the group is still at its default (0,0,0) position, so the result is
+  // relative to the group's own origin. Box3.setFromObject reads matrixWorld, which composes
+  // through the parent chain - if we set group.position to WEAPON_HIP_POSITION first, that
+  // offset gets baked into the box, and then WeaponManager adds viewModel.position (≈ the same
+  // hip/ADS offset) on top of it too, double-counting it and placing tracers well behind the
+  // actual muzzle.
   const box = new THREE.Box3().setFromObject(model);
   const muzzleLocalOffset = new THREE.Vector3(0, (box.min.y + box.max.y) / 2, box.min.z);
+
+  group.position.copy(WEAPON_HIP_POSITION);
 
   return { group, muzzleLocalOffset };
 }
