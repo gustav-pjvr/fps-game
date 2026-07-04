@@ -56,12 +56,17 @@ mechanism, just clamped to a chunk-coordinate range), not a rewrite.
 **Not enterable.** Solid exterior only — no interior geometry, no doors, no interior lighting.
 Functionally a large collision box with a climbable face and a rooftop.
 
-- **Shape**: procedural boxes (`THREE.BoxGeometry`), not a sourced modular building kit. A full
-  architectural kit (doors, interior rooms, multiple modular pieces) is overkill for something
-  that's deliberately not enterable, costs more draw calls, and is harder to keep visually
-  consistent. A handful of size variants (e.g., 3-4 footprint/height presets) with a tiled
-  concrete/brick texture gets a real "building" silhouette at a fraction of the complexity.
-  Texture sourced from Poly Haven (tileable, CC0) rather than fabricated.
+- **Shape (revised during §6 step 4 implementation):** originally planned as procedural
+  `THREE.BoxGeometry` with a tiled concrete texture, to avoid a modular kit's extra draw-call/
+  complexity cost for something deliberately not enterable. Shipped that way first, but once the
+  user saw it in the browser the plain box read as "a block of textured concrete bricks," not a
+  building. Asked the user to choose between keeping it simple, adding painted-on window/door
+  decals, or switching to a real modular kit — they chose the kit, accepting the extra complexity
+  explicitly. Now uses premade sample structures from Kenney's "Modular Buildings" kit (CC0):
+  `building-sample-house-a/b/c.glb` and `building-sample-tower-a/b/c/d.glb` — already-assembled
+  by Kenney from that kit's own wall/window/door/roof tiles, so no manual tile-rotation guessing
+  was needed. See NOTES.md for the two bugs found shipping this (a missing relative-path texture,
+  and a collider/visual center-offset mismatch on 3 of the 7 presets).
 - **Placement**: per-chunk deterministic scatter (same seeding approach as terrain — hash chunk
   coordinates through the existing RNG so a chunk always generates the same buildings, matching
   how heightfield generation already works). Avoid placing buildings inside the match's spawn

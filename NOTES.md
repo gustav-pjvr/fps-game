@@ -102,6 +102,56 @@ this could be called done:
 
 All 16 smoke tests pass after both the performance fix and the spawn-clearance fix.
 
+## World Plan §6 step 4 — buildings, a scope change mid-step, and two more real bugs
+
+First pass shipped exactly what WORLD_PLAN.md §3 originally scoped: a plain `THREE.BoxGeometry`
+with a tiled Poly Haven concrete texture (`concrete_wall_007`, CC0), one solid fixed collider per
+building doubling as the rooftop's walkable surface. Functionally correct and matched the agreed
+plan, but once the user actually looked at it in the browser, the reaction was "it just looks like
+a block of textured concrete bricks" - fair, since that's literally what was built. Asked the user
+directly: keep it simple (original scope), add painted-on window/door decals, or switch to a real
+modular building kit. They chose the real kit, explicitly accepting more draw calls/complexity in
+exchange for it actually reading as a building - **a deliberate mid-step scope change**, not scope
+creep, since it was surfaced and decided explicitly rather than assumed.
+
+Switched to Kenney's "Modular Buildings" kit (CC0) - specifically its premade
+`building-sample-house-a/b/c.glb` and `building-sample-tower-a/b/c/d.glb` prefabs, which are
+already-assembled structures (the kit's own wall/window/door/roof tiles, pre-composed by Kenney)
+rather than raw modular tiles this project would have to hand-place and rotate itself. Considered
+the raw tile kit first (`kenney_building-kit`) but its wall/corner/roof pieces have no premade
+whole buildings, and correctly reverse-engineering each piece's default-orientation convention well
+enough to assemble a leak-free perimeter would have meant the same trial-and-error rotation-guessing
+this project's `NOTES.md` already describes doing for weapon models - the premade-sample kit avoids
+that entirely for a comparable visual result.
+
+Two more real bugs found before this could ship:
+
+1. **`THREE.GLTFLoader: Couldn't load texture Textures/colormap.png`** on all 7 presets. Kenney's
+   glTF export for this kit references its texture by a relative URI instead of embedding it in the
+   `.glb` (unlike the weapon/enemy/vegetation assets already used in this project, which are fully
+   self-contained) - the zip ships `Textures/colormap.png` as a sibling of the `.glb` files, which
+   this project hadn't extracted. Fixed by placing it at the matching relative path
+   (`public/assets/models/buildings/Textures/colormap.png`) so `GLTFLoader` resolves the reference
+   correctly. Caught by the same "loads without console errors" e2e test that's caught every other
+   asset-path issue in this project - reinforces why that test exists.
+2. **Code review caught a collider/visual misalignment**: `measurePreset` computed footprint width/
+   height from the raw bounding box's *extents* but never checked whether that box was *centered*
+   on the model's local origin. For 3 of the 7 prefabs (`tower-a/b/c`) it isn't - verified directly
+   against the `.glb` files' own accessor bounds. Since the building's collider was placed at the
+   same point as the model's local origin, this silently offset the collider by ~0.24-0.28 world
+   units from the true visual footprint for those three presets, worse under 90°/270° rotation
+   (the offset only exists on local Z, so it rotates onto world X while the collider assumed it was
+   always zero) - exactly the kind of edge that would matter once climbing (§6 step 5) relies on
+   the collider's top face as a true rooftop. Fixed by measuring the box's *center* offset too and
+   rotating/adding it into the collider's translation, not just the raw footprint span.
+
+Also extracted the identical `hashChunkSeed`/`chunkKey` helpers (previously copy-pasted between
+`VegetationManager` and `BuildingManager`) into a shared `world/chunkSeed.ts` now that a second
+real consumer exists - a LOW finding from the same review, applied because the duplication was now
+real rather than speculative.
+
+All 16 smoke tests pass after both fixes.
+
 ## User-caught bug: rifle view model rendered backwards/tilted
 
 Reported with a screenshot after the Fable pass. `blaster-e`'s `rotationYOffset: Math.PI` was an

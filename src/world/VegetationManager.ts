@@ -2,6 +2,7 @@ import { createNoise2D } from 'simplex-noise';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { mulberry32 } from '../utils/rng.ts';
+import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import {
   SPAWN_X,
@@ -96,10 +97,6 @@ function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferG
   return primitives;
 }
 
-function hashChunkSeed(cx: number, cz: number): number {
-  return (Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663) ^ WORLD_SEED) >>> 0;
-}
-
 /**
  * Per-chunk deterministic vegetation scatter (WORLD_PLAN.md §4): trees/bushes/rocks rendered via
  * one shared THREE.InstancedMesh pool per (type, sub-mesh) so the whole bounded world's vegetation
@@ -148,7 +145,7 @@ export class VegetationManager {
 
   /** Called by ChunkManager's onChunkLoaded hook - scatters vegetation across the newly loaded chunk. */
   placeForChunk(cx: number, cz: number, originX: number, originZ: number, size: number): void {
-    const rng = mulberry32(hashChunkSeed(cx, cz));
+    const rng = mulberry32(hashChunkSeed(cx, cz, WORLD_SEED));
     const placed: PlacedInstance[] = [];
     const perTypeCount = new Map<VegetationTypeId, number>();
 
@@ -268,8 +265,4 @@ function pickTypeForDensity(rawNoise: number): VegetationTypeId | null {
   if (density > VEGETATION_BUSH_DENSITY_THRESHOLD) return 'bush';
   if (density > VEGETATION_ROCK_DENSITY_THRESHOLD) return 'rock';
   return null;
-}
-
-function chunkKey(cx: number, cz: number): string {
-  return `${cx},${cz}`;
 }

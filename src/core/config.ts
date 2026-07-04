@@ -150,6 +150,25 @@ export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 8;
 export const VEGETATION_INSTANCE_CAPACITY = 500;
 export const VEGETATION_TRUNK_RADIUS = 0.35;
 
+/**
+ * Buildings (WORLD_PLAN.md §3): not enterable, solid exterior only - real premade structures from
+ * Kenney's Modular Buildings kit (CC0), not a plain box, per project decision after seeing the
+ * plain-box version look unconvincing. Per-chunk deterministic placement (moderate density) -
+ * allowed just outside the encounter ring but never inside it, kept a minimum distance apart so
+ * climbing one doesn't put a player inside another's collider. The building's own box collider top
+ * face doubles as the rooftop landing surface (see BuildingManager.ts) - no separate platform
+ * collider is needed since an axis-aligned box's top is already flat and walkable.
+ */
+/** Probability any given chunk attempts to place a building at all - most chunks have none. */
+export const BUILDING_CHUNK_SPAWN_CHANCE = 0.3;
+/** Minimum required gap between two buildings' footprints (beyond their own half-diagonals). */
+export const BUILDING_MIN_GAP = 15;
+/** Measured from the actual spawn point to the building's nearest possible edge (center distance
+ * minus its own half-diagonal) - must clear the largest encounter ring, matching the "just outside
+ * the ring, never inside it" placement decision (unlike vegetation, which is excluded with a wider
+ * buffer since it has no gameplay reason to hug the ring). */
+export const BUILDING_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS;
+
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;
 export const MAX_MATCH_ENTITY_COUNT = 50;
