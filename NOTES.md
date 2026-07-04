@@ -543,3 +543,14 @@ Step 5 (ladder sensor collider + player climbing state machine) - both now next 
 latest direction, along with a larger enemy AI/weapon-variety overhaul (goal-directed patrol,
 aggro range, enemy ranged combat, player melee, per-weapon-archetype behavior) planned as a
 separate, more heavily-designed phase.
+
+## Bigger forests, denser trees (2026-07-04, follow-up)
+
+Forest radius raised from 50-90 to 78-92 - the top of that range (~92) is the largest a zone can
+ever be given the world's spawn-ring/edge-mountain geometry, so this is effectively maxed out
+without enlarging `WORLD_BOUNDARY_RADIUS` itself. `FOREST_ZONE_CELL_SIZE` raised 160 -> 200 to
+stay comfortably above 2x the new max radius. Tree density roughly doubled by doubling
+`VEGETATION_FOREST_EXTRA_CANDIDATES` (220 -> 440), `VEGETATION_MAX_PER_CHUNK_PER_TYPE` (80 -> 160,
+so the per-chunk cap doesn't bottleneck the extra candidates), and `VEGETATION_INSTANCE_CAPACITY`
+(5000 -> 10000, headroom for the higher counts). Re-verified the guaranteed-zone mechanism still
+holds >=2 forests and >=2 towns at the new radius across 200 random seeds; full smoke suite green.
