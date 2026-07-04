@@ -13,7 +13,7 @@ function createWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | n
 
   const thumbnail = document.createElement('div');
   thumbnail.style.cssText =
-    'flex-shrink:0; width:72px; height:72px; border-radius:6px; background:rgba(0,0,0,0.25);' +
+    'flex-shrink:0; width:112px; height:112px; border-radius:6px; background:rgba(0,0,0,0.25);' +
     ' display:flex; align-items:center; justify-content:center; overflow:hidden;';
   if (thumbnailDataUrl) {
     const img = document.createElement('img');
@@ -60,7 +60,7 @@ export class InventoryPanel {
     this.overlay = createOverlay();
 
     const panel = createPanel();
-    panel.style.width = '520px';
+    panel.style.width = '580px';
     panel.appendChild(createPanelTitle('INVENTORY'));
 
     const list = document.createElement('div');

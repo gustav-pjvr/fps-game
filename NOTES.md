@@ -482,5 +482,64 @@ each weapon's glTF load; `App` was updated to await it before showing the main m
 Code-reviewed (agent pass): no CRITICAL/HIGH/MEDIUM findings, one cosmetic LOW (stale comments
 still saying "WORLD_SEED" - fixed).
 
-**Deferred (explicitly paused, not started):** roads connecting town buildings; Step 5 (ladder
-sensor collider + player climbing state machine).
+## Guaranteed towns/forests, bigger towns, larger inventory previews (2026-07-04)
+
+**Guaranteed minimum towns/forests per world.** Previously flat zones (towns) and forest zones
+were placed purely by a per-cell density roll on a jittered hash-grid, so a run of bad luck could
+generate a world with very few or even zero towns/forests. `ZoneMap.ts` now force-places
+`GUARANTEED_ZONE_COUNT` (2) full-size sites of each type directly - `computeGuaranteedSites()`
+picks positions at evenly-spread angles around spawn, each at a distance sampled from the exact
+band where a full-`radiusMin` zone is mathematically guaranteed to clear both the spawn ring and
+the world edge, then assigns each to whichever grid cell it lands in. `siteForCell()` checks this
+list first and returns a guaranteed site verbatim, bypassing the density roll for that cell.
+
+This went through several iterations before landing correctly, all confirmed via direct numeric
+testing (see below) rather than trusting the math by inspection:
+- A random angle/distance sampler that floor-divided into grid cells only ever reached ~4 distinct
+  cells (the zone's cell size is large relative to the safe annulus), so a bad seed could still
+  fail regardless of how many samples were tried.
+- Enumerating every cell exhaustively but requiring its *natural* hash-jittered position to already
+  fit a full-size zone left most seeds with zero eligible cells - positions aren't something that
+  approach can choose, only accept or reject, and the safe annulus is narrow.
+- The final approach (constructing positions directly) initially had two subtler bugs caught by a
+  code-review pass: (1) the distance band was measured from spawn, but the edge-clearance check
+  measures from world origin, and spawn sits 8 units off-origin, so ~11% of seeds produced a
+  guaranteed zone smaller than its stated minimum radius; (2) the two guaranteed sites' collision
+  check rejected merely-*adjacent* grid cells (not just exact duplicates), and since the safe
+  annulus is smaller than one grid cell, nearly every angle pair ends up adjacent to any other -
+  the retry loop exhausted its budget without escaping. Both fixed (band now accounts for the
+  spawn/origin offset; collision check only rejects exact cell matches, since adjacent guaranteed
+  sites are already handled correctly by the existing nearest-site-wins logic). Re-verified via a
+  throwaway script driving the real production code across 500 fresh random seeds post-fix: zero
+  radius-floor violations, zero seeds with fewer than 2 towns or forests. Also directly verified
+  every guaranteed site's full footprint (center ± radius) stays within the loaded chunk range
+  (`[-400, 400)`) - not a boundary/streaming issue.
+
+**Bigger towns.** `TOWN_MIN_BUILDINGS`/`TOWN_MAX_BUILDINGS` raised from 15-30 to 30-45.
+`FLAT_ZONE_RADIUS_MIN/MAX` narrowed from 60-100 to 65-90 (radii above ~92 could never pass the
+spawn/edge clearance check anyway, so the old range wasted a third of its rolls);
+`FLAT_ZONE_INNER_FRACTION` raised from 0.6 to 0.85 so more of each zone reads as genuinely flat;
+`TOWN_BUILDING_SPACING_MARGIN` tightened and `TOWN_MAX_PLACEMENT_ATTEMPTS` raised so rejection
+sampling can still pack 30-45 buildings in. Verified via a script replaying the real placement
+algorithm against production config across 40 random seeds: every town hit at least 30 buildings.
+
+**Bug found and fixed: bigger/guaranteed towns exposed a sprint-test false failure, not a game
+bug.** `e2e/world-bounds.spec.ts` (sprints the player in a fixed heading toward the world edge)
+started timing out after the above changes - a screenshot at the stuck position showed the player
+flush against a building's flat wall, HP dropping from a nearby enemy. This is *correct* physics:
+holding pure forward with zero strafe against a wall exactly perpendicular to travel direction
+has no tangential component to slide along, so Rapier's character controller correctly grinds to
+a near-standstill - a real player would just strafe around it. Bigger, guaranteed towns just make
+a fixed-heading sprint far more likely to run straight into a wall. Fixed the test (not the game)
+to nudge sideways (alternating `KeyA`/`KeyD`) whenever forward progress stalls, emulating how a
+real player would route around an obstacle, while asserting the same final boundary-safety
+invariants. Re-ran 3x clean after the fix.
+
+**Inventory: larger previews.** Thumbnail render resolution raised 96px -> 192px, displayed size
+72px -> 112px, panel width 520px -> 580px, so players can actually make out each weapon's shape.
+
+**Still deferred (paused pending user go-ahead on order):** roads connecting town buildings;
+Step 5 (ladder sensor collider + player climbing state machine) - both now next up per the user's
+latest direction, along with a larger enemy AI/weapon-variety overhaul (goal-directed patrol,
+aggro range, enemy ranged combat, player melee, per-weapon-archetype behavior) planned as a
+separate, more heavily-designed phase.

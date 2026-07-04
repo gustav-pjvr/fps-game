@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-const THUMBNAIL_SIZE = 96;
+// Rendered larger than the 72px slot the old inventory card used, since the card was enlarged to
+// 112px so players can actually make out each weapon's shape/details, not just its silhouette.
+const THUMBNAIL_SIZE = 192;
 
 /**
  * Renders one static PNG data URL of a weapon model at a flattering 3/4 angle, for the inventory

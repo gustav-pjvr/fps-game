@@ -192,9 +192,16 @@ export const FLAT_ZONE_SEED_OFFSET = 10;
  * cell size stays comfortably above 2x the max radius to keep site-overlap rejections rare. */
 export const FLAT_ZONE_CELL_SIZE = 230;
 export const FLAT_ZONE_DENSITY = 0.45;
-export const FLAT_ZONE_RADIUS_MIN = 60;
-export const FLAT_ZONE_RADIUS_MAX = 100;
-export const FLAT_ZONE_INNER_FRACTION = 0.6;
+/** Narrowed from 60-100 to 65-90: isSiteClear rejects any site whose radius plus its distance from
+ * spawn/world-edge doesn't fit the available annulus, which - given ENEMY_RING_BASE_RADIUS,
+ * ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START below - makes radii above ~92 always fail regardless
+ * of position. The old 60-100 range wasted roughly a third of its rolls on sites that could never
+ * pass; this range stays fully inside the feasible band so no roll is wasted. */
+export const FLAT_ZONE_RADIUS_MIN = 65;
+export const FLAT_ZONE_RADIUS_MAX = 90;
+/** Raised from 0.6 - a town needs a genuinely large flat plateau to fit 30+ buildings without
+ * their footprints creeping onto the smoothstep rim (still-sloping ground near the zone's edge). */
+export const FLAT_ZONE_INNER_FRACTION = 0.85;
 
 export const FOREST_ZONE_SEED_OFFSET = 11;
 export const FOREST_ZONE_CELL_SIZE = 160;
@@ -207,20 +214,26 @@ export const FOREST_ZONE_INNER_FRACTION = 0.6;
  * ring, at the zone-presence level so a town or forest can never partially spill into either. */
 export const ZONE_EDGE_MARGIN = 30;
 
+/** At least this many flat-zone (town) and forest-zone sites are force-placed every world,
+ * regardless of the density roll below, so a run of bad luck can never generate a world with too
+ * few or zero towns/forests - see ZoneMap.ts's guaranteed-cell mechanism. */
+export const GUARANTEED_ZONE_COUNT = 2;
+
 export const TOWN_LAYOUT_SEED_OFFSET = 12;
-/** Bumped from 4-8 per project decision ("towns must consist of a lot more buildings") - paired
- * with the larger flat-zone radii above and a much higher placement-attempt budget below, since
- * packing this many buildings via rejection sampling needs many more tries to succeed. */
-export const TOWN_MIN_BUILDINGS = 15;
-export const TOWN_MAX_BUILDINGS = 30;
+/** Raised from 4-8, then again from 15-30, per project decision ("towns must consist of a
+ * minimum of 30 buildings") - paired with the larger flat-zone plateau above and a much higher
+ * placement-attempt budget below, since packing this many buildings via rejection sampling needs
+ * many more tries to succeed. */
+export const TOWN_MIN_BUILDINGS = 30;
+export const TOWN_MAX_BUILDINGS = 45;
 /** Buildings are only placed within this fraction of the flat zone's radius, keeping the whole
- * footprint inside the flat core (membership ~1) rather than the smoothstep rim where the terrain
- * is still transitioning back to natural height. */
-export const TOWN_BUILD_FRACTION = 0.75;
-/** Tighter than the original 6 - a town with 15-30 buildings should read as a dense, real town,
+ * footprint inside the flat core (membership ~1, given FLAT_ZONE_INNER_FRACTION above) rather than
+ * the smoothstep rim where the terrain is still transitioning back to natural height. */
+export const TOWN_BUILD_FRACTION = 0.8;
+/** Tighter than the original 6 - a town with 30-45 buildings should read as a dense, real town,
  * not the same spacing stretched thin over more buildings. */
-export const TOWN_BUILDING_SPACING_MARGIN = 3;
-export const TOWN_MAX_PLACEMENT_ATTEMPTS = 400;
+export const TOWN_BUILDING_SPACING_MARGIN = 2;
+export const TOWN_MAX_PLACEMENT_ATTEMPTS = 800;
 
 /**
  * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,

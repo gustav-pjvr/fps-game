@@ -16,20 +16,37 @@ test('player is held within the world boundary when sprinting straight at it', a
   await page.keyboard.down('ShiftLeft');
   await page.keyboard.down('KeyW');
 
-  // Poll in-browser rather than a fixed wall-clock wait - headless Chromium throttles rAF for
-  // backgrounded/unfocused tabs, so simulated distance per real second isn't a fixed rate. Now
-  // that the world has real obstacles (buildings, collidable rocks), a fixed-heading sprint can
-  // also temporarily snag on one and need the character controller's sliding behavior to clear it
-  // - budget extra time for that rather than assuming a clear line to the edge.
-  await page.waitForFunction(
-    (hardClampRadius) => {
-      const p = window.__gameDebug?.getPlayerPosition();
-      if (!p) return false;
-      return Math.sqrt(p.x * p.x + p.z * p.z) > hardClampRadius - 2;
-    },
-    WORLD_HARD_CLAMP_RADIUS,
-    { timeout: 300_000, polling: 500 },
-  );
+  // Towns are now guaranteed to exist and are large, so a fixed heading has real odds of running
+  // straight into a building's flat wall face - and holding pure forward with zero strafe against
+  // a wall exactly perpendicular to travel direction correctly slides to a near-standstill (there's
+  // no tangential input component to slide along). That's correct player-controller behavior, not a
+  // bug: a real player would just strafe around it. So this polls progress and nudges sideways
+  // (alternating direction so it doesn't just oscillate into a corner) whenever forward progress
+  // stalls, the same way a real player would route around an obstacle in their path.
+  const deadline = Date.now() + 300_000;
+  let lastPosition = await page.evaluate(() => window.__gameDebug?.getPlayerPosition());
+  let stuckStrikes = 0;
+
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(3000);
+    const position = await page.evaluate(() => window.__gameDebug?.getPlayerPosition());
+    if (!position) break;
+
+    const horizontalDistance = Math.sqrt(position.x * position.x + position.z * position.z);
+    if (horizontalDistance > WORLD_HARD_CLAMP_RADIUS - 2) break;
+
+    const progress = lastPosition ? Math.hypot(position.x - lastPosition.x, position.z - lastPosition.z) : Infinity;
+    if (progress < 2) {
+      stuckStrikes++;
+      const strafeKey = stuckStrikes % 2 === 0 ? 'KeyD' : 'KeyA';
+      await page.keyboard.down(strafeKey);
+      await page.waitForTimeout(1200);
+      await page.keyboard.up(strafeKey);
+    } else {
+      stuckStrikes = 0;
+    }
+    lastPosition = position;
+  }
 
   await page.keyboard.up('KeyW');
   await page.keyboard.up('ShiftLeft');
