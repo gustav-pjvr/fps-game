@@ -58,6 +58,50 @@ Verified in-browser via screenshot (not just typecheck) - confirmed the sky grad
 the ground texture tiles without visible seams, fog blends toward the horizon, and no reference
 boxes remain. All 16 existing smoke tests plus the Step 1 boundary test still pass.
 
+## World Plan §6 step 3 — vegetation, and three real bugs found by actually looking at it
+
+Added `VegetationManager`: per-chunk deterministic scatter of trees/bushes/rocks (Kenney Nature
+Kit, CC0, real files verified via the Kenney site's own zip link - see
+`public/assets/credits/nature-kit-LICENSE.txt`), rendered through one shared `THREE.InstancedMesh`
+per (vegetation type, sub-mesh) pair so the whole bounded world's vegetation costs a handful of
+draw calls, not one per plant. Density is gated by a second low-frequency simplex noise field so
+trees/bushes/rocks cluster into forest patches and clearings instead of uniform speckling. Trees
+get a fixed-body cylinder trunk collider; bushes/rocks are visual-only. Wired into `ChunkManager`
+via a new generic `ChunkStreamHooks` interface (`onChunkLoaded`/`onChunkUnloaded`) so terrain
+streaming stays decoupled from what else hangs off it.
+
+Screenshotting the result (not just trusting the code) surfaced three real, non-obvious bugs before
+this could be called done:
+
+1. **Vegetation rendered almost solid black except a thin rim highlight, view-angle dependent.**
+   Root cause: Kenney's Nature Kit glTF export bakes `metallicFactor: 1` into every material -
+   unlike the Blaster Kit/Mini Characters packs already used elsewhere in this project, which
+   correctly export `metallic: 0`. With no `scene.environment` for image-based lighting, a fully
+   metallic `MeshStandardMaterial` has near-zero diffuse reflectance and only shows a grazing
+   specular glint - looks fine by coincidence at some angles, solid black at most others. Fixed by
+   forcing `material.metalness = 0` on every extracted primitive in `extractBakedPrimitives`.
+   Confirmed via before/after screenshots at both distance and close range.
+2. **A real frame-rate regression that broke an unrelated, timing-sensitive e2e test.** The
+   auto-reload test (fires 12 timed shots, expects the 13th to trigger reload) started timing out
+   after this change - not because reload logic changed, but because `markPoolsDirty()` set every
+   `InstancedMesh.count` to the full fixed pool capacity (500) regardless of how many instances
+   were actually placed, so the GPU was drawing and shadow-casting hundreds of degenerate
+   zero-scale instances per type every frame. Fixed by capping `mesh.count` at the high-water mark
+   of indices actually ever allocated (`pool.nextFreeIndex`, clamped to capacity). Caught by
+   actually re-running the full suite after the change instead of assuming an unrelated system
+   couldn't be affected - a frame-budget regression in one system can silently fail a test in a
+   completely different one whenever that test's assertions are wall-clock-timed.
+3. **Code review caught a spawn-safety gap before it shipped**: the "don't place vegetation on top
+   of the player" check measured distance from world origin `(0,0)` with a 6-unit radius, but the
+   actual spawn point is `(SPAWN_X, SPAWN_Z) = (0, 8)` and the largest encounter ring extends 25
+   units from it - meaning a tree's solid trunk collider could have generated inside the entire
+   combat ring, or right on top of the player at spawn. Fixed by moving `SPAWN_X`/`SPAWN_Z`/
+   `ENEMY_RING_BASE_RADIUS` into `config.ts` as shared constants and measuring clearance from the
+   real spawn point with a radius that actually covers the ring
+   (`VEGETATION_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS + 5`).
+
+All 16 smoke tests pass after both the performance fix and the spawn-clearance fix.
+
 ## User-caught bug: rifle view model rendered backwards/tilted
 
 Reported with a screenshot after the Fable pass. `blaster-e`'s `rotationYOffset: Math.PI` was an

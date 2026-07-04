@@ -34,6 +34,13 @@ interface LoadedChunk {
   chunk: Chunk;
 }
 
+/** Lets other per-chunk content (vegetation, buildings) hang its own placement/cleanup off terrain
+ * streaming without ChunkManager needing to know those systems exist. */
+export interface ChunkStreamHooks {
+  onChunkLoaded?: (cx: number, cz: number, originX: number, originZ: number, size: number) => void;
+  onChunkUnloaded?: (cx: number, cz: number) => void;
+}
+
 function chunkKey(cx: number, cz: number): string {
   return `${cx},${cz}`;
 }
@@ -46,6 +53,7 @@ export class ChunkManager {
   constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
+    private readonly hooks: ChunkStreamHooks = {},
   ) {
     this.material = createGroundMaterial();
   }
@@ -91,19 +99,23 @@ export class ChunkManager {
   }
 
   private loadChunk(cx: number, cz: number): void {
+    const originX = cx * TERRAIN_CHUNK_SIZE;
+    const originZ = cz * TERRAIN_CHUNK_SIZE;
     const chunk = new Chunk(this.physics, this.material, {
-      originX: cx * TERRAIN_CHUNK_SIZE,
-      originZ: cz * TERRAIN_CHUNK_SIZE,
+      originX,
+      originZ,
       size: TERRAIN_CHUNK_SIZE,
       resolution: TERRAIN_RESOLUTION,
     });
     this.scene.add(chunk.mesh);
     this.loaded.set(chunkKey(cx, cz), { cx, cz, chunk });
+    this.hooks.onChunkLoaded?.(cx, cz, originX, originZ, TERRAIN_CHUNK_SIZE);
   }
 
   private unloadChunk(key: string, entry: LoadedChunk): void {
     this.scene.remove(entry.chunk.mesh);
     entry.chunk.dispose(this.physics);
     this.loaded.delete(key);
+    this.hooks.onChunkUnloaded?.(entry.cx, entry.cz);
   }
 }

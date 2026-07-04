@@ -3,6 +3,13 @@ export const MAX_FRAME_TIME = 0.25;
 
 export const WORLD_SEED = 1337;
 
+/** Match spawn point and the largest encounter ring drawn around it (enemies use a bigger ring
+ * than targets - see Game.ringRadius) - shared with VegetationManager so placement can keep world
+ * content out of the actual spawn/combat area, not just world origin (0,0). */
+export const SPAWN_X = 0;
+export const SPAWN_Z = 8;
+export const ENEMY_RING_BASE_RADIUS = 25;
+
 export const CAMERA_FOV = 75;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
@@ -117,6 +124,31 @@ export const TERRAIN_EDGE_RIDGE_WEIGHT = 0.1;
 export const WORLD_SOFT_PUSH_START_RADIUS = WORLD_BOUNDARY_RADIUS - 100;
 export const WORLD_HARD_CLAMP_RADIUS = WORLD_BOUNDARY_RADIUS - 5;
 export const WORLD_EDGE_PUSH_SPEED = 6;
+
+/**
+ * Vegetation scatter (WORLD_PLAN.md §4): per-chunk deterministic placement, density-thresholded
+ * against a secondary low-frequency noise field so trees/bushes/rocks cluster into forest patches
+ * and clearings instead of being uniformly speckled. Trees need the highest density (deep forest
+ * only), rocks the lowest (scattered even in clearings); some ground is left with none of the three
+ * so combat sightlines/movement aren't universally obstructed.
+ */
+export const VEGETATION_CANDIDATES_PER_CHUNK = 24;
+export const VEGETATION_DENSITY_NOISE_FREQUENCY = 0.02;
+export const VEGETATION_TREE_DENSITY_THRESHOLD = 0.62;
+export const VEGETATION_BUSH_DENSITY_THRESHOLD = 0.45;
+export const VEGETATION_ROCK_DENSITY_THRESHOLD = 0.3;
+export const VEGETATION_SCALE_VARIANCE = 0.15;
+/** Measured from the actual spawn point (SPAWN_X, SPAWN_Z), not world origin - must clear the
+ * largest encounter ring (ENEMY_RING_BASE_RADIUS) so a tree's solid trunk collider can never land
+ * inside the combat area or on top of the player at spawn. */
+export const VEGETATION_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS + 5;
+/** Caps worst-case instances per type per chunk (e.g. an entire chunk landing in a dense noise
+ * peak) so the fixed-capacity InstancedMesh pools below always have room for every loaded chunk. */
+export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 8;
+/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 8 = 392 worst case
+ * per type - comfortable margin above that for the shared instance pools. */
+export const VEGETATION_INSTANCE_CAPACITY = 500;
+export const VEGETATION_TRUNK_RADIUS = 0.35;
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;

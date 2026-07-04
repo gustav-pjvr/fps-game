@@ -6,6 +6,7 @@ import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
+import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -22,13 +23,10 @@ import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
-import { SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z } from './config.ts';
+import { ENEMY_RING_BASE_RADIUS, SPAWN_X, SPAWN_Z, SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z } from './config.ts';
 
-const SPAWN_X = 0;
-const SPAWN_Z = 8;
 const SPAWN_HEIGHT_OFFSET = 2;
 const TARGET_RING_BASE_RADIUS = 15;
-const ENEMY_RING_BASE_RADIUS = 25;
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
@@ -159,7 +157,13 @@ export class Game {
 
     Game.addLighting(renderer.scene);
 
-    const chunkManager = new ChunkManager(renderer.scene, physics);
+    onProgress?.('Growing vegetation…', 0.02);
+    const vegetation = await VegetationManager.create(renderer.scene, physics);
+
+    const chunkManager = new ChunkManager(renderer.scene, physics, {
+      onChunkLoaded: (cx, cz, originX, originZ, size) => vegetation.placeForChunk(cx, cz, originX, originZ, size),
+      onChunkUnloaded: (cx, cz) => vegetation.removeChunk(cx, cz),
+    });
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
     for (let i = 0; i < 30; i++) {
       chunkManager.update(SPAWN_X, SPAWN_Z);
