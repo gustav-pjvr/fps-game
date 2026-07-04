@@ -146,11 +146,14 @@ export const VEGETATION_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS + 5;
  * peak/thicket) so the fixed-capacity InstancedMesh pools below always have room for every loaded
  * chunk. Sized for extreme forest packing (see VEGETATION_TREE_MIN_SPACING_DENSE), not just the
  * gentle clustering this cap originally covered. */
-export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 80;
-/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 80 = 3920 worst
+/** Doubled per project decision ("spawn even more trees in a forest area, like 2x the amount") -
+ * paired with the doubled VEGETATION_FOREST_EXTRA_CANDIDATES below so the per-chunk cap isn't the
+ * bottleneck on the higher candidate count actually landing more trees. */
+export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 160;
+/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 160 = 7840 worst
  * case per type - comfortable margin above that for the shared instance pools. InstancedMesh
  * handles thousands of instances cheaply, so this is sized for the worst case, not the average. */
-export const VEGETATION_INSTANCE_CAPACITY = 5000;
+export const VEGETATION_INSTANCE_CAPACITY = 10000;
 export const VEGETATION_TRUNK_RADIUS = 0.35;
 /** Outside any forest zone, trees are rare stragglers rather than absent entirely - reads more
  * natural than a hard cutoff at the forest boundary. */
@@ -166,7 +169,9 @@ export const FOREST_TREE_THRESHOLD_DROP = 0.5;
  * needs many more placement attempts than gentle clustering did.
  */
 export const VEGETATION_FOREST_TEXTURE_FREQUENCY = 0.15;
-export const VEGETATION_FOREST_EXTRA_CANDIDATES = 220;
+/** Doubled from 220 (see project decision above) - roughly doubles the number of trees that
+ * actually land in a forest chunk, alongside the doubled per-chunk cap and instance pool above. */
+export const VEGETATION_FOREST_EXTRA_CANDIDATES = 440;
 /** Minimum trunk-center-to-trunk-center spacing enforced between trees placed in the same chunk.
  * DENSE is a deliberately tight squeeze: with VEGETATION_TRUNK_RADIUS = 0.35 trunks and a player
  * capsule radius of 0.4, 1.8 leaves ~1.1 units of clear gap between trunk surfaces - passable, but
@@ -204,10 +209,18 @@ export const FLAT_ZONE_RADIUS_MAX = 90;
 export const FLAT_ZONE_INNER_FRACTION = 0.85;
 
 export const FOREST_ZONE_SEED_OFFSET = 11;
-export const FOREST_ZONE_CELL_SIZE = 160;
+/** Raised from 160 to stay comfortably above 2x the max radius below (avoids frequent site-overlap
+ * rejections at the larger radius - see the matching FLAT_ZONE_CELL_SIZE comment). */
+export const FOREST_ZONE_CELL_SIZE = 200;
 export const FOREST_ZONE_DENSITY = 0.45;
-export const FOREST_ZONE_RADIUS_MIN = 50;
-export const FOREST_ZONE_RADIUS_MAX = 90;
+/** Raised from 50-90 per project decision ("forest radius should increase a lot"), pushed right up
+ * to the world's geometric ceiling: isSiteClear (see below) rejects any site whose radius plus its
+ * distance from spawn/world-edge doesn't fit the available annulus, which given
+ * ENEMY_RING_BASE_RADIUS, ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START makes radii above ~92 always
+ * fail regardless of position - this is the largest a forest zone can ever be without enlarging the
+ * world itself (WORLD_BOUNDARY_RADIUS). */
+export const FOREST_ZONE_RADIUS_MIN = 78;
+export const FOREST_ZONE_RADIUS_MAX = 92;
 export const FOREST_ZONE_INNER_FRACTION = 0.6;
 
 /** Keeps zone sites clear of both the world edge (mountain ring/hard clamp) and the spawn/combat
