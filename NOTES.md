@@ -569,3 +569,69 @@ town's position from the match's world seed, walked straight there, screenshotte
 render correctly between buildings. Code-reviewed: zero findings (chunk-ownership margin math,
 resource cleanup, MST correctness, and the plane-rotation math were all independently verified,
 not just visually sampled once).
+
+## Ladder climbing (2026-07-04, Phase 3 continued)
+
+Implemented WORLD_PLAN.md §3's climb-by-contact mechanic: `BuildingManager.createBuilding()` gives
+every building a sensor collider (`RAPIER.ColliderDesc.cuboid(...).setSensor(true)`) plus a
+procedural low-poly rung ladder mesh, both fixed to the building's world -Z face regardless of the
+building's own rotation (simpler than tracking a rotated "local" face, and every preset's box is
+axis-aligned post-rotation so any face works). `Player.ts` gained a climbing movement state:
+touching the sensor while holding forward suspends gravity and moves straight up
+(`LADDER_CLIMB_SPEED`); releasing forward, holding backward, or reaching the top exits it.
+
+**Real bugs found and fixed, in order, all via direct testing (not just code review):**
+
+1. **Sensor never detected at all.** `PhysicsWorld.isTouchingClimbable()` uses
+   `world.intersectionPairsWith()`, which depends on Rapier's narrow-phase actually tracking an
+   intersection pair between the two colliders - and Rapier's default `ActiveCollisionTypes`
+   (`DYNAMIC_DYNAMIC | DYNAMIC_FIXED | DYNAMIC_KINEMATIC`) does **not** include `KINEMATIC_FIXED`.
+   Since the player is a kinematic body and the ladder sensor sits on a fixed body, no pair was
+   ever tracked - confirmed by `isTouchingClimbable()` staying false even while visibly wedged
+   against the sensor's building. Fixed by explicitly OR-ing in `KINEMATIC_FIXED` on the sensor's
+   `ColliderDesc`.
+2. **Ladder alignment band too narrow to use.** Original `LADDER_WIDTH = 1.2` (±0.6 tolerance) -
+   user playtested and reported being unable to climb despite ladders visually rendering correctly.
+   Root cause: pressing forward into a flat wall has zero tangential/sideways drift (the character
+   controller correctly has nothing to "slide" along when there's no sideways input component -
+   same physics already confirmed for the world-bounds sprint test earlier this session), so a
+   player can't feel their way along a wall to find a narrow band the way they could on an angled
+   surface. Widened to `LADDER_WIDTH = 2.6`.
+3. **Reaching the top dropped the player straight back to the ground, missing the roof.** The
+   original mantle was a horizontal nudge fed through `computeColliderMovement` (the normal
+   physics shape-cast solver) - sometimes worked, often didn't. Root causes (two, compounding):
+   - A fixed mantle distance tuned for one building size overshot or undershot others - fixed by
+     computing the mantle distance (and later, the full target position) per-building from its own
+     `colliderHalfDepth`, registered alongside the climbable sensor.
+   - Even with a correctly-sized distance, the shape-cast itself was unreliable near the wall's own
+     top corner. Replaced entirely: the mantle now **teleports directly** to a precomputed exact
+     roof-center position (`x/y/z` stored on the climbable registration) via
+     `rigidBody.setNextKinematicTranslation`, bypassing the shape-cast solver for this one
+     special-cased action - the same technique many games use for vault/mantle moves.
+4. **Mid-climb, the mantle target could silently swap to a neighboring building's roof.** In a
+   dense town (30-45 buildings, tight spacing), two buildings' ladder sensors can be within reach
+   of each other, and re-querying "any touched climbable" every frame during climbing could pick up
+   the wrong one right as contact was lost, teleporting the player to a roof position nowhere near
+   where they actually were. Fixed by capturing the specific sensor's collider handle once when a
+   climb starts (`activeClimbColliderHandle`) and checking continued contact against that one
+   sensor only for the rest of the climb (`isTouchingSpecificClimbable`), never re-resolving to
+   "whichever is currently closest."
+5. **Test artifact, not a game bug (caught during verification, worth recording since it looked
+   identical to a real failure at first):** an e2e test reactively releasing the forward key after
+   *polling* `isClimbing()` had real lag (Playwright's per-check round-trip vs. the 60fps game
+   loop) - the key stayed logically "held" for extra frames after a successful mantle, walking the
+   test's player forward off whatever roof edge was closest. Direct per-frame instrumentation
+   showed `grounded: true` holding steady immediately after the mantle for as long as the
+   (still-held) forward input was fed in - i.e., the landing itself was fine; the test just kept
+   walking off it. Fixed by using `page.waitForFunction(..., { polling: 'raf' })` (in-browser,
+   no round-trip) to detect climbing start/end instead of a JS-side polling loop.
+
+**Verified:** 4 of 5 clean automated runs (teleporting to a real streamed-in ladder, holding
+forward until climbing naturally starts and ends, per-frame `grounded`/position confirmed stable
+afterward) landed on the roof and stayed there; the fifth didn't engage climbing within the test's
+timeout (alignment/timing, not a landing failure). Full smoke suite (16/16) and world-bounds green
+throughout. **Not yet independently re-confirmed by the user in normal (non-automated) play** after
+the width/mantle/handle-lock fixes above - the original report that prompted fix #2 was against the
+pre-fix version, so a fresh manual check would be worth doing before considering this fully closed.
+Deferred per user direction ("not game-breaking, doesn't affect future tasks") to keep moving on
+the larger enemy AI/weapon-variety overhaul next.

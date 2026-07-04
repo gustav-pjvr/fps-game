@@ -59,6 +59,10 @@ export interface GameDebugApi {
   getCameraFov(): number;
   getCameraChildrenDebug(): unknown[];
   getWorldSeed(): number;
+  isTouchingClimbable(): boolean;
+  isClimbing(): boolean;
+  getActiveLadderPositions(): { x: number; wallFaceZ: number }[];
+  teleport(x: number, y: number, z: number): void;
 }
 
 declare global {
@@ -83,6 +87,7 @@ export class Game {
     private readonly physics: PhysicsWorld,
     private readonly player: Player,
     private readonly chunkManager: ChunkManager,
+    private readonly buildings: BuildingManager,
     private readonly entityManager: EntityManager,
     private readonly weaponManager: WeaponManager,
     private readonly impactMarkers: ImpactMarkers,
@@ -117,6 +122,7 @@ export class Game {
       getEntityCount: () => this.entityManager.count,
       isPointerLocked: () => this.input.isLocked,
       lookAt: (x, y, z) => this.player.debugLookAt(new THREE.Vector3(x, y, z)),
+      teleport: (x, y, z) => this.player.debugTeleport(new THREE.Vector3(x, y, z)),
       getLiveEntityPositions: () =>
         this.entityManager.getLiveEntityPositions().map((p) => ({ x: p.x, y: p.y, z: p.z })),
       raycastForward: () => {
@@ -145,6 +151,9 @@ export class Game {
           })),
         })),
       getWorldSeed: () => getWorldSeed(),
+      isTouchingClimbable: () => this.player.isTouchingClimbable,
+      isClimbing: () => this.player.isClimbing,
+      getActiveLadderPositions: () => this.buildings.getActiveLadderPositions(),
     };
   }
 
@@ -262,6 +271,7 @@ export class Game {
       physics,
       player,
       chunkManager,
+      buildings,
       entityManager,
       weaponManager,
       impactMarkers,

@@ -10,6 +10,11 @@ import { getFlatZoneSite, type FlatZoneSite } from './ZoneMap.ts';
 import {
   FLAT_ZONE_CELL_SIZE,
   FLAT_ZONE_RADIUS_MAX,
+  LADDER_ROOF_CLEARANCE,
+  LADDER_SENSOR_DEPTH,
+  LADDER_TOP_MARGIN,
+  LADDER_WIDTH,
+  PLAYER_HEIGHT,
   TOWN_BUILD_FRACTION,
   TOWN_BUILDING_SPACING_MARGIN,
   TOWN_LAYOUT_SEED_OFFSET,
@@ -66,6 +71,12 @@ interface PlacedBuilding {
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandle: number;
+  ladderColliderHandle: number;
+  ladderGroup: THREE.Object3D;
+  /** Exact ladder face position (world X of its center, world Z of the wall it's flush against) -
+   * kept for debug/test tooling to navigate precisely to a known ladder rather than guessing. */
+  ladderX: number;
+  ladderWallFaceZ: number;
 }
 
 /** Measures a freshly loaded prefab's real bounding box rather than trusting hand-inspected
@@ -106,12 +117,15 @@ export class BuildingManager {
   private readonly townLayoutCache = new Map<string, TownLayout>();
   private readonly activeBuildings = new Map<string, PlacedBuilding>();
   private readonly chunkOwnedBuildingIds = new Map<string, string[]>();
+  private readonly ladderMaterial: THREE.Material;
 
   private constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly presets: BuildingPreset[],
-  ) {}
+  ) {
+    this.ladderMaterial = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 });
+  }
 
   static async create(scene: THREE.Scene, physics: PhysicsWorld): Promise<BuildingManager> {
     const presets: BuildingPreset[] = [];
@@ -168,6 +182,19 @@ export class BuildingManager {
       if (!building) continue;
 
       this.scene.remove(building.group);
+
+      this.scene.remove(building.ladderGroup);
+      building.ladderGroup.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      });
+
+      // Ladder collider is a JS-side tag (climbableColliders is not physics-managed), so it must
+      // be cleared explicitly - otherwise a future collider that reuses this same handle number
+      // (Rapier recycles freed handles) would silently inherit "this is climbable" from a building
+      // that no longer exists.
+      const ladderCollider = this.physics.world.getCollider(building.ladderColliderHandle);
+      if (ladderCollider) this.physics.unregisterClimbable(ladderCollider);
+
       const collider = this.physics.world.getCollider(building.colliderHandle);
       if (collider) this.physics.world.removeCollider(collider, true);
       const rigidBody = this.physics.world.getRigidBody(building.rigidBodyHandle);
@@ -272,6 +299,87 @@ export class BuildingManager {
     const colliderDesc = RAPIER.ColliderDesc.cuboid(colliderHalfWidth, preset.height / 2, colliderHalfDepth);
     const collider = this.physics.world.createCollider(colliderDesc, rigidBody);
 
-    return { group, rigidBodyHandle: rigidBody.handle, colliderHandle: collider.handle };
+    // Ladder always goes on the world -Z face of the collider box, regardless of the building's
+    // own rotation - simpler than picking a "local" pre-rotation face (WORLD_PLAN.md §3 only calls
+    // for "one face," not a specific one), and every preset's box is axis-aligned after rotation
+    // (only 0/90/180/270 are used) so any face is a valid flat side to hang a ladder on.
+    const ladderHalfHeight = (preset.height + LADDER_TOP_MARGIN) / 2;
+    const ladderColliderDesc = RAPIER.ColliderDesc.cuboid(LADDER_WIDTH / 2, ladderHalfHeight, LADDER_SENSOR_DEPTH / 2)
+      .setTranslation(0, LADDER_TOP_MARGIN / 2, -(colliderHalfDepth + LADDER_SENSOR_DEPTH / 2))
+      .setSensor(true)
+      // Rapier's default active collision types (DEFAULT = DYNAMIC_DYNAMIC | DYNAMIC_FIXED |
+      // DYNAMIC_KINEMATIC) does NOT include KINEMATIC_FIXED - since the player is a kinematic
+      // body and this sensor is on a fixed body, the narrow-phase would never track an
+      // intersection pair between them without explicitly opting in, and world.intersectionPairsWith
+      // (unlike the character controller's own shape-cast queries) depends on that tracked pair
+      // existing. Confirmed via direct testing: isTouchingClimbable() stayed false even while
+      // visibly wedged against the sensor's building until this was added.
+      .setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED);
+    const ladderCollider = this.physics.world.createCollider(ladderColliderDesc, rigidBody);
+    // The mantle snaps the player directly to this exact position rather than moving them there
+    // via the physics shape-cast solver (see Player.ts) - direct teleport-on-reaching-the-top was
+    // confirmed via direct testing to be far more reliable than a shape-cast nudge, which
+    // sometimes clipped the wall's own top corner and dropped the player back to the ground
+    // instead of landing them on the roof. Landing at the roof's exact center (both X and Z) keeps
+    // clearance from every edge regardless of how large or small this particular preset's
+    // footprint is - a fixed mantle distance tuned for a tall tower could send a player clean over
+    // a small house's shallower roof instead of landing on it.
+    this.physics.registerClimbable(ladderCollider, {
+      colliderHandle: ladderCollider.handle,
+      x: colliderCenterX,
+      y: groundY + preset.height + PLAYER_HEIGHT / 2 + LADDER_ROOF_CLEARANCE,
+      z: colliderCenterZ,
+    });
+
+    const ladderGroup = this.createLadderVisual(preset.height, colliderCenterX, groundY, colliderCenterZ - colliderHalfDepth);
+    this.scene.add(ladderGroup);
+
+    return {
+      group,
+      rigidBodyHandle: rigidBody.handle,
+      colliderHandle: collider.handle,
+      ladderColliderHandle: ladderCollider.handle,
+      ladderGroup,
+      ladderX: colliderCenterX,
+      ladderWallFaceZ: colliderCenterZ - colliderHalfDepth,
+    };
+  }
+
+  /** Debug/test-only: exact ladder positions for every currently-streamed-in building, so e2e
+   * tests can navigate precisely to a known ladder instead of guessing blindly at one. */
+  getActiveLadderPositions(): { x: number; wallFaceZ: number }[] {
+    return Array.from(this.activeBuildings.values(), (b) => ({ x: b.ladderX, wallFaceZ: b.ladderWallFaceZ }));
+  }
+
+  /** Simple procedural rung ladder (two rails + evenly-spaced rungs) rather than a sourced/textured
+   * asset - matches the project's existing placeholder-primitive style for non-hero geometry (rocks,
+   * targets, etc. - see NOTES.md), and keeps this feature self-contained without a new asset
+   * dependency. Positioned flush against a wall's world -Z face, spanning from the ground to the
+   * building's actual roof height (the sensor collider extends further, by LADDER_TOP_MARGIN, but
+   * the visible ladder stopping at the roofline reads correctly). */
+  private createLadderVisual(height: number, worldX: number, groundY: number, wallFaceZ: number): THREE.Group {
+    const group = new THREE.Group();
+    const railThickness = 0.08;
+    const railInset = LADDER_WIDTH / 2 - railThickness / 2;
+    const railGeometry = new THREE.BoxGeometry(railThickness, height, railThickness);
+    const rungGeometry = new THREE.BoxGeometry(LADDER_WIDTH - railThickness, railThickness, railThickness);
+
+    for (const sideX of [-railInset, railInset]) {
+      const rail = new THREE.Mesh(railGeometry, this.ladderMaterial);
+      rail.position.set(sideX, height / 2, 0);
+      group.add(rail);
+    }
+
+    const rungSpacing = 0.5;
+    const rungCount = Math.floor(height / rungSpacing);
+    for (let i = 1; i < rungCount; i++) {
+      const rung = new THREE.Mesh(rungGeometry, this.ladderMaterial);
+      rung.position.set(0, i * rungSpacing, 0);
+      group.add(rung);
+    }
+
+    // Nudged slightly outward from the wall face so the rungs don't z-fight with the wall.
+    group.position.set(worldX, groundY, wallFaceZ - 0.05);
+    return group;
   }
 }

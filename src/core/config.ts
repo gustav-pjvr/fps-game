@@ -268,6 +268,32 @@ export const ROAD_COLOR = 0x6b5a45;
  * needed since an axis-aligned box's top is already flat and walkable.
  */
 
+/**
+ * Ladder / climb-by-contact mechanic (WORLD_PLAN.md §3): one fixed local face of each building
+ * (before its per-building rotation) gets a procedural low-poly rung ladder plus a sensor
+ * collider spanning that face. See BuildingManager.ts (ladder creation) and Player.ts (the
+ * climbing movement state).
+ */
+/** Widened from 1.2 (±0.6 tolerance) after confirming via playtesting that a band that narrow was
+ * nearly impossible to walk into deliberately - pressing forward into a flat wall gives zero
+ * sideways slide (no tangential movement component to slide along), so a player can't "feel
+ * along" the wall to find a narrow ladder the way they could slide along an angled surface. */
+export const LADDER_WIDTH = 2.6;
+/** How far the sensor protrudes outward from the wall face - must comfortably exceed
+ * PLAYER_RADIUS so a player standing flush against the wall (blocked by its solid collider) is
+ * already intersecting the sensor, without needing to clip into the wall to reach it. */
+export const LADDER_SENSOR_DEPTH = PLAYER_RADIUS + 0.3;
+/** Extends the sensor above the building's actual roof height, so climbing continues a bit past
+ * roof level before contact is lost and the mantle (a direct teleport to the roof's center - see
+ * registerClimbable/Player.ts) fires - without this margin, exiting right at the roof edge would
+ * trigger the mantle before the player is even clear of the wall's own solid collider. */
+export const LADDER_TOP_MARGIN = 2;
+export const LADDER_CLIMB_SPEED = 4;
+/** Extra clearance above the roof surface the mantle teleport targets, so the player's capsule
+ * doesn't spawn exactly flush with the roof (risking a jittery floating-point contact) - settles
+ * onto the roof from a hair above it instead. */
+export const LADDER_ROOF_CLEARANCE = 0.05;
+
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;
 export const MAX_MATCH_ENTITY_COUNT = 50;
