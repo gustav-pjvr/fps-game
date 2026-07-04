@@ -3,13 +3,19 @@ import { mulberry32 } from '../utils/rng.ts';
 import {
   TERRAIN_AMPLITUDE,
   TERRAIN_BASE_FREQUENCY,
+  TERRAIN_EDGE_RIDGE_FREQUENCY,
+  TERRAIN_EDGE_RIDGE_WEIGHT,
   TERRAIN_LACUNARITY,
   TERRAIN_OCTAVES,
   TERRAIN_PERSISTENCE,
+  WORLD_BOUNDARY_RADIUS,
+  WORLD_EDGE_MOUNTAIN_HEIGHT,
+  WORLD_EDGE_RAMP_START,
   WORLD_SEED,
 } from '../core/config.ts';
 
 const noise2D = createNoise2D(mulberry32(WORLD_SEED));
+const ridgeNoise2D = createNoise2D(mulberry32(WORLD_SEED + 1));
 
 /** Layered (fBm) simplex noise sampled in continuous world coordinates, so neighboring chunks tile seamlessly. */
 export function sampleHeight(worldX: number, worldZ: number): number {
@@ -25,7 +31,24 @@ export function sampleHeight(worldX: number, worldZ: number): number {
     frequency *= TERRAIN_LACUNARITY;
   }
 
-  return (sum / amplitudeSum) * TERRAIN_AMPLITUDE;
+  const baseHeight = (sum / amplitudeSum) * TERRAIN_AMPLITUDE;
+  const distanceFromOrigin = Math.sqrt(worldX * worldX + worldZ * worldZ);
+  return baseHeight + edgeMountainHeight(worldX, worldZ, distanceFromOrigin);
+}
+
+/**
+ * Additive height that ramps up as distance from world origin approaches WORLD_BOUNDARY_RADIUS,
+ * turning the bounded world's edge into a mountain ring (WORLD_PLAN.md §2) instead of a hard stop.
+ * Smoothstep keeps the transition seamless with the interior terrain; ridge noise (a second,
+ * independently seeded field) breaks up the ring so it doesn't read as a uniform dome.
+ */
+function edgeMountainHeight(worldX: number, worldZ: number, distanceFromOrigin: number): number {
+  if (distanceFromOrigin <= WORLD_EDGE_RAMP_START) return 0;
+
+  const t = Math.min(1, (distanceFromOrigin - WORLD_EDGE_RAMP_START) / (WORLD_BOUNDARY_RADIUS - WORLD_EDGE_RAMP_START));
+  const falloff = t * t * (3 - 2 * t);
+  const ridge = ridgeNoise2D(worldX * TERRAIN_EDGE_RIDGE_FREQUENCY, worldZ * TERRAIN_EDGE_RIDGE_FREQUENCY);
+  return falloff * (WORLD_EDGE_MOUNTAIN_HEIGHT + ridge * WORLD_EDGE_MOUNTAIN_HEIGHT * TERRAIN_EDGE_RIDGE_WEIGHT);
 }
 
 /**

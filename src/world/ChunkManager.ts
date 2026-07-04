@@ -2,12 +2,31 @@ import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Chunk } from './Chunk.ts';
 import {
+  GROUND_TEXTURE_REPEAT,
+  GROUND_TEXTURE_URL,
   MAX_CHUNK_GENERATIONS_PER_TICK,
   TERRAIN_CHUNK_SIZE,
   TERRAIN_RESOLUTION,
   UNLOAD_RADIUS_CHUNKS,
   VIEW_RADIUS_CHUNKS,
+  WORLD_MAX_CHUNK,
+  WORLD_MIN_CHUNK,
 } from '../core/config.ts';
+
+function createGroundMaterial(): THREE.Material {
+  const texture = new THREE.TextureLoader().load(GROUND_TEXTURE_URL, undefined, undefined, (error) => {
+    console.error(`Failed to load ground texture from ${GROUND_TEXTURE_URL}`, error);
+  });
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(GROUND_TEXTURE_REPEAT, GROUND_TEXTURE_REPEAT);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshStandardMaterial({ map: texture });
+}
+
+function isWithinWorldBounds(cx: number, cz: number): boolean {
+  return cx >= WORLD_MIN_CHUNK && cx <= WORLD_MAX_CHUNK && cz >= WORLD_MIN_CHUNK && cz <= WORLD_MAX_CHUNK;
+}
 
 interface LoadedChunk {
   cx: number;
@@ -28,7 +47,7 @@ export class ChunkManager {
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
   ) {
-    this.material = new THREE.MeshStandardMaterial({ color: 0x4a7a3a });
+    this.material = createGroundMaterial();
   }
 
   update(playerX: number, playerZ: number): void {
@@ -46,7 +65,7 @@ export class ChunkManager {
       for (let dx = -VIEW_RADIUS_CHUNKS; dx <= VIEW_RADIUS_CHUNKS; dx++) {
         const cx = centerCx + dx;
         const cz = centerCz + dz;
-        if (!this.loaded.has(chunkKey(cx, cz))) {
+        if (isWithinWorldBounds(cx, cz) && !this.loaded.has(chunkKey(cx, cz))) {
           missing.push({ cx, cz, distSq: dx * dx + dz * dz });
         }
       }

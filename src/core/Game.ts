@@ -1,4 +1,3 @@
-import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Renderer } from './Renderer.ts';
 import { InputManager } from '../input/InputManager.ts';
@@ -23,11 +22,11 @@ import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
+import { SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z } from './config.ts';
 
 const SPAWN_X = 0;
 const SPAWN_Z = 8;
 const SPAWN_HEIGHT_OFFSET = 2;
-const REFERENCE_BOX_COLORS = [0xdd4444, 0x4488dd, 0xddaa22, 0x22ddaa];
 const TARGET_RING_BASE_RADIUS = 15;
 const ENEMY_RING_BASE_RADIUS = 25;
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
@@ -159,7 +158,6 @@ export class Game {
     const physics = await PhysicsWorld.create();
 
     Game.addLighting(renderer.scene);
-    Game.addReferenceBoxes(renderer.scene, physics);
 
     const chunkManager = new ChunkManager(renderer.scene, physics);
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
@@ -309,29 +307,9 @@ export class Game {
     scene.add(ambient);
 
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(20, 30, 10);
+    sun.position.set(SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z);
     sun.castShadow = true;
     scene.add(sun);
-  }
-
-  private static addReferenceBoxes(scene: THREE.Scene, physics: PhysicsWorld): void {
-    for (let i = 0; i < REFERENCE_BOX_COLORS.length; i++) {
-      const size = 2;
-      const x = Math.cos((i / REFERENCE_BOX_COLORS.length) * Math.PI * 2) * 10;
-      const z = Math.sin((i / REFERENCE_BOX_COLORS.length) * Math.PI * 2) * 10;
-      const y = sampleHeight(x, z) + size / 2;
-
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(size, size, size),
-        new THREE.MeshStandardMaterial({ color: REFERENCE_BOX_COLORS[i] }),
-      );
-      box.position.set(x, y, z);
-      box.castShadow = true;
-      scene.add(box);
-
-      const boxBody = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
-      physics.world.createCollider(RAPIER.ColliderDesc.cuboid(size / 2, size / 2, size / 2), boxBody);
-    }
   }
 
   /** Ring radius that keeps a fixed base size for small counts but grows for large ones so spawns don't stack. */

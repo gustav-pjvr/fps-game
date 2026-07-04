@@ -1,0 +1,17 @@
+	Aerial Grass Rock (Poly Haven)
+
+	Author: Rob Tuytel
+	Source: https://polyhaven.com/a/aerial_grass_rock
+	Downloaded: aerial_grass_rock_diff_1k.jpg (diffuse map, 1k)
+
+			------------------------------
+
+	License: (Creative Commons Zero, CC0)
+	https://creativecommons.org/publicdomain/zero/1.0/
+
+	You can use this content for personal, educational, and commercial purposes,
+	without attribution required (attribution appreciated but optional).
+
+			------------------------------
+
+	Website: www.polyhaven.com

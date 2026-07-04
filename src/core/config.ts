@@ -7,6 +7,18 @@ export const CAMERA_FOV = 75;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
 
+/** Shared between Game's shadow-casting DirectionalLight and Renderer's Sky shader, so the visible
+ * bright spot in the sky and the direction shadows fall match instead of contradicting each other. */
+export const SUN_DIRECTION_X = 20;
+export const SUN_DIRECTION_Y = 30;
+export const SUN_DIRECTION_Z = 10;
+
+/** Retuned for the bounded world (WORLD_PLAN.md §2/§5): far sits just past WORLD_HARD_CLAMP_RADIUS
+ * so the boundary is concealed by haze rather than visible as a sharp cutoff against clear sky. */
+export const FOG_NEAR = 35;
+export const FOG_FAR = 650;
+export const FOG_COLOR = 0xbfd3e0;
+
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MAX_PITCH = Math.PI / 2 - 0.01;
 
@@ -59,6 +71,12 @@ export const TRACER_COLOR = 0xfff2a8;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;
+
+/** World units covered by one tile of the ground texture. Chosen so TERRAIN_CHUNK_SIZE divides
+ * evenly into it - an integer repeat count keeps the tiling phase-aligned across chunk seams. */
+export const GROUND_TEXTURE_WORLD_SIZE = 10;
+export const GROUND_TEXTURE_REPEAT = TERRAIN_CHUNK_SIZE / GROUND_TEXTURE_WORLD_SIZE;
+export const GROUND_TEXTURE_URL = '/assets/textures/terrain/aerial_grass_rock_diff_1k.jpg';
 export const TERRAIN_OCTAVES = 4;
 export const TERRAIN_BASE_FREQUENCY = 0.015;
 export const TERRAIN_LACUNARITY = 2.0;
@@ -68,6 +86,37 @@ export const TERRAIN_AMPLITUDE = 8;
 export const VIEW_RADIUS_CHUNKS = 2;
 export const UNLOAD_RADIUS_CHUNKS = 3;
 export const MAX_CHUNK_GENERATIONS_PER_TICK = 2;
+
+/** World is bounded (arena-style), not infinite — see WORLD_PLAN.md §2. Chunk coordinates outside
+ * [WORLD_MIN_CHUNK, WORLD_MAX_CHUNK] on either axis are never generated. */
+export const WORLD_SIZE_CHUNKS = 12;
+export const WORLD_MIN_CHUNK = -Math.floor(WORLD_SIZE_CHUNKS / 2);
+export const WORLD_MAX_CHUNK = WORLD_MIN_CHUNK + WORLD_SIZE_CHUNKS - 1;
+
+/** Edge treatment: terrain rises into a mountain ring as distance from world origin approaches the
+ * boundary, so the bound reads as an intentional landform rather than a wall. Radius is the
+ * distance from origin to the nearest edge midpoint of the bounded square. */
+export const WORLD_BOUNDARY_RADIUS = (WORLD_SIZE_CHUNKS / 2) * TERRAIN_CHUNK_SIZE;
+export const WORLD_EDGE_RAMP_START = WORLD_BOUNDARY_RADIUS - 130;
+export const WORLD_EDGE_MOUNTAIN_HEIGHT = 45;
+/** Low frequency (broad, ~1000-unit wavelength) so the ridge only varies gently across the ~130-unit
+ * ramp band - a higher frequency here was verified (see NOTES.md-style empirical check) to fragment
+ * the ramp into small alternating steep/shallow patches that wedged the character controller in a
+ * slow autostep "climbing in place" loop instead of blocking or sliding cleanly. */
+export const TERRAIN_EDGE_RIDGE_FREQUENCY = 0.006;
+export const TERRAIN_EDGE_RIDGE_WEIGHT = 0.1;
+
+/**
+ * Safety net (WORLD_PLAN.md §2): even a smooth mountain ring will eventually exceed the character
+ * controller's max slope-climb angle, which blocks forward progress but doesn't guarantee the
+ * player ends up short of WORLD_BOUNDARY_RADIUS. A gentle inward push begins before the ramp's
+ * steepest patch (soft, not a wall) and an absolute radial clamp - inscribed inside the generated
+ * square so it never crosses into ungenerated terrain - guarantees the player physically cannot
+ * fall through regardless of how the terrain collision resolves.
+ */
+export const WORLD_SOFT_PUSH_START_RADIUS = WORLD_BOUNDARY_RADIUS - 100;
+export const WORLD_HARD_CLAMP_RADIUS = WORLD_BOUNDARY_RADIUS - 5;
+export const WORLD_EDGE_PUSH_SPEED = 6;
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;

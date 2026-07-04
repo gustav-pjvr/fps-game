@@ -1,5 +1,32 @@
 import * as THREE from 'three';
-import { CAMERA_FAR, CAMERA_FOV, CAMERA_NEAR } from './config.ts';
+import { Sky } from 'three/addons/objects/Sky.js';
+import {
+  CAMERA_FAR,
+  CAMERA_FOV,
+  CAMERA_NEAR,
+  FOG_COLOR,
+  FOG_FAR,
+  FOG_NEAR,
+  SUN_DIRECTION_X,
+  SUN_DIRECTION_Y,
+  SUN_DIRECTION_Z,
+} from './config.ts';
+
+function createSky(): Sky {
+  const sky = new Sky();
+  sky.scale.setScalar(CAMERA_FAR);
+
+  const uniforms = sky.material.uniforms;
+  uniforms.turbidity!.value = 3;
+  uniforms.rayleigh!.value = 1.2;
+  uniforms.mieCoefficient!.value = 0.004;
+  uniforms.mieDirectionalG!.value = 0.8;
+  // Same direction as Game's shadow-casting sun (see config.ts) so the sky's bright spot and the
+  // direction shadows fall agree with each other.
+  (uniforms.sunPosition!.value as THREE.Vector3).set(SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z);
+
+  return sky;
+}
 
 export class Renderer {
   readonly webgl: THREE.WebGLRenderer;
@@ -14,8 +41,8 @@ export class Renderer {
     container.appendChild(this.webgl.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb);
-    this.scene.fog = new THREE.Fog(0x87ceeb, 50, CAMERA_FAR);
+    this.scene.add(createSky());
+    this.scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     this.camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,

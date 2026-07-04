@@ -18,6 +18,9 @@ import {
   PLAYER_RADIUS,
   RECOIL_DECAY,
   SPRINT_MULTIPLIER,
+  WORLD_EDGE_PUSH_SPEED,
+  WORLD_HARD_CLAMP_RADIUS,
+  WORLD_SOFT_PUSH_START_RADIUS,
 } from '../core/config.ts';
 
 export interface PlayerSoundHooks {
@@ -99,8 +102,10 @@ export class Player implements Entity {
     this.health = PLAYER_HEALTH;
     this.verticalVelocity = 0;
     this.recoilPitch = 0;
-    this.rigidBody.setNextKinematicTranslation({ x: position.x, y: position.y, z: position.z });
-    this.rigidBody.setTranslation({ x: position.x, y: position.y, z: position.z }, true);
+    const target = { x: position.x, y: position.y, z: position.z };
+    this.clampToWorldBounds(target);
+    this.rigidBody.setNextKinematicTranslation(target);
+    this.rigidBody.setTranslation(target, true);
   }
 
   /** Debug/test helper - snaps yaw/pitch to face a world point directly, bypassing mouse input. */
@@ -139,6 +144,9 @@ export class Player implements Entity {
     const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
     moveDir.multiplyScalar(speed * dt);
 
+    const currentBeforeMove = this.rigidBody.translation();
+    this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
+
     if (this.grounded && input.isActionActive('jump')) {
       this.verticalVelocity = JUMP_SPEED;
     }
@@ -161,18 +169,42 @@ export class Player implements Entity {
       }
     }
 
-    const current = this.rigidBody.translation();
     const next = {
-      x: current.x + computed.x,
-      y: current.y + computed.y,
-      z: current.z + computed.z,
+      x: currentBeforeMove.x + computed.x,
+      y: currentBeforeMove.y + computed.y,
+      z: currentBeforeMove.z + computed.z,
     };
+    this.clampToWorldBounds(next);
     this.rigidBody.setNextKinematicTranslation(next);
 
     const effectivePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + this.recoilPitch));
     const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw, 0, 'YXZ'));
     this.camera.position.set(next.x, next.y + EYE_OFFSET, next.z);
     this.camera.quaternion.copy(lookQuat);
+  }
+
+  /** Gentle inward nudge as the player nears the world boundary - see WORLD_PLAN.md §2 / config.ts. */
+  private applyWorldEdgePush(moveDir: THREE.Vector3, current: RAPIER.Vector, dt: number): void {
+    const horizontalDistance = Math.sqrt(current.x * current.x + current.z * current.z);
+    if (horizontalDistance <= WORLD_SOFT_PUSH_START_RADIUS) return;
+
+    const pushT = Math.min(
+      1,
+      (horizontalDistance - WORLD_SOFT_PUSH_START_RADIUS) / (WORLD_HARD_CLAMP_RADIUS - WORLD_SOFT_PUSH_START_RADIUS),
+    );
+    const pushMagnitude = WORLD_EDGE_PUSH_SPEED * pushT * dt;
+    moveDir.x += (-current.x / horizontalDistance) * pushMagnitude;
+    moveDir.z += (-current.z / horizontalDistance) * pushMagnitude;
+  }
+
+  /** Absolute last-resort clamp so the player can never end up past generated terrain. */
+  private clampToWorldBounds(next: { x: number; y: number; z: number }): void {
+    const horizontalDistance = Math.sqrt(next.x * next.x + next.z * next.z);
+    if (horizontalDistance <= WORLD_HARD_CLAMP_RADIUS) return;
+
+    const scale = WORLD_HARD_CLAMP_RADIUS / horizontalDistance;
+    next.x *= scale;
+    next.z *= scale;
   }
 
   get position(): THREE.Vector3 {

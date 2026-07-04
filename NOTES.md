@@ -3,6 +3,61 @@
 Feedback from the first playtest, triaged into: real bugs, missing pieces that belong in v1's
 own combat loop, and things that were deliberately deferred past v1 per PLAN.md.
 
+## World Plan §6 step 1 — bounding the world, and a wedge bug found by actually sprinting into it
+
+Implemented the WORLD_PLAN.md §2 bound: `ChunkManager` now clamps to `[WORLD_MIN_CHUNK,
+WORLD_MAX_CHUNK]` (12×12 chunks, 1200×1200 units), and `TerrainGenerator.sampleHeight` adds a
+radial mountain ring that ramps up as distance from world origin approaches the boundary.
+
+**Found by verifying in-browser (new `e2e/world-bounds.spec.ts`, sprinting straight at the edge for
+several real minutes), not by reasoning about the noise math:** the first version of the ridge
+noise (`TERRAIN_EDGE_RIDGE_FREQUENCY: 0.05`, weight `0.4`) fragmented the ramp into small
+alternating steep/shallow patches. Rather than blocking cleanly or sliding the player back down,
+the character controller got wedged — `x`/`z` frozen, `y` creeping up in tiny (~0.004 units/sec)
+increments indefinitely, well short (radius ~525) of both the intended push zone (560) and the
+world edge (600). A jagged high-frequency ridge on top of a steep base rise reads to the character
+controller as a staircase of sub-autostep ledges rather than a slope - same failure class as other
+"looked fine analytically, wrong once actually driven" bugs in this file. Fixed by lowering the
+ridge frequency to 0.006 (broad ~1000-unit wavelength, effectively flat across the ~130-unit ramp
+band) and its weight to 0.1, and widening/moving the ramp earlier (`WORLD_EDGE_RAMP_START` at
+boundary−130 instead of boundary−100).
+
+Also added, since the ramp alone can't *guarantee* a player stays in bounds (a smoother ramp is
+climbable, just slower - confirmed empirically: the test player climbed to y≈40 while covering the
+last 100 units of radius in the same time the first 500 took a third as long): a soft radial push
+starting at boundary−100 that scales up to a hard, absolute radial clamp at boundary−5. The clamp
+is inscribed inside the generated square specifically so it can never send the player into
+ungenerated terrain. Verified end-to-end: the player's distance from origin plateaus and the clamp
+holds exactly at boundary−5 under continuous forward pressure - see `Player.ts`'s
+`applyWorldEdgePush` / `clampToWorldBounds` and the passing e2e test.
+
+Incidental finding while running this test: the player took real combat damage (down to 36/100 HP)
+just from running away from spawn, because the entity ring sits directly in the sprint-forward
+direction. Not a bug - it's the existing chase/leash behavior working as intended - but worth
+knowing before the WORLD_PLAN.md §3 building-placement pass, since it confirms the entity ring's
+effective radius in practice for the "just outside the ring" placement rule agreed in that plan.
+
+## World Plan §6 step 2 — ground texture, sky shader, fog retune, reference boxes removed
+
+Replaced the flat green `MeshStandardMaterial` with a real CC0 texture (Poly Haven's
+"Aerial Grass Rock", verified via the public Poly Haven API rather than a guessed URL - see
+`public/assets/credits/aerial-grass-rock-LICENSE.txt`), tiled at an integer repeat count
+(`GROUND_TEXTURE_REPEAT = TERRAIN_CHUNK_SIZE / GROUND_TEXTURE_WORLD_SIZE`) so it stays phase-aligned
+across chunk seams. Added `three/addons/objects/Sky.js` as a real gradient sky replacing the flat
+color, sharing its sun direction with `Game.addLighting`'s shadow-casting `DirectionalLight` via new
+`SUN_DIRECTION_X/Y/Z` config constants so the sky's bright spot and the shadows agree. Retuned fog
+(`FOG_NEAR`/`FOG_FAR`) to sit just past the new world boundary instead of the old infinite-world
+50→2000 spread. Removed the four placeholder reference boxes (`Game.addReferenceBoxes` and its
+colliders) now that there's real content to look at.
+
+Code review caught one real gap: the texture load had no `onError` handler, so a failed fetch
+(bad path, moved asset) would have silently left the ground with an empty map and no signal
+anywhere - fixed by logging the error via `TextureLoader.load`'s fourth callback param.
+
+Verified in-browser via screenshot (not just typecheck) - confirmed the sky gradient renders,
+the ground texture tiles without visible seams, fog blends toward the horizon, and no reference
+boxes remain. All 16 existing smoke tests plus the Step 1 boundary test still pass.
+
 ## User-caught bug: rifle view model rendered backwards/tilted
 
 Reported with a screenshot after the Fable pass. `blaster-e`'s `rotationYOffset: Math.PI` was an
