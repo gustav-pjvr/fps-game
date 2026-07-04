@@ -249,6 +249,17 @@ export const TOWN_BUILDING_SPACING_MARGIN = 2;
 export const TOWN_MAX_PLACEMENT_ATTEMPTS = 800;
 
 /**
+ * Roads (WORLD_PLAN.md §9 follow-up, per the Opus design already logged there): a minimum spanning
+ * tree over a town's building positions, rendered as flat strips - the town's flat core is already
+ * genuinely level (see FLAT_ZONE_INNER_FRACTION), so a road just needs to sit slightly above it,
+ * not carve its own grade. See RoadManager.ts.
+ */
+export const ROAD_WIDTH = 3;
+/** Small enough to be visually unnoticeable, large enough to avoid z-fighting with the ground mesh. */
+export const ROAD_SURFACE_OFFSET = 0.04;
+export const ROAD_COLOR = 0x6b5a45;
+
+/**
  * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,
  * solid exterior only - real premade structures from Kenney's Modular Buildings kit (CC0), not a
  * plain box. Placement is now town-clustered within flat zones rather than one-per-chunk - see

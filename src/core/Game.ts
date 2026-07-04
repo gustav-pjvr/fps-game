@@ -6,6 +6,7 @@ import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
+import { RoadManager } from '../world/RoadManager.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
@@ -168,15 +169,18 @@ export class Game {
     const vegetation = await VegetationManager.create(renderer.scene, physics);
     onProgress?.('Constructing buildings…', 0.04);
     const buildings = await BuildingManager.create(renderer.scene, physics);
+    const roads = RoadManager.create(renderer.scene, buildings);
 
     const chunkManager = new ChunkManager(renderer.scene, physics, {
       onChunkLoaded: (cx, cz, originX, originZ, size) => {
         vegetation.placeForChunk(cx, cz, originX, originZ, size);
         buildings.placeForChunk(cx, cz, originX, originZ, size);
+        roads.placeForChunk(cx, cz, originX, originZ, size);
       },
       onChunkUnloaded: (cx, cz) => {
         vegetation.removeChunk(cx, cz);
         buildings.removeChunk(cx, cz);
+        roads.removeChunk(cx, cz);
       },
     });
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.

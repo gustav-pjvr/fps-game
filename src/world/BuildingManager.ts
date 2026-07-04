@@ -179,6 +179,21 @@ export class BuildingManager {
     this.chunkOwnedBuildingIds.delete(key);
   }
 
+  /** World-space building positions for a town cell, reusing the exact same memoized layout that
+   * placeForChunk renders - so a consumer like RoadManager always connects to the buildings that
+   * are actually on screen, never a separately-derived (and potentially divergent) approximation.
+   * Returns null if there's no town at this cell. */
+  getTownBuildingPositions(gx: number, gz: number): { x: number; z: number }[] | null {
+    const site = getFlatZoneSite(gx, gz);
+    if (!site) return null;
+
+    const layout = this.getTownLayout(gx, gz, site);
+    return layout.buildings.map((building) => ({
+      x: site.siteX + building.localX,
+      z: site.siteZ + building.localZ,
+    }));
+  }
+
   /** Pure function of (gx,gz) - memoized, but the memo is a derived cache, not the source of
    * truth, so any chunk asking for the same town cell gets an identical layout whether this is
    * the first call or the hundredth. Rejection-sampled: places varied-size buildings within

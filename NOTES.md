@@ -554,3 +554,18 @@ stay comfortably above 2x the new max radius. Tree density roughly doubled by do
 so the per-chunk cap doesn't bottleneck the extra candidates), and `VEGETATION_INSTANCE_CAPACITY`
 (5000 -> 10000, headroom for the higher counts). Re-verified the guaranteed-zone mechanism still
 holds >=2 forests and >=2 towns at the new radius across 200 random seeds; full smoke suite green.
+
+## Roads connecting town buildings (2026-07-04, Phase 3)
+
+Implemented the approach already logged in WORLD_PLAN.md §9 (Opus's design): `src/world/
+RoadManager.ts` computes a minimum spanning tree (Prim's algorithm) over a town's building
+positions and renders each edge as a flat strip mesh. `BuildingManager.ts` gained a public
+`getTownBuildingPositions(gx, gz)` so roads always connect to the exact same buildings that are
+actually rendered (reuses the same memoized layout, no separately-derived approximation that could
+diverge). Roads stream in/out per-chunk the same way buildings do - each segment is owned by
+whichever chunk contains its *midpoint*, since a segment (unlike a single building) can span
+farther than one chunk. Visually confirmed via a targeted e2e screenshot (predicted a guaranteed
+town's position from the match's world seed, walked straight there, screenshotted) - road strips
+render correctly between buildings. Code-reviewed: zero findings (chunk-ownership margin math,
+resource cleanup, MST correctness, and the plane-rotation math were all independently verified,
+not just visually sampled once).
