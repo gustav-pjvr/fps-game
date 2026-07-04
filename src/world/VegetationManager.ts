@@ -1,6 +1,7 @@
 import { createNoise2D } from 'simplex-noise';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
+import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
@@ -12,16 +13,20 @@ import {
   VEGETATION_BUSH_PROBABILITY,
   VEGETATION_CANDIDATES_PER_CHUNK,
   VEGETATION_DENSITY_NOISE_FREQUENCY,
+  VEGETATION_FOREST_EXTRA_CANDIDATES,
+  VEGETATION_FOREST_TEXTURE_FREQUENCY,
   VEGETATION_INSTANCE_CAPACITY,
   VEGETATION_MAX_PER_CHUNK_PER_TYPE,
   VEGETATION_ROCK_PROBABILITY,
   VEGETATION_SCALE_VARIANCE,
   VEGETATION_SPAWN_CLEARANCE,
   VEGETATION_TREE_DENSITY_THRESHOLD,
+  VEGETATION_TREE_MIN_SPACING_DENSE,
+  VEGETATION_TREE_MIN_SPACING_NORMAL,
+  VEGETATION_TREE_MIN_SPACING_SPARSE,
   VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD,
   VEGETATION_TRUNK_RADIUS,
   WORLD_HARD_CLAMP_RADIUS,
-  WORLD_SEED,
 } from '../core/config.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
@@ -129,13 +134,17 @@ export class VegetationManager {
   private readonly pools = new Map<VegetationTypeId, VegetationPool>();
   private readonly chunkInstances = new Map<string, PlacedInstance[]>();
   private readonly densityNoise2D: (x: number, y: number) => number;
+  private readonly forestTextureNoise2D: (x: number, y: number) => number;
 
   private constructor(
     private readonly physics: PhysicsWorld,
     pools: Map<VegetationTypeId, VegetationPool>,
   ) {
     this.pools = pools;
-    this.densityNoise2D = createNoise2D(mulberry32(WORLD_SEED + 2));
+    this.densityNoise2D = createNoise2D(mulberry32(getWorldSeed() + 2));
+    // Distinct seed/frequency from the main density field - textures a forest's *interior* into
+    // thicket/clearing patches, independent of the broad forest-vs-not gating that field drives.
+    this.forestTextureNoise2D = createNoise2D(mulberry32(getWorldSeed() + 13));
   }
 
   static async create(scene: THREE.Scene, physics: PhysicsWorld): Promise<VegetationManager> {
@@ -168,11 +177,17 @@ export class VegetationManager {
 
   /** Called by ChunkManager's onChunkLoaded hook - scatters vegetation across the newly loaded chunk. */
   placeForChunk(cx: number, cz: number, originX: number, originZ: number, size: number): void {
-    const rng = mulberry32(hashChunkSeed(cx, cz, WORLD_SEED));
+    const rng = mulberry32(hashChunkSeed(cx, cz, getWorldSeed()));
     const placed: PlacedInstance[] = [];
     const perTypeCount = new Map<VegetationTypeId, number>();
+    const placedTreePositions: { x: number; z: number }[] = [];
 
-    for (let i = 0; i < VEGETATION_CANDIDATES_PER_CHUNK; i++) {
+    // Chunks touching a forest zone draw far more candidates - packing a thicket this tight needs
+    // many more placement attempts than the gentle clustering the base candidate count was tuned for.
+    const centerForestMembership = sampleForestZone(originX + size / 2, originZ + size / 2).membership;
+    const candidateCount = VEGETATION_CANDIDATES_PER_CHUNK + Math.round(centerForestMembership * VEGETATION_FOREST_EXTRA_CANDIDATES);
+
+    for (let i = 0; i < candidateCount; i++) {
       const worldX = originX + rng() * size;
       const worldZ = originZ + rng() * size;
 
@@ -192,6 +207,18 @@ export class VegetationManager {
       const rawNoise = this.densityNoise2D(worldX * VEGETATION_DENSITY_NOISE_FREQUENCY, worldZ * VEGETATION_DENSITY_NOISE_FREQUENCY);
       const type = pickType(rawNoise, forestMembership, rng);
       if (!type) continue;
+
+      if (TREE_TYPES.includes(type)) {
+        const textureNoise = this.forestTextureNoise2D(worldX * VEGETATION_FOREST_TEXTURE_FREQUENCY, worldZ * VEGETATION_FOREST_TEXTURE_FREQUENCY);
+        const minSpacing = minTreeSpacingFor(forestMembership, textureNoise);
+        const tooClose = placedTreePositions.some((p) => {
+          const dx = worldX - p.x;
+          const dz = worldZ - p.z;
+          return Math.sqrt(dx * dx + dz * dz) < minSpacing;
+        });
+        if (tooClose) continue;
+        placedTreePositions.push({ x: worldX, z: worldZ });
+      }
 
       const countSoFar = perTypeCount.get(type) ?? 0;
       if (countSoFar >= VEGETATION_MAX_PER_CHUNK_PER_TYPE) continue;
@@ -317,4 +344,18 @@ function pickType(rawNoise: number, forestMembership: number, rng: () => number)
   if (scatterRoll < VEGETATION_BUSH_PROBABILITY) return 'bush';
   if (scatterRoll < VEGETATION_BUSH_PROBABILITY + VEGETATION_ROCK_PROBABILITY) return 'rock';
   return null;
+}
+
+/**
+ * Minimum spacing enforced between trees placed in the same chunk. Two-stage lerp: first, forest
+ * texture noise (independent of and much finer than the main density field) decides where THIS
+ * specific patch of forest sits between "normal forest" and "extreme thicket" spacing; then forest
+ * membership blends that result back out to open, sparse spacing outside the forest entirely. This
+ * is what produces real internal variance within one forest - not just forest-vs-not, but some
+ * parts of the same forest barely walkable and others comfortably open, per project decision.
+ */
+function minTreeSpacingFor(forestMembership: number, textureNoise: number): number {
+  const textureIntensity = (textureNoise + 1) / 2;
+  const inForestSpacing = VEGETATION_TREE_MIN_SPACING_NORMAL - textureIntensity * (VEGETATION_TREE_MIN_SPACING_NORMAL - VEGETATION_TREE_MIN_SPACING_DENSE);
+  return VEGETATION_TREE_MIN_SPACING_SPARSE - forestMembership * (VEGETATION_TREE_MIN_SPACING_SPARSE - inForestSpacing);
 }

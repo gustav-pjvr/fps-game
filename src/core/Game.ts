@@ -25,6 +25,7 @@ import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
 import { ENEMY_RING_BASE_RADIUS, SPAWN_X, SPAWN_Z, SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z } from './config.ts';
+import { getWorldSeed, randomizeWorldSeed } from './worldSeed.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 const TARGET_RING_BASE_RADIUS = 15;
@@ -56,6 +57,7 @@ export interface GameDebugApi {
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
   getCameraFov(): number;
   getCameraChildrenDebug(): unknown[];
+  getWorldSeed(): number;
 }
 
 declare global {
@@ -141,6 +143,7 @@ export class Game {
             scale: { x: gc.scale.x, y: gc.scale.y, z: gc.scale.z },
           })),
         })),
+      getWorldSeed: () => getWorldSeed(),
     };
   }
 
@@ -152,6 +155,9 @@ export class Game {
     onReturnToLobby?: () => void,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
+    // A new seed per match (not per practice-reset) so each new game generates a different world,
+    // while staying fixed for the rest of this match so chunk streaming/reload stays deterministic.
+    randomizeWorldSeed();
     const renderer = new Renderer(container);
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();

@@ -1,7 +1,8 @@
 export const FIXED_TIMESTEP = 1 / 60;
 export const MAX_FRAME_TIME = 0.25;
 
-export const WORLD_SEED = 1337;
+// World seed lives in core/worldSeed.ts (not here) - it's mutable at runtime so each new match
+// generates a different world, unlike every other constant in this file.
 
 /** Match spawn point and the largest encounter ring drawn around it (enemies use a bigger ring
  * than targets - see Game.ringRadius) - shared with VegetationManager so placement can keep world
@@ -142,11 +143,14 @@ export const VEGETATION_SCALE_VARIANCE = 0.15;
  * inside the combat area or on top of the player at spawn. */
 export const VEGETATION_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS + 5;
 /** Caps worst-case instances per type per chunk (e.g. an entire chunk landing in a dense noise
- * peak) so the fixed-capacity InstancedMesh pools below always have room for every loaded chunk. */
-export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 8;
-/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 8 = 392 worst case
- * per type - comfortable margin above that for the shared instance pools. */
-export const VEGETATION_INSTANCE_CAPACITY = 500;
+ * peak/thicket) so the fixed-capacity InstancedMesh pools below always have room for every loaded
+ * chunk. Sized for extreme forest packing (see VEGETATION_TREE_MIN_SPACING_DENSE), not just the
+ * gentle clustering this cap originally covered. */
+export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 80;
+/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 80 = 3920 worst
+ * case per type - comfortable margin above that for the shared instance pools. InstancedMesh
+ * handles thousands of instances cheaply, so this is sized for the worst case, not the average. */
+export const VEGETATION_INSTANCE_CAPACITY = 5000;
 export const VEGETATION_TRUNK_RADIUS = 0.35;
 /** Outside any forest zone, trees are rare stragglers rather than absent entirely - reads more
  * natural than a hard cutoff at the forest boundary. */
@@ -154,6 +158,22 @@ export const VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD = 0.95;
 /** How much a forest zone's membership (0..1, 1 at its core) lowers the effective tree threshold -
  * at full membership, threshold drops to TREE_DENSITY_THRESHOLD - this, making forest cores dense. */
 export const FOREST_TREE_THRESHOLD_DROP = 0.5;
+/**
+ * Per project decision ("forests should be extreme - some areas with just enough space for a
+ * character to pass, some more sparse"): a second, much finer noise field textures the *interior*
+ * of a forest zone into thicket/clearing patches, on top of the broad forest-vs-not gating above.
+ * Chunks touching a forest zone also draw far more candidates, since packing a thicket this tight
+ * needs many more placement attempts than gentle clustering did.
+ */
+export const VEGETATION_FOREST_TEXTURE_FREQUENCY = 0.15;
+export const VEGETATION_FOREST_EXTRA_CANDIDATES = 220;
+/** Minimum trunk-center-to-trunk-center spacing enforced between trees placed in the same chunk.
+ * DENSE is a deliberately tight squeeze: with VEGETATION_TRUNK_RADIUS = 0.35 trunks and a player
+ * capsule radius of 0.4, 1.8 leaves ~1.1 units of clear gap between trunk surfaces - passable, but
+ * a real squeeze, not a comfortable walk-through. SPARSE is open ground outside any forest texture. */
+export const VEGETATION_TREE_MIN_SPACING_DENSE = 1.8;
+export const VEGETATION_TREE_MIN_SPACING_NORMAL = 3.5;
+export const VEGETATION_TREE_MIN_SPACING_SPARSE = 6;
 /** Bushes/rocks get their own uniform per-candidate roll, independent of the forest density field -
  * per project decision, they should scatter randomly rather than cluster with trees. */
 export const VEGETATION_BUSH_PROBABILITY = 0.1;
@@ -164,14 +184,16 @@ export const VEGETATION_ROCK_PROBABILITY = 0.06;
  * and forest zones (where trees cluster densely) are both deterministic jittered hash-grids -
  * "Worley noise" with one candidate site per grid cell, nearest-site-wins membership. Two
  * independent grids since towns and forests want different sizes/densities. See world/ZoneMap.ts.
- * Distinct seed offsets from terrain (WORLD_SEED), the ridge noise (+1), and vegetation density
- * (+2): flat zones use +10, forest zones +11, town layouts +12.
+ * Distinct seed offsets from terrain (the world seed - see worldSeed.ts), the ridge noise (+1),
+ * and vegetation density (+2): flat zones use +10, forest zones +11, town layouts +12.
  */
 export const FLAT_ZONE_SEED_OFFSET = 10;
-export const FLAT_ZONE_CELL_SIZE = 140;
+/** Bumped from 140/35-60 per project decision ("towns must consist of a lot more buildings") -
+ * cell size stays comfortably above 2x the max radius to keep site-overlap rejections rare. */
+export const FLAT_ZONE_CELL_SIZE = 230;
 export const FLAT_ZONE_DENSITY = 0.45;
-export const FLAT_ZONE_RADIUS_MIN = 35;
-export const FLAT_ZONE_RADIUS_MAX = 60;
+export const FLAT_ZONE_RADIUS_MIN = 60;
+export const FLAT_ZONE_RADIUS_MAX = 100;
 export const FLAT_ZONE_INNER_FRACTION = 0.6;
 
 export const FOREST_ZONE_SEED_OFFSET = 11;
@@ -186,14 +208,19 @@ export const FOREST_ZONE_INNER_FRACTION = 0.6;
 export const ZONE_EDGE_MARGIN = 30;
 
 export const TOWN_LAYOUT_SEED_OFFSET = 12;
-export const TOWN_MIN_BUILDINGS = 4;
-export const TOWN_MAX_BUILDINGS = 8;
+/** Bumped from 4-8 per project decision ("towns must consist of a lot more buildings") - paired
+ * with the larger flat-zone radii above and a much higher placement-attempt budget below, since
+ * packing this many buildings via rejection sampling needs many more tries to succeed. */
+export const TOWN_MIN_BUILDINGS = 15;
+export const TOWN_MAX_BUILDINGS = 30;
 /** Buildings are only placed within this fraction of the flat zone's radius, keeping the whole
  * footprint inside the flat core (membership ~1) rather than the smoothstep rim where the terrain
  * is still transitioning back to natural height. */
 export const TOWN_BUILD_FRACTION = 0.75;
-export const TOWN_BUILDING_SPACING_MARGIN = 6;
-export const TOWN_MAX_PLACEMENT_ATTEMPTS = 40;
+/** Tighter than the original 6 - a town with 15-30 buildings should read as a dense, real town,
+ * not the same spacing stretched thin over more buildings. */
+export const TOWN_BUILDING_SPACING_MARGIN = 3;
+export const TOWN_MAX_PLACEMENT_ATTEMPTS = 400;
 
 /**
  * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,

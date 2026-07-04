@@ -431,3 +431,56 @@ a way to threaten the player back, which is why this doesn't feel like real comb
 - Weapon/player skins - cosmetic customization, not in the phase list
 
 None of these were overlooked - they were intentionally out of the original 8-phase scope.
+
+## Random per-match world seed, forest/town density tuning, inventory previews (2026-07-04)
+
+**Random world seed.** Every match now generates a genuinely different world instead of always
+reusing the same fixed seed. `src/core/worldSeed.ts` holds a mutable module-level seed
+(`getWorldSeed()` / `randomizeWorldSeed()`); `Game.create()` calls `randomizeWorldSeed()` once at
+the top of match setup (not on practice-reset via T, so a mid-match reset keeps the same world).
+`TerrainGenerator.ts`, `ZoneMap.ts`, `VegetationManager.ts`, and `BuildingManager.ts` were all
+switched from the old frozen `WORLD_SEED` constant to `getWorldSeed()`. Terrain noise generators
+in `TerrainGenerator.ts` are now rebuilt lazily the first time they're sampled under a new seed
+(`ensureNoiseForCurrentSeed()`), rather than once at module load.
+
+**Bug found via e2e, fixed: random seeds could block spawn-area line-of-sight.** The earlier
+NOTES entry above speculated shots might occasionally be "blocked by hills at the 15-25 unit
+spawn ring" - that's exactly what random seeding exposed. `e2e/smoke.spec.ts`'s "pressing T
+resets..." test started failing intermittently (~1 in 6 runs). Diagnostic instrumentation
+(temporary `e2e/_diag-shoot.spec.ts`, since removed) showed `player.y` and `target.y` - both
+terrain-height-dependent at fixed (x,z) positions - diverging by several units on some random
+seeds, while staying within ~0.05 units of each other under the old fixed seed. The old fixed
+seed (1337) had simply been lucky: flat ground near spawn by coincidence, not by guarantee. Fix:
+`TerrainGenerator.sampleHeight()` now blends toward a small, fixed (non-randomized) "spawn
+clearing" - radius `ENEMY_RING_BASE_RADIUS + 5` (30 units, matching the same margin already used
+by `VEGETATION_SPAWN_CLEARANCE`), always centered on `(SPAWN_X, SPAWN_Z)`, blending toward the
+base terrain height sampled at the spawn point itself regardless of seed. Verified via the same
+diagnostic script across 6 fresh random seeds post-fix: player/target height now track within
+~0.05 units every time, and `e2e/smoke.spec.ts` (16/16) plus `e2e/world-bounds.spec.ts` (1/1) all
+pass. Deliberately kept small (not a large flattened area) at the user's request - it only
+guarantees fair combat within the entity encounter ring, not a big cleared zone.
+
+**Forest density "extreme" variance.** `VegetationManager.ts` gained a second seeded noise field
+(`forestTextureNoise2D`) and `minTreeSpacingFor()`, which varies minimum tree spacing by both
+forest-zone membership and local texture noise - producing dense thickets (spacing down to
+`VEGETATION_TREE_MIN_SPACING_DENSE`) right next to sparser pockets (`_SPARSE`), instead of a
+uniform density across a forest zone. `VEGETATION_INSTANCE_CAPACITY` and
+`VEGETATION_MAX_PER_CHUNK_PER_TYPE` were both raised substantially to support the denser thickets
+without hitting the instance cap.
+
+**Bigger towns.** `TOWN_MIN_BUILDINGS`/`TOWN_MAX_BUILDINGS` raised from 4-8 to 15-30,
+`FLAT_ZONE_RADIUS_MIN/MAX` widened to fit them, `TOWN_BUILDING_SPACING_MARGIN` tightened and
+`TOWN_MAX_PLACEMENT_ATTEMPTS` raised so rejection sampling can still pack that many buildings in.
+
+**Inventory: weapon previews + stat icons.** `src/ui/menu/weaponThumbnail.ts` renders each
+weapon's real glTF model to a static thumbnail (offscreen `WebGLRenderer`, disposed immediately
+after `toDataURL()`) instead of showing text-only stats. `src/ui/menu/statIcons.ts` adds small
+SVG icons (damage/fire-rate/magazine/reload/scope) next to each stat value. `InventoryPanel`
+became an async factory (`InventoryPanel.create()`) since rendering previews requires awaiting
+each weapon's glTF load; `App` was updated to await it before showing the main menu.
+
+Code-reviewed (agent pass): no CRITICAL/HIGH/MEDIUM findings, one cosmetic LOW (stale comments
+still saying "WORLD_SEED" - fixed).
+
+**Deferred (explicitly paused, not started):** roads connecting town buildings; Step 5 (ladder
+sensor collider + player climbing state machine).

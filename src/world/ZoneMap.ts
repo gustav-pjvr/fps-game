@@ -1,3 +1,4 @@
+import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { hashChunkSeed } from './chunkSeed.ts';
 import {
@@ -17,7 +18,6 @@ import {
   SPAWN_X,
   SPAWN_Z,
   WORLD_EDGE_RAMP_START,
-  WORLD_SEED,
   ZONE_EDGE_MARGIN,
 } from '../core/config.ts';
 
@@ -136,7 +136,7 @@ function isSiteClear(siteX: number, siteZ: number, radius: number): boolean {
  * ground, in clusters, not scattered independently). Terrain flattening (TerrainGenerator.ts) and
  * building placement (BuildingManager.ts) both key off this. */
 export function sampleFlatZone(x: number, z: number): ZoneSample {
-  const found = findNearestSite(x, z, FLAT_ZONE_CELL_SIZE, WORLD_SEED + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX);
+  const found = findNearestSite(x, z, FLAT_ZONE_CELL_SIZE, getWorldSeed() + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX);
   if (!found) return NO_ZONE;
   const { site, distance } = found;
   if (!isSiteClear(site.siteX, site.siteZ, site.radius)) return NO_ZONE;
@@ -150,7 +150,7 @@ export function sampleFlatZone(x: number, z: number): ZoneSample {
  * subtler density noise). Independent grid from flat zones - a forest can exist anywhere a town
  * can't (and vice versa; overlap is resolved by callers, see VegetationManager). */
 export function sampleForestZone(x: number, z: number): ZoneSample {
-  const found = findNearestSite(x, z, FOREST_ZONE_CELL_SIZE, WORLD_SEED + FOREST_ZONE_SEED_OFFSET, FOREST_ZONE_DENSITY, FOREST_ZONE_RADIUS_MIN, FOREST_ZONE_RADIUS_MAX);
+  const found = findNearestSite(x, z, FOREST_ZONE_CELL_SIZE, getWorldSeed() + FOREST_ZONE_SEED_OFFSET, FOREST_ZONE_DENSITY, FOREST_ZONE_RADIUS_MIN, FOREST_ZONE_RADIUS_MAX);
   if (!found) return NO_ZONE;
   const { site, distance } = found;
   if (!isSiteClear(site.siteX, site.siteZ, site.radius)) return NO_ZONE;
@@ -180,11 +180,11 @@ export interface FlatZoneSite {
  * code review as a real, reachable inconsistency in the algorithm (not just theoretical) - fixed by
  * requiring this cell's site to also win the nearest-site contest at its own center. */
 export function getFlatZoneSite(gx: number, gz: number): FlatZoneSite | null {
-  const site = siteForCell(gx, gz, FLAT_ZONE_CELL_SIZE, WORLD_SEED + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX);
+  const site = siteForCell(gx, gz, FLAT_ZONE_CELL_SIZE, getWorldSeed() + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX);
   if (!site) return null;
   if (!isSiteClear(site.siteX, site.siteZ, site.radius)) return null;
 
-  const nearest = findNearestSite(site.siteX, site.siteZ, FLAT_ZONE_CELL_SIZE, WORLD_SEED + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX);
+  const nearest = findNearestSite(site.siteX, site.siteZ, FLAT_ZONE_CELL_SIZE, getWorldSeed() + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX);
   if (!nearest || nearest.site.gx !== gx || nearest.site.gz !== gz) return null;
 
   return site;

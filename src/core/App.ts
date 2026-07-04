@@ -14,7 +14,9 @@ export class App {
   private currentGame: Game | null = null;
   private readonly mainMenu: MainMenu;
   private readonly settingsPanel: SettingsPanel;
-  private readonly inventoryPanel: InventoryPanel;
+  // Assigned in create() before enterLobby() shows the menu that can open it - InventoryPanel's
+  // creation is async (it renders each weapon's preview thumbnail), unlike the other lobby panels.
+  private inventoryPanel!: InventoryPanel;
   private readonly loadingScreen: LoadingScreen;
   private playSetupModal: PlaySetupModal | null = null;
 
@@ -30,7 +32,6 @@ export class App {
       onInventory: () => this.inventoryPanel.show(),
     });
     this.settingsPanel = new SettingsPanel(overlayRoot, () => this.settingsPanel.hide());
-    this.inventoryPanel = new InventoryPanel(overlayRoot, () => this.inventoryPanel.hide());
     this.loadingScreen = new LoadingScreen(overlayRoot);
   }
 
@@ -41,6 +42,7 @@ export class App {
     overlayRoot: HTMLElement,
   ): Promise<App> {
     const app = new App(lobbyContainer, gameContainer, hudRoot, overlayRoot);
+    app.inventoryPanel = await InventoryPanel.create(overlayRoot, () => app.inventoryPanel.hide());
     await app.enterLobby();
     return app;
   }

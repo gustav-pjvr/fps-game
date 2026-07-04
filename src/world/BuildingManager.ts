@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
+import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
@@ -15,7 +16,6 @@ import {
   TOWN_MAX_BUILDINGS,
   TOWN_MAX_PLACEMENT_ATTEMPTS,
   TOWN_MIN_BUILDINGS,
-  WORLD_SEED,
 } from '../core/config.ts';
 
 interface BuildingPresetDef {
@@ -190,7 +190,7 @@ export class BuildingManager {
     const cached = this.townLayoutCache.get(key);
     if (cached) return cached;
 
-    const rng = mulberry32(hashChunkSeed(gx, gz, WORLD_SEED + TOWN_LAYOUT_SEED_OFFSET));
+    const rng = mulberry32(hashChunkSeed(gx, gz, getWorldSeed() + TOWN_LAYOUT_SEED_OFFSET));
     const targetCount = TOWN_MIN_BUILDINGS + Math.floor(rng() * (TOWN_MAX_BUILDINGS - TOWN_MIN_BUILDINGS + 1));
     const buildings: TownBuildingPlacement[] = [];
 

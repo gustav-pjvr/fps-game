@@ -1,6 +1,10 @@
 import { createNoise2D } from 'simplex-noise';
+import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import {
+  ENEMY_RING_BASE_RADIUS,
+  SPAWN_X,
+  SPAWN_Z,
   TERRAIN_AMPLITUDE,
   TERRAIN_BASE_FREQUENCY,
   TERRAIN_EDGE_RIDGE_FREQUENCY,
@@ -11,18 +15,62 @@ import {
   WORLD_BOUNDARY_RADIUS,
   WORLD_EDGE_MOUNTAIN_HEIGHT,
   WORLD_EDGE_RAMP_START,
-  WORLD_SEED,
 } from '../core/config.ts';
 import { sampleFlatZone } from './ZoneMap.ts';
 
-const noise2D = createNoise2D(mulberry32(WORLD_SEED));
-const ridgeNoise2D = createNoise2D(mulberry32(WORLD_SEED + 1));
+/**
+ * A small, fixed (non-randomized) clearing right around the match spawn point, always flattened
+ * toward the height sampled at spawn itself regardless of world seed. Kept just large enough to
+ * cover the entity encounter ring (ENEMY_RING_BASE_RADIUS) plus a short margin - without this, a
+ * purely random seed can generate a ridge between spawn and a nearby target/enemy, blocking
+ * hitscan line-of-sight on an otherwise-normal shot. The old fixed seed (1337) happened to be flat
+ * here by luck; that isn't guaranteed once every match gets a fresh seed. Deliberately small so it
+ * doesn't flatten meaningful chunks of the generated world - just enough for fair spawn combat.
+ */
+const SPAWN_CLEARING_RADIUS = ENEMY_RING_BASE_RADIUS + 5;
+const SPAWN_CLEARING_INNER_FRACTION = 0.6;
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function spawnClearingMembership(worldX: number, worldZ: number): number {
+  const dx = worldX - SPAWN_X;
+  const dz = worldZ - SPAWN_Z;
+  const distance = Math.sqrt(dx * dx + dz * dz);
+  if (distance >= SPAWN_CLEARING_RADIUS) return 0;
+  return 1 - smoothstep(SPAWN_CLEARING_RADIUS * SPAWN_CLEARING_INNER_FRACTION, SPAWN_CLEARING_RADIUS, distance);
+}
+
+/** Cached per seed (invalidated alongside flatZoneHeightCache below) since it's a pure function of
+ * the current seed's noise field sampled at a single fixed point. */
+let spawnClearingHeightCache: number | null = null;
+
+// Noise generators are rebuilt lazily whenever the world seed changes (see worldSeed.ts) rather
+// than created once at module load - a fresh match calls randomizeWorldSeed() before generating
+// anything, and these must pick that up without a page reload.
+let noiseSeed: number | null = null;
+let noise2D: (x: number, y: number) => number;
+let ridgeNoise2D: (x: number, y: number) => number;
+
+function ensureNoiseForCurrentSeed(): void {
+  const seed = getWorldSeed();
+  if (noiseSeed === seed) return;
+  noiseSeed = seed;
+  noise2D = createNoise2D(mulberry32(seed));
+  ridgeNoise2D = createNoise2D(mulberry32(seed + 1));
+  flatZoneHeightCache.clear(); // cached heights from the previous world's seed are no longer valid
+  spawnClearingHeightCache = null;
+}
 
 /** Layered (fBm) simplex noise sampled in continuous world coordinates, so neighboring chunks tile
  * seamlessly, plus the edge mountain ring - the terrain *before* any flat-zone flattening is
  * blended in. Also used by sampleHeight itself to measure a flat zone's target height at its own
  * site center (see below), so this must stay independent of ZoneMap to avoid recursion. */
 export function sampleBaseHeight(worldX: number, worldZ: number): number {
+  ensureNoiseForCurrentSeed();
+
   let amplitude = 1;
   let frequency = TERRAIN_BASE_FREQUENCY;
   let sum = 0;
@@ -53,9 +101,18 @@ const flatZoneHeightCache = new Map<string, number>();
  */
 export function sampleHeight(worldX: number, worldZ: number): number {
   const base = sampleBaseHeight(worldX, worldZ);
+  let height = base;
+
+  const spawnMembership = spawnClearingMembership(worldX, worldZ);
+  if (spawnMembership > 0) {
+    if (spawnClearingHeightCache === null) {
+      spawnClearingHeightCache = sampleBaseHeight(SPAWN_X, SPAWN_Z);
+    }
+    height += (spawnClearingHeightCache - height) * spawnMembership;
+  }
 
   const flatZone = sampleFlatZone(worldX, worldZ);
-  if (flatZone.membership <= 0) return base;
+  if (flatZone.membership <= 0) return height;
 
   const cacheKey = `${flatZone.gx},${flatZone.gz}`;
   let flatHeight = flatZoneHeightCache.get(cacheKey);
@@ -64,7 +121,7 @@ export function sampleHeight(worldX: number, worldZ: number): number {
     flatZoneHeightCache.set(cacheKey, flatHeight);
   }
 
-  return base + (flatHeight - base) * flatZone.membership;
+  return height + (flatHeight - height) * flatZone.membership;
 }
 
 /**
