@@ -95,8 +95,9 @@ export const UNLOAD_RADIUS_CHUNKS = 3;
 export const MAX_CHUNK_GENERATIONS_PER_TICK = 2;
 
 /** World is bounded (arena-style), not infinite — see WORLD_PLAN.md §2. Chunk coordinates outside
- * [WORLD_MIN_CHUNK, WORLD_MAX_CHUNK] on either axis are never generated. */
-export const WORLD_SIZE_CHUNKS = 12;
+ * [WORLD_MIN_CHUNK, WORLD_MAX_CHUNK] on either axis are never generated. Shrunk from 12 to 8 per
+ * user feedback that the 1200x1200 world still felt too large to reach the edges of. */
+export const WORLD_SIZE_CHUNKS = 8;
 export const WORLD_MIN_CHUNK = -Math.floor(WORLD_SIZE_CHUNKS / 2);
 export const WORLD_MAX_CHUNK = WORLD_MIN_CHUNK + WORLD_SIZE_CHUNKS - 1;
 
@@ -135,8 +136,6 @@ export const WORLD_EDGE_PUSH_SPEED = 6;
 export const VEGETATION_CANDIDATES_PER_CHUNK = 24;
 export const VEGETATION_DENSITY_NOISE_FREQUENCY = 0.02;
 export const VEGETATION_TREE_DENSITY_THRESHOLD = 0.62;
-export const VEGETATION_BUSH_DENSITY_THRESHOLD = 0.45;
-export const VEGETATION_ROCK_DENSITY_THRESHOLD = 0.3;
 export const VEGETATION_SCALE_VARIANCE = 0.15;
 /** Measured from the actual spawn point (SPAWN_X, SPAWN_Z), not world origin - must clear the
  * largest encounter ring (ENEMY_RING_BASE_RADIUS) so a tree's solid trunk collider can never land
@@ -149,25 +148,61 @@ export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 8;
  * per type - comfortable margin above that for the shared instance pools. */
 export const VEGETATION_INSTANCE_CAPACITY = 500;
 export const VEGETATION_TRUNK_RADIUS = 0.35;
+/** Outside any forest zone, trees are rare stragglers rather than absent entirely - reads more
+ * natural than a hard cutoff at the forest boundary. */
+export const VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD = 0.95;
+/** How much a forest zone's membership (0..1, 1 at its core) lowers the effective tree threshold -
+ * at full membership, threshold drops to TREE_DENSITY_THRESHOLD - this, making forest cores dense. */
+export const FOREST_TREE_THRESHOLD_DROP = 0.5;
+/** Bushes/rocks get their own uniform per-candidate roll, independent of the forest density field -
+ * per project decision, they should scatter randomly rather than cluster with trees. */
+export const VEGETATION_BUSH_PROBABILITY = 0.1;
+export const VEGETATION_ROCK_PROBABILITY = 0.06;
 
 /**
- * Buildings (WORLD_PLAN.md §3): not enterable, solid exterior only - real premade structures from
- * Kenney's Modular Buildings kit (CC0), not a plain box, per project decision after seeing the
- * plain-box version look unconvincing. Per-chunk deterministic placement (moderate density) -
- * allowed just outside the encounter ring but never inside it, kept a minimum distance apart so
- * climbing one doesn't put a player inside another's collider. The building's own box collider top
- * face doubles as the rooftop landing surface (see BuildingManager.ts) - no separate platform
- * collider is needed since an axis-aligned box's top is already flat and walkable.
+ * Zone system (WORLD_PLAN.md, post-buildings user feedback): flat zones (where towns can spawn)
+ * and forest zones (where trees cluster densely) are both deterministic jittered hash-grids -
+ * "Worley noise" with one candidate site per grid cell, nearest-site-wins membership. Two
+ * independent grids since towns and forests want different sizes/densities. See world/ZoneMap.ts.
+ * Distinct seed offsets from terrain (WORLD_SEED), the ridge noise (+1), and vegetation density
+ * (+2): flat zones use +10, forest zones +11, town layouts +12.
  */
-/** Probability any given chunk attempts to place a building at all - most chunks have none. */
-export const BUILDING_CHUNK_SPAWN_CHANCE = 0.3;
-/** Minimum required gap between two buildings' footprints (beyond their own half-diagonals). */
-export const BUILDING_MIN_GAP = 15;
-/** Measured from the actual spawn point to the building's nearest possible edge (center distance
- * minus its own half-diagonal) - must clear the largest encounter ring, matching the "just outside
- * the ring, never inside it" placement decision (unlike vegetation, which is excluded with a wider
- * buffer since it has no gameplay reason to hug the ring). */
-export const BUILDING_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS;
+export const FLAT_ZONE_SEED_OFFSET = 10;
+export const FLAT_ZONE_CELL_SIZE = 140;
+export const FLAT_ZONE_DENSITY = 0.45;
+export const FLAT_ZONE_RADIUS_MIN = 35;
+export const FLAT_ZONE_RADIUS_MAX = 60;
+export const FLAT_ZONE_INNER_FRACTION = 0.6;
+
+export const FOREST_ZONE_SEED_OFFSET = 11;
+export const FOREST_ZONE_CELL_SIZE = 160;
+export const FOREST_ZONE_DENSITY = 0.45;
+export const FOREST_ZONE_RADIUS_MIN = 50;
+export const FOREST_ZONE_RADIUS_MAX = 90;
+export const FOREST_ZONE_INNER_FRACTION = 0.6;
+
+/** Keeps zone sites clear of both the world edge (mountain ring/hard clamp) and the spawn/combat
+ * ring, at the zone-presence level so a town or forest can never partially spill into either. */
+export const ZONE_EDGE_MARGIN = 30;
+
+export const TOWN_LAYOUT_SEED_OFFSET = 12;
+export const TOWN_MIN_BUILDINGS = 4;
+export const TOWN_MAX_BUILDINGS = 8;
+/** Buildings are only placed within this fraction of the flat zone's radius, keeping the whole
+ * footprint inside the flat core (membership ~1) rather than the smoothstep rim where the terrain
+ * is still transitioning back to natural height. */
+export const TOWN_BUILD_FRACTION = 0.75;
+export const TOWN_BUILDING_SPACING_MARGIN = 6;
+export const TOWN_MAX_PLACEMENT_ATTEMPTS = 40;
+
+/**
+ * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,
+ * solid exterior only - real premade structures from Kenney's Modular Buildings kit (CC0), not a
+ * plain box. Placement is now town-clustered within flat zones rather than one-per-chunk - see
+ * TOWN_* constants near the zone system below, and BuildingManager.ts. The building's own box
+ * collider top face doubles as the rooftop landing surface - no separate platform collider is
+ * needed since an axis-aligned box's top is already flat and walkable.
+ */
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;

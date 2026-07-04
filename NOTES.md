@@ -152,6 +152,88 @@ real rather than speculative.
 
 All 16 smoke tests pass after both fixes.
 
+## Post-step-4 batch: playtest fixes + a full zone/town/forest generation system
+
+User playtest feedback after step 4 covered five things: rocks had no collision, gunshots sounded
+delayed, the world still felt too big, buildings should cluster into flat-ground towns instead of
+scattering one-per-chunk, and trees should form real walk-into-able forests with bushes/rocks
+staying uniformly random. The last two needed an actual design pass - spawned an Opus subagent to
+produce an architecture document (deterministic jittered hash-grid "Worley noise" zones, terrain
+flattening via a blend toward a per-zone constant height, town layout as a pure function of its
+zone's cell coordinates) before implementing it in this session with full codebase context, per the
+user's explicit choice of "Opus designs, Sonnet implements" over handing the whole task to Fable
+(which this project's own PLAN.md already scopes out of physics/terrain/systems work).
+
+**Quick fixes:**
+- **Rocks**: `VegetationManager`'s vegetation types gained a `colliderShape` field (`cylinder` |
+  `box` | `none`) instead of a boolean; rocks now get a box collider sized to their measured
+  footprint (bushes stay visual-only, trees keep their trunk cylinder).
+- **Gunshot delay**: no bug in the fire/audio call chain itself (traced `tryFire()` → `onFire()` →
+  `playGunshot()` - fully synchronous, no scheduling gap). Applied the standard Web Audio mitigation
+  for Chrome's idle-throttling of an `AudioContext`'s render thread during silent gaps between
+  one-shot sounds (exactly this game's semi-auto cadence): a near-silent (`gain: 0.0001`), always-
+  running oscillator keeps the audio graph continuously active so gunshots always play on a warm
+  pipeline. Flagged to the user that this can't be verified by automated testing - needs their ears.
+- **World size**: `WORLD_SIZE_CHUNKS` 12 → 8 (1200×1200 → 800×800 units); all boundary/ramp/push/
+  clamp constants are derived from this, so nothing else needed to change numerically.
+
+**The zone system** (`src/world/ZoneMap.ts`, new): two independent deterministic jittered hash-
+grids (flat zones for towns, forest zones for trees) - each grid cell has a hash-derived candidate
+site (jittered position, randomized radius, present or not), and any world point's zone membership
+is resolved by nearest-site-wins across the surrounding 3×3 cells. Pure functions of world/cell
+coordinates only, no global state - reload-identical by construction, matching every other system
+in this project.
+
+- **Terrain flattening** (`TerrainGenerator.ts`): split the old `sampleHeight` into `sampleBaseHeight`
+  (the original fBm + edge-ring, unchanged) and a new `sampleHeight` that blends toward a per-zone
+  constant height (`sampleBaseHeight` evaluated once at the zone's site center, cached per cell) as
+  flat-zone membership approaches 1, easing back to natural terrain at the zone's rim.
+- **Forests** (`VegetationManager.ts`): tree placement's density threshold now lerps continuously
+  from a high "rare stragglers" value outside any forest zone down to a low "dense cluster" value
+  at full forest membership. Bushes/rocks moved off the density-noise field entirely onto their own
+  independent uniform roll from the chunk RNG - decoupled from forests, per the user's ask. All
+  vegetation is suppressed inside flat/town zones so pads stay clear for buildings.
+- **Towns** (`BuildingManager.ts`, rewritten): a town's entire building layout (varied presets,
+  rejection-sampled positions/rotations within the zone's flat core, minimum spacing) is now a pure
+  function of its flat-zone cell coordinates, memoized. Each chunk spawns only the buildings from
+  any overlapping town whose world position actually falls inside that chunk's bounds, so a town
+  spanning several chunks streams in/out correctly regardless of load order - no per-chunk
+  "one random building" scattering anymore.
+- **Roads**: not attempted this pass. Opus's design covers a straightforward approach (MST over a
+  town's building positions, rendered as flat textured strips since the pad is already level) -
+  deferred to a follow-up so the core zone/town system could ship verified rather than adding more
+  surface area before this large batch was even confirmed working.
+
+**Three real bugs found shipping this** (two via code review, one via the project's own
+verify-in-browser discipline):
+
+1. **Mountain-ramp wedge, again.** First implementation only excluded zone sites within
+   `ZONE_EDGE_MARGIN` of `WORLD_HARD_CLAMP_RADIUS` - leaving the entire ~130-unit mountain-ramp band
+   (`WORLD_EDGE_RAMP_START` to the hard clamp) open to zone placement. A flat zone sited there fights
+   the steep mountain ramp with its own flatten-blend, producing a sharp transition. Caught by the
+   `world-bounds` e2e test wedging the character controller against what looked like a plain
+   hillside in the failure screenshot - the exact same failure class as the original ridge-noise
+   wedge bug from step 1, just triggered by a different terrain feature. Fixed by culling zone sites
+   against `WORLD_EDGE_RAMP_START` instead, keeping zones entirely within the naturally-rolling
+   interior.
+2. **Code review caught a nearest-site inconsistency**: `BuildingManager`'s direct per-cell site
+   lookup (`getFlatZoneSite`) didn't confirm that cell's site was actually the *nearest* site at its
+   own center - the same check `sampleFlatZone` (which drives terrain flattening) always performs.
+   Two adjacent cells' jittered sites can have overlapping discs, letting a building be placed as if
+   it belongs to one zone while the terrain at that exact point flattens toward a neighboring zone
+   instead (or not at all). Didn't manifest with this project's current seed/constants by luck, but
+   was a real, reachable bug confirmed by simulation. Fixed by requiring a cell's site to also win
+   the nearest-site contest at its own center before treating it as valid.
+3. **Code review caught a forest-edge density cliff**: the tree threshold branched between an
+   "outside forest" constant and an "inside forest" formula at `forestMembership > 0`, which are
+   numerically nothing alike at the boundary (0.95 outside vs. ~0.62 the instant membership ticks
+   above zero) - producing a hard density cliff exactly at the forest edge, contradicting the
+   intended "rare stragglers fading into a dense core" design. Fixed by lerping the threshold
+   continuously by membership instead of branching.
+
+All 16 smoke tests plus the `world-bounds` e2e test pass after all four fixes (three above plus a
+stale seed-offset code comment also caught by the same review).
+
 ## User-caught bug: rifle view model rendered backwards/tilted
 
 Reported with a screenshot after the Fable pass. `blaster-e`'s `rotationYOffset: Math.PI` was an

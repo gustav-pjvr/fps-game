@@ -43,12 +43,27 @@ export class SoundEngine {
     this.master = ctx.createGain();
     this.master.gain.value = Settings.getMasterVolume();
     this.master.connect(this.ctx.destination);
+    this.startKeepAlive();
   }
 
   static async create(): Promise<SoundEngine> {
-    const ctx = new AudioContext();
+    const ctx = new AudioContext({ latencyHint: 'interactive' });
     const buffers = await loadWeaponSoundBuffers(ctx);
     return new SoundEngine(ctx, buffers);
+  }
+
+  /** Chrome (and some other browsers) can idle-throttle an AudioContext's render thread during
+   * silent gaps between one-shot sounds, adding a perceptible "wake-up" delay to the next sound
+   * scheduled after a pause - exactly the semi-auto gunshot cadence this game has. A near-silent,
+   * permanently running oscillator keeps the audio graph continuously active so gunshots always
+   * play on a warm pipeline instead of periodically re-waking it. */
+  private startKeepAlive(): void {
+    const oscillator = this.ctx.createOscillator();
+    oscillator.frequency.value = 20;
+    const silentGain = this.ctx.createGain();
+    silentGain.gain.value = 0.0001;
+    oscillator.connect(silentGain).connect(this.ctx.destination);
+    oscillator.start();
   }
 
   setMasterVolume(value: number): void {

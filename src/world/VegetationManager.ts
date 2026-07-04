@@ -4,18 +4,21 @@ import { loadGLTF } from '../core/AssetLoader.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
+import { sampleFlatZone, sampleForestZone } from './ZoneMap.ts';
 import {
+  FOREST_TREE_THRESHOLD_DROP,
   SPAWN_X,
   SPAWN_Z,
-  VEGETATION_BUSH_DENSITY_THRESHOLD,
+  VEGETATION_BUSH_PROBABILITY,
   VEGETATION_CANDIDATES_PER_CHUNK,
   VEGETATION_DENSITY_NOISE_FREQUENCY,
   VEGETATION_INSTANCE_CAPACITY,
   VEGETATION_MAX_PER_CHUNK_PER_TYPE,
-  VEGETATION_ROCK_DENSITY_THRESHOLD,
+  VEGETATION_ROCK_PROBABILITY,
   VEGETATION_SCALE_VARIANCE,
   VEGETATION_SPAWN_CLEARANCE,
   VEGETATION_TREE_DENSITY_THRESHOLD,
+  VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD,
   VEGETATION_TRUNK_RADIUS,
   WORLD_HARD_CLAMP_RADIUS,
   WORLD_SEED,
@@ -24,19 +27,22 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 
 type VegetationTypeId = 'treeDefault' | 'treePine' | 'bush' | 'rock';
+type ColliderShape = 'cylinder' | 'box' | 'none';
 
 interface VegetationTypeDef {
   id: VegetationTypeId;
   modelPath: string;
   targetHeight: number;
-  hasTrunkCollider: boolean;
+  colliderShape: ColliderShape;
 }
 
 const VEGETATION_TYPES: VegetationTypeDef[] = [
-  { id: 'treeDefault', modelPath: '/assets/models/vegetation/tree_default.glb', targetHeight: 6.0, hasTrunkCollider: true },
-  { id: 'treePine', modelPath: '/assets/models/vegetation/tree_pineRoundA.glb', targetHeight: 4.5, hasTrunkCollider: true },
-  { id: 'bush', modelPath: '/assets/models/vegetation/plant_bushLarge.glb', targetHeight: 1.0, hasTrunkCollider: false },
-  { id: 'rock', modelPath: '/assets/models/vegetation/rock_largeA.glb', targetHeight: 0.9, hasTrunkCollider: false },
+  { id: 'treeDefault', modelPath: '/assets/models/vegetation/tree_default.glb', targetHeight: 6.0, colliderShape: 'cylinder' },
+  { id: 'treePine', modelPath: '/assets/models/vegetation/tree_pineRoundA.glb', targetHeight: 4.5, colliderShape: 'cylinder' },
+  { id: 'bush', modelPath: '/assets/models/vegetation/plant_bushLarge.glb', targetHeight: 1.0, colliderShape: 'none' },
+  // Box, not 'none': rocks are large enough that walking through them looked broken - a player
+  // should have to walk around (or over, if small enough to autostep) a solid boulder.
+  { id: 'rock', modelPath: '/assets/models/vegetation/rock_largeA.glb', targetHeight: 0.9, colliderShape: 'box' },
 ];
 
 const TREE_TYPES: VegetationTypeId[] = ['treeDefault', 'treePine'];
@@ -44,6 +50,9 @@ const TREE_TYPES: VegetationTypeId[] = ['treeDefault', 'treePine'];
 interface VegetationPool {
   instancedMeshes: THREE.InstancedMesh[];
   scaleFactor: number;
+  /** Raw (unscaled) footprint, measured once at load time - see extractBakedPrimitives. */
+  rawFootprintWidth: number;
+  rawFootprintDepth: number;
   freeIndices: number[];
   nextFreeIndex: number;
 }
@@ -79,21 +88,33 @@ function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferG
     primitives.push({ geometry, material });
   });
 
+  let minX = Infinity;
+  let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
   for (const { geometry } of primitives) {
     geometry.computeBoundingBox();
     const box = geometry.boundingBox;
     if (!box) continue;
+    minX = Math.min(minX, box.min.x);
+    maxX = Math.max(maxX, box.max.x);
     minY = Math.min(minY, box.min.y);
     maxY = Math.max(maxY, box.max.y);
+    minZ = Math.min(minZ, box.min.z);
+    maxZ = Math.max(maxZ, box.max.z);
   }
   for (const { geometry } of primitives) {
     geometry.translate(0, -minY, 0);
   }
 
-  // Stash the pre-normalization height on the first primitive's geometry userData for the caller.
-  if (primitives[0]) primitives[0].geometry.userData.rawHeight = maxY - minY;
+  // Stash pre-normalization measurements on the first primitive's geometry userData for the caller.
+  if (primitives[0]) {
+    primitives[0].geometry.userData.rawHeight = maxY - minY;
+    primitives[0].geometry.userData.rawFootprintWidth = maxX - minX;
+    primitives[0].geometry.userData.rawFootprintDepth = maxZ - minZ;
+  }
   return primitives;
 }
 
@@ -124,6 +145,8 @@ export class VegetationManager {
       const gltf = await loadGLTF(def.modelPath);
       const primitives = extractBakedPrimitives(gltf.scene.clone());
       const rawHeight = (primitives[0]?.geometry.userData.rawHeight as number | undefined) ?? def.targetHeight;
+      const rawFootprintWidth = (primitives[0]?.geometry.userData.rawFootprintWidth as number | undefined) ?? 0;
+      const rawFootprintDepth = (primitives[0]?.geometry.userData.rawFootprintDepth as number | undefined) ?? 0;
       const scaleFactor = def.targetHeight / rawHeight;
 
       const instancedMeshes = primitives.map(({ geometry, material }) => {
@@ -137,7 +160,7 @@ export class VegetationManager {
         return mesh;
       });
 
-      pools.set(def.id, { instancedMeshes, scaleFactor, freeIndices: [], nextFreeIndex: 0 });
+      pools.set(def.id, { instancedMeshes, scaleFactor, rawFootprintWidth, rawFootprintDepth, freeIndices: [], nextFreeIndex: 0 });
     }
 
     return new VegetationManager(physics, pools);
@@ -161,7 +184,13 @@ export class VegetationManager {
       const distanceFromSpawn = Math.sqrt(dxSpawn * dxSpawn + dzSpawn * dzSpawn);
       if (distanceFromSpawn < VEGETATION_SPAWN_CLEARANCE) continue;
 
-      const type = pickTypeForDensity(this.densityNoise2D(worldX * VEGETATION_DENSITY_NOISE_FREQUENCY, worldZ * VEGETATION_DENSITY_NOISE_FREQUENCY));
+      // Keep town pads entirely clear of vegetation - a tree or boulder in the middle of a
+      // building cluster would look wrong and a rock's collider could interfere with a building.
+      if (sampleFlatZone(worldX, worldZ).membership > 0) continue;
+
+      const forestMembership = sampleForestZone(worldX, worldZ).membership;
+      const rawNoise = this.densityNoise2D(worldX * VEGETATION_DENSITY_NOISE_FREQUENCY, worldZ * VEGETATION_DENSITY_NOISE_FREQUENCY);
+      const type = pickType(rawNoise, forestMembership, rng);
       if (!type) continue;
 
       const countSoFar = perTypeCount.get(type) ?? 0;
@@ -227,12 +256,23 @@ export class VegetationManager {
     const def = VEGETATION_TYPES.find((d) => d.id === type);
     const instance: PlacedInstance = { type, index };
 
-    if (def?.hasTrunkCollider) {
-      const scaledHeight = def.targetHeight * scaleJitter;
-      const halfHeight = scaledHeight / 2;
+    const scaledHeight = def?.targetHeight ? def.targetHeight * scaleJitter : 0;
+    const halfHeight = scaledHeight / 2;
+
+    if (def?.colliderShape === 'cylinder') {
       const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(worldX, worldY + halfHeight, worldZ);
       const rigidBody = this.physics.world.createRigidBody(bodyDesc);
       const collider = this.physics.world.createCollider(RAPIER.ColliderDesc.cylinder(halfHeight, VEGETATION_TRUNK_RADIUS), rigidBody);
+      instance.colliderHandle = collider.handle;
+      instance.rigidBodyHandle = rigidBody.handle;
+    } else if (def?.colliderShape === 'box') {
+      // Rocks are irregular/randomly rotated - an axis-aligned box close to the real footprint is
+      // good enough to stop players walking straight through, without needing rotation-aware sizing.
+      const halfWidth = (pool.rawFootprintWidth * scale) / 2;
+      const halfDepth = (pool.rawFootprintDepth * scale) / 2;
+      const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(worldX, worldY + halfHeight, worldZ);
+      const rigidBody = this.physics.world.createRigidBody(bodyDesc);
+      const collider = this.physics.world.createCollider(RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight, halfDepth), rigidBody);
       instance.colliderHandle = collider.handle;
       instance.rigidBodyHandle = rigidBody.handle;
     }
@@ -254,15 +294,27 @@ export class VegetationManager {
   }
 }
 
-/** Bands a [-1,1] simplex sample into a vegetation type - trees need the deepest "forest" noise
- * peaks, rocks appear even in shallow/clearing noise, and low values place nothing at all so
- * combat sightlines/movement aren't universally obstructed. */
-function pickTypeForDensity(rawNoise: number): VegetationTypeId | null {
+/**
+ * Trees are gated by the density noise field against a threshold that's lerped by forest zone
+ * membership - low (rare stragglers) at membership 0, dropping to a dense in-forest value at
+ * membership 1. Lerping (not branching on membership > 0) keeps the threshold continuous right
+ * through the forest boundary; an earlier version branched between the two formulas, which matched
+ * at first glance but actually produced a hard density cliff exactly at membership = 0 (caught by
+ * code review, confirmed by evaluating both branches at that boundary). Bushes/rocks get their own
+ * uniform roll from the chunk RNG, entirely independent of both the density field and forest
+ * membership - per project decision, clutter should scatter randomly rather than cluster with trees.
+ */
+function pickType(rawNoise: number, forestMembership: number, rng: () => number): VegetationTypeId | null {
   const density = (rawNoise + 1) / 2;
-  if (density > VEGETATION_TREE_DENSITY_THRESHOLD) {
+  const inForestThreshold = VEGETATION_TREE_DENSITY_THRESHOLD - FOREST_TREE_THRESHOLD_DROP;
+  const treeThreshold = VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD + (inForestThreshold - VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD) * forestMembership;
+
+  if (density > treeThreshold) {
     return TREE_TYPES[Math.floor((density * 997) % TREE_TYPES.length)] ?? TREE_TYPES[0]!;
   }
-  if (density > VEGETATION_BUSH_DENSITY_THRESHOLD) return 'bush';
-  if (density > VEGETATION_ROCK_DENSITY_THRESHOLD) return 'rock';
+
+  const scatterRoll = rng();
+  if (scatterRoll < VEGETATION_BUSH_PROBABILITY) return 'bush';
+  if (scatterRoll < VEGETATION_BUSH_PROBABILITY + VEGETATION_ROCK_PROBABILITY) return 'rock';
   return null;
 }

@@ -7,7 +7,7 @@ import { lockPointer, waitForGameReady } from './helpers.ts';
  * WORLD_HARD_CLAMP_RADIUS, wired in Player.ts) actually holds in a live game, not just on paper -
  * same verify-in-browser discipline as the rest of this project's bug history (see NOTES.md). */
 test('player is held within the world boundary when sprinting straight at it', async ({ page }) => {
-  test.setTimeout(220_000);
+  test.setTimeout(320_000);
 
   await page.goto('/');
   await waitForGameReady(page);
@@ -17,7 +17,10 @@ test('player is held within the world boundary when sprinting straight at it', a
   await page.keyboard.down('KeyW');
 
   // Poll in-browser rather than a fixed wall-clock wait - headless Chromium throttles rAF for
-  // backgrounded/unfocused tabs, so simulated distance per real second isn't a fixed rate.
+  // backgrounded/unfocused tabs, so simulated distance per real second isn't a fixed rate. Now
+  // that the world has real obstacles (buildings, collidable rocks), a fixed-heading sprint can
+  // also temporarily snag on one and need the character controller's sliding behavior to clear it
+  // - budget extra time for that rather than assuming a clear line to the edge.
   await page.waitForFunction(
     (hardClampRadius) => {
       const p = window.__gameDebug?.getPlayerPosition();
@@ -25,7 +28,7 @@ test('player is held within the world boundary when sprinting straight at it', a
       return Math.sqrt(p.x * p.x + p.z * p.z) > hardClampRadius - 2;
     },
     WORLD_HARD_CLAMP_RADIUS,
-    { timeout: 200_000, polling: 500 },
+    { timeout: 300_000, polling: 500 },
   );
 
   await page.keyboard.up('KeyW');

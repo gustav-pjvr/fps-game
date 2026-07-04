@@ -205,3 +205,30 @@ in-world (end of §6 step 4) — that's the first point this plan produces enoug
 surface for a small landmark-naming pilot to be worth running, mirroring how Fable's actual first
 use on this project (Section 8 of PLAN.md) waited until Target/Enemy classes existed to hang
 content on. Until then, this plan proceeds entirely on Sonnet, same as the rest of core engineering.
+
+## 9. Post-step-4 revision: zone-based generation (flat towns, real forests)
+
+After step 4 shipped, playtesting surfaced that one-per-chunk building scatter and pure density-
+noise vegetation didn't read as intentional — buildings should cluster into towns on genuinely flat
+ground, trees should form real walk-into-able forests, bushes/rocks should stay uniformly random.
+This is a large enough design problem (deterministic zone layout + terrain flattening + multi-chunk
+town coordination, all while staying streaming-safe) that an Opus subagent was used for the
+architecture pass, with Sonnet (this session, full codebase context) implementing it — not Fable,
+per §8's standing rule that systems/terrain code stays off Fable's plate.
+
+Implemented: `src/world/ZoneMap.ts` (deterministic jittered hash-grid zones for "flat"/"forest"
+regions), terrain flattening blended into `sampleHeight`, forest-modulated tree density with
+independently-random bushes/rocks, and town-clustered building placement where a town's whole
+layout is a pure function of its zone's cell coordinates. Full writeup, including three real bugs
+found and fixed (a second mountain-ramp wedge, a nearest-site consistency gap, a forest-edge density
+cliff), is in NOTES.md's "Post-step-4 batch" entry.
+
+**Not yet implemented: roads.** Opus's design covers a concrete approach (minimum-spanning-tree over
+a town's building positions, rendered as flat textured strips since the pad is already level) but it
+was deferred so the core zone/town system could ship verified rather than adding more surface area
+before this large batch was confirmed working. Worth a follow-up pass.
+
+Also fixed in the same pass (unrelated to zones, but same user playtest round): rocks previously had
+no collider (now a box collider sized to their footprint), gunshot audio had a perceptible delay
+(mitigated with a standard Web Audio keep-alive technique — see NOTES.md, unverified by automated
+testing since it requires human ears), and the world was shrunk from 12×12 to 8×8 chunks.

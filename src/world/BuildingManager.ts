@@ -5,13 +5,16 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
+import { getFlatZoneSite, type FlatZoneSite } from './ZoneMap.ts';
 import {
-  BUILDING_CHUNK_SPAWN_CHANCE,
-  BUILDING_MIN_GAP,
-  BUILDING_SPAWN_CLEARANCE,
-  SPAWN_X,
-  SPAWN_Z,
-  WORLD_HARD_CLAMP_RADIUS,
+  FLAT_ZONE_CELL_SIZE,
+  FLAT_ZONE_RADIUS_MAX,
+  TOWN_BUILD_FRACTION,
+  TOWN_BUILDING_SPACING_MARGIN,
+  TOWN_LAYOUT_SEED_OFFSET,
+  TOWN_MAX_BUILDINGS,
+  TOWN_MAX_PLACEMENT_ATTEMPTS,
+  TOWN_MIN_BUILDINGS,
   WORLD_SEED,
 } from '../core/config.ts';
 
@@ -33,9 +36,6 @@ const BUILDING_PRESET_DEFS: BuildingPresetDef[] = [
   { modelPath: '/assets/models/buildings/building-sample-tower-d.glb', targetHeight: 12 },
 ];
 
-/** Distinct from vegetation/terrain seeds so building placement doesn't correlate with either. */
-const BUILDING_SEED_OFFSET = 3;
-
 interface BuildingPreset {
   scene: THREE.Object3D;
   scaleFactor: number;
@@ -49,10 +49,20 @@ interface BuildingPreset {
   footprintOffsetZ: number;
 }
 
-interface PlacedBuilding {
-  centerX: number;
-  centerZ: number;
+/** One building's position within its town, in coordinates local to the town's site center. */
+interface TownBuildingPlacement {
+  localX: number;
+  localZ: number;
+  rotationY: number;
+  presetIndex: number;
   halfDiagonal: number;
+}
+
+interface TownLayout {
+  buildings: TownBuildingPlacement[];
+}
+
+interface PlacedBuilding {
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandle: number;
@@ -80,15 +90,22 @@ function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPre
   };
 }
 
+function townCellKey(gx: number, gz: number): string {
+  return `${gx},${gz}`;
+}
+
 /**
- * Per-chunk deterministic building placement (WORLD_PLAN.md §3). At most one building per chunk,
- * gated by BUILDING_CHUNK_SPAWN_CHANCE so most chunks have none. A single fixed box collider per
- * building (sized to its measured footprint) both blocks movement and serves as the rooftop's
- * walkable surface - an axis-aligned box's top face is already flat, so no separate platform
- * collider is needed.
+ * Town-clustered building placement (WORLD_PLAN.md follow-up: buildings should form clusters like
+ * a small town, not scatter one-per-chunk independently). A town's entire layout is a pure function
+ * of its flat-zone cell coordinates (see getTownLayout) - generated once, memoized, and identical
+ * regardless of which chunk or when it's asked for. Each chunk spawns only the buildings from any
+ * overlapping town whose position actually falls inside that chunk's bounds, so a town spanning
+ * several chunks streams in/out correctly no matter the load order.
  */
 export class BuildingManager {
-  private readonly chunkBuildings = new Map<string, PlacedBuilding>();
+  private readonly townLayoutCache = new Map<string, TownLayout>();
+  private readonly activeBuildings = new Map<string, PlacedBuilding>();
+  private readonly chunkOwnedBuildingIds = new Map<string, string[]>();
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -107,74 +124,111 @@ export class BuildingManager {
 
   /** Called by ChunkManager's onChunkLoaded hook. */
   placeForChunk(cx: number, cz: number, originX: number, originZ: number, size: number): void {
-    const rng = mulberry32(hashChunkSeed(cx, cz, WORLD_SEED + BUILDING_SEED_OFFSET));
-    if (rng() > BUILDING_CHUNK_SPAWN_CHANCE) return;
+    const gxMin = Math.floor((originX - FLAT_ZONE_RADIUS_MAX) / FLAT_ZONE_CELL_SIZE);
+    const gxMax = Math.floor((originX + size + FLAT_ZONE_RADIUS_MAX) / FLAT_ZONE_CELL_SIZE);
+    const gzMin = Math.floor((originZ - FLAT_ZONE_RADIUS_MAX) / FLAT_ZONE_CELL_SIZE);
+    const gzMax = Math.floor((originZ + size + FLAT_ZONE_RADIUS_MAX) / FLAT_ZONE_CELL_SIZE);
 
-    const preset = this.presets[Math.floor(rng() * this.presets.length)];
-    if (!preset) return;
+    const ownedIds: string[] = [];
 
-    const halfDiagonal = Math.sqrt(preset.footprintWidth ** 2 + preset.footprintDepth ** 2) / 2;
-    const margin = Math.max(preset.footprintWidth, preset.footprintDepth) / 2;
-    if (margin * 2 >= size) return;
+    for (let gz = gzMin; gz <= gzMax; gz++) {
+      for (let gx = gxMin; gx <= gxMax; gx++) {
+        const site = getFlatZoneSite(gx, gz);
+        if (!site) continue;
 
-    const centerX = originX + margin + rng() * (size - margin * 2);
-    const centerZ = originZ + margin + rng() * (size - margin * 2);
-    const rotationY = Math.floor(rng() * 4) * (Math.PI / 2);
+        const layout = this.getTownLayout(gx, gz, site);
+        layout.buildings.forEach((placement, index) => {
+          const worldX = site.siteX + placement.localX;
+          const worldZ = site.siteZ + placement.localZ;
+          const inThisChunk = worldX >= originX && worldX < originX + size && worldZ >= originZ && worldZ < originZ + size;
+          if (!inThisChunk) return;
 
-    if (!this.isPlacementValid(centerX, centerZ, halfDiagonal)) return;
+          const preset = this.presets[placement.presetIndex];
+          if (!preset) return;
 
-    this.chunkBuildings.set(chunkKey(cx, cz), this.createBuilding(centerX, centerZ, rotationY, preset, halfDiagonal));
+          const id = `${townCellKey(gx, gz)}:${index}`;
+          const placed = this.createBuilding(worldX, worldZ, placement.rotationY, preset);
+          this.activeBuildings.set(id, placed);
+          ownedIds.push(id);
+        });
+      }
+    }
+
+    this.chunkOwnedBuildingIds.set(chunkKey(cx, cz), ownedIds);
   }
 
   /** Called by ChunkManager's onChunkUnloaded hook. */
   removeChunk(cx: number, cz: number): void {
     const key = chunkKey(cx, cz);
-    const building = this.chunkBuildings.get(key);
-    if (!building) return;
+    const ownedIds = this.chunkOwnedBuildingIds.get(key);
+    if (!ownedIds) return;
 
-    this.scene.remove(building.group);
+    for (const id of ownedIds) {
+      const building = this.activeBuildings.get(id);
+      if (!building) continue;
 
-    const collider = this.physics.world.getCollider(building.colliderHandle);
-    if (collider) this.physics.world.removeCollider(collider, true);
-    const rigidBody = this.physics.world.getRigidBody(building.rigidBodyHandle);
-    if (rigidBody) this.physics.world.removeRigidBody(rigidBody);
+      this.scene.remove(building.group);
+      const collider = this.physics.world.getCollider(building.colliderHandle);
+      if (collider) this.physics.world.removeCollider(collider, true);
+      const rigidBody = this.physics.world.getRigidBody(building.rigidBodyHandle);
+      if (rigidBody) this.physics.world.removeRigidBody(rigidBody);
 
-    this.chunkBuildings.delete(key);
-  }
-
-  private isPlacementValid(centerX: number, centerZ: number, halfDiagonal: number): boolean {
-    const distanceFromOrigin = Math.sqrt(centerX * centerX + centerZ * centerZ);
-    if (distanceFromOrigin > WORLD_HARD_CLAMP_RADIUS) return false;
-
-    const dxSpawn = centerX - SPAWN_X;
-    const dzSpawn = centerZ - SPAWN_Z;
-    const distanceFromSpawn = Math.sqrt(dxSpawn * dxSpawn + dzSpawn * dzSpawn) - halfDiagonal;
-    if (distanceFromSpawn < BUILDING_SPAWN_CLEARANCE) return false;
-
-    for (const existing of this.chunkBuildings.values()) {
-      const dx = centerX - existing.centerX;
-      const dz = centerZ - existing.centerZ;
-      const centerDistance = Math.sqrt(dx * dx + dz * dz);
-      const requiredDistance = halfDiagonal + existing.halfDiagonal + BUILDING_MIN_GAP;
-      if (centerDistance < requiredDistance) return false;
+      this.activeBuildings.delete(id);
     }
 
-    return true;
+    this.chunkOwnedBuildingIds.delete(key);
   }
 
-  private createBuilding(
-    centerX: number,
-    centerZ: number,
-    rotationY: number,
-    preset: BuildingPreset,
-    halfDiagonal: number,
-  ): PlacedBuilding {
-    const groundY = sampleHeight(centerX, centerZ);
+  /** Pure function of (gx,gz) - memoized, but the memo is a derived cache, not the source of
+   * truth, so any chunk asking for the same town cell gets an identical layout whether this is
+   * the first call or the hundredth. Rejection-sampled: places varied-size buildings within
+   * TOWN_BUILD_FRACTION of the flat zone's radius (its flat core, not the blended rim) with a
+   * minimum gap between footprints, capped at TOWN_MAX_PLACEMENT_ATTEMPTS so a crowded roll never
+   * stalls a chunk load. */
+  private getTownLayout(gx: number, gz: number, site: FlatZoneSite): TownLayout {
+    const key = townCellKey(gx, gz);
+    const cached = this.townLayoutCache.get(key);
+    if (cached) return cached;
+
+    const rng = mulberry32(hashChunkSeed(gx, gz, WORLD_SEED + TOWN_LAYOUT_SEED_OFFSET));
+    const targetCount = TOWN_MIN_BUILDINGS + Math.floor(rng() * (TOWN_MAX_BUILDINGS - TOWN_MIN_BUILDINGS + 1));
+    const buildings: TownBuildingPlacement[] = [];
+
+    for (let attempt = 0; attempt < TOWN_MAX_PLACEMENT_ATTEMPTS && buildings.length < targetCount; attempt++) {
+      const presetIndex = Math.floor(rng() * this.presets.length);
+      const preset = this.presets[presetIndex];
+      if (!preset) continue;
+
+      const halfDiagonal = Math.sqrt(preset.footprintWidth ** 2 + preset.footprintDepth ** 2) / 2;
+      const angle = rng() * Math.PI * 2;
+      const distance = rng() * site.radius * TOWN_BUILD_FRACTION;
+      const localX = Math.cos(angle) * distance;
+      const localZ = Math.sin(angle) * distance;
+      const rotationY = Math.floor(rng() * 4) * (Math.PI / 2);
+
+      const overlaps = buildings.some((other) => {
+        const dx = localX - other.localX;
+        const dz = localZ - other.localZ;
+        const centerDistance = Math.sqrt(dx * dx + dz * dz);
+        return centerDistance < halfDiagonal + other.halfDiagonal + TOWN_BUILDING_SPACING_MARGIN;
+      });
+      if (overlaps) continue;
+
+      buildings.push({ localX, localZ, rotationY, presetIndex, halfDiagonal });
+    }
+
+    const layout: TownLayout = { buildings };
+    this.townLayoutCache.set(key, layout);
+    return layout;
+  }
+
+  private createBuilding(worldX: number, worldZ: number, rotationY: number, preset: BuildingPreset): PlacedBuilding {
+    const groundY = sampleHeight(worldX, worldZ);
 
     const group = preset.scene.clone(true);
     group.scale.setScalar(preset.scaleFactor);
     group.rotation.y = rotationY;
-    group.position.set(centerX, groundY, centerZ);
+    group.position.set(worldX, groundY, worldZ);
     group.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
@@ -195,21 +249,14 @@ export class BuildingManager {
     // not the (possibly off-center) point the mesh happens to be positioned at.
     const cos = Math.cos(rotationY);
     const sin = Math.sin(rotationY);
-    const colliderCenterX = centerX + (preset.footprintOffsetX * cos + preset.footprintOffsetZ * sin);
-    const colliderCenterZ = centerZ + (-preset.footprintOffsetX * sin + preset.footprintOffsetZ * cos);
+    const colliderCenterX = worldX + (preset.footprintOffsetX * cos + preset.footprintOffsetZ * sin);
+    const colliderCenterZ = worldZ + (-preset.footprintOffsetX * sin + preset.footprintOffsetZ * cos);
 
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(colliderCenterX, centerY, colliderCenterZ);
     const rigidBody = this.physics.world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.cuboid(colliderHalfWidth, preset.height / 2, colliderHalfDepth);
     const collider = this.physics.world.createCollider(colliderDesc, rigidBody);
 
-    return {
-      centerX,
-      centerZ,
-      halfDiagonal,
-      group,
-      rigidBodyHandle: rigidBody.handle,
-      colliderHandle: collider.handle,
-    };
+    return { group, rigidBodyHandle: rigidBody.handle, colliderHandle: collider.handle };
   }
 }
