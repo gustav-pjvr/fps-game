@@ -44,6 +44,15 @@ export interface EnemyCombatHooks {
 const HEAD_RADIUS = ENEMY_RADIUS * 0.55;
 const HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - HEAD_RADIUS;
 
+/** How far an enemy must move horizontally before its ground height is resampled. sampleHeight is
+ * the enemy hot path's dominant cost (4-octave fBm + a 9-cell Worley scan per call, per enemy, per
+ * frame - thousands of noise evaluations/sec at a 50-enemy match size) for what is nearly static
+ * data: at chase speed 3.4 an enemy covers ~0.057 units/tick, so this caches ~4 frames' worth of
+ * samples. 0.25 units of horizontal drift changes terrain height imperceptibly (terrain base
+ * frequency 0.015 means a full noise period spans ~67 units) and the physics body glues back to
+ * the exact surface on the next resample. */
+const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
+
 /** Kenney's "Mini Characters" bind pose measures ~0.671 units tall, feet at local Y=0. */
 const MODEL_BIND_HEIGHT = 0.671;
 const MODEL_SCALE = ENEMY_HEIGHT / MODEL_BIND_HEIGHT;
@@ -330,7 +339,12 @@ export class Enemy implements Entity, Damageable {
     } else {
       this.releaseEngagementSlot();
       this.aimHoldTimer = 0;
-      this.moveToward(player.position.x, player.position.z, archetype.moveSpeed, dt, current);
+      // Whisker avoidance during chase too (this used to deliberately beeline): a head-height LOS
+      // ray can clear past a tree trunk or boulder whose collider still blocks the ground path, so
+      // a beelining chaser visibly clipped through trunks - the most player-visible AI artifact in
+      // the codebase. Costs 3 short raycasts per chasing (not yet firing) enemy per frame, same as
+      // patrol/search/kite movement already pays.
+      this.moveTowardWithAvoidance(player.position.x, player.position.z, archetype.moveSpeed, dt, current);
     }
   }
 
@@ -524,29 +538,10 @@ export class Enemy implements Entity, Damageable {
     this.stuckCheckPos.set(current.x, current.y, current.z);
   }
 
-  private moveToward(
-    targetX: number,
-    targetZ: number,
-    speed: number,
-    dt: number,
-    current: { x: number; y: number; z: number },
-  ): void {
-    const dx = targetX - current.x;
-    const dz = targetZ - current.z;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-    if (distance < 1e-4) return;
-
-    const step = Math.min(distance, speed * dt);
-    const nextX = current.x + (dx / distance) * step;
-    const nextZ = current.z + (dz / distance) * step;
-    this.applyPosition(nextX, nextZ);
-    this.mesh.rotation.y = Math.atan2(dx, dz);
-    this.isMoving = true;
-  }
-
-  /** Same as moveToward, but steers around nearby obstacles first (see enemySteering.ts) - used
-   * for patrol, where destinations are far enough that running straight into a building/rock/tree
-   * along the way is common; chase deliberately keeps beelining straight at the player for now. */
+  /** Straight-line movement with whisker obstacle steering (see enemySteering.ts) - used by every
+   * moving state (patrol, search, and chase - chase used to beeline without avoidance, which let
+   * chasers clip through tree trunks/rocks whose colliders block the ground path even when the
+   * head-height LOS ray clears past them). */
   private moveTowardWithAvoidance(
     targetX: number,
     targetZ: number,
@@ -587,8 +582,27 @@ export class Enemy implements Entity, Damageable {
     next?.reset().fadeIn(0.2).play();
   }
 
+  /** Initialized to NaN so the first groundHeightAt call always resamples (NaN distance compares
+   * false against the threshold). */
+  private heightSampleX = Number.NaN;
+  private heightSampleZ = Number.NaN;
+  private cachedGroundHeight = 0;
+
+  /** Cached terrain height - resampled only after HEIGHT_RESAMPLE_DISTANCE of horizontal movement,
+   * not every frame (see the constant's comment for the cost/accuracy reasoning). */
+  private groundHeightAt(x: number, z: number): number {
+    const dx = x - this.heightSampleX;
+    const dz = z - this.heightSampleZ;
+    if (!(dx * dx + dz * dz < HEIGHT_RESAMPLE_DISTANCE_SQ)) {
+      this.cachedGroundHeight = sampleHeight(x, z);
+      this.heightSampleX = x;
+      this.heightSampleZ = z;
+    }
+    return this.cachedGroundHeight;
+  }
+
   private applyPosition(x: number, z: number): void {
-    const y = sampleHeight(x, z) + ENEMY_HEIGHT / 2;
+    const y = this.groundHeightAt(x, z) + ENEMY_HEIGHT / 2;
     this.rigidBody.setNextKinematicTranslation({ x, y, z });
     this.mesh.position.set(x, y, z);
   }
