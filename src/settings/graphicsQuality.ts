@@ -12,6 +12,12 @@ export interface GraphicsQualityPreset {
    * from ~24s to 30s+ timeouts). Gated to High for the same reason shadowMapSize is: High targets
    * real GPUs. Low/Medium fall back to a flat AmbientLight fill (see Game.addLighting). */
   readonly environmentLighting: boolean;
+  /** Multiplies scene.environment's contribution (three.js Scene.environmentIntensity) - only
+   * meaningful when environmentLighting is true. The sky's own PMREM is bright enough that at the
+   * default 1.0 it stacks with the full-intensity direct sun to noticeably overexpose/bleach every
+   * surface (confirmed visually) - full sky brightness plus full direct sun double-counts the same
+   * light source. Scaled down so it reads as fill alongside the sun, not a second sun. */
+  readonly environmentIntensity: number;
 }
 
 /** Medium is what this project's own e2e suite is verified to run cleanly on a software-rendered
@@ -21,9 +27,9 @@ export interface GraphicsQualityPreset {
  * hardware, which has no reason to share the test sandbox's software-rendering ceiling. Low turns
  * shadows off entirely for the lowest-end/most CPU-bound systems. */
 export const GRAPHICS_QUALITY_PRESETS: Record<GraphicsQuality, GraphicsQualityPreset> = {
-  low: { shadowsEnabled: false, shadowMapSize: SUN_SHADOW_MAP_SIZE_MEDIUM, pixelRatioCap: 1, environmentLighting: false },
-  medium: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_MEDIUM, pixelRatioCap: 2, environmentLighting: false },
-  high: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_HIGH, pixelRatioCap: 2, environmentLighting: true },
+  low: { shadowsEnabled: false, shadowMapSize: SUN_SHADOW_MAP_SIZE_MEDIUM, pixelRatioCap: 1, environmentLighting: false, environmentIntensity: 1 },
+  medium: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_MEDIUM, pixelRatioCap: 2, environmentLighting: false, environmentIntensity: 1 },
+  high: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_HIGH, pixelRatioCap: 2, environmentLighting: true, environmentIntensity: 0.4 },
 };
 
 export const GRAPHICS_QUALITY_ORDER: GraphicsQuality[] = ['low', 'medium', 'high'];

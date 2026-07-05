@@ -67,6 +67,10 @@ export class Renderer {
       const pmremGenerator = new THREE.PMREMGenerator(this.webgl);
       this.scene.environment = pmremGenerator.fromScene(this.scene, 0, CAMERA_NEAR, CAMERA_FAR).texture;
       pmremGenerator.dispose();
+      // The sky's own PMREM is bright enough that at full strength it stacks with the direct sun
+      // and visibly overexposes/bleaches every surface - scaled down so it reads as fill light
+      // alongside the sun, not a second sun (see GraphicsQualityPreset.environmentIntensity).
+      this.scene.environmentIntensity = quality.environmentIntensity;
     }
 
     this.camera = new THREE.PerspectiveCamera(
