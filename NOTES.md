@@ -1223,3 +1223,128 @@ affected tests (8 batches x 2 tests) - all clean, and each batch visibly faster 
 for both tests combined, from over 2 minutes for a single test pre-fix).
 
 **Verified:** typecheck clean; full smoke suite (16/16) green after all of the above.
+
+## Whole-codebase review follow-through: 13 of 15 items implemented, 2 deferred (2026-07-05)
+
+`CODE_REVIEW.md` (a fresh whole-codebase review, ~7,500 lines, Fable 5 model) produced 15
+prioritized improvement items. Worked through them roughly in the review's own priority order,
+grouping related fixes into separate commits the way this project's history already does. Full
+commit list is in the session's final report; this entry covers what changed and why, grouped by
+theme rather than by commit.
+
+**Lifecycle bugs (items 1, 2, 7 - the review's own top priority, "highest-value, lowest-risk"):**
+`SoundEngine` now has a real `dispose()` (stops the keep-alive oscillator, closes the
+`AudioContext`) called from `Game.dispose()` - previously every lobby->match cycle leaked a
+running `AudioContext` until the browser's concurrent-context cap would eventually kill audio
+outright; the keep-alive oscillator is also rerouted through the master gain so volume/mute now
+actually applies to it. `spawnEncountersAsync` takes an `isCancelled` check (a generation counter
+bumped by `resetPlay`/`dispose`) evaluated after every frame-yielded batch - closes both the
+double-spawn race (rapid double-reset previously left two spawn loops running, overshooting the
+match's entity count) and the use-after-free (returning to the lobby mid-spawn had the surviving
+loop calling `createRigidBody` on the already-freed WASM world). `InputManager`'s `contextmenu`
+listener is now a named handler actually removed in `dispose()` (the old anonymous registration
+stacked one document-level listener per match); `Settings.getKeyBindings()` returns a copy instead
+of the live internal object.
+
+**Dead code (item 3):** deleted every `ENEMY_*` constant in `config.ts` that the per-archetype
+refactor had already made unreachable (`ENEMY_HEALTH`, `ENEMY_SPEED`, `ENEMY_DETECTION_RANGE`,
+`ENEMY_LEASH_RANGE`, the `ENEMY_RANGED_*`/`ENEMY_AIM_*` block, `ENEMY_ATTACK_DAMAGE`) along with
+their multi-paragraph tuning comments, which had gone stale and were actively describing numbers
+the game no longer reads from that file - verified by grep before and after. The surviving baseline
+values live on The Straggler's archetype entry now, with the Phase E measured-TTK tuning note moved
+there too.
+
+**Testing (item 4 - "the single highest-leverage testing investment available" per the review):**
+added the project's first unit-test layer, Vitest, scoped to `src/**/*.test.ts` so it never
+collides with the Playwright e2e suite (`npm run test:unit`, additive - `npx playwright test` is
+unchanged). Three tests lock in invariants that had each already been broken once and caught only
+by hand: `ZoneMap.test.ts` sweeps 1000 seeds confirming the guaranteed-zone-count/full-size/
+distinct-cell/nearest-site-wins invariants from `computeGuaranteedSites`'s own docstring;
+`archetypes.test.ts` enforces `detectionRange < ENEMY_RING_BASE_RADIUS` for every archetype (the
+exact Ridge Walker match-start-sniping regression from the per-archetype loadouts session) plus
+kite hysteresis ordering and picker determinism; `rng.test.ts` covers `mulberry32` determinism/
+range/uniformity. `setWorldSeedForTesting()` added to `worldSeed.ts` as a documented test-only
+escape hatch.
+
+**Determinism and dedup (items 5, 9):** enemy patrol (destinations, repath timers, LOS-check phase
+offset) now draws from a per-enemy seeded `mulberry32` stream (world seed + spawn index) instead of
+raw `Math.random` - completes the "reproducible world" story archetype assignment already had; the
+`pickPatrolDestination(spawn, rng)` plumbing for this already existed, only the call site was
+wrong. The spread-by-two-axis-angle technique, previously duplicated verbatim in
+`WeaponManager.firePellet`, `Enemy.fireRangedShot`, and `Enemy.updateMelee`, is now one
+`applySpreadCone()` helper in `src/combat/spread.ts`, with the known square-ish/diagonally-biased
+distribution documented in exactly one place instead of three.
+
+**Enemy hot-path and behavior (items 6, 10 - "the clearest hot-path scaling issue" and "the most
+player-visible AI artifact"):** `Enemy.applyPosition` now caches its last sampled terrain height and
+only resamples after 0.25 units of horizontal drift, instead of paying a 4-octave fBm + 9-cell
+Worley zone scan every frame for every moving enemy - the dominant per-enemy cost at the 50-enemy
+match cap. Separately, chase movement switched from the old deliberate beeline (`moveToward`) to
+the same whisker-avoidance steering patrol/search/kite already used (`moveTowardWithAvoidance`) -
+chasing enemies used to visibly clip through tree trunks and boulders because a head-height LOS ray
+clears past obstacles whose ground-level collider still blocks movement; the now-unused
+`moveToward` was deleted.
+
+**Fairness/readability polish (items 11, 12):** enemy gunshots are now distance-attenuated (full
+volume inside 10 units, linear fade to a 0.15 floor at 60, never fully silent) instead of playing
+at uniform full volume regardless of the shooter's distance - undermined the same combat-
+readability goal the ranged-combat tracer work exists for. `VegetationManager`'s forest-density
+candidate budget now samples membership at a chunk's center *and* all 4 corners (max, not average)
+instead of center alone, removing the chunk-grid-aligned tree-density cliffs that showed up along
+forest edges when a chunk's corner overlapped a forest but its center didn't.
+
+**e2e suite maintainability (item 8):** added `findFirstEnemyIndex(page)` (identifies the first
+live enemy by archetype, since targets report none) to replace the hard-coded "index 5 is an
+enemy" assumption baked into three tests and `killPlayerByEnemy` - only true for the default
+5-target/3-enemy match with the current spawn order, and would have broken obscurely on any
+reorder. Added `window.__gameDebug.damagePlayer(n)` - the one deliberate exception to the
+aim-only debug API's no-gameplay-cheats rule, used by exactly one of the two death-flow tests
+(the other keeps real combat via `killPlayerByEnemy`, so the genuine enemy-damages-player path
+stays covered end to end) - cuts that test's worst case from ~90s of staged combat to one tick.
+Caught a real bug writing this: the hook originally applied damage immediately on call, but
+`update()` detects the death transition by comparing `isDead` *across* a tick, so damage landing
+between ticks made the transition unobservable and the death screen never showed. Fixed by queuing
+the damage and applying it inside the next `update()` tick, the same within-tick path enemy damage
+already takes.
+
+**Render interpolation (item 13):** `Loop`'s fixed-timestep accumulator already computed a
+fractional tick progress (`alpha`) for exactly this purpose, but `Game.render(_alpha)` ignored it,
+so camera motion visibly stepped at 60Hz on displays faster than the simulation. `Player` now
+tracks `previousCameraPosition/Quaternion` independently of `camera.position` itself (captured at
+the start of `update()`, before `applyMovement`'s authoritative write), and `interpolateCamera(alpha)`
+blends them for rendering only - never fed back into the next tick's "previous," so no drift.
+Deliberately scoped to the camera only (weapon view models come along for free, being parented to
+it) rather than every enemy/target mesh - the highest-value, lowest-risk slice per the review's own
+sizing, and it needs no new e2e-visible bookkeeping since `getLiveEntityPositions()` etc. read
+physics-authoritative positions, never the camera. `respawn()`/`debugTeleport()` snap both
+interpolation endpoints together so a teleport cuts instantly instead of drawing a one-frame streak.
+
+**Deferred (items 14, 15), per this pass's explicit authorization to scope down or skip risky
+items rather than force them through:**
+- **Item 14 (GameSystems registry)** - not attempted beyond this assessment. `Game`'s 22-parameter
+  constructor is exactly as fragile as the review describes, but the fragility is entangled with
+  two already-documented forward-reference hacks (`scoreState`, the `gameRef` circular dependency
+  for `DeathScreen`/`PauseMenu` callbacks) and one implicit-ordering hack (`PauseMenu` constructed
+  before `SettingsPanel` purely for DOM paint order). A mechanical "collect into a disposables
+  array" slice was considered and rejected: `update()`/`render()` need each system's specific typed
+  methods (`hud.setAmmo`, `weaponManager.ammo`, etc.), so a generic registry array would have to
+  coexist alongside the individually-typed fields rather than replace them - not a real reduction
+  in the "three places to forget," just moving the list around. A genuine fix means redesigning
+  around the forward-ref hacks first, which is bigger than "introduce a registry" and risks
+  destabilizing working teardown/paint-order behavior for a cosmetic win. Left as-is.
+- **Item 15 (worker-thread chunk generation)** - skipped entirely, per the review's own "only worth
+  it if real-hardware p95 numbers confirm" framing and this pass's explicit pre-authorization to
+  skip it. This sandbox's Chromium renders via SwiftShader (software GPU, see PERFORMANCE.md), so
+  there's no way to measure whether the p95 spikes this would fix are actually a problem on real
+  hardware, and a worker migration is real architectural surgery (structured-clone or SharedArrayBuffer
+  transfer of heightfield data, moving `sampleHeight`'s noise/zone dependencies off the main thread)
+  that shouldn't be attempted blind.
+
+**Verification methodology for this whole pass:** every item ran `npx tsc --noEmit --pretty false`
+(clean throughout) and either the full smoke suite or a targeted subset immediately after
+implementation, never batching several risky changes before checking. The full suite went
+16/16 green multiple times across the pass; the one recurring flake (`loads without console errors`
+failing on a full-suite run, always passing in isolated re-runs) is the same pre-existing
+GLTF-texture-load flake this file already documents elsewhere, confirmed unrelated by isolated
+re-runs after each change that touched anything nearby. New: `npm run test:unit` (17 Vitest tests,
+~0.4s) alongside the unchanged `npx playwright test` workflow.
