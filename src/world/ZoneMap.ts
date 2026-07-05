@@ -157,7 +157,7 @@ function membershipFor(distance: number, radius: number, innerFraction: number):
  * flatten-blend, producing a sharp, jagged transition (verified in-browser: this wedged the
  * character controller against what looked like a plain hillside, same failure class as the
  * original ridge-noise wedge bug in WORLD_PLAN.md §2 - see NOTES.md). */
-function isSiteClear(siteX: number, siteZ: number, radius: number): boolean {
+export function isSiteClear(siteX: number, siteZ: number, radius: number): boolean {
   const distanceFromOrigin = Math.sqrt(siteX * siteX + siteZ * siteZ);
   if (distanceFromOrigin + radius > WORLD_EDGE_RAMP_START - ZONE_EDGE_MARGIN) return false;
 
@@ -254,7 +254,11 @@ interface GuaranteedSitesCache {
 let guaranteedFlatSitesCache: GuaranteedSitesCache | null = null;
 let guaranteedForestSitesCache: GuaranteedSitesCache | null = null;
 
-function getGuaranteedFlatSites(): GuaranteedSite[] {
+/** Exported (along with getGuaranteedForestSites/isSiteClear) for the unit-test layer - the
+ * guaranteed-sites mechanism has already been broken twice in subtle numeric ways caught only by
+ * hand (see computeGuaranteedSites's docstring), so the invariant is locked in by tests across
+ * many seeds rather than by comment alone. */
+export function getGuaranteedFlatSites(): GuaranteedSite[] {
   const seed = getWorldSeed();
   if (!guaranteedFlatSitesCache || guaranteedFlatSitesCache.seed !== seed) {
     guaranteedFlatSitesCache = {
@@ -265,7 +269,7 @@ function getGuaranteedFlatSites(): GuaranteedSite[] {
   return guaranteedFlatSitesCache.sites;
 }
 
-function getGuaranteedForestSites(): GuaranteedSite[] {
+export function getGuaranteedForestSites(): GuaranteedSite[] {
   const seed = getWorldSeed();
   if (!guaranteedForestSitesCache || guaranteedForestSitesCache.seed !== seed) {
     guaranteedForestSitesCache = {

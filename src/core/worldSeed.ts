@@ -8,6 +8,12 @@ export function getWorldSeed(): number {
   return currentSeed;
 }
 
+/** Test-only escape hatch (unit tests need to sweep many specific seeds deterministically) -
+ * production code never sets a chosen seed, it only randomizes per match via randomizeWorldSeed. */
+export function setWorldSeedForTesting(seed: number): void {
+  currentSeed = seed >>> 0;
+}
+
 /** Called once per match start (Game.create(), not the in-match practice-reset) so each new game
  * generates a different world. Terrain/vegetation/building/zone systems all read the seed via
  * getWorldSeed() rather than a frozen constant, so this takes effect for everything generated after
