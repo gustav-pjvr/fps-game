@@ -906,9 +906,66 @@ doc's state list) - a stationary enemy that stops and returns fire once in range
 real ranged combat; cover-seeking would need real pathfinding this codebase doesn't have. Revisit in
 Phase E's tuning pass if it reads as too static in practice.
 
-**Still to do (Phases D-E):** player knife + universal enemy melee fallback (melee is currently still
-the Phase A/B flat-damage tick, not a real weapon-style attack), and per-weapon archetype behavior
-differentiation with seeded randomized enemy loadouts.
+**Still to do at the time (Phases D-E):** player knife + universal enemy melee fallback (melee was
+still the Phase A/B flat-damage tick, not a real weapon-style attack), and per-weapon archetype
+behavior differentiation with seeded randomized enemy loadouts. Phase D below.
+
+### Phase D: player knife + upgraded universal enemy melee fallback (2026-07-05)
+
+**Player knife.** `WeaponDefinition` gained a `kind: 'ranged' | 'melee'` field (all four existing
+guns marked `'ranged'` explicitly) and an optional `range` (melee's short reach - guns keep sharing
+`WeaponManager`'s existing long-range `HITSCAN_RANGE` constant). The knife itself
+(`WEAPON_DEFINITIONS.knife`, "Bicknell Trench Knife") slots into the exact same firing pipeline every
+gun already uses - `pelletCount: 3` *is* "a small fan of raycasts" (the design doc's own phrase for
+melee hit-testing), just with melee's tighter spread/range instead of a shotgun's. `magazineSize:
+Infinity` needed zero special-casing in `Weapon.ts`: `Infinity - 1 === Infinity` in JS, so
+`tryFire()`'s plain `ammoInMagazine > 0` check never fails and reload never triggers, for free.
+`Hud.setAmmo` shows `"MELEE"` instead of `"Infinity / Infinity"` (`Number.isFinite(max)` check) -
+the one place that distinction needed to be visible at all.
+
+No sourced `.glb` exists for a knife (Kenney's "Blaster Kit," everything else in this project's
+weapon set, has no melee weapon in it) - added `createProceduralMeleeViewModel()` (a blade + handle
+built from two tinted boxes) rather than blocking on a new asset, following this project's existing
+precedent for non-hero placeholder geometry (the procedural ladder rungs in `BuildingManager.ts`).
+`WeaponManager.create` now branches per-weapon: load a real `.glb` if `WEAPON_MODEL_SPECS` has one,
+else use the procedural view model - `InventoryPanel` already handled a missing spec gracefully (no
+thumbnail image, existing fallback), so the knife's inventory card needed no changes there.
+
+Reachable in-game only via mouse-wheel weapon cycling, not a dedicated number key - `weaponSlot1-4`
+are hardwired to physical keys `1-4` (`DEFAULT_KEY_BINDINGS`) and adding a fifth would mean touching
+key-binding infrastructure (`actions.ts`, `InputManager`, the rebind UI) for one extra slot. Deliberately
+trimmed for scope; the knife shows correctly in the hotbar (`Hotbar.setSlots` is length-agnostic) and
+is fully functional once cycled to, just not one-key-direct-select yet.
+
+**Enemy melee, upgraded from a flat tick to a real attack.** The close-range branch of
+`updateChase` used to just deal `ENEMY_ATTACK_DAMAGE` unconditionally once `distanceToPlayer <=
+ENEMY_ATTACK_RANGE`, with no line-of-sight check at all (a gap that predates this phase, from back
+when melee was the *only* combat behavior). `updateMelee()` now mirrors the player's own knife: the
+same spread-by-two-axis-angle fan of `ENEMY_MELEE_SWING_COUNT` (3) raycasts, gated on
+`hasLineOfSightToPlayer` (Phase B's existing throttled check), and only deals damage if a ray
+actually connects with the player's collider - a player hugging the exact edge of `ENEMY_ATTACK_RANGE`
+is no longer guaranteed to get hit purely for being in range.
+
+**Verified:** a temporary e2e test cycled to the knife via mouse wheel (`weaponNext` has no default
+key binding, only wheel - confirmed via `InputManager`'s wheel handler), fired it at a live target in
+range and confirmed a kill, then separately stood the player point-blank next to a live enemy and
+confirmed the upgraded melee fallback still connects. 3 of 3 runs passed cleanly.
+
+**A real, expected slowdown in the existing smoke suite - not a regression.** The full suite's first
+post-Phase-D run failed `killPlayerByEnemy` (used by two death-flow tests) with a timeout, at its
+existing 40s deadline. Re-ran the whole suite clean (16/16) immediately after with no code changes,
+confirming this wasn't a hard regression - but the *reason* it's now borderline is real: before
+Phases B-D, an aggroed enemy always beelined straight into a guaranteed-hit melee tick, so
+time-to-kill was tightly bounded by `ENEMY_ATTACK_INTERVAL`. Now an engaging enemy often just stands
+at range firing bursts with a real aim-error cone (an entire burst can whiff), and melee itself can
+miss too (Phase D's fan-raycast swing) - death is still reliable, just no longer bounded by a fixed
+cadence. Widened `killPlayerByEnemy`'s internal deadline (40s -> 50s) and both call sites'
+`test.setTimeout` (60s -> 75s, keeping real margin after the kill for each test's remaining
+assertions) - confirmed clean across 3 repeated runs of just those two tests, then a full-suite
+re-run (16/16) green.
+
+**Still to do (Phase E):** per-weapon archetype behavior differentiation with seeded randomized
+enemy loadouts, and a tuning pass across everything Phases B-D landed based on how it actually plays.
 
 ## Lobby redesign (2026-07-05)
 

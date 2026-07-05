@@ -228,7 +228,7 @@ export class Game {
     const weaponManager = await WeaponManager.create(
       renderer.camera,
       physics,
-      ['pistol', 'rifle', 'shotgun', 'sniper'],
+      ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'],
       scopeOverlay,
       (point, isEntityHit) => {
         impactMarkers.spawn(point, isEntityHit);

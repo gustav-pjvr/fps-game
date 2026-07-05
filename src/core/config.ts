@@ -63,6 +63,13 @@ export const ENEMY_ATTACK_INTERVAL = 1;
 export const ENEMY_DETECTION_RANGE = 18;
 export const ENEMY_LEASH_RANGE = 26;
 
+/** Universal melee fallback (Phase D), upgraded from a flat auto-hit tick to a real fan-raycast
+ * swing mirroring the player's own knife (WeaponManager.firePellet's spread technique) - requires
+ * line-of-sight and can actually miss if none of the swing's rays connect, rather than guaranteeing
+ * damage purely from being in range. */
+export const ENEMY_MELEE_SWING_COUNT = 3;
+export const ENEMY_MELEE_SWING_SPREAD_DEG = 10;
+
 /**
  * Aggro/LOS state transitions (enemy AI overhaul, Phase B). Detection now requires a clear
  * line-of-sight raycast in addition to ENEMY_DETECTION_RANGE, not distance alone - an enemy on the

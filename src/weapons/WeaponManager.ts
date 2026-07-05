@@ -2,7 +2,13 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
-import { createWeaponViewModel, WEAPON_ADS_POSITION, WEAPON_HIP_POSITION, WEAPON_MODEL_SPECS } from './viewModel.ts';
+import {
+  createProceduralMeleeViewModel,
+  createWeaponViewModel,
+  WEAPON_ADS_POSITION,
+  WEAPON_HIP_POSITION,
+  WEAPON_MODEL_SPECS,
+} from './viewModel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
@@ -74,10 +80,11 @@ export class WeaponManager {
         if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
         const spec = WEAPON_MODEL_SPECS[id];
-        if (!spec) throw new Error(`No model spec for weapon: ${id}`);
-        const gltf = await loadGLTF(spec.path);
-
-        const { group, muzzleLocalOffset } = createWeaponViewModel(definition, gltf);
+        // No sourced model for melee weapons (Phase D) - a procedural placeholder stands in rather
+        // than blocking on a new asset (see createProceduralMeleeViewModel).
+        const { group, muzzleLocalOffset } = spec
+          ? createWeaponViewModel(definition, await loadGLTF(spec.path))
+          : createProceduralMeleeViewModel(definition);
         group.visible = false;
         camera.add(group);
         return { weapon: new Weapon(definition), viewModel: group, muzzleLocalOffset };
@@ -245,8 +252,9 @@ export class WeaponManager {
   }
 
   private firePellet(origin: THREE.Vector3, muzzleWorld: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
-    const { spreadRadians, adsSpreadMultiplier, damage } = this.active.weapon.definition;
+    const { spreadRadians, adsSpreadMultiplier, damage, range } = this.active.weapon.definition;
     const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
+    const effectiveRange = range ?? HITSCAN_RANGE;
 
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
@@ -254,9 +262,9 @@ export class WeaponManager {
 
     // camera.position sits inside the player's own capsule (EYE_OFFSET is well within its
     // radius/height), so without excluding it every shot immediately self-hit at distance 0.
-    const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE, excludeCollider);
+    const hit = castHitscan(this.physics, origin, direction, effectiveRange, excludeCollider);
 
-    const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(HITSCAN_RANGE));
+    const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(effectiveRange));
     this.onTracer(muzzleWorld, tracerEnd);
 
     if (hit) {

@@ -24,6 +24,8 @@ import {
   ENEMY_HEIGHT,
   ENEMY_LEASH_RANGE,
   ENEMY_LOS_CHECK_INTERVAL,
+  ENEMY_MELEE_SWING_COUNT,
+  ENEMY_MELEE_SWING_SPREAD_DEG,
   ENEMY_PATROL_REPATH_MAX,
   ENEMY_PATROL_REPATH_MIN,
   ENEMY_PATROL_SPEED,
@@ -290,11 +292,8 @@ export class Enemy implements Entity, Damageable {
       // ranged combat stands aside entirely here rather than trying to also fire at point-blank.
       this.releaseEngagementSlot();
       this.aimHoldTimer = 0;
-      if (this.attackCooldown <= 0 && !player.isDead) {
-        player.takeDamage(ENEMY_ATTACK_DAMAGE);
-        this.attackCooldown = ENEMY_ATTACK_INTERVAL;
-      }
       this.faceToward(player.position.x, player.position.z, current);
+      this.updateMelee(player, current);
     } else if (distanceToPlayer <= ENEMY_RANGED_RANGE && this.hasLineOfSightToPlayer) {
       this.updateRangedCombat(dt, player, current);
     } else {
@@ -368,6 +367,35 @@ export class Enemy implements Entity, Damageable {
     if (!this.hasEngagementSlot) return;
     this.engagementSlots.release(this.id);
     this.hasEngagementSlot = false;
+  }
+
+  /** Universal melee fallback (Phase D) - a real fan-raycast swing mirroring the player's own
+   * knife (same spread-by-two-axis-angle technique, ENEMY_MELEE_SWING_COUNT rays instead of one),
+   * requiring an actual line of sight rather than the flat auto-hit-if-in-range tick this used to
+   * be. Can genuinely miss if none of the swing's rays connect - a player hugging the very edge of
+   * ENEMY_ATTACK_RANGE isn't guaranteed to get hit just for being in range. */
+  private updateMelee(player: Player, current: { x: number; y: number; z: number }): void {
+    if (this.attackCooldown > 0 || player.isDead || !this.hasLineOfSightToPlayer) return;
+    this.attackCooldown = ENEMY_ATTACK_INTERVAL;
+
+    const origin = new THREE.Vector3(current.x, current.y + HEAD_OFFSET_Y, current.z);
+    const target = player.position.clone();
+    target.y += EYE_OFFSET;
+    const baseDirection = target.clone().sub(origin).normalize();
+    const spreadRad = THREE.MathUtils.degToRad(ENEMY_MELEE_SWING_SPREAD_DEG);
+    const maxRange = ENEMY_ATTACK_RANGE + 1;
+
+    for (let i = 0; i < ENEMY_MELEE_SWING_COUNT; i++) {
+      const direction = baseDirection.clone();
+      direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * spreadRad);
+      direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * spreadRad);
+
+      const hit = castHitscan(this.physics, origin, direction, maxRange, undefined, this.rigidBody);
+      if (hit?.colliderHandle === player.ownCollider.handle) {
+        player.takeDamage(ENEMY_ATTACK_DAMAGE);
+        return;
+      }
+    }
   }
 
   /** Picks a fresh destination, moves toward it with whisker obstacle avoidance, and reroutes if

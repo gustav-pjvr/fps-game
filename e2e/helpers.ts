@@ -40,9 +40,15 @@ export async function openPauseMenu(page: Page): Promise<void> {
  *
  * Re-aims and re-taps forward every iteration instead of holding a fixed heading/sprint: the
  * player's sprint speed (8) far outpaces the enemy's chase speed (2.5), so a single fixed-heading
- * sprint blows straight past the enemy after one graze and never comes back in range. */
+ * sprint blows straight past the enemy after one graze and never comes back in range.
+ *
+ * Deadline widened from 40s (enemy AI Phase B/C/D): an engaging enemy now often stands its ground
+ * firing ranged bursts with a real aim-error cone (can whiff a whole burst) rather than beelining
+ * straight into a guaranteed-hit melee tick, and melee itself can now miss too - death is still
+ * reliable, just no longer bounded by a fixed melee-attack cadence. Confirmed via a full smoke-suite
+ * re-run that a 40s timeout was genuinely too tight post-Phase-D, not a real regression. */
 export async function killPlayerByEnemy(page: Page): Promise<void> {
-  const deadline = Date.now() + 40000;
+  const deadline = Date.now() + 50000;
 
   while (true) {
     const health = await page.evaluate(() => window.__gameDebug?.getPlayerHealth());

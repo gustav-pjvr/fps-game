@@ -54,7 +54,10 @@ export class Hud {
   }
 
   setAmmo(current: number, max: number, reloading: boolean): void {
-    this.ammoElement.textContent = reloading ? 'RELOADING…' : `${current} / ${max}`;
+    // Melee weapons (Phase D) use an infinite magazineSize so Weapon.tryFire's plain
+    // ammoInMagazine > 0 check never needs special-casing - shown as "MELEE" instead of "Infinity /
+    // Infinity" here, the one place that distinction actually needs to be visible.
+    this.ammoElement.textContent = reloading ? 'RELOADING…' : Number.isFinite(max) ? `${current} / ${max}` : 'MELEE';
   }
 
   setWeaponName(name: string): void {

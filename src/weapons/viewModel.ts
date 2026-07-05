@@ -31,6 +31,31 @@ export function weaponModelPaths(): string[] {
   return Object.values(WEAPON_MODEL_SPECS).map((spec) => spec.path);
 }
 
+/** No sourced .glb exists for the knife (Phase D) - matches this project's existing precedent for
+ * non-hero placeholder geometry (see the procedural ladder rungs in BuildingManager.ts) rather than
+ * blocking on a new asset. A simple blade + handle silhouette built from boxes, tinted by the
+ * weapon's own `viewModelColor`. */
+export function createProceduralMeleeViewModel(definition: WeaponDefinition): WeaponViewModel {
+  const group = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ color: definition.viewModelColor, metalness: 0.6, roughness: 0.35 });
+
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.14), material);
+  handle.position.set(0, 0, 0.05);
+  group.add(handle);
+
+  const bladeLength = 0.16;
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.02, 0.03, bladeLength),
+    new THREE.MeshStandardMaterial({ color: 0xd8dde0, metalness: 0.85, roughness: 0.2 }),
+  );
+  blade.position.set(0, 0, -0.05 - bladeLength / 2);
+  group.add(blade);
+
+  group.position.copy(WEAPON_HIP_POSITION);
+  const muzzleLocalOffset = new THREE.Vector3(0, 0, -0.05 - bladeLength);
+  return { group, muzzleLocalOffset };
+}
+
 export function createWeaponViewModel(definition: WeaponDefinition, gltf: GLTF): WeaponViewModel {
   const spec = WEAPON_MODEL_SPECS[definition.id];
   if (!spec) throw new Error(`No model spec for weapon: ${definition.id}`);
