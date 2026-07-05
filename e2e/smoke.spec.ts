@@ -175,8 +175,9 @@ test('enemies wander near spawn instead of beelining when the player is far away
   const dx = enemyAfter.x - enemyBefore.x;
   const dz = enemyAfter.z - enemyBefore.z;
   const drift = Math.sqrt(dx * dx + dz * dz);
-  // Idle wander stays within ENEMY_WANDER_RADIUS (6) of spawn; the old always-chase behavior
-  // would have closed most of the ~25 unit gap toward the stationary player by now.
+  // Idle patrol moves at ENEMY_PATROL_SPEED (1.5 u/s) toward far-off destinations, covering at
+  // most ~4.5 units in this window; the old always-chase behavior would have closed most of the
+  // ~25 unit gap toward the stationary player by now.
   expect(drift).toBeLessThan(8);
 });
 

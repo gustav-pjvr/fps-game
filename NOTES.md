@@ -635,3 +635,101 @@ the width/mantle/handle-lock fixes above - the original report that prompted fix
 pre-fix version, so a fresh manual check would be worth doing before considering this fully closed.
 Deferred per user direction ("not game-breaking, doesn't affect future tasks") to keep moving on
 the larger enemy AI/weapon-variety overhaul next.
+
+## Enemy AI overhaul - design pass and Phase A: goal-directed patrol (2026-07-05)
+
+The user asked for a full enemy AI overhaul: goal-directed movement instead of circling, an aggro
+range with line-of-sight, enemies that shoot back with hitscan weapons (fair, not instant-perfect),
+a player melee/knife weapon, and per-archetype behavior (sniper kites, shotgun rushes, etc.) with
+every enemy falling back to melee at close range regardless of its gun. Given the size and risk of
+this system (the user explicitly flagged it as the highest-stakes piece of this whole batch), an
+Opus architect subagent was used for a full design pass before any implementation - full doc is in
+the session transcript; summary of the design and Phase A (the only phase implemented so far)
+below.
+
+### Design summary (not yet all implemented - phases B-E remain)
+
+- **State machine**: `idle -> patrol -> alert -> engage/reposition/melee -> search`, split into a
+  separate `EnemyBrain` (decision logic) from `Enemy.ts` (entity shell: colliders, model, health) -
+  not yet split out; Phase A kept the existing single-class structure since it only touched
+  movement, and splitting was deferred until brain logic actually exists to split out.
+- **Movement**: no navmesh (this codebase has none, and adding one is out of scope for a solo
+  project this size) - goal-directed patrol toward real destinations across the map, biased toward
+  town/forest zone content, with whisker raycast obstacle avoidance and stuck-detection reroute
+  standing in for real pathfinding.
+- **Aggro**: distance + line-of-sight (reusing `castHitscan`), throttled for performance, with
+  detection/leash hysteresis (already existed as `ENEMY_DETECTION_RANGE`/`ENEMY_LEASH_RANGE`).
+- **Fair enemy combat** (not yet implemented): enemies aim with a real error cone that widens with
+  range/movement and narrows the longer they hold aim on the player - actual missed tracers the
+  player can see and react to, not a hidden hit-chance roll. Reaction delay before the first shot,
+  burst-then-pause cadence, and a cap on how many enemies can be actively engaging at once.
+- **Melee** (not yet implemented): knife joins the existing `WeaponDefinition` data model via a
+  `kind: 'ranged' | 'melee'` field so it works in the inventory/hotbar for free; hit-tested with a
+  small fan of raycasts. Every enemy archetype auto-switches to melee at close range regardless of
+  its gun.
+- **Archetypes** (not yet implemented): sniper kites at range, shotgun rushes to close range,
+  rifle/pistol are the aggressive/generalist middle: distinct range bands, weighted-random spawn
+  loadout, seeded for reproducibility.
+
+### Phase A: goal-directed patrol (implemented and verified this session)
+
+**What changed.** Enemies previously "idled" by picking a random point within
+`ENEMY_WANDER_RADIUS` (6 units) of their spawn point every `ENEMY_WANDER_INTERVAL` (3s) - a tight
+shuffle that reads as running in small circles, exactly the complaint the user raised. Replaced
+with real patrol:
+
+- New file `src/entities/enemies/enemySteering.ts`:
+  - `pickPatrolDestination(spawnPos, rng)` - samples a handful of random candidate points within
+    the new `ENEMY_ROAM_RADIUS` (55 units, a real map-scale patrol area vs. the old 6-unit shuffle)
+    of spawn, and prefers whichever candidate has the highest town/forest zone membership (via the
+    existing `sampleFlatZone`/`sampleForestZone`) with probability `ENEMY_PATROL_POI_BIAS` (0.6) -
+    so patrols read as heading somewhere with real content more often than pure noise, without the
+    cost of precomputing/caching an actual point-of-interest list (these ZoneMap lookups are
+    already O(1) hash-grid queries, cheap enough to just sample directly). Falls back to a plain
+    random point the rest of the time, and always clamps candidates inside
+    `WORLD_SOFT_PUSH_START_RADIUS` so patrol destinations never reach into the edge-mountain ramp.
+  - `steerWithAvoidance(physics, chestPos, desiredDir, excludeCollider)` - whisker obstacle
+    avoidance: casts three short probe rays (straight ahead, and +/-`ENEMY_AVOID_ANGLE_DEG`) via
+    the existing `castHitscan`, and steers toward whichever is clearest (slight preference for
+    straight-ahead on a tie, so an unobstructed enemy walks straight rather than drifting). Handles
+    convex obstacles (buildings, rocks, tree trunks) reasonably; this codebase has no navmesh and
+    isn't getting one this pass, so concave traps are explicitly *not* solved by this function -
+    see stuck-detection below for the backstop.
+- `Enemy.ts`: `updateWander` -> `updatePatrol`, using the above. New `repath()` helper (picks a
+  fresh destination and resets the repath timer to a randomized `ENEMY_PATROL_REPATH_MIN..MAX`
+  (8-16s) window) is called both on arrival/timeout and from a new `updateStuckDetection` - if an
+  enemy tries to move but covers less than `ENEMY_STUCK_EPSILON` (0.5 units) over
+  `ENEMY_STUCK_WINDOW` (2s), it's treated as wedged against something whisker-avoidance couldn't
+  solve, and picks a new destination rather than freezing in place indefinitely. Chase/attack
+  behavior (the `chase` state) is untouched this phase - still beelines straight at the player, no
+  avoidance or aggro/LOS changes yet (that's Phase B/C).
+- Added a permanent debug hook, `debugState` (on `Enemy`, threaded through
+  `EntityManager.getLiveEntityStates()` and `window.__gameDebug.getLiveEntityStates()`), exposing
+  each live entity's AI state (`'idle' | 'chase'`, undefined for non-AI entities like targets) -
+  useful for this phase's own verification and will matter more once Phase B adds more states.
+
+**Verification, and a real diagnostic detour.** Teleported near a town, sampled all three enemies'
+positions every 5s for 60s. First pass looked broken - two of three enemies drifted for a while
+then froze at an exact position for the remainder of the run, positions identical to many decimal
+places. Root-caused via a live per-entity update-call counter (not console logs, which turned out
+unreliable for this - see below) exposed through the same debug channel: **all three enemies'
+update-call counters froze at the exact same number, simultaneously**, regardless of AI state (one
+was `idle`, one was `chase`) - that ruled out a per-enemy patrol bug immediately, since a real stuck
+enemy wouldn't freeze in lockstep with an unrelated chasing enemy. Checked `isPointerLocked()` at
+the end: `false`. The freeze was the browser losing pointer lock during a ~60s idle automated wait
+(a known headless-Chromium/Playwright quirk over long unattended runs, not something the game
+itself does) - pointer-lock loss pauses the whole game loop by design, which freezes every entity's
+update uniformly. Not a bug in this phase's code at all.
+
+Re-confirmed with the actual (pre-freeze) data: enemies drifted 23-35 units from their start point
+and covered 59-69 total units of movement over the ~59 "live" seconds before the pointer-lock
+freeze - a real, wide-ranging patrol, a large step up from the old 6-unit shuffle. One enemy
+correctly transitioned into `chase` mid-run when it patrolled within `ENEMY_DETECTION_RANGE` of the
+stationary player, confirming the untouched chase logic still coexists correctly with the new
+patrol. Full smoke suite (16/16) green throughout, including the existing "enemies wander near
+spawn instead of beelining" test (its own comment referencing the now-removed
+`ENEMY_WANDER_RADIUS` constant was updated to match).
+
+**Still to do (Phases B-E, not started):** aggro/LOS state transitions, fair enemy ranged combat
+(the highest-stakes remaining piece), player knife + universal enemy melee fallback, and per-weapon
+archetype behavior differentiation with seeded randomized enemy loadouts.

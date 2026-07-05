@@ -10,6 +10,7 @@ interface ManagedEntity {
   readonly mesh: THREE.Object3D;
   readonly isDead: boolean;
   readonly killFeedLabel: string;
+  readonly debugState?: string;
   dispose(): void;
   update?(dt: number, player: Player): void;
 }
@@ -83,5 +84,11 @@ export class EntityManager {
   /** Debug/test helper - world positions of everything currently alive. */
   getLiveEntityPositions(): THREE.Vector3[] {
     return this.entities.map((entity) => entity.mesh.position.clone());
+  }
+
+  /** Debug/test helper - AI state of everything currently alive (undefined for non-enemy entities
+   * like targets, which have no state machine). */
+  getLiveEntityStates(): (string | undefined)[] {
+    return this.entities.map((entity) => entity.debugState);
   }
 }

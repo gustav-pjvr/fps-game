@@ -55,6 +55,7 @@ export interface GameDebugApi {
   isPointerLocked(): boolean;
   lookAt(x: number, y: number, z: number): void;
   getLiveEntityPositions(): { x: number; y: number; z: number }[];
+  getLiveEntityStates(): (string | undefined)[];
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
   getCameraFov(): number;
   getCameraChildrenDebug(): unknown[];
@@ -125,6 +126,7 @@ export class Game {
       teleport: (x, y, z) => this.player.debugTeleport(new THREE.Vector3(x, y, z)),
       getLiveEntityPositions: () =>
         this.entityManager.getLiveEntityPositions().map((p) => ({ x: p.x, y: p.y, z: p.z })),
+      getLiveEntityStates: () => this.entityManager.getLiveEntityStates(),
       raycastForward: () => {
         const origin = this.renderer.camera.position.clone();
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.renderer.camera.quaternion);

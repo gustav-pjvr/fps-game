@@ -8,6 +8,7 @@ import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import { ACTIVE_ENEMY_ARCHETYPE } from './archetypes.ts';
+import { pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
 import {
   ENEMY_ATTACK_DAMAGE,
   ENEMY_ATTACK_INTERVAL,
@@ -16,13 +17,15 @@ import {
   ENEMY_HEALTH,
   ENEMY_HEIGHT,
   ENEMY_LEASH_RANGE,
+  ENEMY_PATROL_REPATH_MAX,
+  ENEMY_PATROL_REPATH_MIN,
+  ENEMY_PATROL_SPEED,
+  ENEMY_PATROL_STOP_DISTANCE,
   ENEMY_RADIUS,
   ENEMY_SPEED,
   ENEMY_STOP_DISTANCE,
-  ENEMY_WANDER_INTERVAL,
-  ENEMY_WANDER_RADIUS,
-  ENEMY_WANDER_SPEED,
-  ENEMY_WANDER_STOP_DISTANCE,
+  ENEMY_STUCK_EPSILON,
+  ENEMY_STUCK_WINDOW,
   HEADSHOT_MULTIPLIER,
 } from '../../core/config.ts';
 
@@ -38,8 +41,10 @@ const MODEL_SCALE = ENEMY_HEIGHT / MODEL_BIND_HEIGHT;
 type EnemyState = 'idle' | 'chase';
 
 /**
- * Idle: wanders slowly within ENEMY_WANDER_RADIUS of its spawn point. Chase: once the player
- * comes within ENEMY_DETECTION_RANGE, beelines for them and attacks in range, until they get
+ * Idle: patrols real destinations across ENEMY_ROAM_RADIUS of its spawn point (biased toward
+ * town/forest content, not a uniformly random shuffle - see enemySteering.ts), with whisker
+ * obstacle avoidance and stuck-detection reroute standing in for real pathfinding. Chase: once the
+ * player comes within ENEMY_DETECTION_RANGE, beelines for them and attacks in range, until they get
  * further than ENEMY_LEASH_RANGE away (a wider radius than detection, so it doesn't flicker
  * between states right at the detection boundary).
  *
@@ -58,8 +63,10 @@ export class Enemy implements Entity, Damageable {
   private attackCooldown = 0;
   private state: EnemyState = 'idle';
   private readonly spawnPosition: THREE.Vector3;
-  private wanderTarget: THREE.Vector3;
-  private wanderTimer = 0;
+  private patrolDestination: THREE.Vector3;
+  private patrolRepathTimer = 0;
+  private stuckCheckTimer = 0;
+  private stuckCheckPos: THREE.Vector3;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
   private readonly headCollider: RAPIER.Collider;
@@ -75,7 +82,8 @@ export class Enemy implements Entity, Damageable {
     gltf: GLTF,
   ) {
     this.spawnPosition = position.clone();
-    this.wanderTarget = position.clone();
+    this.patrolDestination = position.clone();
+    this.stuckCheckPos = position.clone();
 
     // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - a plain clone
     // duplicates the mesh but not the skeleton bindings, leaving bones pointing at the shared
@@ -121,6 +129,11 @@ export class Enemy implements Entity, Damageable {
     return this.dead;
   }
 
+  /** Debug-only introspection for the e2e suite. */
+  get debugState(): EnemyState {
+    return this.state;
+  }
+
   takeDamage(amount: number, hitColliderHandle: number): void {
     if (this.dead) return;
     const isHeadshot = hitColliderHandle === this.headCollider.handle;
@@ -147,7 +160,7 @@ export class Enemy implements Entity, Damageable {
     if (this.state === 'chase') {
       this.updateChase(dt, player, current, distanceToPlayer);
     } else {
-      this.updateWander(dt, current);
+      this.updatePatrol(dt, current);
     }
 
     if (this.isMoving !== wasMoving) this.setMovingAnimation(this.isMoving);
@@ -171,24 +184,43 @@ export class Enemy implements Entity, Damageable {
     }
   }
 
-  private updateWander(dt: number, current: { x: number; y: number; z: number }): void {
-    this.wanderTimer -= dt;
-    const distanceToWanderTarget = horizontalDistance(current, this.wanderTarget);
+  /** Picks a fresh destination, moves toward it with whisker obstacle avoidance, and reroutes if
+   * either the repath timer expires (destination unreached for too long), the destination is
+   * reached, or the enemy is stuck (wedged against something avoidance couldn't solve). */
+  private updatePatrol(dt: number, current: { x: number; y: number; z: number }): void {
+    this.patrolRepathTimer -= dt;
+    const distanceToDestination = horizontalDistance(current, this.patrolDestination);
 
-    if (this.wanderTimer <= 0 || distanceToWanderTarget <= ENEMY_WANDER_STOP_DISTANCE) {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = Math.random() * ENEMY_WANDER_RADIUS;
-      this.wanderTarget = new THREE.Vector3(
-        this.spawnPosition.x + Math.cos(angle) * radius,
-        0,
-        this.spawnPosition.z + Math.sin(angle) * radius,
-      );
-      this.wanderTimer = ENEMY_WANDER_INTERVAL + Math.random() * ENEMY_WANDER_INTERVAL;
+    if (this.patrolRepathTimer <= 0 || distanceToDestination <= ENEMY_PATROL_STOP_DISTANCE) {
+      this.repath();
     }
 
-    if (distanceToWanderTarget > ENEMY_WANDER_STOP_DISTANCE) {
-      this.moveToward(this.wanderTarget.x, this.wanderTarget.z, ENEMY_WANDER_SPEED, dt, current);
+    if (horizontalDistance(current, this.patrolDestination) > ENEMY_PATROL_STOP_DISTANCE) {
+      this.moveTowardWithAvoidance(this.patrolDestination.x, this.patrolDestination.z, ENEMY_PATROL_SPEED, dt, current);
     }
+
+    this.updateStuckDetection(dt, current);
+  }
+
+  private repath(): void {
+    this.patrolDestination = pickPatrolDestination(this.spawnPosition, Math.random);
+    this.patrolRepathTimer = ENEMY_PATROL_REPATH_MIN + Math.random() * (ENEMY_PATROL_REPATH_MAX - ENEMY_PATROL_REPATH_MIN);
+  }
+
+  /** No navmesh in this codebase - whisker avoidance (see enemySteering.ts) handles convex
+   * obstacles, but a concave trap (e.g. a tight gap between buildings) can still wedge an enemy.
+   * Rather than freezing indefinitely, an enemy that's tried to move but barely progressed over
+   * ENEMY_STUCK_WINDOW gives up on its current destination and picks a new one. */
+  private updateStuckDetection(dt: number, current: { x: number; y: number; z: number }): void {
+    this.stuckCheckTimer += dt;
+    if (this.stuckCheckTimer < ENEMY_STUCK_WINDOW) return;
+
+    const moved = horizontalDistance(current, this.stuckCheckPos);
+    if (this.isMoving && moved < ENEMY_STUCK_EPSILON) {
+      this.repath();
+    }
+    this.stuckCheckTimer = 0;
+    this.stuckCheckPos.set(current.x, current.y, current.z);
   }
 
   private moveToward(
@@ -208,6 +240,33 @@ export class Enemy implements Entity, Damageable {
     const nextZ = current.z + (dz / distance) * step;
     this.applyPosition(nextX, nextZ);
     this.mesh.rotation.y = Math.atan2(dx, dz);
+    this.isMoving = true;
+  }
+
+  /** Same as moveToward, but steers around nearby obstacles first (see enemySteering.ts) - used
+   * for patrol, where destinations are far enough that running straight into a building/rock/tree
+   * along the way is common; chase deliberately keeps beelining straight at the player for now. */
+  private moveTowardWithAvoidance(
+    targetX: number,
+    targetZ: number,
+    speed: number,
+    dt: number,
+    current: { x: number; y: number; z: number },
+  ): void {
+    const dx = targetX - current.x;
+    const dz = targetZ - current.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+    if (distance < 1e-4) return;
+
+    const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
+    const chestPos = new THREE.Vector3(current.x, current.y, current.z);
+    const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
+
+    const step = Math.min(distance, speed * dt);
+    const nextX = current.x + steeredDir.x * step;
+    const nextZ = current.z + steeredDir.z * step;
+    this.applyPosition(nextX, nextZ);
+    this.mesh.rotation.y = Math.atan2(steeredDir.x, steeredDir.z);
     this.isMoving = true;
   }
 

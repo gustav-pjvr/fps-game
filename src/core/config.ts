@@ -63,10 +63,36 @@ export const ENEMY_ATTACK_DAMAGE = 8;
 export const ENEMY_ATTACK_INTERVAL = 1;
 export const ENEMY_DETECTION_RANGE = 18;
 export const ENEMY_LEASH_RANGE = 26;
-export const ENEMY_WANDER_RADIUS = 6;
-export const ENEMY_WANDER_SPEED = ENEMY_SPEED * 0.4;
-export const ENEMY_WANDER_INTERVAL = 3;
-export const ENEMY_WANDER_STOP_DISTANCE = 0.4;
+
+/**
+ * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
+ * picked random points within only 6 units of spawn every 3s and read as running in small circles
+ * rather than actually going anywhere). Enemies now patrol real destinations across a much wider
+ * area, biased toward real zone content (towns/forests via ZoneMap) rather than pure noise, with
+ * whisker obstacle avoidance and stuck-detection reroute standing in for full pathfinding - no
+ * navmesh in this codebase, so an enemy boxed into a concave corner reroutes rather than freezing.
+ */
+export const ENEMY_ROAM_RADIUS = 55;
+export const ENEMY_PATROL_SPEED = ENEMY_SPEED * 0.6;
+export const ENEMY_PATROL_STOP_DISTANCE = 1.5;
+/** Forces a fresh destination even if the current one was never reached, so patrols don't fixate
+ * on an unreachable point forever - randomized per-pick within this range. */
+export const ENEMY_PATROL_REPATH_MIN = 8;
+export const ENEMY_PATROL_REPATH_MAX = 16;
+/** Probability of preferring a real zone (town/forest) among the sampled candidate destinations,
+ * over a plain random point - see enemySteering.ts's pickDestination. */
+export const ENEMY_PATROL_POI_BIAS = 0.6;
+export const ENEMY_PATROL_CANDIDATE_COUNT = 6;
+/** Whisker obstacle avoidance: three short probe rays (center, +/- angle) ahead of the movement
+ * direction, steering toward whichever is clearest - handles convex obstacles (buildings, rocks,
+ * tree trunks) without needing real pathfinding. */
+export const ENEMY_AVOID_PROBE_LENGTH = ENEMY_RADIUS + 1.5;
+export const ENEMY_AVOID_ANGLE_DEG = 40;
+/** If an enemy tries to move but covers less than this distance over this time window, it's
+ * considered stuck (wedged against a concave obstacle whisker-avoidance can't solve) and picks a
+ * fresh destination rather than freezing in place indefinitely. */
+export const ENEMY_STUCK_WINDOW = 2;
+export const ENEMY_STUCK_EPSILON = 0.5;
 
 export const PLAYER_HEALTH = 100;
 
