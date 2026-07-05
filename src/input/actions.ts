@@ -12,6 +12,7 @@ export type Action =
   | 'weaponSlot2'
   | 'weaponSlot3'
   | 'weaponSlot4'
+  | 'weaponSlot5'
   | 'weaponNext'
   | 'weaponPrev'
   | 'resetPlay';
@@ -28,6 +29,7 @@ export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   Digit2: 'weaponSlot2',
   Digit3: 'weaponSlot3',
   Digit4: 'weaponSlot4',
+  Digit5: 'weaponSlot5',
   KeyT: 'resetPlay',
 };
 
@@ -57,6 +59,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   weaponSlot2: 'Weapon Slot 2',
   weaponSlot3: 'Weapon Slot 3',
   weaponSlot4: 'Weapon Slot 4',
+  weaponSlot5: 'Weapon Slot 5',
   weaponNext: 'Next Weapon',
   weaponPrev: 'Previous Weapon',
   resetPlay: 'Reset Match',

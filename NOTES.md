@@ -1155,3 +1155,18 @@ regardless of enemy tuning) and got `test.setTimeout(60000)` for real margin. Co
 visual models/tints/sounds, no 4th/5th archetype, no cover-seeking or strafing, no per-archetype
 patrol behavior, no spawn-composition rules (e.g. "max N snipers per match"). Loadout stats and the
 one kiting movement pattern only.
+
+## 5th hotbar key for the knife (2026-07-05)
+
+The knife (Phase D) was only reachable by mouse-wheel cycling - `weaponSlot1-4` are hardwired to
+physical keys `1-4` (`DEFAULT_KEY_BINDINGS`), and a 5th slot had never been added since only four
+guns existed when that binding was written. Small, mechanical follow-up: added `weaponSlot5` to the
+`Action` union, bound it to `Digit5`, added its `ACTION_LABELS` entry, and extended
+`WeaponManager`'s `SLOT_ACTIONS` array to five entries so `handleSwitchRequests`'s existing
+index-into-`SLOT_ACTIONS` loop picks it up for free. `REBINDABLE_ACTIONS` already excludes number
+keys entirely (they're intentionally fixed, not user-rebindable) - slot 5 needed no new exclusion,
+it just fell under the same existing rule by not being listed.
+
+**Verified:** pressing `5` switches directly to the Bicknell Trench Knife, and pressing `1`
+afterward correctly returns to the pistol - confirming slot 5 didn't disturb the other direct-select
+keys. 2 of 2 repeat runs clean. Full smoke suite (16/16) green.

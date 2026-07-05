@@ -29,7 +29,7 @@ import {
 
 const HITSCAN_RANGE = 500;
 
-const SLOT_ACTIONS: Action[] = ['weaponSlot1', 'weaponSlot2', 'weaponSlot3', 'weaponSlot4'];
+const SLOT_ACTIONS: Action[] = ['weaponSlot1', 'weaponSlot2', 'weaponSlot3', 'weaponSlot4', 'weaponSlot5'];
 
 interface WeaponSlot {
   weapon: Weapon;
