@@ -51,6 +51,16 @@ export class Player implements Entity {
   private health = PLAYER_HEALTH;
   private footstepAccumulator = 0;
 
+  /** Render interpolation (Loop's fixed-timestep accumulator already computes `alpha`, but it went
+   * unused - Game.render(_alpha) ignored it, so camera motion visibly stepped at 60Hz on
+   * higher-refresh displays). previous/current are captured independently of camera.position
+   * itself (not derived from it) so interpolateCamera's writes to camera.position never feed back
+   * into the next tick's "previous" - only applyMovement's authoritative result does. */
+  private readonly previousCameraPosition = new THREE.Vector3();
+  private readonly previousCameraQuaternion = new THREE.Quaternion();
+  private readonly currentCameraPosition = new THREE.Vector3();
+  private readonly currentCameraQuaternion = new THREE.Quaternion();
+
   constructor(
     private readonly physics: PhysicsWorld,
     private readonly camera: THREE.PerspectiveCamera,
@@ -75,12 +85,29 @@ export class Player implements Entity {
     this.controller.setMinSlopeSlideAngle((35 * Math.PI) / 180);
     this.controller.enableAutostep(0.5, 0.2, true);
     this.controller.enableSnapToGround(0.3);
+
+    this.currentCameraPosition.set(spawnPosition.x, spawnPosition.y + EYE_OFFSET, spawnPosition.z);
+    this.previousCameraPosition.copy(this.currentCameraPosition);
+    this.camera.position.copy(this.currentCameraPosition);
   }
 
   update(dt: number, input: InputManager): void {
+    this.previousCameraPosition.copy(this.currentCameraPosition);
+    this.previousCameraQuaternion.copy(this.currentCameraQuaternion);
     this.applyLook(input);
     this.applyMovement(dt, input);
     this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
+  }
+
+  /** Blends the camera's on-screen transform between the last two fixed-timestep ticks by `alpha`
+   * (Loop's fractional tick progress) - call once per rendered frame, after every fixed update for
+   * that frame has already run. Smooths camera motion on displays faster than the 60Hz simulation
+   * without changing simulation timing. Firing/hitscan always reads camera.position from inside
+   * update() (via WeaponManager.fireShot, which runs before render()), so it always sees the
+   * authoritative tick position, never an interpolated one - this only affects what's drawn. */
+  interpolateCamera(alpha: number): void {
+    this.camera.position.lerpVectors(this.previousCameraPosition, this.currentCameraPosition, alpha);
+    this.camera.quaternion.slerpQuaternions(this.previousCameraQuaternion, this.currentCameraQuaternion, alpha);
   }
 
   /** Temporary upward camera kick that decays back to the player's held aim over time. */
@@ -114,6 +141,7 @@ export class Player implements Entity {
     this.clampToWorldBounds(target);
     this.rigidBody.setNextKinematicTranslation(target);
     this.rigidBody.setTranslation(target, true);
+    this.snapCameraPositionTo(target);
   }
 
   /** Debug/test helper - instantly repositions the player (e.g. for e2e tests to reach a known
@@ -125,6 +153,17 @@ export class Player implements Entity {
     this.clampToWorldBounds(target);
     this.rigidBody.setNextKinematicTranslation(target);
     this.rigidBody.setTranslation(target, true);
+    this.snapCameraPositionTo(target);
+  }
+
+  /** Resets both interpolation endpoints to the same instantaneous position - without this, a
+   * teleport/respawn would leave `previousCameraPosition` at the pre-teleport spot, and the next
+   * render's interpolateCamera would draw a brief streak crossing the whole jump instead of an
+   * instant cut. */
+  private snapCameraPositionTo(target: { x: number; y: number; z: number }): void {
+    this.currentCameraPosition.set(target.x, target.y + EYE_OFFSET, target.z);
+    this.previousCameraPosition.copy(this.currentCameraPosition);
+    this.camera.position.copy(this.currentCameraPosition);
   }
 
   /** Debug/test helper - snaps yaw/pitch to face a world point directly, bypassing mouse input. */
@@ -253,8 +292,13 @@ export class Player implements Entity {
 
     const effectivePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + this.recoilPitch));
     const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw, 0, 'YXZ'));
-    this.camera.position.set(next.x, next.y + EYE_OFFSET, next.z);
-    this.camera.quaternion.copy(lookQuat);
+    this.currentCameraPosition.set(next.x, next.y + EYE_OFFSET, next.z);
+    this.currentCameraQuaternion.copy(lookQuat);
+    // Camera stays authoritative (not interpolated) for the rest of this tick - firing reads it
+    // synchronously later in the same Game.update() call, and interpolateCamera() overwrites it
+    // again next render() anyway.
+    this.camera.position.copy(this.currentCameraPosition);
+    this.camera.quaternion.copy(this.currentCameraQuaternion);
   }
 
   /** Gentle inward nudge as the player nears the world boundary - see WORLD_PLAN.md §2 / config.ts. */

@@ -545,12 +545,18 @@ export class Game {
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
 
-  private readonly render = (_alpha: number): void => {
+  private readonly render = (alpha: number): void => {
     const now = performance.now();
     this.fpsMeter.recordFrame(now - this.lastRenderTime);
     this.lastRenderTime = now;
     this.perfOverlay.update(this.fpsMeter.getStats(), this.entityManager.count);
 
+    // Loop's fixed-timestep accumulator already computed this fractional tick progress, but it
+    // went unused. Scoped to just the camera (and anything parented to it, i.e. the weapon view
+    // models) as the highest-value, lowest-risk slice - it's what the player is actually looking
+    // through, and unlike interpolating every enemy/target mesh, it needs no new per-entity
+    // prev/current bookkeeping or e2e position-reporting changes.
+    this.player.interpolateCamera(alpha);
     this.renderer.render();
   };
 
