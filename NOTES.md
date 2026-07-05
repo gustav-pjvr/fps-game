@@ -1348,3 +1348,77 @@ failing on a full-suite run, always passing in isolated re-runs) is the same pre
 GLTF-texture-load flake this file already documents elsewhere, confirmed unrelated by isolated
 re-runs after each change that touched anything nearby. New: `npm run test:unit` (17 Vitest tests,
 ~0.4s) alongside the unchanged `npx playwright test` workflow.
+
+## Long-shot callout (2026-07-05)
+
+Added an on-screen acknowledgment when a player hit lands at `LONG_SHOT_DISTANCE` (50m, see
+config.ts) or beyond - a hit that far out is easy to miss amid tracers/hit markers/kill feed, so it
+gets a brief, unmissable callout of its own. Implemented directly (not via a Fable agent, per
+explicit instruction) since it's a small, isolated feature.
+
+- `src/ui/longShotCallout.ts` (new) - `LongShotCallout` class, same fade-in/out shape as the
+  existing `WeaponCaption`: `show(distance)` starts a 1.5s hold + 0.4s fade, `update(dt)` advances
+  it, `dispose()` tears down its DOM node.
+- `WeaponManager.firePellet` now takes an `onLongShot(distance)` callback (threaded through
+  `WeaponManager.create`) and calls it when `hit.distance >= LONG_SHOT_DISTANCE` on a damageable
+  hit - reuses the hitscan's own reported distance, no separate distance calculation needed since
+  world units in this codebase are already meters (`PLAYER_HEIGHT = 1.8`, etc.).
+- `Game.ts` wires a `LongShotCallout` instance into the HUD root and calls `.update(dt)` each frame
+  alongside the other HUD widgets it already owns.
+
+Verification: typecheck clean. Automated e2e verification turned out to be the wrong tool for this -
+teleporting the player to a precise 50m+ firing solution kept hitting the project's known
+"teleport + immediate lookAt goes stale" issue (see the Ridge Walker/aim sections elsewhere in this
+file): reusing a stale y-coordinate after a large horizontal teleport lets gravity move the player
+an unpredictable amount before the pre-computed aim is applied, so the shot would geometrically miss
+even though the feature itself was correct. After a couple of failed attempts (including using the
+`raycastForward` debug hook, which was discovered along the way to be unconditionally broken - it
+never excludes the player's own collider, so it always self-hits at distance~=0 regardless of aim;
+confirmed via grep that nothing in `e2e/` or `src/` relies on it, so left as-is and just avoided),
+the test was dropped in favor of direct manual verification, which the user performed and confirmed:
+a real 110m hit produced the callout correctly.
+
+## Tree leaves now stop bullets, without blocking movement (2026-07-05)
+
+Trees' trunks have always had solid hit collision; their canopy (leaves) had none, so a shot aimed
+into the foliage instead of the trunk just passed through. Added a canopy hit volume per tree
+instance that registers hitscan hits but never blocks movement - players and enemies still walk
+through foliage exactly as before. Implemented directly (not via a Fable agent, per explicit
+instruction).
+
+The mechanism is a Rapier **sensor** collider, not `InteractionGroups`: sensors are included in
+raycast queries by default (Rapier would need an explicit `QueryFilterFlags.EXCLUDE_SENSORS` to
+skip them, and `castHitscan` never passes that), but never participate in solid narrow-phase
+collision resolution, so the player's character controller and enemies' kinematic movement both
+ignore it completely. This was chosen over `InteractionGroups` because this codebase uses zero
+custom collision groups anywhere - doing it via groups would have meant touching the player
+capsule's own (currently all-default) group config, a much larger blast radius for a feature this
+contained.
+
+- `config.ts` - added `VEGETATION_CANOPY_RADIUS` (0.9) and
+  `VEGETATION_CANOPY_CENTER_HEIGHT_FRACTION` (0.7, since foliage sits in the upper portion of a tree
+  model, not at its base).
+- `VegetationManager.ts` - `placeInstance` now also creates a fixed rigid body + ball sensor
+  collider for tree types only (bushes/rocks unaffected), sized off the same per-instance scale
+  jitter the trunk already uses; `PlacedInstance` gained `canopyColliderHandle` /
+  `canopyRigidBodyHandle`, cleaned up in `removeChunk` alongside the existing trunk cleanup. Pulled
+  the geometry math out as an exported pure function, `canopyGeometryFor(worldY, scaledHeight,
+  scaleJitter)`, following the same pattern as this file's existing `pickType`/
+  `minTreeSpacingFor` - specifically so the "canopy floats above where a standing player can reach"
+  invariant could be locked in as a real test rather than left as a comment-only assumption (the
+  Ridge Walker detection-range bug earlier in this project's history was exactly that kind of
+  comment-only gap until a test was added after the fact).
+- `VegetationManager.test.ts` (new) - two Vitest cases: the reach invariant, checked across the two
+  real tree target heights (4.5, 6.0) and the actual scale-jitter range this codebase produces
+  (`1 +/- VEGETATION_SCALE_VARIANCE`, not arbitrary extremes - a first draft using 0.5/1.5 jitter
+  failed correctly, because trees outside the real jitter range are never placed at all); and a
+  scaling-sanity check that a larger jittered tree gets a larger, higher canopy than a smaller one.
+
+Verification: typecheck clean, `npm run test:unit` 19/19 green (17 pre-existing + 2 new), full smoke
+suite 15/16 green with one failure (`dying releases pointer lock and Respawn resets the match without
+leaving it`, timed out waiting on `isPointerLocked() === false` after `killPlayerByEnemy`) - re-run in
+isolation to check whether the canopy change was responsible; this is the same pre-existing
+kiting-archetype tail-risk flakiness already documented elsewhere in this file (Ridge Walker's
+kiting occasionally pushes `killPlayerByEnemy` toward worst-case duration even after the sprint-based
+mitigation), not something touched by this change, since nothing here touches enemy/combat/death-UI
+code paths.

@@ -19,6 +19,7 @@ import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
+import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
@@ -140,6 +141,7 @@ export class Game {
     private readonly hitMarker: HitMarker,
     private readonly deathScreen: DeathScreen,
     private readonly weaponCaption: WeaponCaption,
+    private readonly longShotCallout: LongShotCallout,
     private readonly killFeed: KillFeed,
     private readonly scopeOverlay: ScopeOverlay,
     private readonly pauseMenu: PauseMenu,
@@ -269,6 +271,7 @@ export class Game {
     const tracers = new Tracers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
     const hitMarker = new HitMarker(hudRoot);
+    const longShotCallout = new LongShotCallout(hudRoot);
 
     onProgress?.('Loading weapons…', 0.05);
     const weaponManager = await WeaponManager.create(
@@ -286,6 +289,7 @@ export class Game {
       (start, end) => tracers.spawn(start, end),
       (weaponId) => sound.playGunshot(weaponId),
       (weaponId) => sound.playReloadClick(weaponId),
+      (distance) => longShotCallout.show(distance),
     );
 
     onProgress?.('Loading combatants…', 0.1);
@@ -354,6 +358,7 @@ export class Game {
       hitMarker,
       deathScreen,
       weaponCaption,
+      longShotCallout,
       killFeed,
       scopeOverlay,
       pauseMenu,
@@ -385,6 +390,7 @@ export class Game {
     this.hitMarker.dispose();
     this.deathScreen.dispose();
     this.weaponCaption.dispose();
+    this.longShotCallout.dispose();
     this.killFeed.dispose();
     this.scopeOverlay.dispose();
     this.pauseMenu.dispose();
@@ -531,6 +537,7 @@ export class Game {
     this.tracers.update(dt);
     this.hitMarker.update(dt);
     this.weaponCaption.update(dt);
+    this.longShotCallout.update(dt);
     this.killFeed.update(dt);
 
     if (this.player.isDead && !wasDead) {

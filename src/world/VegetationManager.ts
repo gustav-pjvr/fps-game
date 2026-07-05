@@ -12,6 +12,8 @@ import {
   SPAWN_Z,
   VEGETATION_BUSH_PROBABILITY,
   VEGETATION_CANDIDATES_PER_CHUNK,
+  VEGETATION_CANOPY_CENTER_HEIGHT_FRACTION,
+  VEGETATION_CANOPY_RADIUS,
   VEGETATION_DENSITY_NOISE_FREQUENCY,
   VEGETATION_FOREST_EXTRA_CANDIDATES,
   VEGETATION_FOREST_TEXTURE_FREQUENCY,
@@ -67,6 +69,9 @@ interface PlacedInstance {
   index: number;
   colliderHandle?: number;
   rigidBodyHandle?: number;
+  /** Tree types only - separate rigid body/collider from the trunk (see placeInstance). */
+  canopyColliderHandle?: number;
+  canopyRigidBodyHandle?: number;
 }
 
 const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -262,6 +267,14 @@ export class VegetationManager {
         const rigidBody = this.physics.world.getRigidBody(instance.rigidBodyHandle);
         if (rigidBody) this.physics.world.removeRigidBody(rigidBody);
       }
+      if (instance.canopyColliderHandle !== undefined) {
+        const collider = this.physics.world.getCollider(instance.canopyColliderHandle);
+        if (collider) this.physics.world.removeCollider(collider, true);
+      }
+      if (instance.canopyRigidBodyHandle !== undefined) {
+        const rigidBody = this.physics.world.getRigidBody(instance.canopyRigidBodyHandle);
+        if (rigidBody) this.physics.world.removeRigidBody(rigidBody);
+      }
     }
 
     this.chunkInstances.delete(key);
@@ -312,6 +325,20 @@ export class VegetationManager {
       const collider = this.physics.world.createCollider(RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight, halfDepth), rigidBody);
       instance.colliderHandle = collider.handle;
       instance.rigidBodyHandle = rigidBody.handle;
+    }
+
+    // Leaf/canopy hit volume (trees only) - a sensor, so it's hit by hitscan raycasts (Rapier
+    // includes sensors in raycasts by default) but never blocks movement (sensors never
+    // participate in solid collision resolution) - see the VEGETATION_CANOPY_* comment in
+    // config.ts for why this is the right primitive for "bullets yes, walking no."
+    if (TREE_TYPES.includes(type)) {
+      const { radius: canopyRadius, centerY: canopyCenterY } = canopyGeometryFor(worldY, scaledHeight, scaleJitter);
+      const canopyBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(worldX, canopyCenterY, worldZ);
+      const canopyRigidBody = this.physics.world.createRigidBody(canopyBodyDesc);
+      const canopyColliderDesc = RAPIER.ColliderDesc.ball(canopyRadius).setSensor(true);
+      const canopyCollider = this.physics.world.createCollider(canopyColliderDesc, canopyRigidBody);
+      instance.canopyColliderHandle = canopyCollider.handle;
+      instance.canopyRigidBodyHandle = canopyRigidBody.handle;
     }
 
     return instance;
@@ -368,4 +395,15 @@ function minTreeSpacingFor(forestMembership: number, textureNoise: number): numb
   const textureIntensity = (textureNoise + 1) / 2;
   const inForestSpacing = VEGETATION_TREE_MIN_SPACING_NORMAL - textureIntensity * (VEGETATION_TREE_MIN_SPACING_NORMAL - VEGETATION_TREE_MIN_SPACING_DENSE);
   return VEGETATION_TREE_MIN_SPACING_SPARSE - forestMembership * (VEGETATION_TREE_MIN_SPACING_SPARSE - inForestSpacing);
+}
+
+/** Leaf/canopy sensor geometry for a tree instance - exported (and pulled out as a pure function)
+ * specifically so a unit test can lock in the "canopy floats above where a standing player's
+ * capsule can reach" invariant across the real scale-jitter range, without needing a running
+ * PhysicsWorld. See the VEGETATION_CANOPY_* comment in config.ts for why this needs to hold. */
+export function canopyGeometryFor(worldY: number, scaledHeight: number, scaleJitter: number): { radius: number; centerY: number } {
+  return {
+    radius: VEGETATION_CANOPY_RADIUS * scaleJitter,
+    centerY: worldY + scaledHeight * VEGETATION_CANOPY_CENTER_HEIGHT_FRACTION,
+  };
 }

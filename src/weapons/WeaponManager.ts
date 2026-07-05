@@ -21,6 +21,7 @@ import type { ScopeOverlay } from '../ui/scope.ts';
 import {
   ADS_LERP_SPEED,
   CAMERA_FOV,
+  LONG_SHOT_DISTANCE,
   RELOAD_DIP,
   RELOAD_TILT_ANGLE,
   SCOPE_REVEAL_THRESHOLD,
@@ -57,6 +58,7 @@ export class WeaponManager {
     private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
     private readonly onFire: (weaponId: string) => void,
     private readonly onReloadStart: (weaponId: string) => void,
+    private readonly onLongShot: (distance: number) => void,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -72,6 +74,7 @@ export class WeaponManager {
     onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
     onFire: (weaponId: string) => void,
     onReloadStart: (weaponId: string) => void,
+    onLongShot: (distance: number) => void,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -92,7 +95,7 @@ export class WeaponManager {
       }),
     );
 
-    return new WeaponManager(camera, physics, slots, scopeOverlay, onImpact, onTracer, onFire, onReloadStart);
+    return new WeaponManager(camera, physics, slots, scopeOverlay, onImpact, onTracer, onFire, onReloadStart, onLongShot);
   }
 
   private get active(): WeaponSlot {
@@ -273,6 +276,7 @@ export class WeaponManager {
       this.onImpact(hit.point, isEntityHit);
       if (isDamageable(target)) {
         target.takeDamage(damage, hit.colliderHandle);
+        if (hit.distance >= LONG_SHOT_DISTANCE) this.onLongShot(hit.distance);
       }
     }
   }

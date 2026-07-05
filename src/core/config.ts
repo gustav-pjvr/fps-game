@@ -148,6 +148,12 @@ export const PLAYER_HEALTH = 100;
 
 export const HIT_MARKER_DURATION = 0.2;
 
+/** World units already read as meters throughout this codebase (PLAYER_HEIGHT = 1.8, etc.) - a
+ * player hit landing at or beyond this distance gets a quick on-screen callout (see
+ * ui/longShotCallout.ts) acknowledging the shot, since a hit that far away is easy to miss amid
+ * everything else on screen. */
+export const LONG_SHOT_DISTANCE = 50;
+
 /** Visual-only travel speed for tracers - the hit itself is already resolved instantly via raycast. */
 export const TRACER_SPEED = 150;
 export const TRACER_LENGTH = 0.6;
@@ -231,6 +237,19 @@ export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 160;
  * handles thousands of instances cheaply, so this is sized for the worst case, not the average. */
 export const VEGETATION_INSTANCE_CAPACITY = 10000;
 export const VEGETATION_TRUNK_RADIUS = 0.35;
+/** Leaf/canopy hit volume for tree types only (bushes/rocks are unaffected) - a sensor collider
+ * (see VegetationManager.placeInstance), not a solid one: sensors are still hit by ordinary
+ * hitscan raycasts (Rapier includes them by default; excluding them needs an explicit
+ * QueryFilterFlags.EXCLUDE_SENSORS this codebase never passes) but never participate in solid
+ * collision resolution, so the player's character controller and enemies' kinematic movement both
+ * ignore it completely - shooting into foliage can now plausibly hit a leaf, but walking through
+ * the same canopy stays exactly as unobstructed as it already was. Radius/height are a rough
+ * approximation of the actual model's canopy, not a measured fit - good enough for "does a shot
+ * into the foliage register," not a precise visual match. */
+export const VEGETATION_CANOPY_RADIUS = 0.9;
+/** Fraction of the tree's total (scaled) height the canopy sensor is centered at - trees' foliage
+ * sits in the upper portion of the model, not at the base. */
+export const VEGETATION_CANOPY_CENTER_HEIGHT_FRACTION = 0.7;
 /** Outside any forest zone, trees are rare stragglers rather than absent entirely - reads more
  * natural than a hard cutoff at the forest boundary. */
 export const VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD = 0.95;
