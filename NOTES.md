@@ -1547,3 +1547,41 @@ original IBL-performance regression was delegated to an Opus-model agent (per us
 initial isolation (shadow map size, shadow enable/disable, Enemy shadow fix) had ruled out the more
 obvious suspects without finding the actual cause - it bisected the remaining candidates and applied
 the `environmentLighting` gate fix, independently re-verified here rather than taken on faith.
+
+## World shrink + denser zone placement (2026-07-05)
+
+Per user request: a smaller, denser-feeling world (less open ground, more towns/forests), without
+resorting to a real inter-zone overlap-avoidance search - the user explicitly doesn't mind
+forest/town discs overlapping each other or crowding the spawn/combat ring.
+
+Turned out `WORLD_SIZE_CHUNKS` can't just be lowered on its own: it sets a hard geometric ceiling
+on how large any flat/forest zone can ever be (see `isSiteClear`/`maxClearRadius` in `ZoneMap.ts` -
+a site's disc must clear both the world-edge mountain ramp and the spawn/combat ring, and shrinking
+the world narrows that clearance for every site everywhere at once, not just some). Worked out the
+actual ceiling formula by hand: at the user's first-choice `WORLD_SIZE_CHUNKS=6` (300 unit radius),
+even the *best-possible* site position anywhere in the world only clears ~42 units of radius - far
+below the existing zone radius ranges (65-90 flat, 78-92 forest). Confirmed this isn't a "some
+sites fail, retry elsewhere" situation: `computeGuaranteedSites` already has an explicit
+`if (maxDistance <= minDistance) return []` bail-out for exactly this case, meaning zero towns and
+zero forests, ever, for any seed - not something a smarter retry/overlap-avoidance search could fix,
+since there's no position anywhere that the geometry allows.
+
+Landed on a combination that keeps zone sizes nearly unchanged while still shrinking the world and
+substantially increasing how many towns/forests spawn:
+- `WORLD_SIZE_CHUNKS`: 8 -> 7 (350 unit radius, `WORLD_EDGE_RAMP_START` = 220).
+- `ZONE_EDGE_MARGIN`: 30 -> 10 (per user decision - zone/spawn-ring crowding is fine). This is the
+  bigger lever on density: a smaller margin means far more candidate sites clear `isSiteClear` at a
+  large radius, directly increasing how many towns/forests actually spawn per match, not just
+  capping how big one can be. Not dropped to zero - buildings have no clearance check of their own
+  (unlike vegetation's `VEGETATION_SPAWN_CLEARANCE`, checked per-instance regardless of zone shape),
+  so this margin is the only thing keeping a town's actual buildings off the encounter ring's edge.
+- `FLAT_ZONE_RADIUS_MAX`: 90 -> 85, `FOREST_ZONE_RADIUS_MAX`: 92 -> 85 (mins unchanged at 65/78) -
+  the new ceiling at these settings is ~87.5, so both needed only a small trim to stay safely inside
+  it, nowhere near the drastic cut (~40) shrinking the world alone would have forced.
+
+**Verification:** `npx tsc --noEmit` clean. `npm run test:unit` 19/19 green, including
+`ZoneMap.test.ts`'s 1000-seed sweep asserting every seed still yields exactly `GUARANTEED_ZONE_COUNT`
+full-size, clear flat and forest sites - the definitive check for this change, since it exercises the
+exact formula this whole exercise was reasoning about by hand. Full `npx playwright test
+e2e/smoke.spec.ts` 15/16 green (the one failure was the same pre-existing GLTF-texture-load flake
+this file already documents elsewhere, confirmed unrelated by a clean isolated re-run).
