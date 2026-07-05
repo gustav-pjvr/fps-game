@@ -28,6 +28,9 @@ import { SoundEngine } from '../audio/SoundEngine.ts';
 import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
 import {
+  ENEMY_GUNSHOT_AUDIBLE_RANGE,
+  ENEMY_GUNSHOT_FULL_VOLUME_RANGE,
+  ENEMY_GUNSHOT_MIN_VOLUME,
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
   SPAWN_X,
@@ -52,6 +55,15 @@ export interface MatchConfig {
 
 function waitForNextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/** Linear gain falloff for enemy gunshots: full volume inside FULL_VOLUME_RANGE, fading to
+ * MIN_VOLUME (never silent - an inaudible shot that still damages would read as unfair) at
+ * AUDIBLE_RANGE. See the ENEMY_GUNSHOT_* constants' comment in config.ts. */
+function enemyGunshotVolume(distance: number): number {
+  const t = (distance - ENEMY_GUNSHOT_FULL_VOLUME_RANGE) / (ENEMY_GUNSHOT_AUDIBLE_RANGE - ENEMY_GUNSHOT_FULL_VOLUME_RANGE);
+  const clamped = Math.max(0, Math.min(1, t));
+  return 1 - clamped * (1 - ENEMY_GUNSHOT_MIN_VOLUME);
 }
 
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond aiming. */
@@ -276,7 +288,9 @@ export class Game {
         onRangedShotFired: (origin, end, hitPlayer) => {
           tracers.spawn(origin, end, ENEMY_RANGED_TRACER_COLOR);
           impactMarkers.spawn(end, hitPlayer);
-          sound.playGunshot('enemy-rifle');
+          // Attenuated by the shooter's distance from the player - a shot from 30 units away
+          // shouldn't sound identical to one at point-blank (see ENEMY_GUNSHOT_* in config.ts).
+          sound.playGunshot('enemy-rifle', enemyGunshotVolume(origin.distanceTo(player.position)));
         },
       },
     );

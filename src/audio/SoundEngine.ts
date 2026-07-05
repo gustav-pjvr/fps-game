@@ -89,28 +89,31 @@ export class SoundEngine {
     if (this.ctx.state === 'suspended') void this.ctx.resume();
   }
 
-  playGunshot(weaponId: string): void {
-    if (this.playBuffer(`${weaponId}_shot`)) return;
+  /** `volumeScale` (0..1, default 1) scales this one shot's gain on top of the master volume -
+   * enemy gunshots pass a distance-attenuated value so a shot from 30 units away no longer sounds
+   * identical to one at point-blank (the player's own shots always play at full scale). */
+  playGunshot(weaponId: string, volumeScale = 1): void {
+    if (this.playBuffer(`${weaponId}_shot`, volumeScale)) return;
 
     switch (weaponId) {
       case 'pistol':
-        this.noiseBurst(0.09, 2200, 'lowpass', 0.5);
-        this.tone(180, 0.05, 0.3, 'square');
+        this.noiseBurst(0.09, 2200, 'lowpass', 0.5 * volumeScale);
+        this.tone(180, 0.05, 0.3 * volumeScale, 'square');
         break;
       case 'rifle':
-        this.noiseBurst(0.06, 2600, 'lowpass', 0.4);
-        this.tone(220, 0.04, 0.22, 'square');
+        this.noiseBurst(0.06, 2600, 'lowpass', 0.4 * volumeScale);
+        this.tone(220, 0.04, 0.22 * volumeScale, 'square');
         break;
       case 'shotgun':
-        this.noiseBurst(0.18, 700, 'lowpass', 0.7);
-        this.tone(100, 0.12, 0.4, 'sawtooth');
+        this.noiseBurst(0.18, 700, 'lowpass', 0.7 * volumeScale);
+        this.tone(100, 0.12, 0.4 * volumeScale, 'sawtooth');
         break;
       case 'sniper':
-        this.noiseBurst(0.22, 900, 'lowpass', 0.8);
-        this.tone(90, 0.18, 0.5, 'sawtooth');
+        this.noiseBurst(0.22, 900, 'lowpass', 0.8 * volumeScale);
+        this.tone(90, 0.18, 0.5 * volumeScale, 'sawtooth');
         break;
       default:
-        this.noiseBurst(0.1, 2000, 'lowpass', 0.5);
+        this.noiseBurst(0.1, 2000, 'lowpass', 0.5 * volumeScale);
     }
   }
 
@@ -133,13 +136,19 @@ export class SoundEngine {
   }
 
   /** Plays a preloaded recorded sample by key - returns false (does nothing) if it never loaded. */
-  private playBuffer(key: string): boolean {
+  private playBuffer(key: string, volumeScale = 1): boolean {
     const buffer = this.buffers.get(key);
     if (!buffer) return false;
 
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.master);
+    if (volumeScale !== 1) {
+      const gain = this.ctx.createGain();
+      gain.gain.value = Math.max(0, Math.min(1, volumeScale));
+      source.connect(gain).connect(this.master);
+    } else {
+      source.connect(this.master);
+    }
     source.start();
     return true;
   }

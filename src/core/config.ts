@@ -102,6 +102,15 @@ export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
  * enemy that can't get a slot still tracks/faces the player, it just doesn't shoot yet. */
 export const ENEMY_MAX_CONCURRENT_ENGAGERS = 2;
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
+/** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
+ * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that
+ * still damages would read as unfair, the opposite of what the tracer/Phase C fairness work is
+ * for). Uniform full-volume gunshots undermined that same readability goal from the other
+ * direction: a shot from 30 units sounded identical to one at point-blank. No HRTF/panning -
+ * plain gain scaling, which is the cheap 90% of the effect. */
+export const ENEMY_GUNSHOT_FULL_VOLUME_RANGE = 10;
+export const ENEMY_GUNSHOT_AUDIBLE_RANGE = 60;
+export const ENEMY_GUNSHOT_MIN_VOLUME = 0.15;
 
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
