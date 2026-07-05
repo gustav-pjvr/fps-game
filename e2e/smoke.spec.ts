@@ -159,7 +159,7 @@ test('enemies wander near spawn instead of beelining when the player is far away
   await lockPointer(page);
 
   // Encounters spawn 5 targets (radius 15) then 3 enemies (radius 25) - index 5 is an enemy,
-  // and at spawn the player is well outside ENEMY_DETECTION_RANGE (18) from any of them.
+  // and at spawn the player is well outside every archetype's detectionRange (max 20) from any of them.
   const positions = await page.evaluate(() => window.__gameDebug?.getLiveEntityPositions());
   const enemyBefore = positions?.[5];
   expect(enemyBefore).toBeDefined();

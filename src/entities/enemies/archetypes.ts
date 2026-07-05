@@ -44,7 +44,11 @@ export interface EnemyArchetype {
  */
 export const ENEMY_ARCHETYPES: readonly EnemyArchetype[] = [
   {
-    // Today's tuned Phase A-E values, unchanged - every other archetype deviates from this baseline.
+    // Today's tuned Phase A-E values, unchanged - every other archetype deviates from this
+    // baseline. These numbers ARE the old global config.ts enemy constants (deleted once they went
+    // dead there), including Phase E's measured ranged-damage tuning: 6 dmg / 1.6s burst pause
+    // measured ~23-26s to kill a stationary, unresisting player at 10 units - too weak to read as
+    // a threat - hence rangedDamage 9 / burstPause 1.1. Tune here, not in config.ts.
     name: 'The Straggler',
     flavor: 'Separated from a column that no longer exists. Takes it out on whoever’s nearest.',
     health: 60,

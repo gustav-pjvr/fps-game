@@ -53,15 +53,16 @@ export const TARGET_RADIUS = 0.5;
 export const TARGET_HEAD_RADIUS = 0.18;
 export const HEADSHOT_MULTIPLIER = 3;
 
-export const ENEMY_HEALTH = 60;
+// Per-enemy combat/movement numbers (health, chase speed, detection/leash/ranged ranges, ranged
+// damage and burst cadence, aim-error cone, melee damage) live in entities/enemies/archetypes.ts,
+// not here - the per-archetype loadout refactor moved them, and The Straggler's stat block is the
+// old globally-tuned baseline (including the Phase C/E measured tuning notes that used to sit
+// here). Only genuinely archetype-independent enemy constants remain below.
 export const ENEMY_RADIUS = 0.45;
 export const ENEMY_HEIGHT = 1.7;
-export const ENEMY_SPEED = 2.5;
+/** Melee always wins below this range regardless of archetype (Phase D's universal fallback). */
 export const ENEMY_ATTACK_RANGE = 3;
-export const ENEMY_ATTACK_DAMAGE = 8;
 export const ENEMY_ATTACK_INTERVAL = 1;
-export const ENEMY_DETECTION_RANGE = 18;
-export const ENEMY_LEASH_RANGE = 26;
 
 /** Universal melee fallback (Phase D), upgraded from a flat auto-hit tick to a real fan-raycast
  * swing mirroring the player's own knife (WeaponManager.firePellet's spread technique) - requires
@@ -71,13 +72,13 @@ export const ENEMY_MELEE_SWING_COUNT = 3;
 export const ENEMY_MELEE_SWING_SPREAD_DEG = 10;
 
 /**
- * Aggro/LOS state transitions (enemy AI overhaul, Phase B). Detection now requires a clear
- * line-of-sight raycast in addition to ENEMY_DETECTION_RANGE, not distance alone - an enemy on the
- * far side of a building wall no longer "senses" the player through it. Idle/patrol -> alert (a
- * short reaction beat, also lets Phase C's future aim delay reuse this same window) -> chase. Losing
- * LOS mid-chase (not just leashing out of range) drops to search, which beelines the last-seen spot
- * for a while before giving up back to patrol - reads as "I saw you go around that corner" instead
- * of instantly forgetting the player the moment a wall gets between them.
+ * Aggro/LOS state transitions (enemy AI overhaul, Phase B). Detection requires a clear
+ * line-of-sight raycast in addition to the archetype's detectionRange, not distance alone - an
+ * enemy on the far side of a building wall no longer "senses" the player through it. Idle/patrol
+ * -> alert (a short reaction beat) -> chase. Losing LOS mid-chase (not just leashing out of range)
+ * drops to search, which beelines the last-seen spot for a while before giving up back to patrol -
+ * reads as "I saw you go around that corner" instead of instantly forgetting the player the moment
+ * a wall gets between them.
  */
 export const ENEMY_ALERT_REACTION_TIME = 0.4;
 export const ENEMY_SEARCH_DURATION = 6;
@@ -87,30 +88,14 @@ export const ENEMY_SEARCH_STOP_DISTANCE = 1.5;
 export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
 
 /**
- * Fair enemy ranged combat (enemy AI overhaul, Phase C). Once chasing and within ENEMY_RANGED_RANGE
- * with a clear line-of-sight, an engaging enemy stops closing distance and fires real hitscan shots
- * with a visible tracer - actual missed shots the player can see and react to, not a hidden
- * hit-chance roll. Aim error is a real angular cone (not a fixed linear miss distance), so it widens
- * with range for free - a given angular error covers more lateral distance the farther away the
- * target is - and narrows the longer the enemy holds aim on an unbroken line of sight
- * (ENEMY_AIM_ERROR_MAX_DEG -> ENEMY_AIM_ERROR_MIN_DEG over ENEMY_AIM_SETTLE_TIME), rewarding a
- * player who breaks sightlines over one who stands still in the open. Below ENEMY_ATTACK_RANGE,
- * ranged combat stands aside entirely for the existing melee attack - "falls back to melee at close
- * range" from the design doc.
+ * Fair enemy ranged combat (enemy AI overhaul, Phase C). Once chasing and within the archetype's
+ * rangedRange with a clear line-of-sight, an engaging enemy stops closing distance and fires real
+ * hitscan shots with a visible tracer - actual missed shots the player can see and react to, not a
+ * hidden hit-chance roll. Aim error is a real angular cone that narrows the longer the enemy holds
+ * aim on an unbroken sightline. The per-archetype numbers driving all of this (range, damage,
+ * burst cadence, aim-error min/max/settle) live in archetypes.ts - only the match-level pacing
+ * knobs below stay global.
  */
-export const ENEMY_RANGED_RANGE = 16;
-/** Tuned during Phase E's measurement pass: 6 damage / 1.6s burst pause measured ~23-26s to kill a
- * completely unresisting, stationary player standing at 10 units in the open (plus a real chance of
- * landing zero hits at all within 45s on an unlucky world/LOS draw) - too weak to read as a genuine
- * threat, especially since a real player also moves, takes cover, and shoots back, all of which
- * only weaken the enemy's effective throughput further from that already-generous baseline. */
-export const ENEMY_RANGED_DAMAGE = 9;
-export const ENEMY_RANGED_FIRE_INTERVAL = 0.5;
-export const ENEMY_RANGED_BURST_COUNT = 3;
-export const ENEMY_RANGED_BURST_PAUSE = 1.1;
-export const ENEMY_AIM_ERROR_MAX_DEG = 9;
-export const ENEMY_AIM_ERROR_MIN_DEG = 1.5;
-export const ENEMY_AIM_SETTLE_TIME = 2.5;
 /** Global cap (shared across every enemy in the match, see engagementSlots.ts) on how many can be
  * actively firing at once - without it, every enemy that spots the player opens fire the instant
  * it's in range, which reads as an unfair dogpile rather than a fight fought piece by piece. An
@@ -127,7 +112,9 @@ export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
  * navmesh in this codebase, so an enemy boxed into a concave corner reroutes rather than freezing.
  */
 export const ENEMY_ROAM_RADIUS = 55;
-export const ENEMY_PATROL_SPEED = ENEMY_SPEED * 0.6;
+/** 60% of the old global chase speed (2.5) - patrol pace is deliberately archetype-independent
+ * (an archetype reveals itself in combat, not while wandering at 50m - see archetypes.ts). */
+export const ENEMY_PATROL_SPEED = 1.5;
 export const ENEMY_PATROL_STOP_DISTANCE = 1.5;
 /** Forces a fresh destination even if the current one was never reached, so patrols don't fixate
  * on an unreachable point forever - randomized per-pick within this range. */

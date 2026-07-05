@@ -54,13 +54,13 @@ type EnemyState = 'idle' | 'alert' | 'chase' | 'search';
  * town/forest content, not a uniformly random shuffle - see enemySteering.ts), with whisker
  * obstacle avoidance and stuck-detection reroute standing in for real pathfinding.
  *
- * Alert/chase/search (Phase B): detection requires both ENEMY_DETECTION_RANGE and a clear
+ * Alert/chase/search (Phase B): detection requires both the archetype's detectionRange and a clear
  * line-of-sight raycast, not distance alone - a player behind a wall no longer gets "sensed"
  * through it. Spotting the player enters alert (a short stationary reaction beat, facing the
  * threat) before committing to chase. Losing LOS mid-chase (rather than just leashing out of range)
  * drops to search - beelines the last-seen position for ENEMY_SEARCH_DURATION before giving up back
  * to idle, reading as "I saw you go around that corner" instead of instantly forgetting the player.
- * Getting further than ENEMY_LEASH_RANGE away from any of alert/chase/search always drops straight
+ * Getting further than the archetype's leashRange away from any of alert/chase/search always drops straight
  * back to idle (a wider radius than detection, so it doesn't flicker right at the detection boundary).
  *
  * Chase itself (Phase C): beyond ENEMY_ATTACK_RANGE, closes distance until within the archetype's
