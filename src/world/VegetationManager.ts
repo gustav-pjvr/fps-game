@@ -183,9 +183,19 @@ export class VegetationManager {
     const placedTreePositions: { x: number; z: number }[] = [];
 
     // Chunks touching a forest zone draw far more candidates - packing a thicket this tight needs
-    // many more placement attempts than the gentle clustering the base candidate count was tuned for.
-    const centerForestMembership = sampleForestZone(originX + size / 2, originZ + size / 2).membership;
-    const candidateCount = VEGETATION_CANDIDATES_PER_CHUNK + Math.round(centerForestMembership * VEGETATION_FOREST_EXTRA_CANDIDATES);
+    // many more placement attempts than the gentle clustering the base candidate count was tuned
+    // for. Membership is the max over the chunk's center and 4 corners, not the center alone: a
+    // chunk whose corner overlaps a forest but whose center sits outside used to get only the base
+    // candidate budget, which showed up as visible chunk-grid-aligned density cliffs along forest
+    // edges. Five samples still costs almost nothing (once per chunk load, not per candidate).
+    const chunkForestMembership = Math.max(
+      sampleForestZone(originX + size / 2, originZ + size / 2).membership,
+      sampleForestZone(originX, originZ).membership,
+      sampleForestZone(originX + size, originZ).membership,
+      sampleForestZone(originX, originZ + size).membership,
+      sampleForestZone(originX + size, originZ + size).membership,
+    );
+    const candidateCount = VEGETATION_CANDIDATES_PER_CHUNK + Math.round(chunkForestMembership * VEGETATION_FOREST_EXTRA_CANDIDATES);
 
     for (let i = 0; i < candidateCount; i++) {
       const worldX = originX + rng() * size;
