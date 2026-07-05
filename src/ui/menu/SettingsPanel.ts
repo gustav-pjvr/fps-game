@@ -1,6 +1,6 @@
 import { Settings } from '../../settings/Settings.ts';
 import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '../../input/actions.ts';
-import { createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { ACCENT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
 /** Lobby overlay: master volume, mouse sensitivity, and rebindable key bindings - all persisted via Settings. */
 export class SettingsPanel {
@@ -73,7 +73,7 @@ export class SettingsPanel {
     slider.max = String(max);
     slider.step = String(step);
     slider.value = String(initialValue);
-    slider.style.cssText = 'width:100%;';
+    slider.style.cssText = `width:100%; accent-color:${ACCENT};`;
     slider.addEventListener('input', () => onChange(parseFloat(slider.value)));
 
     row.append(labelEl, slider);

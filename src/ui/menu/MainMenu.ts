@@ -1,4 +1,5 @@
-import { createButton } from './menuStyles.ts';
+import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, HAIRLINE } from './menuStyles.ts';
+import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts';
 
 export interface MainMenuCallbacks {
   onPlay: () => void;
@@ -6,7 +7,13 @@ export interface MainMenuCallbacks {
   onInventory: () => void;
 }
 
-/** Lobby's persistent bottom-right button rail: Play / Settings / Inventory. */
+/**
+ * Lobby's persistent chrome (WORLD_PLAN.md follow-up: lobby redesign, grounded in shipped tactical
+ * shooter lobbies - Valorant, Apex Legends, CS2 - rather than a generic dark web-app overlay).
+ * Deliberately asymmetric: the character render (LobbyScene.ts) sits left-of-center, so the title
+ * lives top-left near it, a real deployment-data readout anchors bottom-left, and the action rail
+ * stays bottom-right where a player's eye already expects a primary CTA.
+ */
 export class MainMenu {
   private readonly element: HTMLDivElement;
 
@@ -14,32 +21,75 @@ export class MainMenu {
     this.element = document.createElement('div');
     this.element.style.cssText = 'position:absolute; inset:0; display:none; pointer-events:none; z-index:15;';
 
+    for (const corner of ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const) {
+      this.element.appendChild(createCornerBracket(corner));
+    }
+
+    const titleBlock = document.createElement('div');
+    titleBlock.style.cssText = 'position:absolute; top:52px; left:56px; pointer-events:none;';
+
+    const eyebrow = createEyebrow('BROWSER TACTICAL OPS');
+    eyebrow.style.marginBottom = '10px';
+
     const title = document.createElement('div');
     title.textContent = 'FPS GAME';
     title.style.cssText =
-      'position:absolute; top:40px; left:40px; font-size:1.6rem; font-weight:800; letter-spacing:0.15em;' +
-      ' color:#fff; text-shadow:0 2px 8px rgba(0,0,0,0.6);';
-    this.element.appendChild(title);
+      `font-family:${DISPLAY_FONT}; font-size:2.4rem; font-weight:700; letter-spacing:0.1em;` +
+      ' color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.7);';
+
+    const rule = document.createElement('div');
+    rule.style.cssText = `width:56px; height:3px; background:${ACCENT}; margin-top:14px;`;
+
+    titleBlock.append(eyebrow, title, rule);
+    this.element.appendChild(titleBlock);
+
+    // Real deployment data (the actual DEFAULT_ENEMY_COUNT/DEFAULT_TARGET_COUNT a match will spawn
+    // with, editable in PlaySetupModal) rather than a decorative stat - a small honest readout of
+    // what's about to happen, in the same spirit as a HUD ammo counter.
+    const readout = document.createElement('div');
+    readout.style.cssText =
+      `position:absolute; bottom:52px; left:56px; pointer-events:none; font-family:${BODY_FONT};` +
+      ` border-left:2px solid ${ACCENT}; padding-left:16px;`;
+
+    const readoutLabel = createEyebrow('DEFAULT DEPLOYMENT');
+    readoutLabel.style.marginBottom = '6px';
+
+    const readoutValue = document.createElement('div');
+    readoutValue.style.cssText = `font-size:0.95rem; color:#dfe3e6; letter-spacing:0.02em;`;
+    readoutValue.innerHTML =
+      `<span style="color:${ACCENT}; font-weight:600;">${DEFAULT_ENEMY_COUNT}</span> hostiles &nbsp;/&nbsp; ` +
+      `<span style="color:${ACCENT}; font-weight:600;">${DEFAULT_TARGET_COUNT}</span> targets`;
+
+    readout.append(readoutLabel, readoutValue);
+    this.element.appendChild(readout);
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText =
-      'position:absolute; bottom:40px; right:40px; display:flex; flex-direction:column; gap:10px;' +
+      'position:absolute; bottom:48px; right:48px; display:flex; flex-direction:column; gap:10px;' +
       ' align-items:stretch; pointer-events:auto;';
 
     const playButton = createButton('PLAY', 'primary');
-    playButton.style.minWidth = '180px';
+    playButton.style.minWidth = '200px';
     playButton.addEventListener('click', callbacks.onPlay);
 
     const settingsButton = createButton('SETTINGS');
-    settingsButton.style.minWidth = '180px';
+    settingsButton.style.minWidth = '200px';
     settingsButton.addEventListener('click', callbacks.onSettings);
 
     const inventoryButton = createButton('INVENTORY');
-    inventoryButton.style.minWidth = '180px';
+    inventoryButton.style.minWidth = '200px';
     inventoryButton.addEventListener('click', callbacks.onInventory);
 
     buttonRow.append(playButton, settingsButton, inventoryButton);
     this.element.appendChild(buttonRow);
+
+    // Faint divider echoing a HUD scope line, purely atmospheric - ties the left (identity) and
+    // right (action) halves together without competing with either.
+    const divider = document.createElement('div');
+    divider.style.cssText =
+      `position:absolute; top:20%; bottom:20%; left:50%; width:1px; background:${HAIRLINE}; pointer-events:none;`;
+    this.element.appendChild(divider);
+
     root.appendChild(this.element);
   }
 

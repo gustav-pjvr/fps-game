@@ -733,3 +733,51 @@ spawn instead of beelining" test (its own comment referencing the now-removed
 **Still to do (Phases B-E, not started):** aggro/LOS state transitions, fair enemy ranged combat
 (the highest-stakes remaining piece), player knife + universal enemy melee fallback, and per-weapon
 archetype behavior differentiation with seeded randomized enemy loadouts.
+
+## Lobby redesign (2026-07-05)
+
+The lobby (main menu, match setup, settings, inventory) read as a generic dark web-app overlay:
+plain rounded-rect panels, a bobbing character dead-center competing with a stacked button rail,
+one accent color with no other visual system tying things together. Redesigned it grounded in real
+shipped tactical-shooter lobbies (Valorant, Apex Legends, CS2 - researched via web search rather
+than guessed) rather than a generic template.
+
+**Design.** One consistent signature shape (a chamfered/cut corner, via CSS `clip-path`, replacing
+every rounded corner in the old design) applied to every panel and button - `chamferClipPath()` in
+`menuStyles.ts`, alternating which corner is cut so panels don't all lean the same direction. A
+condensed display face (`Chakra Petch`, loaded via Google Fonts in `index.html` - this codebase had
+no custom font infrastructure before this) for titles/buttons/eyebrow labels, against `Inter` for
+body/data text - the first real typographic system this UI has had, replacing plain `system-ui`
+everywhere. Same near-black + single green accent palette as before (kept for brand continuity,
+just applied more deliberately), with a cool steel-gray added for secondary/label text.
+
+**Layout.** Deliberately asymmetric rather than centered: the lobby character (`LobbyScene.ts`) now
+sits left-of-frame (`CHARACTER_OFFSET_X`) instead of dead-center, with a soft accent-tinted ground
+glow (a radial-gradient canvas texture, not a flat-color circle - a flat circle read as a hard-edged
+puddle, confirmed via screenshot before switching to a gradient) giving it presence. This opens the
+right side of the screen for the action rail without visual competition, and lets the title/eyebrow
+live top-left near the character rather than fighting for center-screen space. Four corner brackets
+(faint L-shaped marks, `createCornerBracket()`) frame the screen like a tactical HUD viewfinder - a
+cheap, purely atmospheric touch. A thin vertical divider ties the left (identity) and right (action)
+halves together.
+
+**One genuinely diegetic touch, not decoration:** a "DEFAULT DEPLOYMENT" readout bottom-left shows
+the *real* `DEFAULT_ENEMY_COUNT`/`DEFAULT_TARGET_COUNT` a match will actually spawn with (editable
+in the existing Match Setup modal) - not a fabricated stat. Considered showing the current world
+seed here too, but the seed doesn't exist yet at the main-menu stage (`randomizeWorldSeed()` only
+runs when a match actually starts) - would have been fake data, so left out.
+
+**Verification.** Screenshotted every panel (main menu, match setup, settings, inventory) after
+each change rather than shipping on assumption - caught two real issues this way: the ground glow
+initially rendered as a hard-edged circle (switched to a canvas radial gradient) and native
+`<input type="range">` sliders in Settings rendered with the browser's default blue thumb, clashing
+badly against the new near-black/green palette (fixed with `accent-color` on the slider elements -
+a one-line, well-supported CSS fix, no custom slider markup needed). Full smoke suite (16/16) green;
+one console-error test failed on the first full-suite run (`THREE.GLTFLoader: Couldn't load texture
+Textures/colormap.png`) but passed 3/3 in isolation and clean on a full-suite re-run - pre-existing
+flakiness unrelated to this change (nothing touched GLTF loading), not a new regression.
+
+**Scope note:** `PlaySetupModal.ts`/`SettingsPanel.ts`/`InventoryPanel.ts` inherit the new chrome
+"for free" since they're built from the same `createPanel`/`createButton`/`createPanelTitle`
+helpers - only `SettingsPanel.ts` needed a direct touch (the slider accent-color fix). No internal
+restructuring of those panels' own logic.
