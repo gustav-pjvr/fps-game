@@ -8,19 +8,31 @@ export interface HitscanResult {
   colliderHandle: number;
 }
 
-/** `direction` must be a unit vector — the returned distance is the raw Rapier time-of-impact along it. */
+/** `direction` must be a unit vector — the returned distance is the raw Rapier time-of-impact along it.
+ * `excludeRigidBody` skips every collider on that body in one shot - needed for a caster with more
+ * than one collider on itself (e.g. an enemy's body capsule + head ball), where excluding just one
+ * of the two still lets the ray self-hit the other. */
 export function castHitscan(
   physics: PhysicsWorld,
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   maxDistance: number,
   excludeCollider?: RAPIER.Collider,
+  excludeRigidBody?: RAPIER.RigidBody,
 ): HitscanResult | null {
   const ray = new RAPIER.Ray(
     { x: origin.x, y: origin.y, z: origin.z },
     { x: direction.x, y: direction.y, z: direction.z },
   );
-  const hit = physics.world.castRayAndGetNormal(ray, maxDistance, true, undefined, undefined, excludeCollider);
+  const hit = physics.world.castRayAndGetNormal(
+    ray,
+    maxDistance,
+    true,
+    undefined,
+    undefined,
+    excludeCollider,
+    excludeRigidBody,
+  );
   if (!hit) return null;
 
   const point = new THREE.Vector3(

@@ -82,3 +82,29 @@ export function steerWithAvoidance(
 
   return bestDir;
 }
+
+/** Straight-line raycast from `from` to `to`, true only if nothing but the target itself is in the
+ * way - identified by collider handle rather than a distance-margin heuristic, since the target's
+ * own collider radius would otherwise make a clean hit land slightly short of the full distance.
+ * Used for enemy aggro (Phase B): detection now requires an actual clear sightline, not just
+ * distance, so a player on the far side of a wall no longer gets "sensed" through it.
+ *
+ * `excludeRigidBody` must be the caster's own body - an enemy has two colliders on itself (body
+ * capsule + head ball), and `from` (its head) sits exactly at the head ball's center, so excluding
+ * only one of the two still lets the ray self-hit the other every time (confirmed via direct
+ * testing: LOS was never true until this was a rigid-body exclusion instead of a single collider). */
+export function hasLineOfSight(
+  physics: PhysicsWorld,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  excludeRigidBody: RAPIER.RigidBody,
+  targetColliderHandle: number,
+): boolean {
+  const offset = new THREE.Vector3().subVectors(to, from);
+  const distance = offset.length();
+  if (distance < 1e-4) return true;
+
+  const dir = offset.multiplyScalar(1 / distance);
+  const hit = castHitscan(physics, from, dir, distance, undefined, excludeRigidBody);
+  return !hit || hit.colliderHandle === targetColliderHandle;
+}

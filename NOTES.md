@@ -790,9 +790,64 @@ patrol. Full smoke suite (16/16) green throughout, including the existing "enemi
 spawn instead of beelining" test (its own comment referencing the now-removed
 `ENEMY_WANDER_RADIUS` constant was updated to match).
 
-**Still to do (Phases B-E, not started):** aggro/LOS state transitions, fair enemy ranged combat
-(the highest-stakes remaining piece), player knife + universal enemy melee fallback, and per-weapon
-archetype behavior differentiation with seeded randomized enemy loadouts.
+**Still to do at the time (Phases B-E):** aggro/LOS state transitions, fair enemy ranged combat (the
+highest-stakes remaining piece), player knife + universal enemy melee fallback, and per-weapon
+archetype behavior differentiation with seeded randomized enemy loadouts. Phase B below.
+
+### Phase B: aggro/LOS state transitions (2026-07-05)
+
+**What changed.** Detection was pure distance (`ENEMY_DETECTION_RANGE`/`ENEMY_LEASH_RANGE`), so an
+enemy on the far side of a building wall "sensed" the player right through it. `EnemyState` grew
+from `'idle' | 'chase'` to `'idle' | 'alert' | 'chase' | 'search'`:
+
+- **Detection now requires distance *and* a clear line-of-sight raycast.** New `hasLineOfSight()` in
+  `enemySteering.ts` casts from the enemy's head to the player's eye position (`EYE_OFFSET`) and
+  passes only if nothing is hit, or the one thing hit is the player's own collider (checked by
+  collider handle, not a distance-margin guess - the target's own capsule radius would otherwise
+  make even a clean hit land slightly short of the full distance).
+- **`idle -> alert -> chase`.** Spotting the player (in range + LOS) enters `alert`: the enemy stops
+  and faces the threat for `ENEMY_ALERT_REACTION_TIME` (0.4s) before actually committing to chase -
+  a deliberate reaction beat, and the same window Phase C's aim delay can reuse later. Losing LOS or
+  leash range during `alert` drops straight back to `idle`.
+- **`chase -> search -> idle/chase`.** Losing LOS mid-chase (as opposed to just leashing out of
+  range) now drops to `search` instead of forgetting the player instantly: the enemy beelines the
+  last position it actually saw the player at (kept fresh every chase frame, so it's not stale) using
+  the same whisker-avoidance movement as patrol, for up to `ENEMY_SEARCH_DURATION` (6s) before giving
+  up back to `idle`. Regaining LOS+range during `search` returns straight to `chase`. Leashing out of
+  range from *any* of alert/chase/search still drops straight to `idle`, unchanged from Phase A.
+- **Throttled, not per-frame.** LOS is only rechecked every `ENEMY_LOS_CHECK_INTERVAL` (0.15s) per
+  enemy, with a randomized initial timer offset so many enemies' checks don't all land on the same
+  frame, and skipped entirely once the player's already beyond leash range (no state cares about LOS
+  at that distance). Direct motivation: the earlier performance-headroom check (this same session)
+  couldn't get a real number from this sandboxed environment, so the raycast cost that *is*
+  controllable was kept as low as reasonably possible up front rather than deferred.
+
+**A real bug caught before it ever worked: self-hit via the wrong exclusion.** First version excluded
+only the enemy's body capsule collider from the LOS raycast, matching the existing pattern in
+`steerWithAvoidance`. Every LOS check returned false, unconditionally - traced via a temporary e2e
+test that never once observed `alert` or `chase` despite standing right next to an enemy in open
+terrain. Root cause: the ray's origin (the enemy's own head height) sits exactly at the *center* of
+its separate head-ball collider, which was never excluded - the ray immediately self-hit its own head
+at distance ~0 every time. `steerWithAvoidance`'s horizontal probes never hit this because they don't
+travel through the head ball's vertical position; a LOS ray specifically aimed at head height always
+does. Fixed by extending `castHitscan()` (`combat/hitscan.ts`) with an `excludeRigidBody` parameter
+(Rapier's `castRayAndGetNormal` already supports `filterExcludeRigidBody` - just not plumbed through
+the wrapper before) and having `hasLineOfSight()` exclude the enemy's whole rigid body, which skips
+every collider attached to it in one shot regardless of how many there are.
+
+**Verified:** a temporary e2e test drove the real state machine end to end - teleported the player
+next to a patrolling enemy in open terrain and watched `getLiveEntityStates()` for the sequence,
+then teleported far away and confirmed the leash back to `idle`. 10 of 11 runs passed cleanly
+(`alert` and/or `chase` observed while approaching, `idle` regained after leashing); the one failure
+is presumed terrain/obstacle-dependent (a patrol destination happening to put the enemy somewhere
+with an actually-blocked sightline to the chosen approach point) rather than a logic bug, consistent
+with LOS now being a real geometric check rather than a distance formula - not chased further given
+the sample size and that this is exactly the kind of variance a real sightline check should produce.
+Full smoke suite (16/16) green throughout.
+
+**Still to do (Phases C-E):** fair enemy ranged combat (the highest-stakes remaining piece - this
+phase deliberately didn't touch combat, only the state machine deciding *when* to engage), player
+knife + universal enemy melee fallback, and per-weapon archetype behavior differentiation.
 
 ## Lobby redesign (2026-07-05)
 

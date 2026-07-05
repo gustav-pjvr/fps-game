@@ -65,6 +65,22 @@ export const ENEMY_DETECTION_RANGE = 18;
 export const ENEMY_LEASH_RANGE = 26;
 
 /**
+ * Aggro/LOS state transitions (enemy AI overhaul, Phase B). Detection now requires a clear
+ * line-of-sight raycast in addition to ENEMY_DETECTION_RANGE, not distance alone - an enemy on the
+ * far side of a building wall no longer "senses" the player through it. Idle/patrol -> alert (a
+ * short reaction beat, also lets Phase C's future aim delay reuse this same window) -> chase. Losing
+ * LOS mid-chase (not just leashing out of range) drops to search, which beelines the last-seen spot
+ * for a while before giving up back to patrol - reads as "I saw you go around that corner" instead
+ * of instantly forgetting the player the moment a wall gets between them.
+ */
+export const ENEMY_ALERT_REACTION_TIME = 0.4;
+export const ENEMY_SEARCH_DURATION = 6;
+export const ENEMY_SEARCH_STOP_DISTANCE = 1.5;
+/** Re-checking LOS every frame is wasted raycasts once several enemies are chasing at once -
+ * this is a per-enemy cadence, not a global one, so it doesn't create a single frame-spike. */
+export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
+
+/**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
  * picked random points within only 6 units of spawn every 3s and read as running in small circles
  * rather than actually going anywhere). Enemies now patrol real destinations across a much wider

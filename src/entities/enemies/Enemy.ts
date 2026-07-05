@@ -8,8 +8,9 @@ import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import { ACTIVE_ENEMY_ARCHETYPE } from './archetypes.ts';
-import { pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
+import { hasLineOfSight, pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
 import {
+  ENEMY_ALERT_REACTION_TIME,
   ENEMY_ATTACK_DAMAGE,
   ENEMY_ATTACK_INTERVAL,
   ENEMY_ATTACK_RANGE,
@@ -17,15 +18,19 @@ import {
   ENEMY_HEALTH,
   ENEMY_HEIGHT,
   ENEMY_LEASH_RANGE,
+  ENEMY_LOS_CHECK_INTERVAL,
   ENEMY_PATROL_REPATH_MAX,
   ENEMY_PATROL_REPATH_MIN,
   ENEMY_PATROL_SPEED,
   ENEMY_PATROL_STOP_DISTANCE,
   ENEMY_RADIUS,
+  ENEMY_SEARCH_DURATION,
+  ENEMY_SEARCH_STOP_DISTANCE,
   ENEMY_SPEED,
   ENEMY_STOP_DISTANCE,
   ENEMY_STUCK_EPSILON,
   ENEMY_STUCK_WINDOW,
+  EYE_OFFSET,
   HEADSHOT_MULTIPLIER,
 } from '../../core/config.ts';
 
@@ -38,15 +43,22 @@ const HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - HEAD_RADIUS;
 const MODEL_BIND_HEIGHT = 0.671;
 const MODEL_SCALE = ENEMY_HEIGHT / MODEL_BIND_HEIGHT;
 
-type EnemyState = 'idle' | 'chase';
+type EnemyState = 'idle' | 'alert' | 'chase' | 'search';
 
 /**
  * Idle: patrols real destinations across ENEMY_ROAM_RADIUS of its spawn point (biased toward
  * town/forest content, not a uniformly random shuffle - see enemySteering.ts), with whisker
- * obstacle avoidance and stuck-detection reroute standing in for real pathfinding. Chase: once the
- * player comes within ENEMY_DETECTION_RANGE, beelines for them and attacks in range, until they get
- * further than ENEMY_LEASH_RANGE away (a wider radius than detection, so it doesn't flicker
- * between states right at the detection boundary).
+ * obstacle avoidance and stuck-detection reroute standing in for real pathfinding.
+ *
+ * Alert/chase/search (Phase B): detection requires both ENEMY_DETECTION_RANGE and a clear
+ * line-of-sight raycast, not distance alone - a player behind a wall no longer gets "sensed"
+ * through it. Spotting the player enters alert (a short stationary reaction beat, facing the
+ * threat) before committing to chase, which beelines for them and attacks in range. Losing LOS
+ * mid-chase (rather than just leashing out of range) drops to search - beelines the last-seen
+ * position for ENEMY_SEARCH_DURATION before giving up back to idle, reading as "I saw you go around
+ * that corner" instead of instantly forgetting the player. Getting further than ENEMY_LEASH_RANGE
+ * away from any of alert/chase/search always drops straight back to idle (a wider radius than
+ * detection, so it doesn't flicker between states right at the detection boundary).
  *
  * Visuals are the real character-male-a.glb (Kenney "Mini Characters", CC0), animated with its
  * bundled "idle"/"walk" clips. Hit detection still uses the same invisible capsule+ball
@@ -67,6 +79,14 @@ export class Enemy implements Entity, Damageable {
   private patrolRepathTimer = 0;
   private stuckCheckTimer = 0;
   private stuckCheckPos: THREE.Vector3;
+  private alertTimer = 0;
+  private searchTimer = 0;
+  private readonly searchDestination: THREE.Vector3;
+  /** Throttled (ENEMY_LOS_CHECK_INTERVAL), not recomputed every frame - a raycast per enemy per
+   * frame adds up once several are chasing at once. Randomized initial offset so many enemies'
+   * checks don't all land on the same frame. */
+  private losCheckTimer: number;
+  private hasLineOfSightToPlayer = false;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
   private readonly headCollider: RAPIER.Collider;
@@ -84,6 +104,8 @@ export class Enemy implements Entity, Damageable {
     this.spawnPosition = position.clone();
     this.patrolDestination = position.clone();
     this.stuckCheckPos = position.clone();
+    this.searchDestination = position.clone();
+    this.losCheckTimer = Math.random() * ENEMY_LOS_CHECK_INTERVAL;
 
     // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - a plain clone
     // duplicates the mesh but not the skeleton bindings, leaving bones pointing at the shared
@@ -148,23 +170,80 @@ export class Enemy implements Entity, Damageable {
     const current = this.rigidBody.translation();
     const distanceToPlayer = horizontalDistance(current, player.position);
 
-    if (this.state === 'idle' && distanceToPlayer <= ENEMY_DETECTION_RANGE) {
-      this.state = 'chase';
-    } else if (this.state === 'chase' && distanceToPlayer > ENEMY_LEASH_RANGE) {
-      this.state = 'idle';
+    this.losCheckTimer -= dt;
+    if (this.losCheckTimer <= 0) {
+      this.losCheckTimer = ENEMY_LOS_CHECK_INTERVAL;
+      // Skip the raycast entirely once the player's already out of leash range - no state this
+      // frame could care about LOS at that distance anyway.
+      this.hasLineOfSightToPlayer =
+        distanceToPlayer <= ENEMY_LEASH_RANGE && this.computeLineOfSight(current, player);
     }
+
+    this.updateAggroState(dt, distanceToPlayer);
 
     const wasMoving = this.isMoving;
     this.isMoving = false;
 
-    if (this.state === 'chase') {
-      this.updateChase(dt, player, current, distanceToPlayer);
-    } else {
-      this.updatePatrol(dt, current);
+    switch (this.state) {
+      case 'chase':
+        this.updateChase(dt, player, current, distanceToPlayer);
+        break;
+      case 'search':
+        this.updateSearch(dt, current);
+        break;
+      case 'alert':
+        this.faceToward(player.position.x, player.position.z, current);
+        break;
+      default:
+        this.updatePatrol(dt, current);
     }
 
     if (this.isMoving !== wasMoving) this.setMovingAnimation(this.isMoving);
     this.mixer.update(dt);
+  }
+
+  private computeLineOfSight(current: { x: number; y: number; z: number }, player: Player): boolean {
+    const from = new THREE.Vector3(current.x, current.y + HEAD_OFFSET_Y, current.z);
+    const to = player.position.clone();
+    to.y += EYE_OFFSET;
+    return hasLineOfSight(this.physics, from, to, this.rigidBody, player.ownCollider.handle);
+  }
+
+  /** Pure state transitions - no movement here, so the switch in update() always sees this frame's
+   * already-resolved state (matches the immediate-use pattern the old idle/chase check had). */
+  private updateAggroState(dt: number, distanceToPlayer: number): void {
+    switch (this.state) {
+      case 'idle':
+        if (distanceToPlayer <= ENEMY_DETECTION_RANGE && this.hasLineOfSightToPlayer) {
+          this.state = 'alert';
+          this.alertTimer = ENEMY_ALERT_REACTION_TIME;
+        }
+        break;
+      case 'alert':
+        if (distanceToPlayer > ENEMY_LEASH_RANGE || !this.hasLineOfSightToPlayer) {
+          this.state = 'idle';
+          break;
+        }
+        this.alertTimer -= dt;
+        if (this.alertTimer <= 0) this.state = 'chase';
+        break;
+      case 'chase':
+        if (distanceToPlayer > ENEMY_LEASH_RANGE) {
+          this.state = 'idle';
+        } else if (!this.hasLineOfSightToPlayer) {
+          this.state = 'search';
+          this.searchTimer = ENEMY_SEARCH_DURATION;
+        }
+        break;
+      case 'search':
+        if (distanceToPlayer <= ENEMY_DETECTION_RANGE && this.hasLineOfSightToPlayer) {
+          this.state = 'chase';
+          break;
+        }
+        this.searchTimer -= dt;
+        if (this.searchTimer <= 0) this.state = 'idle';
+        break;
+    }
   }
 
   private updateChase(
@@ -173,6 +252,10 @@ export class Enemy implements Entity, Damageable {
     current: { x: number; y: number; z: number },
     distanceToPlayer: number,
   ): void {
+    // Kept fresh every frame while chasing so search (entered the instant LOS is lost) beelines
+    // for where the player actually was, not a stale position from several frames earlier.
+    this.searchDestination.copy(player.position);
+
     if (distanceToPlayer > ENEMY_STOP_DISTANCE) {
       this.moveToward(player.position.x, player.position.z, ENEMY_SPEED, dt, current);
     } else {
@@ -200,6 +283,15 @@ export class Enemy implements Entity, Damageable {
     }
 
     this.updateStuckDetection(dt, current);
+  }
+
+  /** Beelines the last-seen player position (with the same whisker avoidance as patrol) until
+   * close enough to stop, then just stands there for whatever's left of ENEMY_SEARCH_DURATION -
+   * updateAggroState (not here) owns the timer and the fallback back to idle when it runs out. */
+  private updateSearch(dt: number, current: { x: number; y: number; z: number }): void {
+    if (horizontalDistance(current, this.searchDestination) > ENEMY_SEARCH_STOP_DISTANCE) {
+      this.moveTowardWithAvoidance(this.searchDestination.x, this.searchDestination.z, ENEMY_PATROL_SPEED, dt, current);
+    }
   }
 
   private repath(): void {
