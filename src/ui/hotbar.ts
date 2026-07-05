@@ -14,7 +14,7 @@ export class Hotbar {
   constructor(root: HTMLElement) {
     this.container = document.createElement('div');
     this.container.style.cssText =
-      'position:absolute; bottom:80px; left:50%; transform:translateX(-50%); display:flex; gap:8px;';
+      'position:absolute; bottom:0; left:50%; transform:translateX(-50%); display:flex; gap:8px;';
     root.appendChild(this.container);
   }
 

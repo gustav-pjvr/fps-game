@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const MARKER_LIFETIME = 1.5;
+const MARKER_LIFETIME = 0.4;
 const MAX_MARKERS = 24;
 const WORLD_HIT_RADIUS = 0.05;
 const ENTITY_HIT_RADIUS = 0.09;
