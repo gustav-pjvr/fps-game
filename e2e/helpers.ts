@@ -42,13 +42,18 @@ export async function openPauseMenu(page: Page): Promise<void> {
  * player's sprint speed (8) far outpaces the enemy's chase speed (2.5), so a single fixed-heading
  * sprint blows straight past the enemy after one graze and never comes back in range.
  *
- * Deadline widened from 40s (enemy AI Phase B/C/D): an engaging enemy now often stands its ground
- * firing ranged bursts with a real aim-error cone (can whiff a whole burst) rather than beelining
- * straight into a guaranteed-hit melee tick, and melee itself can now miss too - death is still
- * reliable, just no longer bounded by a fixed melee-attack cadence. Confirmed via a full smoke-suite
- * re-run that a 40s timeout was genuinely too tight post-Phase-D, not a real regression. */
+ * Deadline widened twice now. 40s -> 50s for enemy AI Phase B/C/D (an engaging enemy often stands
+ * its ground firing ranged bursts with a real aim-error cone - can whiff a whole burst - rather
+ * than beelining straight into a guaranteed-hit melee tick, and melee itself can miss too).
+ * 50s -> 90s for per-archetype loadouts: whichever archetype spawns at index 5 is now random, and
+ * a Ridge Walker (kiter) actively backs away whenever this loop's approach brings the player within
+ * its kite range, turning "walk up and get hit" into an extended, real (if slow) chase - measured
+ * directly via a temporary diagnostic script: one Ridge Walker draw took 58s to die by this same
+ * approach logic, comfortably past the old 50s deadline. Death is still guaranteed (a kiter can't
+ * out-walk sprint forever, and this loop's re-aim-and-approach eventually closes the gap), just no
+ * longer bounded by a fixed combat cadence the way melee-only combat used to be. */
 export async function killPlayerByEnemy(page: Page): Promise<void> {
-  const deadline = Date.now() + 50000;
+  const deadline = Date.now() + 90000;
 
   while (true) {
     const health = await page.evaluate(() => window.__gameDebug?.getPlayerHealth());
@@ -66,9 +71,18 @@ export async function killPlayerByEnemy(page: Page): Promise<void> {
     await page.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), enemyPos);
 
     if (distance > 2.5) {
+      // Sprinting is safe here specifically because this loop re-aims and re-issues a short
+      // (<=400ms) burst every iteration rather than holding one heading for a long stretch - the
+      // "blows straight past" failure mode from the comment above only bites a single long,
+      // uncorrected sprint. Needed against a kiting archetype (Ridge Walker, moveSpeed 2.2) that
+      // actively retreats: at walk speed the net closing rate was too close to zero in the worst
+      // case (measured up to ~58s to land a kill), sprint (8) makes the outcome not just
+      // eventually-guaranteed but reliably fast regardless of which archetype is at index 5.
+      await page.keyboard.down('ShiftLeft');
       await page.keyboard.down('KeyW');
       await page.waitForTimeout(Math.min(400, distance * 60));
       await page.keyboard.up('KeyW');
+      await page.keyboard.up('ShiftLeft');
     } else {
       await page.waitForTimeout(300);
     }

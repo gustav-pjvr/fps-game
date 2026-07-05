@@ -25,6 +25,8 @@ import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
+import { FpsMeter } from './FpsMeter.ts';
+import { PerfOverlay } from '../ui/perfOverlay.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
@@ -73,6 +75,10 @@ export interface GameDebugApi {
   isClimbing(): boolean;
   getActiveLadderPositions(): { x: number; wallFaceZ: number }[];
   teleport(x: number, y: number, z: number): void;
+  /** Rolling real-frame-time stats (see FpsMeter) - lets a script measure performance on the
+   * user's own hardware/browser instead of relying on this environment's software-rendered GPU,
+   * which can't produce a meaningful number (see PERFORMANCE.md). */
+  getFrameStats(): { fps: number; avgMs: number; p95Ms: number };
 }
 
 declare global {
@@ -90,6 +96,8 @@ interface ScoreState {
 export class Game {
   private readonly loop: Loop;
   private lastActiveWeaponIndex: number;
+  private readonly fpsMeter = new FpsMeter();
+  private lastRenderTime = performance.now();
 
   private constructor(
     private readonly renderer: Renderer,
@@ -111,11 +119,13 @@ export class Game {
     private readonly scopeOverlay: ScopeOverlay,
     private readonly pauseMenu: PauseMenu,
     private readonly settingsPanel: SettingsPanel,
+    private readonly perfOverlay: PerfOverlay,
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
+    document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
   }
 
@@ -166,6 +176,7 @@ export class Game {
       isTouchingClimbable: () => this.player.isTouchingClimbable,
       isClimbing: () => this.player.isClimbing,
       getActiveLadderPositions: () => this.buildings.getActiveLadderPositions(),
+      getFrameStats: () => this.fpsMeter.getStats(),
     };
   }
 
@@ -290,6 +301,7 @@ export class Game {
       onReturnToLobby: () => onReturnToLobby?.(),
     });
     const settingsPanel = new SettingsPanel(hudRoot, () => settingsPanel.hide(), (value) => sound.setMasterVolume(value));
+    const perfOverlay = new PerfOverlay(hudRoot);
 
     const game = new Game(
       renderer,
@@ -311,6 +323,7 @@ export class Game {
       scopeOverlay,
       pauseMenu,
       settingsPanel,
+      perfOverlay,
       scoreState,
       matchConfig,
     );
@@ -328,6 +341,7 @@ export class Game {
    * fresh match without leaking GL contexts or stacking duplicate HUD nodes. */
   dispose(): void {
     this.loop.stop();
+    document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();
     this.hud.dispose();
@@ -339,6 +353,7 @@ export class Game {
     this.scopeOverlay.dispose();
     this.pauseMenu.dispose();
     this.settingsPanel.dispose();
+    this.perfOverlay.dispose();
     this.physics.dispose();
     window.__gameDebug = undefined;
   }
@@ -468,6 +483,18 @@ export class Game {
   };
 
   private readonly render = (_alpha: number): void => {
+    const now = performance.now();
+    this.fpsMeter.recordFrame(now - this.lastRenderTime);
+    this.lastRenderTime = now;
+    this.perfOverlay.update(this.fpsMeter.getStats(), this.entityManager.count);
+
     this.renderer.render();
+  };
+
+  /** F3 toggles the perf overlay - a dev tool, not a rebindable gameplay action, so it
+   * deliberately bypasses the Action/InputManager system entirely (same reasoning as
+   * openPauseMenu's raw pointer-lock call in the e2e helpers - some things aren't player controls). */
+  private readonly onDebugKeyDown = (event: KeyboardEvent): void => {
+    if (event.code === 'F3') this.perfOverlay.toggle();
   };
 }

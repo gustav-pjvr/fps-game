@@ -248,7 +248,7 @@ test('firing an empty magazine auto-reloads without pressing R', async ({ page }
 });
 
 test('dying releases pointer lock and Respawn resets the match without leaving it', async ({ page }) => {
-  test.setTimeout(75000); // killPlayerByEnemy waits on real combat timing, longer than the 30s default
+  test.setTimeout(120000); // killPlayerByEnemy can now take up to 90s (a kiting archetype), longer than the 30s default
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
@@ -271,7 +271,7 @@ test('dying releases pointer lock and Respawn resets the match without leaving i
 });
 
 test('Return to Lobby after death tears down the match and shows the lobby again', async ({ page }) => {
-  test.setTimeout(75000); // killPlayerByEnemy waits on real combat timing, longer than the 30s default
+  test.setTimeout(120000); // killPlayerByEnemy can now take up to 90s (a kiting archetype), longer than the 30s default
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);

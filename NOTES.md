@@ -1170,3 +1170,56 @@ it just fell under the same existing rule by not being listed.
 **Verified:** pressing `5` switches directly to the Bicknell Trench Knife, and pressing `1`
 afterward correctly returns to the pistol - confirming slot 5 didn't disturb the other direct-select
 keys. 2 of 2 repeat runs clean. Full smoke suite (16/16) green.
+
+## Performance tooling: in-game overlay + local check + docs (2026-07-05)
+
+The earlier Phase E performance-headroom attempt concluded that this sandbox can't answer "is
+performance okay" at all - its Chromium renders via SwiftShader (a CPU software rasterizer,
+confirmed via `WEBGL_debug_renderer_info`), so any FPS number gathered here measures software
+rasterization speed, not the game. This session's tooling is aimed entirely at making that check
+possible *outside* this environment, on the user's own hardware, with as little friction as
+possible.
+
+- **`FpsMeter`** (new, `src/core/FpsMeter.ts`) - a rolling 120-sample window of real per-frame
+  wall-clock time (sampled once per displayed frame in `Game.render`, not the fixed physics
+  timestep). Reports average FPS/frame time plus **p95 frame time** specifically so an occasional
+  stutter (e.g. several enemies' hitscan raycasts landing the same frame) shows up even when it's
+  brief enough not to move the average.
+- **In-game overlay** (`src/ui/perfOverlay.ts`) - off by default, toggled with **F3**. F3 is
+  deliberately wired via a raw `document.addEventListener`, not the `Action`/`InputManager`/
+  rebind system - it's a dev tool, not a gameplay control, same reasoning as the e2e suite's
+  `openPauseMenu` helper calling `document.exitPointerLock()` directly rather than going through a
+  bound key.
+- **`window.__gameDebug.getFrameStats()`** - the same numbers the overlay shows, for scripted
+  measurement.
+- **`e2e/performance-check.spec.ts`** (new, NOT part of the smoke suite - has no pass/fail
+  assertions, just prints numbers) - drives three representative scenarios (open terrain, a
+  20-enemy combat encounter, a dense town found via grid search) and logs FPS/p95 for each.
+  Deliberately kept as a `.spec.ts` file despite wanting to exclude it from casual discovery -
+  tried naming it without that suffix first so Playwright's default test discovery would skip it
+  entirely, but confirmed via direct testing that Playwright requires the suffix even for an
+  explicit file-path argument (`npx playwright test e2e/performance-check.ts` reports "No tests
+  found"). Documented instead, in both the file's own header comment and PERFORMANCE.md, that it's
+  manual/local-only.
+- **`PERFORMANCE.md`** (new, repo root) - explains the SwiftShader limitation, and walks through
+  three ways to get a real number: the F3 overlay (fastest), Chrome DevTools' Performance/Rendering
+  tabs (most detail), and the scripted check above (repeatable). No fabricated "target FPS" number -
+  hardware and desired enemy count vary too much for one to be meaningful; the doc explains what to
+  watch for (average vs. p95 spread) instead of asserting a threshold this session can't verify.
+
+**A real, unrelated regression this work exposed rather than caused.** Running the full smoke suite
+while building this surfaced `killPlayerByEnemy` (used by two death-flow tests) intermittently
+exceeding even its already-once-widened 50s deadline - traced to Ridge Walker (the kiter archetype,
+Phase 1's per-archetype loadouts) actively backing away whenever the helper's approach closed to
+its kite range, turning a straightforward walk-up-and-get-hit into an extended chase. One measured
+case took 58s by the exact same approach logic. Rather than widen the timeout a third time (diminishing
+returns - kiting is open-ended in the worst case, so any fixed deadline just gets a bigger tail),
+fixed the helper itself: it now holds `ShiftLeft` (sprint, speed 8) during its approach bursts
+instead of walking. This is safe specifically because the loop already re-aims and re-issues a
+fresh short (<=400ms) burst every iteration rather than holding one heading for a long stretch - the
+"blows straight past" failure mode the original code's own comment warned about only happens with
+one long, uncorrected sprint, which this loop never does. Verified via 16 repeated runs of both
+affected tests (8 batches x 2 tests) - all clean, and each batch visibly faster (down to 50s-1.4m
+for both tests combined, from over 2 minutes for a single test pre-fix).
+
+**Verified:** typecheck clean; full smoke suite (16/16) green after all of the above.
