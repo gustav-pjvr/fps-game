@@ -66,7 +66,11 @@ function enemyGunshotVolume(distance: number): number {
   return 1 - clamped * (1 - ENEMY_GUNSHOT_MIN_VOLUME);
 }
 
-/** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond aiming. */
+/** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
+ * aiming, with one deliberate exception: damagePlayer, which exists so death-*UI-flow* tests don't
+ * have to stage up to ~90s of real combat just to reach the death screen. One death-flow test
+ * still uses real combat (see e2e/helpers.ts killPlayerByEnemy) so the genuine
+ * enemy-damages-player path stays covered end to end. */
 export interface GameDebugApi {
   getScore(): number;
   getPlayerHealth(): number;
@@ -85,6 +89,8 @@ export interface GameDebugApi {
   getWorldSeed(): number;
   isTouchingClimbable(): boolean;
   isClimbing(): boolean;
+  /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */
+  damagePlayer(amount: number): void;
   getActiveLadderPositions(): { x: number; wallFaceZ: number }[];
   teleport(x: number, y: number, z: number): void;
   /** Rolling real-frame-time stats (see FpsMeter) - lets a script measure performance on the
@@ -115,6 +121,8 @@ export class Game {
    * (entity count overshooting the configured match size), and returning to the lobby mid-spawn
    * had the surviving loop calling createRigidBody on an already-freed WASM world. */
   private spawnGeneration = 0;
+  /** Damage requested via the debug API, applied inside the next update tick (see installDebugApi). */
+  private pendingDebugDamage = 0;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -193,6 +201,13 @@ export class Game {
       getWorldSeed: () => getWorldSeed(),
       isTouchingClimbable: () => this.player.isTouchingClimbable,
       isClimbing: () => this.player.isClimbing,
+      // Queued, not applied immediately: update() detects death by comparing isDead across the
+      // tick (wasDead), so damage landing *between* ticks would make the death transition
+      // unobservable and the death screen would never show. Queuing routes debug damage through
+      // the exact same within-tick path enemy damage takes.
+      damagePlayer: (amount) => {
+        this.pendingDebugDamage += amount;
+      },
       getActiveLadderPositions: () => this.buildings.getActiveLadderPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
     };
@@ -490,6 +505,11 @@ export class Game {
     }
 
     const wasDead = this.player.isDead;
+
+    if (this.pendingDebugDamage > 0) {
+      this.player.takeDamage(this.pendingDebugDamage);
+      this.pendingDebugDamage = 0;
+    }
 
     if (this.player.isDead) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on respawn.

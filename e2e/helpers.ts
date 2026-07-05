@@ -34,9 +34,22 @@ export async function openPauseMenu(page: Page): Promise<void> {
   await page.getByTestId('pause-menu').getByRole('button', { name: 'Resume', exact: true }).waitFor({ state: 'visible' });
 }
 
-/** Seeks the first live enemy (index 5 in the default 5-target/3-enemy match) and holds position
- * next to it until it attacks the player down to 0 HP - no debug damage hook exists on purpose
- * (window.__gameDebug is aim-only, no gameplay cheats), so this is real combat damage.
+/** Index of the first live enemy, identified by archetype (enemies report one, targets don't) -
+ * replaces the old hard-coded "index 5 is an enemy" assumption, which was only true for the
+ * default 5-target/3-enemy match with the current spawn order and broke obscurely if either
+ * changed. Note: page.evaluate JSON-serializes the array, so targets' undefined entries arrive
+ * as null - hence the loose != null check. */
+export async function findFirstEnemyIndex(page: Page): Promise<number> {
+  const archetypes = await page.evaluate(() => window.__gameDebug?.getLiveEntityArchetypes());
+  const index = archetypes?.findIndex((archetype) => archetype != null) ?? -1;
+  if (index < 0) throw new Error('no live enemy found');
+  return index;
+}
+
+/** Seeks the first live enemy (found by archetype, not a hard-coded index) and holds position
+ * next to it until it attacks the player down to 0 HP - this is real combat damage on purpose:
+ * exactly one death-flow test keeps the genuine enemy-damages-player path covered end to end
+ * (the other uses the faster debug damagePlayer hook, which exists for death-UI-flow tests).
  *
  * Re-aims and re-taps forward every iteration instead of holding a fixed heading/sprint: the
  * player's sprint speed (8) far outpaces the enemy's chase speed (2.5), so a single fixed-heading
@@ -45,7 +58,7 @@ export async function openPauseMenu(page: Page): Promise<void> {
  * Deadline widened twice now. 40s -> 50s for enemy AI Phase B/C/D (an engaging enemy often stands
  * its ground firing ranged bursts with a real aim-error cone - can whiff a whole burst - rather
  * than beelining straight into a guaranteed-hit melee tick, and melee itself can miss too).
- * 50s -> 90s for per-archetype loadouts: whichever archetype spawns at index 5 is now random, and
+ * 50s -> 90s for per-archetype loadouts: whichever archetype the targeted enemy gets is random, and
  * a Ridge Walker (kiter) actively backs away whenever this loop's approach brings the player within
  * its kite range, turning "walk up and get hit" into an extended, real (if slow) chase - measured
  * directly via a temporary diagnostic script: one Ridge Walker draw took 58s to die by this same
@@ -60,9 +73,11 @@ export async function killPlayerByEnemy(page: Page): Promise<void> {
     if ((health ?? 100) <= 0) return;
     if (Date.now() > deadline) throw new Error('killPlayerByEnemy timed out without the player dying');
 
-    const enemyPos = (await page.evaluate(() => window.__gameDebug?.getLiveEntityPositions()))?.[5];
+    // Re-found each iteration (cheap) so a mid-fight entity-list change can't leave a stale index.
+    const enemyIndex = await findFirstEnemyIndex(page);
+    const enemyPos = (await page.evaluate(() => window.__gameDebug?.getLiveEntityPositions()))?.[enemyIndex];
     const playerPos = await page.evaluate(() => window.__gameDebug?.getPlayerPosition());
-    if (!enemyPos || !playerPos) throw new Error('expected an enemy at index 5 and a player position');
+    if (!enemyPos || !playerPos) throw new Error('expected a live enemy and a player position');
 
     const dx = enemyPos.x - playerPos.x;
     const dz = enemyPos.z - playerPos.z;
@@ -77,7 +92,7 @@ export async function killPlayerByEnemy(page: Page): Promise<void> {
       // uncorrected sprint. Needed against a kiting archetype (Ridge Walker, moveSpeed 2.2) that
       // actively retreats: at walk speed the net closing rate was too close to zero in the worst
       // case (measured up to ~58s to land a kill), sprint (8) makes the outcome not just
-      // eventually-guaranteed but reliably fast regardless of which archetype is at index 5.
+      // eventually-guaranteed but reliably fast regardless of which archetype the enemy drew.
       await page.keyboard.down('ShiftLeft');
       await page.keyboard.down('KeyW');
       await page.waitForTimeout(Math.min(400, distance * 60));

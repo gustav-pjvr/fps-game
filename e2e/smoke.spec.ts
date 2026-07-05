@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { holdKey, killPlayerByEnemy, lockPointer, openPauseMenu, waitForGameReady } from './helpers.ts';
+import { findFirstEnemyIndex, holdKey, killPlayerByEnemy, lockPointer, openPauseMenu, waitForGameReady } from './helpers.ts';
 
 test('loads without console errors and renders a canvas', async ({ page }) => {
   const errors: string[] = [];
@@ -158,19 +158,21 @@ test('enemies wander near spawn instead of beelining when the player is far away
   await waitForGameReady(page);
   await lockPointer(page);
 
-  // Encounters spawn 5 targets (radius 15) then 3 enemies (radius 25) - index 5 is an enemy,
-  // and at spawn the player is well outside every archetype's detectionRange (max 20) from any of them.
+  // Enemies spawn on a radius-25 ring - at spawn the player is well outside every archetype's
+  // detectionRange (max 20) from any of them. The enemy is found by archetype (targets report
+  // none), not a hard-coded index tied to the default spawn order.
+  const enemyIndex = await findFirstEnemyIndex(page);
   const positions = await page.evaluate(() => window.__gameDebug?.getLiveEntityPositions());
-  const enemyBefore = positions?.[5];
+  const enemyBefore = positions?.[enemyIndex];
   expect(enemyBefore).toBeDefined();
-  if (!enemyBefore) throw new Error('expected an enemy at index 5');
+  if (!enemyBefore) throw new Error('expected a live enemy');
 
   await page.waitForTimeout(3000);
 
   const positionsAfter = await page.evaluate(() => window.__gameDebug?.getLiveEntityPositions());
-  const enemyAfter = positionsAfter?.[5];
+  const enemyAfter = positionsAfter?.[enemyIndex];
   expect(enemyAfter).toBeDefined();
-  if (!enemyAfter) throw new Error('expected an enemy at index 5 after waiting');
+  if (!enemyAfter) throw new Error('expected a live enemy after waiting');
 
   const dx = enemyAfter.x - enemyBefore.x;
   const dz = enemyAfter.z - enemyBefore.z;
@@ -271,12 +273,16 @@ test('dying releases pointer lock and Respawn resets the match without leaving i
 });
 
 test('Return to Lobby after death tears down the match and shows the lobby again', async ({ page }) => {
-  test.setTimeout(120000); // killPlayerByEnemy can now take up to 90s (a kiting archetype), longer than the 30s default
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
 
-  await killPlayerByEnemy(page);
+  // This test is about the death screen's teardown UI flow, not combat - the debug damage hook
+  // reaches the death screen in one tick instead of up to ~90s of staged real combat. The
+  // genuine enemy-damages-player path stays covered by the Respawn death-flow test above, which
+  // deliberately keeps killPlayerByEnemy.
+  await page.evaluate(() => window.__gameDebug?.damagePlayer(999));
+  await page.waitForFunction(() => window.__gameDebug?.getPlayerHealth() === 0, { timeout: 3000 });
   const deathScreen = page.getByTestId('death-screen');
   await expect(deathScreen.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
 
