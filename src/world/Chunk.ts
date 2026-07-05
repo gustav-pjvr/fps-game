@@ -78,6 +78,10 @@ function buildGeometry(heights: Float32Array, resolution: number, size: number):
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  // aoMap reads uv2, not uv (three.js convention - a separate unwrap for baked lighting/AO,
+  // distinct from the tiled material uv) - a duplicate of the same coordinates is fine here since
+  // the AO map is meant to tile with the rest of the terrain material, not use a unique unwrap.
+  geometry.setAttribute('uv2', new THREE.BufferAttribute(uvs.slice(), 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;

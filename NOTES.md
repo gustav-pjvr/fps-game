@@ -1422,3 +1422,107 @@ kiting-archetype tail-risk flakiness already documented elsewhere in this file (
 kiting occasionally pushes `killPlayerByEnemy` toward worst-case duration even after the sprint-based
 mitigation), not something touched by this change, since nothing here touches enemy/combat/death-UI
 code paths.
+
+## Visual realism pass, items 1-7 (2026-07-05)
+
+Implemented the top 7 items from VISUAL_REALISM.md's priority table directly (not via a Fable
+agent). Understood each recommendation's actual mechanism before touching code, not just its
+headline - see the per-item notes below for what changed and why.
+
+- **Item 1 - shadow camera.** `Game.addLighting` now configures `sun.shadow.mapSize`, ortho camera
+  bounds (`SUN_SHADOW_ORTHO_HALF_EXTENT = 60`), bias/normalBias, and a new `updateSunFollow()`
+  (called every render frame) re-centers the shadow camera's ortho box on the player, snapping the
+  offset to shadow-texel increments to avoid visible shadow "swimming." Previously the shadow
+  camera sat at Three.js's unconfigured default (a +/-5 unit box at the origin), so in this
+  ~800x800m world shadows only ever rendered in a tiny, useless patch near spawn. Also fixed a real
+  bug found while reading the doc: `Enemy.ts` and `Target.ts` set `castShadow = true` on a
+  `THREE.Group`, which three.js's shadow pass only ever reads on `Mesh` instances - so enemies and
+  targets have never actually cast a shadow. Fixed via `model.traverse()` setting
+  `castShadow`/`receiveShadow` per child mesh.
+- **Item 2 - ACES filmic tone mapping.** `Renderer.ts` sets `toneMapping = ACESFilmicToneMapping`
+  and a tuned `toneMappingExposure` (ACES reads darker than the previous `NoToneMapping` at the
+  same light intensities).
+- **Item 3 - image-based lighting.** Originally: `scene.environment` from a `PMREMGenerator` of the
+  existing Sky shader, replacing the flat `AmbientLight`. Had to be revisited - see the regression
+  note below.
+- **Item 4 - terrain PBR maps.** Downloaded the normal/roughness/AO maps from the same Poly Haven
+  "Aerial Grass Rock" CC0 set already used for the diffuse texture (credits file updated) and wired
+  them into `ChunkManager.createGroundMaterial()`. `aoMap` needs a `uv2` attribute (three.js
+  convention, distinct from the tiled material `uv`) - added as a clone of the existing `uv` in
+  `Chunk.ts`'s geometry builder.
+- **Item 5 - muzzle flash.** New `src/combat/MuzzleFlash.ts`: a single reusable `PointLight` +
+  additive `Sprite` (a canvas-generated radial gradient, not a sourced asset - not detailed enough
+  to need one) at the world-space muzzle point `WeaponManager` already computes for tracers.
+  Gated on `kind === 'ranged'` so the knife doesn't spawn a light out of its blade.
+- **Item 6 - death sequence.** `EntityManager` now keeps a `dying` list alongside `entities`: on
+  death, physics (colliders/rigid body) is disposed immediately - same tick as before, so nothing
+  can still collide with or shoot through a corpse - but the mesh lingers ~3s (topple via
+  `rotation.x`, hold, sink via `position.y`) before actually leaving the scene, instead of vanishing
+  the instant health hits 0. Deliberately animates only position/rotation, not material opacity:
+  `SkeletonUtils.clone` (used for every enemy) reuses the source material *by reference* across
+  every clone (confirmed via its own docstring), so fading one dying enemy's opacity would fade
+  every other enemy sharing that model's material too.
+- **Item 7 - weapon sway/bob + camera bob.** Weapon sway (`WeaponManager.updateWeaponSway`) lags
+  the view model behind the camera's own yaw/pitch delta each tick, damped back to neutral -
+  ported from the same "offset by a fraction of movement, damped" idea the lobby's idle
+  character bob already uses, but driven by real look/movement instead of a fixed idle timer.
+  Movement bob: `Player.applyMovement` computes one shared sin phase from the player's actual
+  per-tick horizontal displacement (advances only while grounded and moving, so it starts/fades
+  with real movement) and exposes it via `movementBobPhase`/`movementBobStrength` getters, so both
+  the camera bob (applied directly to `currentCameraPosition` in Player) and the weapon bob
+  (`WeaponManager.updateAim`, reading the same getters) move on the exact same phase rather than
+  two independent ones.
+
+**Regression found and fixed: item 3 (IBL) tanked e2e performance.** The full smoke suite started
+failing/timing out on several tests after items 1-7 landed - not a hang, a severe FPS crash (traced
+via `Date.now()` timing marks in a temporary debug spec: a sequence that used to take ~1s of
+scripted waits was taking 20-30+ real seconds). Bisected by reverting one item at a time against a
+`git stash`-clean baseline (which passed in 24.6s, confirming this was 100% a today's-work
+regression, not pre-existing flakiness): shadows fully disabled didn't fix it, the Enemy shadow bug
+fix didn't cause it, terrain PBR maps weren't it either. Root cause was `scene.environment` (the
+PMREM env map): it adds a prefiltered-envmap sample to every `MeshStandardMaterial` fragment across
+the whole scene every frame - cheap on real GPU hardware, but the e2e sandbox's Chromium renders via
+SwiftShader (software/CPU rasterization, see PERFORMANCE.md), where that per-fragment cost proved
+ruinous. Confirmed by disabling just this one thing: timing dropped right back to the clean
+baseline.
+
+Fixed by adding a **Graphics Quality setting** (see below) rather than reverting the feature -
+`environmentLighting` is a new field on `GraphicsQualityPreset`, on for High only (real-GPU tier),
+off for Low/Medium. `Game.addLighting` reinstates a flat `AmbientLight` fill when IBL is off, so
+Low/Medium don't lose all ambient fill light entirely.
+
+## Graphics Quality setting (2026-07-05)
+
+Added a Low/Medium/High graphics-quality option under Settings, so players on weaker hardware
+aren't stuck with whatever tuning happens to suit this project's own test sandbox, and players on
+real GPUs can opt into the full visual pass (particularly image-based lighting, disabled by default
+per the regression above).
+
+- `src/settings/graphicsQuality.ts` (new) - `GraphicsQuality` type, `GraphicsQualityPreset`
+  interface (`shadowsEnabled`, `shadowMapSize`, `pixelRatioCap`, `environmentLighting`), and the
+  three presets. Medium is the default and is exactly what this project's own e2e suite runs
+  against (512 shadow map, no IBL) - out-of-the-box behavior matches what's actually verified. High
+  matches VISUAL_REALISM.md's original recommendations (2048 shadow map, IBL on) for real GPU
+  hardware, which has no reason to share the test sandbox's software-rendering ceiling. Low turns
+  shadows off entirely and caps pixel ratio at 1 for the lowest-end/most CPU-bound systems.
+- `Settings.ts` - persists the choice (`getGraphicsQuality`/`setGraphicsQuality`), default
+  `'medium'`.
+- `SettingsPanel.ts` - new "Graphics Quality" section, a three-button segmented control (styled
+  like the existing key-bind rows) rather than a slider, since these are named presets, not a
+  continuous range. Includes a small "Applies next match" hint.
+- `Game.create()` reads the preset once via `Settings.getGraphicsQuality()` and passes it to both
+  `Renderer`'s constructor (pixel ratio cap, shadow enable, IBL) and `Game.addLighting` (shadow map
+  size, shadow enable, ambient fallback) - **not** live-applied to a match already in progress,
+  since shadow map resolution and the PMREM environment texture are both baked into GPU render
+  targets at creation time; hot-swapping either mid-match is real risk for a setting a player only
+  changes occasionally. A change takes effect starting the player's next match, which is
+  communicated in the settings UI itself.
+
+**Verification for both of the above:** `npx tsc --noEmit` clean throughout. `npm run test:unit`
+19/19 green. Full `npx playwright test e2e/smoke.spec.ts` 16/16 green (confirming the IBL-gating fix
+actually resolved the regression across the whole suite, not just the one test used to isolate it).
+Root-cause isolation for the regression was delegated to an Opus-model agent (per user request) once
+initial isolation (shadow map size, shadow enable/disable, Enemy shadow fix) had ruled out the more
+obvious suspects without finding the actual cause - it bisected the remaining candidates and applied
+the `environmentLighting` gate fix described above, independently re-verified here rather than
+taken on faith.

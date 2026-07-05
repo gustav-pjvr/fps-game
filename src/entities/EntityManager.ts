@@ -7,7 +7,14 @@ import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks } from './enemies/Enemy.
 import { createArchetypePicker } from './enemies/archetypes.ts';
 import { EngagementSlots } from './enemies/engagementSlots.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
-import { ENEMY_MAX_CONCURRENT_ENGAGERS } from '../core/config.ts';
+import {
+  DEATH_FALL_ANGLE,
+  DEATH_FALL_DURATION,
+  DEATH_HOLD_DURATION,
+  DEATH_SINK_DISTANCE,
+  DEATH_SINK_DURATION,
+  ENEMY_MAX_CONCURRENT_ENGAGERS,
+} from '../core/config.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
 
@@ -15,6 +22,8 @@ import { mulberry32 } from '../utils/rng.ts';
  * +10..+13, guaranteed sites +40/+41, archetypes +101) so per-enemy patrol streams don't correlate
  * with anything else derived from the same world seed. */
 const PATROL_SEED_OFFSET = 211;
+
+const DEATH_TOTAL_DURATION = DEATH_FALL_DURATION + DEATH_HOLD_DURATION + DEATH_SINK_DURATION;
 
 interface ManagedEntity {
   readonly mesh: THREE.Object3D;
@@ -26,9 +35,19 @@ interface ManagedEntity {
   update?(dt: number, player: Player): void;
 }
 
+/** A corpse mid-death-sequence (see the DEATH_* comment in config.ts) - its physics presence is
+ * already gone, but the mesh lingers to topple/hold/sink before actually leaving the scene. */
+interface DyingEntity {
+  readonly mesh: THREE.Object3D;
+  elapsed: number;
+  readonly startY: number;
+  readonly startRotationX: number;
+}
+
 /** Owns spawned targets/enemies: advances moving ones, and cleans up + reports kills once they die. */
 export class EntityManager {
   private readonly entities: ManagedEntity[] = [];
+  private readonly dying: DyingEntity[] = [];
   /** Shared across every enemy spawned by this manager (i.e. one per match) - see
    * engagementSlots.ts for why this needs to be shared rather than per-enemy. */
   private readonly engagementSlots = new EngagementSlots(ENEMY_MAX_CONCURRENT_ENGAGERS);
@@ -86,10 +105,44 @@ export class EntityManager {
       entity.update?.(dt, player);
 
       if (entity.isDead) {
-        this.scene.remove(entity.mesh);
+        // Physics presence goes immediately (same tick as before this feature existed) - only the
+        // mesh lingers, for the death sequence below. Nothing can still collide with or shoot
+        // through a corpse mid-sequence.
         entity.dispose();
         this.entities.splice(i, 1);
         this.onKilled(entity.killFeedLabel);
+        this.dying.push({
+          mesh: entity.mesh,
+          elapsed: 0,
+          startY: entity.mesh.position.y,
+          startRotationX: entity.mesh.rotation.x,
+        });
+      }
+    }
+
+    this.updateDying(dt);
+  }
+
+  private updateDying(dt: number): void {
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const dying = this.dying[i];
+      if (!dying) continue;
+
+      dying.elapsed += dt;
+      if (dying.elapsed <= DEATH_FALL_DURATION) {
+        const fallProgress = THREE.MathUtils.smoothstep(dying.elapsed, 0, DEATH_FALL_DURATION);
+        dying.mesh.rotation.x = dying.startRotationX + DEATH_FALL_ANGLE * fallProgress;
+      } else if (dying.elapsed <= DEATH_FALL_DURATION + DEATH_HOLD_DURATION) {
+        dying.mesh.rotation.x = dying.startRotationX + DEATH_FALL_ANGLE;
+      } else {
+        const sinkElapsed = dying.elapsed - DEATH_FALL_DURATION - DEATH_HOLD_DURATION;
+        const sinkProgress = THREE.MathUtils.smoothstep(sinkElapsed, 0, DEATH_SINK_DURATION);
+        dying.mesh.position.y = dying.startY - DEATH_SINK_DISTANCE * sinkProgress;
+      }
+
+      if (dying.elapsed >= DEATH_TOTAL_DURATION) {
+        this.scene.remove(dying.mesh);
+        this.dying.splice(i, 1);
       }
     }
   }
@@ -98,13 +151,19 @@ export class EntityManager {
     return this.entities.length;
   }
 
-  /** Despawns everything regardless of alive/dead state - practice-reset feature, not a kill. */
+  /** Despawns everything regardless of alive/dead state - practice-reset feature, not a kill.
+   * Includes mid-death-sequence corpses: a reset should give a clean slate, not leave sinking
+   * bodies from the previous life behind. */
   clearAll(): void {
     for (const entity of this.entities) {
       this.scene.remove(entity.mesh);
       entity.dispose();
     }
     this.entities.length = 0;
+    for (const dying of this.dying) {
+      this.scene.remove(dying.mesh);
+    }
+    this.dying.length = 0;
   }
 
   /** Debug/test helper - world positions of everything currently alive. */

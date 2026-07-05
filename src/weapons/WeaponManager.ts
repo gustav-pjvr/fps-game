@@ -25,7 +25,11 @@ import {
   RELOAD_DIP,
   RELOAD_TILT_ANGLE,
   SCOPE_REVEAL_THRESHOLD,
+  WEAPON_BOB_AMPLITUDE,
   WEAPON_HOLSTER_DROP,
+  WEAPON_SWAY_DAMP,
+  WEAPON_SWAY_LOOK_FACTOR,
+  WEAPON_SWAY_MAX,
   WEAPON_SWITCH_DURATION,
 } from '../core/config.ts';
 
@@ -49,6 +53,17 @@ export class WeaponManager {
   private switching = false;
   private pendingIndex: number | null = null;
 
+  /** Weapon sway (VISUAL_REALISM.md §6) - the view model lags behind the camera's own look
+   * rotation instead of being rigidly bolted to it. Tracked as yaw/pitch deltas between ticks
+   * (not raw mouse movement) so this only needs the camera WeaponManager already holds, rather
+   * than a second read of InputManager's look delta (which Player already consumes once per
+   * tick - reading it again here would either double-consume or need new API surface on
+   * InputManager for no real benefit). */
+  private previousCameraYaw = 0;
+  private previousCameraPitch = 0;
+  private swayYaw = 0;
+  private swayPitch = 0;
+
   private constructor(
     private readonly camera: THREE.PerspectiveCamera,
     private readonly physics: PhysicsWorld,
@@ -59,6 +74,7 @@ export class WeaponManager {
     private readonly onFire: (weaponId: string) => void,
     private readonly onReloadStart: (weaponId: string) => void,
     private readonly onLongShot: (distance: number) => void,
+    private readonly onMuzzleFlash: (point: THREE.Vector3) => void,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -75,6 +91,7 @@ export class WeaponManager {
     onFire: (weaponId: string) => void,
     onReloadStart: (weaponId: string) => void,
     onLongShot: (distance: number) => void,
+    onMuzzleFlash: (point: THREE.Vector3) => void,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -95,7 +112,18 @@ export class WeaponManager {
       }),
     );
 
-    return new WeaponManager(camera, physics, slots, scopeOverlay, onImpact, onTracer, onFire, onReloadStart, onLongShot);
+    return new WeaponManager(
+      camera,
+      physics,
+      slots,
+      scopeOverlay,
+      onImpact,
+      onTracer,
+      onFire,
+      onReloadStart,
+      onLongShot,
+      onMuzzleFlash,
+    );
   }
 
   private get active(): WeaponSlot {
@@ -143,7 +171,7 @@ export class WeaponManager {
     this.active.weapon.update(dt);
     this.handleSwitchRequests(input);
     this.updateSwitching(dt);
-    this.updateAim(dt, input);
+    this.updateAim(dt, input, player);
 
     if (this.switching) return;
 
@@ -211,13 +239,15 @@ export class WeaponManager {
     this.active.viewModel.position.y = WEAPON_HIP_POSITION.y - WEAPON_HOLSTER_DROP * this.switchProgress;
   }
 
-  private updateAim(dt: number, input: InputManager): void {
+  private updateAim(dt: number, input: InputManager, player: Player): void {
     const { adsFov, hasScope } = this.active.weapon.definition;
     const targetAim = !this.switching && input.isActionActive('aim') ? 1 : 0;
     this.aimAmount = THREE.MathUtils.damp(this.aimAmount, targetAim, ADS_LERP_SPEED, dt);
 
     this.camera.fov = THREE.MathUtils.lerp(CAMERA_FOV, adsFov, this.aimAmount);
     this.camera.updateProjectionMatrix();
+
+    this.updateWeaponSway(dt);
 
     if (!this.switching) {
       this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
@@ -226,7 +256,14 @@ export class WeaponManager {
       // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
       const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);
       this.active.viewModel.position.y -= RELOAD_DIP * reloadCurve;
-      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve;
+      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve + this.swayPitch;
+      this.active.viewModel.rotation.y = this.swayYaw;
+
+      // Same shared phase the camera bob uses (see Player.movementBobPhase) - the weapon and the
+      // camera bob together rather than independently, matching the doc's framing of one phase
+      // driving both.
+      this.active.viewModel.position.y +=
+        Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength;
     }
 
     const scopeShouldShow = hasScope && this.aimAmount >= SCOPE_REVEAL_THRESHOLD;
@@ -234,9 +271,26 @@ export class WeaponManager {
     this.active.viewModel.visible = !scopeShouldShow;
   }
 
+  /** Computes this tick's lag offset from how much the camera itself rotated since last tick -
+   * the weapon target-offsets opposite that rotation (dragging behind, as a real weapon's inertia
+   * would) and damps back toward neutral over time. Clamped so a big single-tick look snap (e.g.
+   * a debug teleport/lookAt) can't fling the view model to an extreme angle. */
+  private updateWeaponSway(dt: number): void {
+    const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+    const yawDelta = euler.y - this.previousCameraYaw;
+    const pitchDelta = euler.x - this.previousCameraPitch;
+    this.previousCameraYaw = euler.y;
+    this.previousCameraPitch = euler.x;
+
+    const targetSwayYaw = THREE.MathUtils.clamp(-yawDelta * WEAPON_SWAY_LOOK_FACTOR, -WEAPON_SWAY_MAX, WEAPON_SWAY_MAX);
+    const targetSwayPitch = THREE.MathUtils.clamp(-pitchDelta * WEAPON_SWAY_LOOK_FACTOR, -WEAPON_SWAY_MAX, WEAPON_SWAY_MAX);
+    this.swayYaw = THREE.MathUtils.damp(this.swayYaw, targetSwayYaw, WEAPON_SWAY_DAMP, dt);
+    this.swayPitch = THREE.MathUtils.damp(this.swayPitch, targetSwayPitch, WEAPON_SWAY_DAMP, dt);
+  }
+
   /** One trigger pull - fires pelletCount independent rays (shotguns; 1 for everything else) but a single recoil kick. */
   private fireShot(player: Player): void {
-    const { pelletCount, recoilKick } = this.active.weapon.definition;
+    const { pelletCount, recoilKick, kind } = this.active.weapon.definition;
 
     // camera has no parent, so .position IS the world position - avoids reading a stale
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
@@ -252,6 +306,8 @@ export class WeaponManager {
     }
 
     this.onFire(this.active.weapon.definition.id);
+    // Melee has no muzzle - a flash there would be a light spawning out of a knife blade.
+    if (kind === 'ranged') this.onMuzzleFlash(muzzleWorld);
     player.addRecoil(recoilKick);
   }
 

@@ -10,7 +10,9 @@ import {
   SUN_DIRECTION_X,
   SUN_DIRECTION_Y,
   SUN_DIRECTION_Z,
+  TONE_MAPPING_EXPOSURE,
 } from './config.ts';
+import type { GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 
 function createSky(): Sky {
   const sky = new Sky();
@@ -33,16 +35,39 @@ export class Renderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, quality: GraphicsQualityPreset) {
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
-    this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.webgl.setSize(window.innerWidth, window.innerHeight);
-    this.webgl.shadowMap.enabled = true;
+    this.webgl.shadowMap.enabled = quality.shadowsEnabled;
+    // This three.js version has deprecated PCFSoftShadowMap - it silently downgrades to
+    // PCFShadowMap at render time anyway (with a console warning), so setting it directly avoids
+    // the noise for the same actual behavior.
+    this.webgl.shadowMap.type = THREE.PCFShadowMap;
+    // Filmic rolloff instead of the default hard clip to white (VISUAL_REALISM.md §3) - the
+    // exposure compensates for ACES reading darker than NoToneMapping at the same light intensities.
+    this.webgl.toneMapping = THREE.ACESFilmicToneMapping;
+    this.webgl.toneMappingExposure = TONE_MAPPING_EXPOSURE;
     container.appendChild(this.webgl.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.add(createSky());
+    const sky = createSky();
+    this.scene.add(sky);
     this.scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
+
+    // Image-based lighting from the sky itself (VISUAL_REALISM.md §5) - without this every
+    // MeshStandardMaterial in the game only ever sees the flat AmbientLight fill, so upward and
+    // downward-facing surfaces read identically lit. Generated once here, while the scene still
+    // only contains the sky (nothing else has been added to it yet), matching the standard
+    // "Sky + PMREM" recipe from the three.js examples. Gated to High-quality only: the per-fragment
+    // envmap sample it adds to every PBR surface is cheap on real GPUs but cripplingly slow on the
+    // software (SwiftShader) renderer the e2e sandbox uses (see GraphicsQualityPreset.environmentLighting).
+    // Low/Medium fall back to a flat AmbientLight added in Game.addLighting.
+    if (quality.environmentLighting) {
+      const pmremGenerator = new THREE.PMREMGenerator(this.webgl);
+      this.scene.environment = pmremGenerator.fromScene(this.scene, 0, CAMERA_NEAR, CAMERA_FAR).texture;
+      pmremGenerator.dispose();
+    }
 
     this.camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,

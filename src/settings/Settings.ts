@@ -1,4 +1,5 @@
 import { DEFAULT_KEY_BINDINGS, type Action } from '../input/actions.ts';
+import { isGraphicsQuality, type GraphicsQuality } from './graphicsQuality.ts';
 
 const STORAGE_KEY = 'fps-game-settings-v1';
 
@@ -6,10 +7,18 @@ interface StoredSettings {
   masterVolume: number;
   mouseSensitivity: number;
   keyBindings: Record<string, Action>;
+  graphicsQuality: GraphicsQuality;
 }
 
 function defaults(): StoredSettings {
-  return { masterVolume: 0.5, mouseSensitivity: 1, keyBindings: { ...DEFAULT_KEY_BINDINGS } };
+  return {
+    masterVolume: 0.5,
+    mouseSensitivity: 1,
+    keyBindings: { ...DEFAULT_KEY_BINDINGS },
+    // Matches what this project's own e2e suite is verified against - see the comment on
+    // GRAPHICS_QUALITY_PRESETS in graphicsQuality.ts for why Medium, not High, is the safe default.
+    graphicsQuality: 'medium',
+  };
 }
 
 function loadFromStorage(): StoredSettings {
@@ -26,6 +35,7 @@ function loadFromStorage(): StoredSettings {
         parsed.keyBindings && typeof parsed.keyBindings === 'object'
           ? { ...base.keyBindings, ...parsed.keyBindings }
           : base.keyBindings,
+      graphicsQuality: isGraphicsQuality(parsed.graphicsQuality) ? parsed.graphicsQuality : base.graphicsQuality,
     };
   } catch {
     return defaults();
@@ -78,6 +88,19 @@ export const Settings = {
   },
   resetKeyBindings(): void {
     state.keyBindings = { ...DEFAULT_KEY_BINDINGS };
+    persist();
+  },
+
+  /** Read once per match at Game.create() (see Renderer/Game.addLighting), not live-applied to a
+   * running match - shadow map resolution is baked into a GPU render target at creation, and
+   * hot-swapping it mid-match is real risk (a stale/disposed render target, or a frame where the
+   * light and renderer disagree on size) for a setting a player only changes occasionally. A
+   * change here takes effect next match, same as most games' graphics settings. */
+  getGraphicsQuality(): GraphicsQuality {
+    return state.graphicsQuality;
+  },
+  setGraphicsQuality(value: GraphicsQuality): void {
+    state.graphicsQuality = value;
     persist();
   },
 };

@@ -160,7 +160,14 @@ export class Enemy implements Entity, Damageable {
     this.mesh = new THREE.Group();
     this.mesh.add(model);
     this.mesh.position.copy(position);
-    this.mesh.castShadow = true;
+    // castShadow on a Group doesn't propagate to its children (three.js only reads it on Mesh
+    // instances during the shadow pass), so it has to be set per-mesh via traverse.
+    model.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
 
     this.mixer = new THREE.AnimationMixer(model);
     const idleClip = gltf.animations.find((clip) => clip.name === 'idle');

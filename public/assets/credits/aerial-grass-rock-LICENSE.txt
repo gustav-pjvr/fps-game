@@ -3,6 +3,9 @@
 	Author: Rob Tuytel
 	Source: https://polyhaven.com/a/aerial_grass_rock
 	Downloaded: aerial_grass_rock_diff_1k.jpg (diffuse map, 1k)
+	Downloaded: aerial_grass_rock_nor_gl_1k.jpg (OpenGL normal map, 1k)
+	Downloaded: aerial_grass_rock_rough_1k.jpg (roughness map, 1k)
+	Downloaded: aerial_grass_rock_ao_1k.jpg (ambient occlusion map, 1k)
 
 			------------------------------
 

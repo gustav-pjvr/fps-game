@@ -21,6 +21,74 @@ export const SUN_DIRECTION_X = 20;
 export const SUN_DIRECTION_Y = 30;
 export const SUN_DIRECTION_Z = 10;
 
+/** Directional-light shadow camera (VISUAL_REALISM.md §1) - an unconfigured Three.js shadow camera
+ * defaults to a +/-5 unit ortho box centered on the origin, so in this ~800x800m world shadows only
+ * ever rendered in a tiny patch near spawn. The camera is re-centered on the player every frame
+ * (see Game.updateSunFollow) so this box only needs to cover the player's immediate surroundings,
+ * not the whole world.
+ *
+ * The two MAP_SIZE constants are the shadow depth texture's resolution (pixels per side, not a
+ * world-space size) for the Medium/High graphics-quality presets (see settings/graphicsQuality.ts)
+ * - the doc's original suggestion of 2048 unconditionally (and even 1024/768) hard-hung this
+ * project's sandboxed, software-rendered (SwiftShader) Chromium during e2e runs - confirmed by
+ * bisection (512 passes every smoke test cleanly, 768 hangs). MEDIUM (512) is the default so
+ * out-of-the-box behavior matches what's actually tested; HIGH (the doc's original 2048) is an
+ * opt-in for players on real GPU hardware, which has no reason to share the test sandbox's
+ * software-rendering ceiling. */
+export const SUN_SHADOW_MAP_SIZE_MEDIUM = 512;
+export const SUN_SHADOW_MAP_SIZE_HIGH = 2048;
+export const SUN_SHADOW_ORTHO_HALF_EXTENT = 60;
+export const SUN_SHADOW_CAMERA_FAR = 200;
+export const SUN_SHADOW_BIAS = -0.0002;
+export const SUN_SHADOW_NORMAL_BIAS = 0.02;
+
+/** ACES filmic tone mapping (VISUAL_REALISM.md §3) reads darker than the default NoToneMapping at
+ * the same light intensities - this compensates without needing to retune every light. */
+export const TONE_MAPPING_EXPOSURE = 1.1;
+
+/** Muzzle flash (VISUAL_REALISM.md §7) - a brief PointLight + sprite at the muzzle on every
+ * ranged shot. Lifetime is 2-3 frames at 60fps, long enough to read as a flash without lingering
+ * into a glow. */
+export const MUZZLE_FLASH_LIFETIME = 0.05;
+export const MUZZLE_FLASH_LIGHT_INTENSITY = 6;
+export const MUZZLE_FLASH_LIGHT_RANGE = 4;
+
+/** Death sequence (VISUAL_REALISM.md §6) - a killed enemy/target now topples, holds, and sinks
+ * instead of vanishing the instant its health hits 0 (previously the single worst
+ * realism-breaking moment in the game per the review). Only mesh transform (rotation/position) is
+ * animated, deliberately not material opacity: enemy models are SkeletonUtils-cloned, which reuses
+ * the source material by reference across every clone (see its own docstring - "materials are
+ * reused by reference"), so fading one dying enemy's opacity would fade every other enemy sharing
+ * that material too. EntityManager disposes the corpse's physics presence (colliders/rigid body)
+ * immediately on death, same tick as before - only the mesh removal is delayed, so nothing can
+ * still collide with or shoot through a dead body during this sequence. */
+export const DEATH_FALL_DURATION = 0.4;
+export const DEATH_HOLD_DURATION = 2;
+export const DEATH_SINK_DURATION = 0.6;
+export const DEATH_FALL_ANGLE = Math.PI / 2;
+export const DEATH_SINK_DISTANCE = 1.2;
+
+/** Movement bob (VISUAL_REALISM.md §6) - previously the view model was bolted rigidly to the
+ * camera with zero motion of its own. Player computes one shared sin phase from the player's
+ * actual per-tick horizontal displacement (not a fixed idle timer, unlike the lobby's bob/sway -
+ * this needs to track real movement so it starts/stops with the player, not run continuously) and
+ * exposes it (see movementBobPhase/movementBobStrength) so both the camera bob below and
+ * WeaponManager's weapon bob apply the exact same phase, matching the doc's framing that one
+ * phase drives both. BOB_REFERENCE_SPEED is roughly walk speed - bob reaches full amplitude at or
+ * above it and fades out as the player slows to a stop, rather than snapping on/off. */
+export const PLAYER_BOB_FREQUENCY = 12;
+export const PLAYER_BOB_REFERENCE_SPEED = 4;
+export const CAMERA_BOB_AMPLITUDE = 0.02;
+
+/** Weapon sway (lag behind look) and weapon bob (shared phase with the camera bob above) -
+ * VISUAL_REALISM.md §6, porting the same "offset by a damped fraction of movement" idea the lobby
+ * scene already uses for its idle character, but driven by the camera's actual look/movement
+ * instead of a fixed idle timer. */
+export const WEAPON_SWAY_LOOK_FACTOR = 0.4;
+export const WEAPON_SWAY_MAX = 0.06;
+export const WEAPON_SWAY_DAMP = 12;
+export const WEAPON_BOB_AMPLITUDE = 0.015;
+
 /** Retuned for the bounded world (WORLD_PLAN.md §2/§5): far sits just past WORLD_HARD_CLAMP_RADIUS
  * so the boundary is concealed by haze rather than visible as a sharp cutoff against clear sky. */
 export const FOG_NEAR = 35;
@@ -167,6 +235,12 @@ export const TERRAIN_RESOLUTION = 64;
 export const GROUND_TEXTURE_WORLD_SIZE = 10;
 export const GROUND_TEXTURE_REPEAT = TERRAIN_CHUNK_SIZE / GROUND_TEXTURE_WORLD_SIZE;
 export const GROUND_TEXTURE_URL = '/assets/textures/terrain/aerial_grass_rock_diff_1k.jpg';
+/** Same Poly Haven "Aerial Grass Rock" set as GROUND_TEXTURE_URL (VISUAL_REALISM.md §2) - a
+ * diffuse-only material renders like paper under grazing light; these give the terrain (the
+ * biggest pixel area in every frame) actual surface relief and non-uniform roughness. */
+export const GROUND_NORMAL_TEXTURE_URL = '/assets/textures/terrain/aerial_grass_rock_nor_gl_1k.jpg';
+export const GROUND_ROUGHNESS_TEXTURE_URL = '/assets/textures/terrain/aerial_grass_rock_rough_1k.jpg';
+export const GROUND_AO_TEXTURE_URL = '/assets/textures/terrain/aerial_grass_rock_ao_1k.jpg';
 export const TERRAIN_OCTAVES = 4;
 export const TERRAIN_BASE_FREQUENCY = 0.015;
 export const TERRAIN_LACUNARITY = 2.0;

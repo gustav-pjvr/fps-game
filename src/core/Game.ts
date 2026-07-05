@@ -12,6 +12,7 @@ import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
+import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
 import { Tracers } from '../combat/Tracers.ts';
 import { Hud } from '../ui/hud.ts';
 import { Hotbar } from '../ui/hotbar.ts';
@@ -39,8 +40,14 @@ import {
   SUN_DIRECTION_X,
   SUN_DIRECTION_Y,
   SUN_DIRECTION_Z,
+  SUN_SHADOW_BIAS,
+  SUN_SHADOW_CAMERA_FAR,
+  SUN_SHADOW_NORMAL_BIAS,
+  SUN_SHADOW_ORTHO_HALF_EXTENT,
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed } from './worldSeed.ts';
+import { Settings } from '../settings/Settings.ts';
+import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 const TARGET_RING_BASE_RADIUS = 15;
@@ -136,6 +143,7 @@ export class Game {
     private readonly weaponManager: WeaponManager,
     private readonly impactMarkers: ImpactMarkers,
     private readonly tracers: Tracers,
+    private readonly muzzleFlash: MuzzleFlash,
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
@@ -150,11 +158,27 @@ export class Game {
     private readonly sound: SoundEngine,
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
+    private readonly sun: THREE.DirectionalLight,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
+  }
+
+  /** Re-centers the shadow camera's ortho box on the player every frame (see the
+   * SUN_SHADOW_* comment in config.ts) - keeps the box small/high-res while still covering
+   * wherever the player currently is in the 800x800m world. Target/position offset snaps to
+   * shadow-texel increments so shadow edges don't visibly crawl ("swim") as the player moves a
+   * sub-texel distance between frames. */
+  private updateSunFollow(): void {
+    const texelSize = (2 * SUN_SHADOW_ORTHO_HALF_EXTENT) / this.sun.shadow.mapSize.width;
+    const playerPos = this.player.position;
+    const snappedX = Math.round(playerPos.x / texelSize) * texelSize;
+    const snappedZ = Math.round(playerPos.z / texelSize) * texelSize;
+    this.sun.target.position.set(snappedX, playerPos.y, snappedZ);
+    this.sun.position.set(snappedX + SUN_DIRECTION_X, playerPos.y + SUN_DIRECTION_Y, snappedZ + SUN_DIRECTION_Z);
+    this.sun.target.updateMatrixWorld();
   }
 
   private installDebugApi(): void {
@@ -226,11 +250,15 @@ export class Game {
     // A new seed per match (not per practice-reset) so each new game generates a different world,
     // while staying fixed for the rest of this match so chunk streaming/reload stays deterministic.
     randomizeWorldSeed();
-    const renderer = new Renderer(container);
+    // Read once here, not live-applied to an in-progress match - see the comment on
+    // Settings.getGraphicsQuality for why (shadow map resolution is baked into a GPU render
+    // target at creation). A change made mid-match takes effect starting next match.
+    const quality = GRAPHICS_QUALITY_PRESETS[Settings.getGraphicsQuality()];
+    const renderer = new Renderer(container, quality);
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
-    Game.addLighting(renderer.scene);
+    const sun = Game.addLighting(renderer.scene, quality);
 
     onProgress?.('Growing vegetation…', 0.02);
     const vegetation = await VegetationManager.create(renderer.scene, physics);
@@ -269,6 +297,7 @@ export class Game {
 
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const tracers = new Tracers(renderer.scene);
+    const muzzleFlash = new MuzzleFlash(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
     const hitMarker = new HitMarker(hudRoot);
     const longShotCallout = new LongShotCallout(hudRoot);
@@ -290,6 +319,7 @@ export class Game {
       (weaponId) => sound.playGunshot(weaponId),
       (weaponId) => sound.playReloadClick(weaponId),
       (distance) => longShotCallout.show(distance),
+      (point) => muzzleFlash.spawn(point),
     );
 
     onProgress?.('Loading combatants…', 0.1);
@@ -353,6 +383,7 @@ export class Game {
       weaponManager,
       impactMarkers,
       tracers,
+      muzzleFlash,
       hud,
       hotbar,
       hitMarker,
@@ -367,6 +398,7 @@ export class Game {
       sound,
       scoreState,
       matchConfig,
+      sun,
     );
     gameRef.current = game;
 
@@ -429,14 +461,33 @@ export class Game {
     this.input.requestPointerLock();
   }
 
-  private static addLighting(scene: THREE.Scene): void {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambient);
+  private static addLighting(scene: THREE.Scene, quality: GraphicsQualityPreset): THREE.DirectionalLight {
+    // On High, Renderer assigns scene.environment (a PMREM of the sky) for plausible
+    // sky/ground-bounced fill (VISUAL_REALISM.md §5). On Low/Medium that image-based lighting is
+    // disabled (ruinous on the software-rendered e2e sandbox - see
+    // GraphicsQualityPreset.environmentLighting), so a flat AmbientLight stands in as cheap fill,
+    // otherwise every surface facing away from the sun would render nearly black.
+    if (!quality.environmentLighting) {
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    }
 
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z);
-    sun.castShadow = true;
+    // Renderer's shadowMap.enabled already gates the whole shadow pass on Low - this additionally
+    // keeps the light itself from ever being asked to cast, rather than relying solely on the
+    // renderer-level switch.
+    sun.castShadow = quality.shadowsEnabled;
+    sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
+    sun.shadow.camera.left = -SUN_SHADOW_ORTHO_HALF_EXTENT;
+    sun.shadow.camera.right = SUN_SHADOW_ORTHO_HALF_EXTENT;
+    sun.shadow.camera.top = SUN_SHADOW_ORTHO_HALF_EXTENT;
+    sun.shadow.camera.bottom = -SUN_SHADOW_ORTHO_HALF_EXTENT;
+    sun.shadow.camera.far = SUN_SHADOW_CAMERA_FAR;
+    sun.shadow.bias = SUN_SHADOW_BIAS;
+    sun.shadow.normalBias = SUN_SHADOW_NORMAL_BIAS;
     scene.add(sun);
+    scene.add(sun.target);
+    return sun;
   }
 
   /** Ring radius that keeps a fixed base size for small counts but grows for large ones so spawns don't stack. */
@@ -535,6 +586,7 @@ export class Game {
 
     this.impactMarkers.update(dt);
     this.tracers.update(dt);
+    this.muzzleFlash.update(dt);
     this.hitMarker.update(dt);
     this.weaponCaption.update(dt);
     this.longShotCallout.update(dt);
@@ -564,6 +616,7 @@ export class Game {
     // through, and unlike interpolating every enemy/target mesh, it needs no new per-entity
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
+    this.updateSunFollow();
     this.renderer.render();
   };
 

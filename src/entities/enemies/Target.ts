@@ -54,6 +54,12 @@ export class Target implements Entity, Damageable {
     const model = gltf.scene.clone(true);
     model.scale.setScalar(MODEL_SCALE);
     model.rotation.y = facingRotationY;
+    model.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
 
     this.mesh = new THREE.Group();
     this.mesh.add(model);

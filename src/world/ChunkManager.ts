@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Chunk } from './Chunk.ts';
 import {
+  GROUND_AO_TEXTURE_URL,
+  GROUND_NORMAL_TEXTURE_URL,
+  GROUND_ROUGHNESS_TEXTURE_URL,
   GROUND_TEXTURE_REPEAT,
   GROUND_TEXTURE_URL,
   MAX_CHUNK_GENERATIONS_PER_TICK,
@@ -13,15 +16,31 @@ import {
   WORLD_MIN_CHUNK,
 } from '../core/config.ts';
 
-function createGroundMaterial(): THREE.Material {
-  const texture = new THREE.TextureLoader().load(GROUND_TEXTURE_URL, undefined, undefined, (error) => {
-    console.error(`Failed to load ground texture from ${GROUND_TEXTURE_URL}`, error);
+const textureLoader = new THREE.TextureLoader();
+
+/** aoMap/normalMap/roughnessMap must not repeat via the color-space-corrected diffuse map's own
+ * settings - each needs its own RepeatWrapping + repeat, since Three.js textures don't share wrap
+ * state even when they tile identically (VISUAL_REALISM.md §2). Only the diffuse map is sRGB;
+ * normal/rough/AO are linear data, not color, so they're left at the TextureLoader default. */
+function loadTiledTexture(url: string, colorSpace?: THREE.ColorSpace): THREE.Texture {
+  const texture = textureLoader.load(url, undefined, undefined, (error) => {
+    console.error(`Failed to load ground texture from ${url}`, error);
   });
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(GROUND_TEXTURE_REPEAT, GROUND_TEXTURE_REPEAT);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return new THREE.MeshStandardMaterial({ map: texture });
+  if (colorSpace) texture.colorSpace = colorSpace;
+  return texture;
+}
+
+function createGroundMaterial(): THREE.Material {
+  return new THREE.MeshStandardMaterial({
+    map: loadTiledTexture(GROUND_TEXTURE_URL, THREE.SRGBColorSpace),
+    normalMap: loadTiledTexture(GROUND_NORMAL_TEXTURE_URL),
+    roughnessMap: loadTiledTexture(GROUND_ROUGHNESS_TEXTURE_URL),
+    aoMap: loadTiledTexture(GROUND_AO_TEXTURE_URL),
+    roughness: 1,
+  });
 }
 
 function isWithinWorldBounds(cx: number, cz: number): boolean {

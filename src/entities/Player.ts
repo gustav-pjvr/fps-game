@@ -5,6 +5,7 @@ import type { ClimbableMantleTarget, PhysicsWorld } from '../physics/PhysicsWorl
 import type { InputManager } from '../input/InputManager.ts';
 import { Settings } from '../settings/Settings.ts';
 import {
+  CAMERA_BOB_AMPLITUDE,
   CAMERA_FOV,
   EYE_OFFSET,
   FOOTSTEP_DISTANCE,
@@ -13,6 +14,8 @@ import {
   LADDER_CLIMB_SPEED,
   MAX_PITCH,
   MOUSE_SENSITIVITY,
+  PLAYER_BOB_FREQUENCY,
+  PLAYER_BOB_REFERENCE_SPEED,
   PLAYER_HEALTH,
   PLAYER_HEIGHT,
   PLAYER_MOVE_SPEED,
@@ -50,6 +53,13 @@ export class Player implements Entity {
   private activeClimbColliderHandle: number | null = null;
   private health = PLAYER_HEALTH;
   private footstepAccumulator = 0;
+
+  /** Shared movement-bob phase/strength (see the PLAYER_BOB_* comment in config.ts) - advances only
+   * while grounded and actually displacing, so it starts and fades with real movement rather than
+   * running continuously like the lobby's idle bob. WeaponManager reads both via the getters below
+   * to drive the weapon's own bob from this exact phase, not a second independent one. */
+  private bobPhase = 0;
+  private bobStrength = 0;
 
   /** Render interpolation (Loop's fixed-timestep accumulator already computes `alpha`, but it went
    * unused - Game.render(_alpha) ignored it, so camera motion visibly stepped at 60Hz on
@@ -137,6 +147,8 @@ export class Player implements Entity {
     this.health = PLAYER_HEALTH;
     this.verticalVelocity = 0;
     this.recoilPitch = 0;
+    this.bobPhase = 0;
+    this.bobStrength = 0;
     const target = { x: position.x, y: position.y, z: position.z };
     this.clampToWorldBounds(target);
     this.rigidBody.setNextKinematicTranslation(target);
@@ -272,13 +284,22 @@ export class Player implements Entity {
         this.verticalVelocity = 0;
       }
 
+      const horizontalMoveDistance = Math.sqrt(computed.x * computed.x + computed.z * computed.z);
       if (this.grounded) {
-        this.footstepAccumulator += Math.sqrt(computed.x * computed.x + computed.z * computed.z);
+        this.footstepAccumulator += horizontalMoveDistance;
         if (this.footstepAccumulator >= FOOTSTEP_DISTANCE) {
           this.footstepAccumulator -= FOOTSTEP_DISTANCE;
           this.sounds.onFootstep();
         }
       }
+
+      // Bob strength (and therefore visible amplitude) reaches 0 exactly when the phase stops
+      // advancing, so the bob always settles back through its own neutral point when the player
+      // slows to a stop instead of freezing mid-swing.
+      this.bobStrength = this.grounded
+        ? Math.min(1, horizontalMoveDistance / dt / PLAYER_BOB_REFERENCE_SPEED)
+        : 0;
+      this.bobPhase += dt * PLAYER_BOB_FREQUENCY * this.bobStrength;
 
       next = {
         x: currentBeforeMove.x + computed.x,
@@ -292,7 +313,8 @@ export class Player implements Entity {
 
     const effectivePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + this.recoilPitch));
     const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw, 0, 'YXZ'));
-    this.currentCameraPosition.set(next.x, next.y + EYE_OFFSET, next.z);
+    const cameraBobOffset = Math.sin(this.bobPhase) * CAMERA_BOB_AMPLITUDE * this.bobStrength;
+    this.currentCameraPosition.set(next.x, next.y + EYE_OFFSET + cameraBobOffset, next.z);
     this.currentCameraQuaternion.copy(lookQuat);
     // Camera stays authoritative (not interpolated) for the rest of this tick - firing reads it
     // synchronously later in the same Game.update() call, and interpolateCamera() overwrites it
@@ -342,5 +364,18 @@ export class Player implements Entity {
 
   get isTouchingClimbable(): boolean {
     return this.physics.isTouchingClimbable(this.collider);
+  }
+
+  /** Shared movement-bob phase (see the PLAYER_BOB_* comment in config.ts) - WeaponManager reads
+   * this alongside movementBobStrength to drive the weapon view model's own bob from the exact
+   * same phase the camera bob uses, rather than tracking a second independent one. */
+  get movementBobPhase(): number {
+    return this.bobPhase;
+  }
+
+  /** 0..1 - how much of the bob amplitude should currently show, ramping with horizontal ground
+   * speed and dropping to 0 while airborne/climbing/stationary. */
+  get movementBobStrength(): number {
+    return this.bobStrength;
   }
 }

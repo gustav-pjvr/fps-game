@@ -1,12 +1,14 @@
 import { Settings } from '../../settings/Settings.ts';
 import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '../../input/actions.ts';
-import { ACCENT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { ACCENT, HAIRLINE, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { GRAPHICS_QUALITY_LABELS, GRAPHICS_QUALITY_ORDER, type GraphicsQuality } from '../../settings/graphicsQuality.ts';
 
 /** Lobby overlay: master volume, mouse sensitivity, and rebindable key bindings - all persisted via Settings. */
 export class SettingsPanel {
   private readonly overlay: HTMLDivElement;
   private listeningFor: Action | null = null;
   private readonly keyButtons = new Map<Action, HTMLButtonElement>();
+  private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!this.listeningFor) return;
@@ -33,6 +35,7 @@ export class SettingsPanel {
     panel.appendChild(this.buildSliderRow('Mouse Sensitivity', Settings.getMouseSensitivity(), 0.1, 3, 0.05, (value) =>
       Settings.setMouseSensitivity(value),
     ));
+    panel.appendChild(this.buildGraphicsQualitySection());
     panel.appendChild(this.buildKeyBindSection());
 
     const footer = document.createElement('div');
@@ -78,6 +81,57 @@ export class SettingsPanel {
 
     row.append(labelEl, slider);
     return row;
+  }
+
+  /** Low/Medium/High shadow quality + resolution scaling (see settings/graphicsQuality.ts) - a
+   * segmented button group rather than a slider, since these are named presets, not a continuous
+   * range. Takes effect on the next match (see Settings.getGraphicsQuality), not the one already
+   * running, since shadow map resolution is baked into a GPU render target at Renderer/Game
+   * construction time. */
+  private buildGraphicsQualitySection(): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:18px;';
+
+    const labelEl = document.createElement('label');
+    labelEl.textContent = 'Graphics Quality';
+    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    row.appendChild(labelEl);
+
+    const buttonRow = document.createElement('div');
+    buttonRow.style.cssText = 'display:flex; gap:8px;';
+
+    for (const quality of GRAPHICS_QUALITY_ORDER) {
+      const button = document.createElement('button');
+      button.textContent = GRAPHICS_QUALITY_LABELS[quality];
+      button.style.cssText = 'flex:1; padding:8px 0; font-size:0.85rem; cursor:pointer; border-radius:4px;';
+      button.addEventListener('click', () => {
+        Settings.setGraphicsQuality(quality);
+        this.refreshGraphicsQualityButtons();
+      });
+      this.qualityButtons.set(quality, button);
+      buttonRow.appendChild(button);
+    }
+
+    row.appendChild(buttonRow);
+
+    const hint = document.createElement('div');
+    hint.textContent = 'Applies next match.';
+    hint.style.cssText = 'font-size:0.75rem; opacity:0.55; margin-top:6px;';
+    row.appendChild(hint);
+
+    this.refreshGraphicsQualityButtons();
+    return row;
+  }
+
+  private refreshGraphicsQualityButtons(): void {
+    const active = Settings.getGraphicsQuality();
+    for (const [quality, button] of this.qualityButtons) {
+      const isActive = quality === active;
+      button.style.background = isActive ? ACCENT : 'rgba(255,255,255,0.06)';
+      button.style.color = isActive ? '#08130a' : TEXT;
+      button.style.border = `1px solid ${isActive ? ACCENT : HAIRLINE}`;
+      button.style.fontWeight = isActive ? '600' : '400';
+    }
   }
 
   private buildKeyBindSection(): HTMLDivElement {
