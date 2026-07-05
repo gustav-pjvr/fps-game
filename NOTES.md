@@ -655,6 +655,24 @@ moving through the rest of the todo list; a real player who gets stuck mid-climb
 holding backward (release condition doesn't depend on the frozen movement working), so this isn't a
 hard-lock, just a bad climb.
 
+## World-gen visual gut-check (2026-07-05)
+
+Confirmed by eye (not just generation-logic reasoning) that the recent town-density, forest-density,
+and road changes actually read correctly in-game. Used a temporary Playwright script driving
+`window.__gameDebug.teleport`/`lookAt` to fly to real streamed-in content (found via
+`getActiveLadderPositions()`, which is only non-empty once a town's chunks have loaded) and
+screenshot it, since a pure high-altitude top-down shot turned out useless (just washed-out dirt
+texture with no readable structure - camera needs to be closer and angled, not directly overhead).
+
+Confirmed: a town interior shot showed 6+ buildings packed close together, each with a distinct
+ladder on its wall, varied roof shapes/heights, and a road strip running between them into the
+cluster - matching what the town-minimum-30/road-connection work was supposed to produce. A forest
+shot from an earlier run in a different world seed showed a dense stand of trees on a hillside,
+consistent with the doubled density/maxed radius change. Script and screenshots were temporary
+(deleted after review) - this was a one-time visual sanity check, not a repeatable test, since
+"looks right" isn't something worth asserting on every CI run the way the smoke suite's functional
+checks are.
+
 ## Enemy AI overhaul - design pass and Phase A: goal-directed patrol (2026-07-05)
 
 The user asked for a full enemy AI overhaul: goal-directed movement instead of circling, an aggro
