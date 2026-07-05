@@ -61,8 +61,10 @@ export const Settings = {
     persist();
   },
 
+  /** Returns a copy - handing out the internal object would let a caller's mutation silently
+   * persist wrong bindings on the next persist(). All rebinding goes through rebindKey. */
   getKeyBindings(): Record<string, Action> {
-    return state.keyBindings;
+    return { ...state.keyBindings };
   },
   /** Clears any existing binding for this action and any existing binding on the new key, then binds them. */
   rebindKey(action: Action, newCode: string): void {

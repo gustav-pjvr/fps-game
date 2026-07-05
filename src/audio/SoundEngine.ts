@@ -36,6 +36,7 @@ export class SoundEngine {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
   private readonly buffers: Map<string, AudioBuffer>;
+  private keepAliveOscillator: OscillatorNode | null = null;
 
   private constructor(ctx: AudioContext, buffers: Map<string, AudioBuffer>) {
     this.ctx = ctx;
@@ -62,8 +63,21 @@ export class SoundEngine {
     oscillator.frequency.value = 20;
     const silentGain = this.ctx.createGain();
     silentGain.gain.value = 0.0001;
-    oscillator.connect(silentGain).connect(this.ctx.destination);
+    // Routed through the master gain (not straight to ctx.destination) so the volume setting -
+    // including mute - applies to it like every other sound; a gain node at 0 still keeps the
+    // audio graph rendering, so the warm-pipeline purpose survives the reroute.
+    oscillator.connect(silentGain).connect(this.master);
     oscillator.start();
+    this.keepAliveOscillator = oscillator;
+  }
+
+  /** Releases the AudioContext (and the permanently running keep-alive oscillator feeding it).
+   * Browsers cap concurrent AudioContexts (Chrome historically ~6), so without this each
+   * lobby->match cycle leaked one until new contexts silently failed to create and audio died. */
+  dispose(): void {
+    this.keepAliveOscillator?.stop();
+    this.keepAliveOscillator = null;
+    void this.ctx.close();
   }
 
   setMasterVolume(value: number): void {

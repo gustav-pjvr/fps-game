@@ -22,7 +22,7 @@ export class InputManager {
     document.addEventListener('mousedown', this.onMouseDown);
     document.addEventListener('mouseup', this.onMouseUp);
     document.addEventListener('wheel', this.onWheel, { passive: true });
-    document.addEventListener('contextmenu', (e) => e.preventDefault());
+    document.addEventListener('contextmenu', this.onContextMenu);
   }
 
   get isLocked(): boolean {
@@ -108,6 +108,12 @@ export class InputManager {
     this.justPressedActions.add(event.deltaY > 0 ? 'weaponNext' : 'weaponPrev');
   };
 
+  /** Named (not an inline arrow) so dispose() can actually remove it - the old anonymous
+   * registration stacked one document-level listener per lobby->match cycle. */
+  private readonly onContextMenu = (event: MouseEvent): void => {
+    event.preventDefault();
+  };
+
   dispose(): void {
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('pointerlockerror', this.onPointerLockError);
@@ -117,5 +123,6 @@ export class InputManager {
     document.removeEventListener('mousedown', this.onMouseDown);
     document.removeEventListener('mouseup', this.onMouseUp);
     document.removeEventListener('wheel', this.onWheel);
+    document.removeEventListener('contextmenu', this.onContextMenu);
   }
 }

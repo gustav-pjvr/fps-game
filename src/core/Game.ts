@@ -98,6 +98,11 @@ export class Game {
   private lastActiveWeaponIndex: number;
   private readonly fpsMeter = new FpsMeter();
   private lastRenderTime = performance.now();
+  /** Bumped by resetPlay/dispose to cancel any in-flight spawnEncountersAsync loop - its batches
+   * yield to requestAnimationFrame, so without this a second rapid reset kept both loops spawning
+   * (entity count overshooting the configured match size), and returning to the lobby mid-spawn
+   * had the surviving loop calling createRigidBody on an already-freed WASM world. */
+  private spawnGeneration = 0;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -120,6 +125,7 @@ export class Game {
     private readonly pauseMenu: PauseMenu,
     private readonly settingsPanel: SettingsPanel,
     private readonly perfOverlay: PerfOverlay,
+    private readonly sound: SoundEngine,
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
   ) {
@@ -324,6 +330,7 @@ export class Game {
       pauseMenu,
       settingsPanel,
       perfOverlay,
+      sound,
       scoreState,
       matchConfig,
     );
@@ -354,6 +361,10 @@ export class Game {
     this.pauseMenu.dispose();
     this.settingsPanel.dispose();
     this.perfOverlay.dispose();
+    this.sound.dispose();
+    // Invalidate any in-flight spawnEncountersAsync loop *before* freeing the physics world -
+    // its frame-yielded batches would otherwise call createRigidBody on freed WASM memory.
+    this.spawnGeneration++;
     this.physics.dispose();
     window.__gameDebug = undefined;
   }
@@ -368,7 +379,14 @@ export class Game {
     this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
-    void Game.spawnEncountersAsync(this.entityManager, this.matchConfig.targetCount, this.matchConfig.enemyCount);
+    const generation = ++this.spawnGeneration;
+    void Game.spawnEncountersAsync(
+      this.entityManager,
+      this.matchConfig.targetCount,
+      this.matchConfig.enemyCount,
+      undefined,
+      () => this.spawnGeneration !== generation,
+    );
     this.impactMarkers.clear();
     this.tracers.clear();
     this.scoreState.value = 0;
@@ -394,12 +412,17 @@ export class Game {
   }
 
   /** Spawns the chosen number of targets/enemies in batches, yielding a frame between batches so
-   * large match sizes stay responsive and a loading screen can show real progress. */
+   * large match sizes stay responsive and a loading screen can show real progress. `isCancelled`
+   * is checked after every yielded frame - a reset or dispose that happens mid-spawn invalidates
+   * the rest of this loop instead of letting it keep pushing entities (or worse, touch a freed
+   * physics world). The initial create()-time spawn is awaited before a Game instance exists, so
+   * it can't be cancelled and passes nothing. */
   private static async spawnEncountersAsync(
     entityManager: EntityManager,
     targetCount: number,
     enemyCount: number,
     onProgress?: (status: string, ratio: number) => void,
+    isCancelled?: () => boolean,
   ): Promise<void> {
     const total = targetCount + enemyCount;
     let done = 0;
@@ -414,7 +437,10 @@ export class Game {
       entityManager.spawnTarget(new THREE.Vector3(x, y, z), new THREE.Vector3(SPAWN_X, y, SPAWN_Z));
       done++;
       report(`Placing targets… (${done}/${total})`);
-      if (done % SPAWN_BATCH_SIZE === 0) await waitForNextFrame();
+      if (done % SPAWN_BATCH_SIZE === 0) {
+        await waitForNextFrame();
+        if (isCancelled?.()) return;
+      }
     }
 
     const enemyRadius = Game.ringRadius(enemyCount, ENEMY_RING_BASE_RADIUS);
@@ -425,7 +451,10 @@ export class Game {
       entityManager.spawnEnemy(new THREE.Vector3(x, sampleHeight(x, z) + 1, z));
       done++;
       report(`Deploying enemies… (${done}/${total})`);
-      if (done % SPAWN_BATCH_SIZE === 0) await waitForNextFrame();
+      if (done % SPAWN_BATCH_SIZE === 0) {
+        await waitForNextFrame();
+        if (isCancelled?.()) return;
+      }
     }
 
     report('Ready');
