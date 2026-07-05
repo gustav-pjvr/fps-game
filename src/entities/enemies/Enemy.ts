@@ -8,6 +8,7 @@ import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import { castHitscan } from '../../combat/hitscan.ts';
+import { applySpreadCone } from '../../combat/spread.ts';
 import type { EnemyArchetype } from './archetypes.ts';
 import { hasLineOfSight, pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
 import type { EngagementSlots } from './engagementSlots.ts';
@@ -118,6 +119,11 @@ export class Enemy implements Entity, Damageable {
   private readonly walkAction: THREE.AnimationAction | undefined;
   private isMoving = false;
 
+  /** `patrolRng` is a seeded per-enemy stream (EntityManager derives it from the world seed and
+   * spawn order) - patrol destinations, repath timers, and the LOS-check phase offset all draw
+   * from it, so a given world seed reproduces the same pre-aggro AI behavior exactly. Combat
+   * spread (aim error, melee swing fan) deliberately stays on Math.random, matching the player's
+   * own non-deterministic weapon spread. */
   constructor(
     private readonly physics: PhysicsWorld,
     position: THREE.Vector3,
@@ -125,6 +131,7 @@ export class Enemy implements Entity, Damageable {
     private readonly archetype: EnemyArchetype,
     private readonly engagementSlots: EngagementSlots,
     private readonly combatHooks: EnemyCombatHooks,
+    private readonly patrolRng: () => number,
   ) {
     this.health = archetype.health;
     this.killFeedLabel = `${archetype.name} eliminated`;
@@ -132,7 +139,7 @@ export class Enemy implements Entity, Damageable {
     this.patrolDestination = position.clone();
     this.stuckCheckPos = position.clone();
     this.searchDestination = position.clone();
-    this.losCheckTimer = Math.random() * ENEMY_LOS_CHECK_INTERVAL;
+    this.losCheckTimer = this.patrolRng() * ENEMY_LOS_CHECK_INTERVAL;
 
     // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - a plain clone
     // duplicates the mesh but not the skeleton bindings, leaving bones pointing at the shared
@@ -416,9 +423,7 @@ export class Enemy implements Entity, Damageable {
     // technique WeaponManager already uses for the player's own weapons.
     const holdT = Math.min(1, this.aimHoldTimer / archetype.aimSettleTime);
     const errorDeg = archetype.aimErrorMaxDeg - (archetype.aimErrorMaxDeg - archetype.aimErrorMinDeg) * holdT;
-    const errorRad = THREE.MathUtils.degToRad(errorDeg);
-    direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * errorRad);
-    direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * errorRad);
+    applySpreadCone(direction, THREE.MathUtils.degToRad(errorDeg));
 
     const maxRange = archetype.rangedRange + 5;
     const hit = castHitscan(this.physics, origin, direction, maxRange, undefined, this.rigidBody);
@@ -456,9 +461,7 @@ export class Enemy implements Entity, Damageable {
     const maxRange = ENEMY_ATTACK_RANGE + 1;
 
     for (let i = 0; i < ENEMY_MELEE_SWING_COUNT; i++) {
-      const direction = baseDirection.clone();
-      direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * spreadRad);
-      direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * spreadRad);
+      const direction = applySpreadCone(baseDirection.clone(), spreadRad);
 
       const hit = castHitscan(this.physics, origin, direction, maxRange, undefined, this.rigidBody);
       if (hit?.colliderHandle === player.ownCollider.handle) {
@@ -496,8 +499,8 @@ export class Enemy implements Entity, Damageable {
   }
 
   private repath(): void {
-    this.patrolDestination = pickPatrolDestination(this.spawnPosition, Math.random);
-    this.patrolRepathTimer = ENEMY_PATROL_REPATH_MIN + Math.random() * (ENEMY_PATROL_REPATH_MAX - ENEMY_PATROL_REPATH_MIN);
+    this.patrolDestination = pickPatrolDestination(this.spawnPosition, this.patrolRng);
+    this.patrolRepathTimer = ENEMY_PATROL_REPATH_MIN + this.patrolRng() * (ENEMY_PATROL_REPATH_MAX - ENEMY_PATROL_REPATH_MIN);
   }
 
   /** No navmesh in this codebase - whisker avoidance (see enemySteering.ts) handles convex

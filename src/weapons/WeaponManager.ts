@@ -11,6 +11,7 @@ import {
 } from './viewModel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
+import { applySpreadCone } from '../combat/spread.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
@@ -257,8 +258,7 @@ export class WeaponManager {
     const effectiveRange = range ?? HITSCAN_RANGE;
 
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
-    direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * effectiveSpread);
+    applySpreadCone(direction, effectiveSpread);
 
     // camera.position sits inside the player's own capsule (EYE_OFFSET is well within its
     // radius/height), so without excluding it every shot immediately self-hit at distance 0.

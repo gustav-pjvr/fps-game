@@ -9,6 +9,12 @@ import { EngagementSlots } from './enemies/engagementSlots.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
 import { ENEMY_MAX_CONCURRENT_ENGAGERS } from '../core/config.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
+import { mulberry32 } from '../utils/rng.ts';
+
+/** Distinct from every other seed-offset derivation (terrain +0, ridge +1, vegetation +2, zones
+ * +10..+13, guaranteed sites +40/+41, archetypes +101) so per-enemy patrol streams don't correlate
+ * with anything else derived from the same world seed. */
+const PATROL_SEED_OFFSET = 211;
 
 interface ManagedEntity {
   readonly mesh: THREE.Object3D;
@@ -29,6 +35,11 @@ export class EntityManager {
   /** Seeded once per match (getWorldSeed()) so a given world's enemy loadout composition is
    * reproducible - each spawnEnemy call advances the same stream, so spawn order matters too. */
   private readonly pickArchetype = createArchetypePicker(getWorldSeed());
+  /** Per-enemy patrol RNG seeding: world seed + spawn index, so a given world reproduces the same
+   * patrol behavior for every enemy regardless of how many draws each one's stream makes -
+   * completing the determinism story archetype assignment already had (patrol previously used raw
+   * Math.random despite pickPatrolDestination taking an rng parameter). */
+  private enemiesSpawned = 0;
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -61,7 +72,8 @@ export class EntityManager {
 
   spawnEnemy(position: THREE.Vector3): void {
     const archetype = this.pickArchetype();
-    const enemy = new Enemy(this.physics, position, this.enemyGltf, archetype, this.engagementSlots, this.enemyCombatHooks);
+    const patrolRng = mulberry32(getWorldSeed() + PATROL_SEED_OFFSET + this.enemiesSpawned++);
+    const enemy = new Enemy(this.physics, position, this.enemyGltf, archetype, this.engagementSlots, this.enemyCombatHooks, patrolRng);
     this.scene.add(enemy.mesh);
     this.entities.push(enemy);
   }
