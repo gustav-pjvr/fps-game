@@ -673,6 +673,29 @@ consistent with the doubled density/maxed radius change. Script and screenshots 
 "looks right" isn't something worth asserting on every CI run the way the smoke suite's functional
 checks are.
 
+## Performance headroom check - inconclusive, environment limitation (2026-07-05)
+
+Attempted to measure frame-rate headroom ahead of Enemy AI Phases B-E (which add per-enemy
+line-of-sight raycasts every frame - directly relevant to whether there's budget left). Sampled
+actual rendered FPS via `requestAnimationFrame` counting at spawn, inside a dense town, and inside a
+dense forest using a temporary Playwright script.
+
+**Result was not usable.** Checked the canvas's WebGL context (`WEBGL_debug_renderer_info`) and this
+automated browser is running on `SwiftShader` (Google's CPU software rasterizer), not a real GPU -
+confirmed via `UNMASKED_RENDERER_WEBGL` returning `"ANGLE ... SwiftShader Device ... SwiftShader
+driver"`. Measured FPS was 4-7 across all three locations, which is a software-rendering artifact,
+not a signal about real-world performance - Playwright/headless Chromium here has no hardware GPU
+access at all, so these numbers say nothing about how the game runs on the user's actual machine.
+The only thing worth noting from the raw numbers is a relative one (town ~4fps vs. spawn/forest
+~6.5fps in this same software-rendered environment), which is weak evidence building-heavy scenes
+cost more to render than vegetation-heavy ones, but not solid enough to act on.
+
+**Conclusion:** this check genuinely requires the user's own hardware - open the game in a normal
+browser and watch DevTools' Performance/FPS meter (or Chrome's `Rendering > Frame Rendering Stats`)
+in a dense town vs. open terrain vs. a big forest, ideally with several enemies aggroed at once once
+Phase B lands. Deferred; not something this environment can answer, so moving on to Phase B rather
+than continuing to chase a number that can't mean anything from here.
+
 ## Enemy AI overhaul - design pass and Phase A: goal-directed patrol (2026-07-05)
 
 The user asked for a full enemy AI overhaul: goal-directed movement instead of circling, an aggro
