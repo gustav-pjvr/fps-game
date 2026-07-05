@@ -1499,30 +1499,51 @@ real GPUs can opt into the full visual pass (particularly image-based lighting, 
 per the regression above).
 
 - `src/settings/graphicsQuality.ts` (new) - `GraphicsQuality` type, `GraphicsQualityPreset`
-  interface (`shadowsEnabled`, `shadowMapSize`, `pixelRatioCap`, `environmentLighting`), and the
-  three presets. Medium is the default and is exactly what this project's own e2e suite runs
-  against (512 shadow map, no IBL) - out-of-the-box behavior matches what's actually verified. High
-  matches VISUAL_REALISM.md's original recommendations (2048 shadow map, IBL on) for real GPU
-  hardware, which has no reason to share the test sandbox's software-rendering ceiling. Low turns
-  shadows off entirely and caps pixel ratio at 1 for the lowest-end/most CPU-bound systems.
+  interface (`shadowsEnabled`, `shadowMapSize`, `pixelRatioCap`, `environmentLighting`,
+  `environmentIntensity`), and the three presets. Medium is the default and is exactly what this
+  project's own e2e suite runs against (512 shadow map, no IBL) - out-of-the-box behavior matches
+  what's actually verified. High matches VISUAL_REALISM.md's original recommendations (2048 shadow
+  map, IBL on) for real GPU hardware, which has no reason to share the test sandbox's
+  software-rendering ceiling. Low turns shadows off entirely and caps pixel ratio at 1 for the
+  lowest-end/most CPU-bound systems.
 - `Settings.ts` - persists the choice (`getGraphicsQuality`/`setGraphicsQuality`), default
   `'medium'`.
 - `SettingsPanel.ts` - new "Graphics Quality" section, a three-button segmented control (styled
   like the existing key-bind rows) rather than a slider, since these are named presets, not a
-  continuous range. Includes a small "Applies next match" hint.
-- `Game.create()` reads the preset once via `Settings.getGraphicsQuality()` and passes it to both
-  `Renderer`'s constructor (pixel ratio cap, shadow enable, IBL) and `Game.addLighting` (shadow map
-  size, shadow enable, ambient fallback) - **not** live-applied to a match already in progress,
-  since shadow map resolution and the PMREM environment texture are both baked into GPU render
-  targets at creation time; hot-swapping either mid-match is real risk for a setting a player only
-  changes occasionally. A change takes effect starting the player's next match, which is
-  communicated in the settings UI itself.
+  continuous range.
+- `Game.create()` reads the preset once via `Settings.getGraphicsQuality()` for a freshly created
+  match's initial setting.
 
-**Verification for both of the above:** `npx tsc --noEmit` clean throughout. `npm run test:unit`
-19/19 green. Full `npx playwright test e2e/smoke.spec.ts` 16/16 green (confirming the IBL-gating fix
-actually resolved the regression across the whole suite, not just the one test used to isolate it).
-Root-cause isolation for the regression was delegated to an Opus-model agent (per user request) once
+**Follow-up: High was overexposing the scene (bleached landscape) - fixed same day.** At full
+strength the sky's PMREM stacked with the already-full-intensity direct sun, roughly doubling the
+light every surface received. Added `environmentIntensity` (three.js `scene.environmentIntensity`)
+to the preset, 0.4 on High, so IBL reads as fill alongside the sun rather than a second sun.
+
+**Follow-up: made the setting apply live, not just next-match - fixed same day.** Originally the
+preset was baked into `Renderer`/`Game` at construction and a change only took effect on the
+player's next match (shadow map resolution and the PMREM texture are both GPU resources tied to
+creation time, so the first pass avoided touching them mid-match). Revisited once asked whether this
+could be instant instead: `Renderer.applyQuality(quality)` is now a public method (also called once
+from the constructor) that updates pixel ratio, `shadowMap.enabled`, and swaps `scene.environment`
+between `null` and a texture generated *once* up front regardless of quality (the sky's shader
+uniforms never change at runtime, so there's nothing to regenerate later - toggling is just
+reassigning a cached reference, not re-running `PMREMGenerator`, so it's cheap and leak-free).
+`Game.applyGraphicsQuality(quality)` mirrors this for what Renderer doesn't own: toggles the
+ambient-light fallback's intensity, toggles `sun.castShadow`, and - only if the resolution actually
+changed - disposes the shadow map's GPU render target and clears the reference so three.js
+allocates a fresh one at the new size on the next shadow pass. Wired from the pause menu's Settings
+panel via a new optional `onGraphicsQualityChange` callback (same forward-ref pattern as
+`onResetPlay` already uses for the circular Game/SettingsPanel dependency). Explicitly does **not**
+touch the world seed, terrain, entities, or physics - confirmed by inspection, since none of the
+above calls into `ChunkManager`/`EntityManager`/`PhysicsWorld`/`worldSeed.ts` at all; it only
+changes how the same, unchanged scene graph is lit and rendered from that frame onward.
+
+**Verification for the whole Graphics Quality feature (all three passes):** `npx tsc --noEmit`
+clean throughout. `npm run test:unit` 19/19 green. Full `npx playwright test e2e/smoke.spec.ts`
+16/16 green after the live-apply follow-up (one `loads without console errors` failure on the
+full-suite run was the same pre-existing GLTF-texture-load flake this file already documents
+elsewhere, confirmed unrelated by an isolated re-run passing cleanly). Root-cause isolation for the
+original IBL-performance regression was delegated to an Opus-model agent (per user request) once
 initial isolation (shadow map size, shadow enable/disable, Enemy shadow fix) had ruled out the more
 obvious suspects without finding the actual cause - it bisected the remaining candidates and applied
-the `environmentLighting` gate fix described above, independently re-verified here rather than
-taken on faith.
+the `environmentLighting` gate fix, independently re-verified here rather than taken on faith.

@@ -55,6 +55,9 @@ const TARGET_RING_BASE_RADIUS = 15;
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
 const SPAWN_BATCH_SIZE = 4;
+/** Flat ambient fill used on Low/Medium graphics quality in place of image-based lighting (see
+ * Game.addLighting/applyGraphicsQuality). */
+const AMBIENT_FILL_INTENSITY = 0.6;
 
 export interface MatchConfig {
   enemyCount: number;
@@ -159,6 +162,7 @@ export class Game {
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
     private readonly sun: THREE.DirectionalLight,
+    private readonly ambientLight: THREE.AmbientLight,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
@@ -250,15 +254,14 @@ export class Game {
     // A new seed per match (not per practice-reset) so each new game generates a different world,
     // while staying fixed for the rest of this match so chunk streaming/reload stays deterministic.
     randomizeWorldSeed();
-    // Read once here, not live-applied to an in-progress match - see the comment on
-    // Settings.getGraphicsQuality for why (shadow map resolution is baked into a GPU render
-    // target at creation). A change made mid-match takes effect starting next match.
+    // Initial value only - the pause menu's Settings panel can change this live afterward (see
+    // applyGraphicsQuality), this is just what a freshly created match starts with.
     const quality = GRAPHICS_QUALITY_PRESETS[Settings.getGraphicsQuality()];
     const renderer = new Renderer(container, quality);
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
-    const sun = Game.addLighting(renderer.scene, quality);
+    const { sun, ambientLight } = Game.addLighting(renderer.scene, quality);
 
     onProgress?.('Growing vegetation…', 0.02);
     const vegetation = await VegetationManager.create(renderer.scene, physics);
@@ -369,7 +372,12 @@ export class Game {
       onResetPlay: () => gameRef.current?.resetPlay(),
       onReturnToLobby: () => onReturnToLobby?.(),
     });
-    const settingsPanel = new SettingsPanel(hudRoot, () => settingsPanel.hide(), (value) => sound.setMasterVolume(value));
+    const settingsPanel = new SettingsPanel(
+      hudRoot,
+      () => settingsPanel.hide(),
+      (value) => sound.setMasterVolume(value),
+      (quality) => gameRef.current?.applyGraphicsQuality(GRAPHICS_QUALITY_PRESETS[quality]),
+    );
     const perfOverlay = new PerfOverlay(hudRoot);
 
     const game = new Game(
@@ -399,6 +407,7 @@ export class Game {
       scoreState,
       matchConfig,
       sun,
+      ambientLight,
     );
     gameRef.current = game;
 
@@ -461,15 +470,18 @@ export class Game {
     this.input.requestPointerLock();
   }
 
-  private static addLighting(scene: THREE.Scene, quality: GraphicsQualityPreset): THREE.DirectionalLight {
-    // On High, Renderer assigns scene.environment (a PMREM of the sky) for plausible
-    // sky/ground-bounced fill (VISUAL_REALISM.md §5). On Low/Medium that image-based lighting is
-    // disabled (ruinous on the software-rendered e2e sandbox - see
-    // GraphicsQualityPreset.environmentLighting), so a flat AmbientLight stands in as cheap fill,
-    // otherwise every surface facing away from the sun would render nearly black.
-    if (!quality.environmentLighting) {
-      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    }
+  /** AmbientLight is always created (so applyGraphicsQuality can toggle its intensity live) but is
+   * only non-zero on Low/Medium - on High, Renderer assigns scene.environment (a PMREM of the sky)
+   * for plausible sky/ground-bounced fill instead (VISUAL_REALISM.md §5). Image-based lighting is
+   * disabled on Low/Medium (ruinous on the software-rendered e2e sandbox - see
+   * GraphicsQualityPreset.environmentLighting), so this flat fill stands in there, otherwise every
+   * surface facing away from the sun would render nearly black. */
+  private static addLighting(
+    scene: THREE.Scene,
+    quality: GraphicsQualityPreset,
+  ): { sun: THREE.DirectionalLight; ambientLight: THREE.AmbientLight } {
+    const ambientLight = new THREE.AmbientLight(0xffffff, quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY);
+    scene.add(ambientLight);
 
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z);
@@ -487,7 +499,24 @@ export class Game {
     sun.shadow.normalBias = SUN_SHADOW_NORMAL_BIAS;
     scene.add(sun);
     scene.add(sun.target);
-    return sun;
+    return { sun, ambientLight };
+  }
+
+  /** Everything a Graphics Quality change affects outside Renderer (see Renderer.applyQuality) -
+   * called live from the pause menu's Settings panel, so changing the setting takes effect on the
+   * very next frame rather than requiring a fresh match. Shadow map resolution is the one part
+   * that can't just be reassigned: an already-rendered shadow map is a GPU render target sized at
+   * creation, so a size change disposes it and clears the reference, which makes three.js allocate
+   * a fresh one at the new size the next time the shadow pass runs. */
+  private applyGraphicsQuality(quality: GraphicsQualityPreset): void {
+    this.renderer.applyQuality(quality);
+    this.ambientLight.intensity = quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY;
+    this.sun.castShadow = quality.shadowsEnabled;
+    if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
+      this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
   }
 
   /** Ring radius that keeps a fixed base size for small counts but grows for large ones so spawns don't stack. */

@@ -18,11 +18,16 @@ export class SettingsPanel {
     this.refreshKeyLabels();
   };
 
-  /** onVolumeChange lets the caller push volume changes into a live AudioContext GainNode in real
-   * time - Settings.setMasterVolume() alone only persists the value for the *next* SoundEngine to
-   * read at construction, it never touches an already-running one. Omit when there's no live
-   * audio to update (e.g. the lobby, which has no SoundEngine). */
-  constructor(root: HTMLElement, onClose: () => void, onVolumeChange?: (value: number) => void) {
+  /** onVolumeChange/onGraphicsQualityChange let the caller push changes into a live match in real
+   * time - Settings.setMasterVolume/setGraphicsQuality alone only persist the value for the *next*
+   * SoundEngine/Game to read at construction, they never touch an already-running one. Omit either
+   * when there's no live match to update (e.g. the lobby, which has no SoundEngine or Game yet). */
+  constructor(
+    root: HTMLElement,
+    onClose: () => void,
+    onVolumeChange?: (value: number) => void,
+    onGraphicsQualityChange?: (quality: GraphicsQuality) => void,
+  ) {
     this.overlay = createOverlay();
 
     const panel = createPanel();
@@ -35,7 +40,7 @@ export class SettingsPanel {
     panel.appendChild(this.buildSliderRow('Mouse Sensitivity', Settings.getMouseSensitivity(), 0.1, 3, 0.05, (value) =>
       Settings.setMouseSensitivity(value),
     ));
-    panel.appendChild(this.buildGraphicsQualitySection());
+    panel.appendChild(this.buildGraphicsQualitySection(onGraphicsQualityChange));
     panel.appendChild(this.buildKeyBindSection());
 
     const footer = document.createElement('div');
@@ -85,10 +90,9 @@ export class SettingsPanel {
 
   /** Low/Medium/High shadow quality + resolution scaling (see settings/graphicsQuality.ts) - a
    * segmented button group rather than a slider, since these are named presets, not a continuous
-   * range. Takes effect on the next match (see Settings.getGraphicsQuality), not the one already
-   * running, since shadow map resolution is baked into a GPU render target at Renderer/Game
-   * construction time. */
-  private buildGraphicsQualitySection(): HTMLDivElement {
+   * range. Applies immediately to a live match via onGraphicsQualityChange (see Game.applyGraphicsQuality);
+   * with no live match (the lobby), it simply takes effect on the next one started. */
+  private buildGraphicsQualitySection(onGraphicsQualityChange?: (quality: GraphicsQuality) => void): HTMLDivElement {
     const row = document.createElement('div');
     row.style.cssText = 'margin-bottom:18px;';
 
@@ -106,6 +110,7 @@ export class SettingsPanel {
       button.style.cssText = 'flex:1; padding:8px 0; font-size:0.85rem; cursor:pointer; border-radius:4px;';
       button.addEventListener('click', () => {
         Settings.setGraphicsQuality(quality);
+        onGraphicsQualityChange?.(quality);
         this.refreshGraphicsQualityButtons();
       });
       this.qualityButtons.set(quality, button);
@@ -113,11 +118,6 @@ export class SettingsPanel {
     }
 
     row.appendChild(buttonRow);
-
-    const hint = document.createElement('div');
-    hint.textContent = 'Applies next match.';
-    hint.style.cssText = 'font-size:0.75rem; opacity:0.55; margin-top:6px;';
-    row.appendChild(hint);
 
     this.refreshGraphicsQualityButtons();
     return row;

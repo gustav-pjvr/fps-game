@@ -35,11 +35,16 @@ export class Renderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
 
+  /** Generated once (see the constructor) from the sky alone, regardless of the initial quality
+   * tier - the sky's shader uniforms never change at runtime (fixed sun direction), so there's
+   * nothing to regenerate later. Toggling environment lighting on/off (applyQuality) just assigns
+   * or clears scene.environment against this cached texture, which is instant and leak-free -
+   * cheaper and simpler than re-running PMREMGenerator every time the setting changes. */
+  private readonly skyEnvironmentTexture: THREE.Texture;
+
   constructor(container: HTMLElement, quality: GraphicsQualityPreset) {
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
-    this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.webgl.setSize(window.innerWidth, window.innerHeight);
-    this.webgl.shadowMap.enabled = quality.shadowsEnabled;
     // This three.js version has deprecated PCFSoftShadowMap - it silently downgrades to
     // PCFShadowMap at render time anyway (with a console warning), so setting it directly avoids
     // the noise for the same actual behavior.
@@ -51,27 +56,18 @@ export class Renderer {
     container.appendChild(this.webgl.domElement);
 
     this.scene = new THREE.Scene();
-    const sky = createSky();
-    this.scene.add(sky);
+    this.scene.add(createSky());
     this.scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     // Image-based lighting from the sky itself (VISUAL_REALISM.md §5) - without this every
     // MeshStandardMaterial in the game only ever sees the flat AmbientLight fill, so upward and
-    // downward-facing surfaces read identically lit. Generated once here, while the scene still
-    // only contains the sky (nothing else has been added to it yet), matching the standard
-    // "Sky + PMREM" recipe from the three.js examples. Gated to High-quality only: the per-fragment
-    // envmap sample it adds to every PBR surface is cheap on real GPUs but cripplingly slow on the
-    // software (SwiftShader) renderer the e2e sandbox uses (see GraphicsQualityPreset.environmentLighting).
-    // Low/Medium fall back to a flat AmbientLight added in Game.addLighting.
-    if (quality.environmentLighting) {
-      const pmremGenerator = new THREE.PMREMGenerator(this.webgl);
-      this.scene.environment = pmremGenerator.fromScene(this.scene, 0, CAMERA_NEAR, CAMERA_FAR).texture;
-      pmremGenerator.dispose();
-      // The sky's own PMREM is bright enough that at full strength it stacks with the direct sun
-      // and visibly overexposes/bleaches every surface - scaled down so it reads as fill light
-      // alongside the sun, not a second sun (see GraphicsQualityPreset.environmentIntensity).
-      this.scene.environmentIntensity = quality.environmentIntensity;
-    }
+    // downward-facing surfaces read identically lit. Generated here, while the scene still only
+    // contains the sky (nothing else has been added to it yet), matching the standard "Sky + PMREM"
+    // recipe from the three.js examples - whether or not it's actually enabled at this exact
+    // moment (see applyQuality below and the class comment above).
+    const pmremGenerator = new THREE.PMREMGenerator(this.webgl);
+    this.skyEnvironmentTexture = pmremGenerator.fromScene(this.scene, 0, CAMERA_NEAR, CAMERA_FAR).texture;
+    pmremGenerator.dispose();
 
     this.camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,
@@ -86,7 +82,20 @@ export class Renderer {
     // this doesn't change camera.position's meaning (still equals world position).
     this.scene.add(this.camera);
 
+    this.applyQuality(quality);
     window.addEventListener('resize', this.onResize);
+  }
+
+  /** Everything Renderer owns that a Graphics Quality change affects - safe to call at any time,
+   * not just construction, so changing the setting mid-match takes effect on the very next frame
+   * rather than requiring a fresh match. Gated to High for real GPU hardware (see
+   * GraphicsQualityPreset.environmentLighting) - the software-rendered (SwiftShader) e2e sandbox
+   * can't afford the per-fragment envmap sample this adds to every PBR surface. */
+  applyQuality(quality: GraphicsQualityPreset): void {
+    this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
+    this.webgl.shadowMap.enabled = quality.shadowsEnabled;
+    this.scene.environment = quality.environmentLighting ? this.skyEnvironmentTexture : null;
+    this.scene.environmentIntensity = quality.environmentIntensity;
   }
 
   get canvas(): HTMLCanvasElement {
@@ -105,6 +114,7 @@ export class Renderer {
 
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
+    this.skyEnvironmentTexture.dispose();
     this.webgl.dispose();
     this.webgl.domElement.remove();
   }
