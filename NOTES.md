@@ -964,8 +964,62 @@ cadence. Widened `killPlayerByEnemy`'s internal deadline (40s -> 50s) and both c
 assertions) - confirmed clean across 3 repeated runs of just those two tests, then a full-suite
 re-run (16/16) green.
 
-**Still to do (Phase E):** per-weapon archetype behavior differentiation with seeded randomized
-enemy loadouts, and a tuning pass across everything Phases B-D landed based on how it actually plays.
+**Still to do at the time (Phase E):** per-weapon archetype behavior differentiation with seeded
+randomized enemy loadouts, and a tuning pass across everything Phases B-D landed based on how it
+actually plays. Phase E (the tuning half) below - archetype differentiation was descoped, see that
+section's closing note.
+
+## Phase E: measurement-driven tuning pass (2026-07-05)
+
+No human tester available, so instead of guessing at numbers, built a temporary measurement harness
+(`_phasee_measure.spec.ts`, deleted after use) that plays out real combat headlessly and times it:
+how long a completely unresisting, stationary player survives a single engaging enemy at 10 units
+(ranged) and at 1.5 units (melee), and how long the player's own rifle takes to kill one enemy.
+
+**Ranged combat measured too weak, with a real stall risk.** At the Phase C baseline
+(`ENEMY_RANGED_DAMAGE = 6`, `ENEMY_RANGED_BURST_PAUSE = 1.6`), killing a stationary, non-fighting-back
+player at 10 units took **~23-26s** across three runs, and a fourth run landed *zero hits at all*
+within a 45s cutoff (confirmed via per-second logging of health/state/distance - the enemy was
+correctly in `chase` and roughly the right distance the whole time, so this was a real accuracy/cadence
+problem, not a stuck state machine). That's too generous for a mechanic meant to read as a genuine
+threat - especially since this is the *best case* for the enemy: a real player also moves, takes
+cover, and shoots back, all of which only reduce the enemy's actual effective throughput further
+below that already-weak baseline.
+
+Tuned two constants: `ENEMY_RANGED_DAMAGE` 6 -> 9 (+50%) and `ENEMY_RANGED_BURST_PAUSE` 1.6 -> 1.1s
+(more frequent bursts, raising sustained DPS further and shrinking the window a marginal LOS flicker
+could interrupt a kill in progress). Re-measured: **~15.6-18.8s** (avg ~17.2s) across three fresh
+runs, zero stalls. Left `ENEMY_RANGED_FIRE_INTERVAL`, `ENEMY_RANGED_BURST_COUNT`, and the aim-error
+cone (`ENEMY_AIM_ERROR_MAX_DEG`/`MIN_DEG`/`ENEMY_AIM_SETTLE_TIME`) untouched - the cone's narrowing
+behavior already read correctly in the Phase C verification, and this pass was about raw throughput,
+not accuracy shape.
+
+**Melee left as-is.** Measured **~12.5-13.0s** consistently (two runs) at point-blank range - already
+fast and reliable without any stalls, so no tuning pressure there. Makes sense: melee's spread is
+tighter, LOS at 1.5 units is essentially never blocked, and `ENEMY_ATTACK_DAMAGE` (8) with a 1s
+cooldown and no narrowing-over-time mechanic to fail was already a simpler, more deterministic
+system than ranged combat's cone.
+
+**Player-side rifle TTK wasn't captured.** The measurement script chained three scenarios in one
+page load (ranged -> reset via `KeyT` -> melee -> reset -> player rifle), and the second `KeyT`
+reset (after the ranged-kill death) didn't reliably bring health back to 100 within the script's
+own wait - plausibly `resetPlay` behaving differently once the death screen is actually showing
+(untested territory; the existing `KeyT` smoke test only exercises it while alive) rather than a
+death-screen bug per se. Not chased further: this was a measurement-script limitation, not something
+blocking the tuning conclusions above, and the player's own weapons were already known to be
+extremely fast against 60 HP enemies from every other combat test this session (one rifle burst or
+a single sniper/shotgun hit).
+
+**Archetype behavior differentiation (weighted-random spawn loadouts, sniper/shotgun/rifle range
+bands) was descoped from this phase entirely.** This codebase only has one enemy visual/stat profile
+right now (`ACTIVE_ENEMY_ARCHETYPE`) - building real per-archetype range-band behavior on top of
+Phases B-D's now-working aggro/ranged/melee systems is a genuinely separate feature addition (new
+archetype data, weapon-style stat variation, spawn-loadout randomization), not a "tuning pass" in
+the sense the rest of this phase was, and the todo list's framing for Phase E was specifically
+"tuning pass based on playtesting." Recorded here as a real gap rather than silently dropped -
+worth its own follow-up pass if/when it's prioritized.
+
+**Verified:** typecheck clean, full smoke suite (16/16) green after the constant changes.
 
 ## Lobby redesign (2026-07-05)
 

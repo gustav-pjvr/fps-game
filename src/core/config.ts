@@ -99,10 +99,15 @@ export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
  * range" from the design doc.
  */
 export const ENEMY_RANGED_RANGE = 16;
-export const ENEMY_RANGED_DAMAGE = 6;
+/** Tuned during Phase E's measurement pass: 6 damage / 1.6s burst pause measured ~23-26s to kill a
+ * completely unresisting, stationary player standing at 10 units in the open (plus a real chance of
+ * landing zero hits at all within 45s on an unlucky world/LOS draw) - too weak to read as a genuine
+ * threat, especially since a real player also moves, takes cover, and shoots back, all of which
+ * only weaken the enemy's effective throughput further from that already-generous baseline. */
+export const ENEMY_RANGED_DAMAGE = 9;
 export const ENEMY_RANGED_FIRE_INTERVAL = 0.5;
 export const ENEMY_RANGED_BURST_COUNT = 3;
-export const ENEMY_RANGED_BURST_PAUSE = 1.6;
+export const ENEMY_RANGED_BURST_PAUSE = 1.1;
 export const ENEMY_AIM_ERROR_MAX_DEG = 9;
 export const ENEMY_AIM_ERROR_MIN_DEG = 1.5;
 export const ENEMY_AIM_SETTLE_TIME = 2.5;
