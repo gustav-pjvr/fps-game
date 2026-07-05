@@ -1068,3 +1068,90 @@ flakiness unrelated to this change (nothing touched GLTF loading), not a new reg
 "for free" since they're built from the same `createPanel`/`createButton`/`createPanelTitle`
 helpers - only `SettingsPanel.ts` needed a direct touch (the slider accent-color fix). No internal
 restructuring of those panels' own logic.
+
+## Per-archetype enemy loadouts (2026-07-05)
+
+Phase E's tuning pass explicitly descoped this as real feature work, not a tuning tweak - this is
+that follow-up. Before this, `EnemyArchetype` was name+flavor only; every enemy in the game ran
+identical stats/behavior regardless of which of the five flavor names got attached to it.
+
+**Design pass with a Fable architect subagent** (design-only, no code, mirroring the earlier Opus
+design pass for the original enemy AI overhaul) produced a concrete doc covering the stat-block
+schema, exact numbers for three archetypes, the kiting movement spec, the seeded spawn-assignment
+algorithm, and which existing constants stay global vs. become per-archetype. Reviewed the actual
+output before proceeding rather than the model name in isolation - it was grounded in the real
+`updateChase` branch structure, gave a reasoned number for every field (no placeholders), and made
+a concrete engineering call with justification (see Rush Job below) - implemented directly from it,
+no Opus cross-check requested.
+
+**Three real archetypes**, mapped onto three of the five existing flavor names (the other two,
+Grass Sitter and The Other One, stay reserved for future archetypes - same as before):
+
+- **The Straggler (generalist, spawn weight 50/100)** - today's Phase A-E tuned values, completely
+  unchanged. Every other archetype is a deviation from this baseline.
+- **Ridge Walker (kiter, weight 20)** - long range (30 vs. 16), high per-hit damage (22 vs. 9), but
+  low health (40 vs. 60, `not less` - a stationary long-range threat has to be more punishable up
+  close to stay fair) and weak melee (5) as the counterplay for closing the gap. Backs away if the
+  player gets inside 10 units, via a new `updateKiteRetreat` (whisker-avoidance movement away from
+  the player, facing rotation overridden to face the threat it's retreating from, hysteresis at 14
+  units to stop flickering, aim-error stays wide while moving and only narrows once stationary).
+- **Rush Job (rusher, weight 30)** - tankier (90 hp) and faster (3.4 vs. 2.5) so it actually closes
+  the gap, heavy melee payoff (14) for surviving the approach. `rangedRange: 0` rather than a new
+  "skip ranged" flag - the Fable design's actual argument: `updateChase`'s branch order already
+  checks melee, then ranged, then closes distance, so a ranged range of zero makes the ranged branch
+  permanently unreachable (melee already owns everything at or below `ENEMY_ATTACK_RANGE`) - "never
+  shoot" falls out of the existing structure for free, no new code path.
+
+**Seeded, reproducible spawn assignment.** `createArchetypePicker(seed)` in `archetypes.ts` -
+`mulberry32(seed + ARCHETYPE_SEED_OFFSET)`, same pattern already used by ZoneMap/VegetationManager/
+BuildingManager for terrain/vegetation/building placement (each with its own seed offset so the
+streams don't correlate). `EntityManager` constructs one picker per match from `getWorldSeed()` and
+calls it inside `spawnEnemy` - so a given world seed always produces the same loadout composition
+*and* the same spawn-order sequence, not just the same total counts.
+
+**Integration into `Enemy.ts`:** the state machine and every combat mechanic (fan-raycast melee, LOS
+raycast, burst-fire cadence, engagement-slot cap, whisker avoidance) are completely unchanged and
+shared by all three archetypes - only the *numbers* differ (health, moveSpeed, detectionRange,
+leashRange, rangedRange, rangedDamage, burst timing, aim-error min/max/settle, meleeDamage), read
+from `this.archetype.X` instead of flat module constants, plus the one new movement branch for
+kiting. Deliberately kept global (per the design doc's reasoning): LOS-check throttle interval,
+alert-reaction time, search duration, the melee swing's mechanics (count/spread/cooldown - only its
+damage is per-archetype), the engagement-slot cap (a match-level pacing knob, not per-enemy), and all
+patrol/roam constants (pre-aggro behavior is identical on purpose - an archetype reveals itself in
+combat, not while wandering at 50m).
+
+**Verified via e2e** (temporary test, deleted after use): started a 30-enemy match and confirmed all
+three archetype names actually appear with roughly the expected 50/30/20 split (one real run: 16/9/5
+Straggler/Rush Job/Ridge Walker - noisy at n=30 but directionally right); found a live Ridge Walker
+and confirmed it measurably increases distance from an approaching player instead of standing still;
+isolated a single-enemy match (retried fresh matches up to 15 times to land on a Rush Job by chance,
+since spawn assignment is randomized per match) and confirmed a Rush Job's health-over-time trace
+shows zero damage while the player closes a 10-unit gap - direct proof it never fires a ranged shot,
+only ever damages via melee once the gap closes.
+
+**A real regression caught by the full smoke suite, not just the new archetype tests.** First full
+suite run failed `firing an empty magazine auto-reloads without pressing R` with the player dying
+mid-test. Root cause: Ridge Walker's first-draft `detectionRange` (30) exceeded
+`ENEMY_RING_BASE_RADIUS` (25, config.ts) - the radius the default match's enemy spawn ring uses -
+so a Ridge Walker could detect and snipe a completely passive player from the moment the match
+started, before they'd done anything at all. This silently broke an invariant several existing
+smoke tests already depended on (enemies must NOT be able to sense a stationary player at spawn).
+Fixed by dropping `detectionRange` to 20 and `leashRange` to 32 (both still above the generalist's
+18/26, keeping the "notices you from farther away" identity, just no longer past the spawn ring
+itself) - `rangedRange` (30) stays higher still since that's safe: an enemy only ever reaches ranged
+combat *after* already detecting the player within `detectionRange` and closing in, so by the time
+it matters the enemy is already well inside its own ranged range too.
+
+Separately (confirmed via bisection against unmodified `master`), `firing an empty magazine...` was
+already an intermittent ~1-in-6 flake *before* this session's archetype work, caused by the same
+test running close to Playwright's 30s default timeout - not a logic bug (ammo/reload behaved
+correctly every time the test actually completed). Hardened it regardless, since it's now more
+exposed by a growing enemy roster: the test teleports away from the spawn ring before firing (ammo
+bookkeeping has nothing to do with nearby enemies, so removing them as a variable is correct
+regardless of enemy tuning) and got `test.setTimeout(60000)` for real margin. Confirmed clean across
+6 repeated runs of just that test, then a full suite re-run (16/16) green.
+
+**Explicitly out of scope for this pass** (per the design doc's own boundary): no per-archetype
+visual models/tints/sounds, no 4th/5th archetype, no cover-seeking or strafing, no per-archetype
+patrol behavior, no spawn-composition rules (e.g. "max N snipers per match"). Loadout stats and the
+one kiting movement pattern only.

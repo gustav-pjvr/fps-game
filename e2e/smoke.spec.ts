@@ -218,9 +218,17 @@ test('pressing T resets ammo, entities, and score to a fresh state', async ({ pa
 });
 
 test('firing an empty magazine auto-reloads without pressing R', async ({ page }) => {
+  test.setTimeout(60000); // this test's own ~6-9s of spaced clicks left little margin under the 30s default
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
+
+  // This test is about ammo/reload bookkeeping, not combat - teleport well clear of the enemy
+  // spawn ring first. One real cause found and fixed separately (a new enemy archetype's detection
+  // range exceeded the spawn ring radius, sniping a passive player from match start) - this
+  // teleport removes combat as a variable entirely regardless of enemy tuning, since ammo/reload
+  // has nothing to do with nearby enemies.
+  await page.evaluate(() => window.__gameDebug?.teleport(250, 30, 250));
 
   const fullAmmo = await page.evaluate(() => window.__gameDebug?.getAmmo());
   expect(fullAmmo).toBe(12); // pistol magazine size

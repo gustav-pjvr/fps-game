@@ -8,21 +8,14 @@ import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import { castHitscan } from '../../combat/hitscan.ts';
-import { ACTIVE_ENEMY_ARCHETYPE } from './archetypes.ts';
+import type { EnemyArchetype } from './archetypes.ts';
 import { hasLineOfSight, pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
 import type { EngagementSlots } from './engagementSlots.ts';
 import {
-  ENEMY_AIM_ERROR_MAX_DEG,
-  ENEMY_AIM_ERROR_MIN_DEG,
-  ENEMY_AIM_SETTLE_TIME,
   ENEMY_ALERT_REACTION_TIME,
-  ENEMY_ATTACK_DAMAGE,
   ENEMY_ATTACK_INTERVAL,
   ENEMY_ATTACK_RANGE,
-  ENEMY_DETECTION_RANGE,
-  ENEMY_HEALTH,
   ENEMY_HEIGHT,
-  ENEMY_LEASH_RANGE,
   ENEMY_LOS_CHECK_INTERVAL,
   ENEMY_MELEE_SWING_COUNT,
   ENEMY_MELEE_SWING_SPREAD_DEG,
@@ -31,14 +24,8 @@ import {
   ENEMY_PATROL_SPEED,
   ENEMY_PATROL_STOP_DISTANCE,
   ENEMY_RADIUS,
-  ENEMY_RANGED_BURST_COUNT,
-  ENEMY_RANGED_BURST_PAUSE,
-  ENEMY_RANGED_DAMAGE,
-  ENEMY_RANGED_FIRE_INTERVAL,
-  ENEMY_RANGED_RANGE,
   ENEMY_SEARCH_DURATION,
   ENEMY_SEARCH_STOP_DISTANCE,
-  ENEMY_SPEED,
   ENEMY_STUCK_EPSILON,
   ENEMY_STUCK_WINDOW,
   EYE_OFFSET,
@@ -76,12 +63,17 @@ type EnemyState = 'idle' | 'alert' | 'chase' | 'search';
  * Getting further than ENEMY_LEASH_RANGE away from any of alert/chase/search always drops straight
  * back to idle (a wider radius than detection, so it doesn't flicker right at the detection boundary).
  *
- * Chase itself (Phase C): beyond ENEMY_ATTACK_RANGE, closes distance until within ENEMY_RANGED_RANGE
- * with a clear sightline, then stands and fires real hitscan shots with a visible tracer and a
- * narrowing angular aim-error cone rather than a hidden hit-chance roll - see updateRangedCombat.
- * Within ENEMY_ATTACK_RANGE, melee always wins regardless of gun (the "universal fallback" from the
- * design doc, Phase D makes this a real weapon-style attack; for now it's the original flat-damage
- * tick from Phase A/B, unchanged).
+ * Chase itself (Phase C): beyond ENEMY_ATTACK_RANGE, closes distance until within the archetype's
+ * rangedRange with a clear sightline, then stands (or, for a 'kite' archetype, backs away - see
+ * updateKiteRetreat) and fires real hitscan shots with a visible tracer and a narrowing angular
+ * aim-error cone rather than a hidden hit-chance roll - see updateRangedFiring. Within
+ * ENEMY_ATTACK_RANGE, melee always wins regardless of archetype (the "universal fallback" from the
+ * design doc) - a real fan-raycast swing (Phase D), not a flat auto-hit tick.
+ *
+ * Per-archetype loadouts (follow-up to Phases A-E): every enemy is constructed with a real
+ * `EnemyArchetype` (see archetypes.ts) carrying its own health/speed/range/damage/aim-error numbers
+ * and a movementStyle ('direct' or 'kite') - the state machine and combat mechanics above are
+ * shared by every archetype; only the numbers and the one movement branch differ.
  *
  * Visuals are the real character-male-a.glb (Kenney "Mini Characters", CC0), animated with its
  * bundled "idle"/"walk" clips. Hit detection still uses the same invisible capsule+ball
@@ -90,10 +82,10 @@ type EnemyState = 'idle' | 'alert' | 'chase' | 'search';
 export class Enemy implements Entity, Damageable {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
-  readonly killFeedLabel = `${ACTIVE_ENEMY_ARCHETYPE.name} eliminated`;
+  readonly killFeedLabel: string;
   readonly mesh: THREE.Group;
 
-  private health = ENEMY_HEALTH;
+  private health: number;
   private dead = false;
   private attackCooldown = 0;
   private state: EnemyState = 'idle';
@@ -114,6 +106,9 @@ export class Enemy implements Entity, Damageable {
   private aimHoldTimer = 0;
   private burstShotsFired = 0;
   private burstCooldown = 0;
+  /** 'kite' archetypes only - true while backing away from a player that's closed inside
+   * kiteTriggerRange; hysteresis (see updateChase) keeps this from flickering at the boundary. */
+  private isKiting = false;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
   private readonly headCollider: RAPIER.Collider;
@@ -127,9 +122,12 @@ export class Enemy implements Entity, Damageable {
     private readonly physics: PhysicsWorld,
     position: THREE.Vector3,
     gltf: GLTF,
+    private readonly archetype: EnemyArchetype,
     private readonly engagementSlots: EngagementSlots,
     private readonly combatHooks: EnemyCombatHooks,
   ) {
+    this.health = archetype.health;
+    this.killFeedLabel = `${archetype.name} eliminated`;
     this.spawnPosition = position.clone();
     this.patrolDestination = position.clone();
     this.stuckCheckPos = position.clone();
@@ -185,6 +183,12 @@ export class Enemy implements Entity, Damageable {
     return this.state;
   }
 
+  /** Debug-only introspection for the e2e suite - which archetype this instance actually got
+   * assigned (per-archetype loadouts follow-up). */
+  get debugArchetype(): string {
+    return this.archetype.name;
+  }
+
   takeDamage(amount: number, hitColliderHandle: number): void {
     if (this.dead) return;
     const isHeadshot = hitColliderHandle === this.headCollider.handle;
@@ -205,7 +209,7 @@ export class Enemy implements Entity, Damageable {
       // Skip the raycast entirely once the player's already out of leash range - no state this
       // frame could care about LOS at that distance anyway.
       this.hasLineOfSightToPlayer =
-        distanceToPlayer <= ENEMY_LEASH_RANGE && this.computeLineOfSight(current, player);
+        distanceToPlayer <= this.archetype.leashRange && this.computeLineOfSight(current, player);
     }
 
     this.updateAggroState(dt, distanceToPlayer);
@@ -243,13 +247,13 @@ export class Enemy implements Entity, Damageable {
   private updateAggroState(dt: number, distanceToPlayer: number): void {
     switch (this.state) {
       case 'idle':
-        if (distanceToPlayer <= ENEMY_DETECTION_RANGE && this.hasLineOfSightToPlayer) {
+        if (distanceToPlayer <= this.archetype.detectionRange && this.hasLineOfSightToPlayer) {
           this.state = 'alert';
           this.alertTimer = ENEMY_ALERT_REACTION_TIME;
         }
         break;
       case 'alert':
-        if (distanceToPlayer > ENEMY_LEASH_RANGE || !this.hasLineOfSightToPlayer) {
+        if (distanceToPlayer > this.archetype.leashRange || !this.hasLineOfSightToPlayer) {
           this.state = 'idle';
           break;
         }
@@ -257,17 +261,19 @@ export class Enemy implements Entity, Damageable {
         if (this.alertTimer <= 0) this.state = 'chase';
         break;
       case 'chase':
-        if (distanceToPlayer > ENEMY_LEASH_RANGE) {
+        if (distanceToPlayer > this.archetype.leashRange) {
           this.state = 'idle';
           this.releaseEngagementSlot();
+          this.isKiting = false;
         } else if (!this.hasLineOfSightToPlayer) {
           this.state = 'search';
           this.searchTimer = ENEMY_SEARCH_DURATION;
           this.releaseEngagementSlot();
+          this.isKiting = false;
         }
         break;
       case 'search':
-        if (distanceToPlayer <= ENEMY_DETECTION_RANGE && this.hasLineOfSightToPlayer) {
+        if (distanceToPlayer <= this.archetype.detectionRange && this.hasLineOfSightToPlayer) {
           this.state = 'chase';
           break;
         }
@@ -286,32 +292,94 @@ export class Enemy implements Entity, Damageable {
     // Kept fresh every frame while chasing so search (entered the instant LOS is lost) beelines
     // for where the player actually was, not a stale position from several frames earlier.
     this.searchDestination.copy(player.position);
+    const archetype = this.archetype;
 
     if (distanceToPlayer <= ENEMY_ATTACK_RANGE) {
-      // Melee always wins at close range regardless of gun (Phase D's "universal fallback"), so
-      // ranged combat stands aside entirely here rather than trying to also fire at point-blank.
+      // Melee always wins at close range regardless of archetype (Phase D's "universal fallback"),
+      // so ranged combat/kiting stand aside entirely here rather than also acting at point-blank.
       this.releaseEngagementSlot();
       this.aimHoldTimer = 0;
+      this.isKiting = false;
       this.faceToward(player.position.x, player.position.z, current);
       this.updateMelee(player, current);
-    } else if (distanceToPlayer <= ENEMY_RANGED_RANGE && this.hasLineOfSightToPlayer) {
-      this.updateRangedCombat(dt, player, current);
+      return;
+    }
+
+    if (archetype.movementStyle === 'kite') {
+      if (!this.isKiting && distanceToPlayer < archetype.kiteTriggerRange) {
+        this.isKiting = true;
+      } else if (this.isKiting && distanceToPlayer >= archetype.kiteStopRange) {
+        this.isKiting = false;
+      }
+      if (this.isKiting && this.hasLineOfSightToPlayer) {
+        this.updateKiteRetreat(dt, player, current);
+        return;
+      }
+    }
+
+    if (distanceToPlayer <= archetype.rangedRange && this.hasLineOfSightToPlayer) {
+      this.faceToward(player.position.x, player.position.z, current);
+      this.updateRangedFiring(dt, player, current, true);
     } else {
       this.releaseEngagementSlot();
       this.aimHoldTimer = 0;
-      this.moveToward(player.position.x, player.position.z, ENEMY_SPEED, dt, current);
+      this.moveToward(player.position.x, player.position.z, archetype.moveSpeed, dt, current);
     }
   }
 
-  /** Stands and fires real hitscan shots once in range with a clear sightline, instead of closing
-   * distance further - "fair" ranged combat (Phase C): a visible tracer per shot (hit or miss), an
-   * angular aim-error cone that narrows the longer the sightline holds, and a burst-then-pause
-   * cadence rather than a continuous stream. Gated by `engagementSlots` (ENEMY_MAX_CONCURRENT_
-   * ENGAGERS) so not every enemy that spots the player opens fire simultaneously - one that can't
-   * get a slot still tracks/faces the player, it just holds fire until one frees up. */
-  private updateRangedCombat(dt: number, player: Player, current: { x: number; y: number; z: number }): void {
-    this.faceToward(player.position.x, player.position.z, current);
+  /** 'kite' archetypes only (e.g. Ridge Walker) - backs away from the player while continuing to
+   * fire, instead of just standing and shooting. Reuses the same whisker avoidance as patrol/search
+   * movement so retreating doesn't walk straight into a wall, and reuses the patrol/search
+   * stuck-detection pattern (same timer/pos fields, since patrol and chase never run in the same
+   * frame) to abandon a wedged retreat rather than freeze - standing and firing in place until
+   * distance re-arms kiting is a perfectly fine fallback. Aim-error intentionally stays wide the
+   * whole time it's moving (see updateRangedFiring's `isStationary` param) - a sniper on the move
+   * shouldn't shoot as accurately as one holding still. */
+  private updateKiteRetreat(dt: number, player: Player, current: { x: number; y: number; z: number }): void {
+    const dx = current.x - player.position.x;
+    const dz = current.z - player.position.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
 
+    if (distance > 1e-4) {
+      const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
+      const chestPos = new THREE.Vector3(current.x, current.y, current.z);
+      const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
+
+      const step = this.archetype.moveSpeed * dt;
+      const nextX = current.x + steeredDir.x * step;
+      const nextZ = current.z + steeredDir.z * step;
+      this.applyPosition(nextX, nextZ);
+
+      // Faces the threat it's backing away from, not the retreat direction - computed from the
+      // *new* position, not the stale `current`, since faceToward's own applyPosition call would
+      // otherwise snap the enemy right back to where it started.
+      const faceDx = player.position.x - nextX;
+      const faceDz = player.position.z - nextZ;
+      if (faceDx * faceDx + faceDz * faceDz > 1e-4) {
+        this.mesh.rotation.y = Math.atan2(faceDx, faceDz);
+      }
+      this.isMoving = true;
+      this.updateStuckDetection(dt, { x: nextX, y: current.y, z: nextZ }, () => {
+        this.isKiting = false;
+      });
+    }
+
+    this.updateRangedFiring(dt, player, current, false);
+  }
+
+  /** Stands and fires real hitscan shots once in range with a clear sightline - "fair" ranged
+   * combat (Phase C): a visible tracer per shot (hit or miss), an angular aim-error cone that
+   * narrows the longer `isStationary` has held true, and a burst-then-pause cadence rather than a
+   * continuous stream. Gated by `engagementSlots` (ENEMY_MAX_CONCURRENT_ENGAGERS) so not every
+   * enemy that spots the player opens fire simultaneously - one that can't get a slot still
+   * tracks/faces the player, it just holds fire until one frees up. Movement/facing is the caller's
+   * job (stand-and-fire vs. kite-and-fire look different) - this only ever fires. */
+  private updateRangedFiring(
+    dt: number,
+    player: Player,
+    current: { x: number; y: number; z: number },
+    isStationary: boolean,
+  ): void {
     if (!this.hasEngagementSlot) {
       this.hasEngagementSlot = this.engagementSlots.tryAcquire(this.id);
     }
@@ -320,21 +388,22 @@ export class Enemy implements Entity, Damageable {
       return;
     }
 
-    this.aimHoldTimer += dt;
+    this.aimHoldTimer = isStationary ? this.aimHoldTimer + dt : 0;
     this.burstCooldown -= dt;
     if (this.burstCooldown > 0) return;
 
     this.fireRangedShot(player, current);
     this.burstShotsFired += 1;
-    if (this.burstShotsFired >= ENEMY_RANGED_BURST_COUNT) {
+    if (this.burstShotsFired >= this.archetype.burstCount) {
       this.burstShotsFired = 0;
-      this.burstCooldown = ENEMY_RANGED_BURST_PAUSE;
+      this.burstCooldown = this.archetype.burstPause;
     } else {
-      this.burstCooldown = ENEMY_RANGED_FIRE_INTERVAL;
+      this.burstCooldown = this.archetype.fireInterval;
     }
   }
 
   private fireRangedShot(player: Player, current: { x: number; y: number; z: number }): void {
+    const archetype = this.archetype;
     const origin = new THREE.Vector3(current.x, current.y + HEAD_OFFSET_Y, current.z);
     const target = player.position.clone();
     target.y += EYE_OFFSET;
@@ -343,21 +412,21 @@ export class Enemy implements Entity, Damageable {
 
     // A real angular cone, not a fixed linear miss distance - it widens with range "for free"
     // (the same angular error covers more lateral distance the farther the target is) and narrows
-    // the longer the sightline has held (see ENEMY_AIM_SETTLE_TIME), same spread-by-two-axis-angle
+    // the longer the sightline has held (see aimSettleTime), same spread-by-two-axis-angle
     // technique WeaponManager already uses for the player's own weapons.
-    const holdT = Math.min(1, this.aimHoldTimer / ENEMY_AIM_SETTLE_TIME);
-    const errorDeg = ENEMY_AIM_ERROR_MAX_DEG - (ENEMY_AIM_ERROR_MAX_DEG - ENEMY_AIM_ERROR_MIN_DEG) * holdT;
+    const holdT = Math.min(1, this.aimHoldTimer / archetype.aimSettleTime);
+    const errorDeg = archetype.aimErrorMaxDeg - (archetype.aimErrorMaxDeg - archetype.aimErrorMinDeg) * holdT;
     const errorRad = THREE.MathUtils.degToRad(errorDeg);
     direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * errorRad);
     direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * errorRad);
 
-    const maxRange = ENEMY_RANGED_RANGE + 5;
+    const maxRange = archetype.rangedRange + 5;
     const hit = castHitscan(this.physics, origin, direction, maxRange, undefined, this.rigidBody);
     const tracerEnd = hit ? hit.point : origin.clone().add(direction.multiplyScalar(maxRange));
 
     const hitPlayer = hit?.colliderHandle === player.ownCollider.handle;
     if (hitPlayer && !player.isDead) {
-      player.takeDamage(ENEMY_RANGED_DAMAGE);
+      player.takeDamage(archetype.rangedDamage);
     }
 
     this.combatHooks.onRangedShotFired(origin, tracerEnd, hitPlayer);
@@ -373,7 +442,8 @@ export class Enemy implements Entity, Damageable {
    * knife (same spread-by-two-axis-angle technique, ENEMY_MELEE_SWING_COUNT rays instead of one),
    * requiring an actual line of sight rather than the flat auto-hit-if-in-range tick this used to
    * be. Can genuinely miss if none of the swing's rays connect - a player hugging the very edge of
-   * ENEMY_ATTACK_RANGE isn't guaranteed to get hit just for being in range. */
+   * ENEMY_ATTACK_RANGE isn't guaranteed to get hit just for being in range. Swing mechanics
+   * (count/spread/cooldown) stay global across archetypes; only meleeDamage is the identity knob. */
   private updateMelee(player: Player, current: { x: number; y: number; z: number }): void {
     if (this.attackCooldown > 0 || player.isDead || !this.hasLineOfSightToPlayer) return;
     this.attackCooldown = ENEMY_ATTACK_INTERVAL;
@@ -392,7 +462,7 @@ export class Enemy implements Entity, Damageable {
 
       const hit = castHitscan(this.physics, origin, direction, maxRange, undefined, this.rigidBody);
       if (hit?.colliderHandle === player.ownCollider.handle) {
-        player.takeDamage(ENEMY_ATTACK_DAMAGE);
+        player.takeDamage(this.archetype.meleeDamage);
         return;
       }
     }
@@ -433,14 +503,19 @@ export class Enemy implements Entity, Damageable {
   /** No navmesh in this codebase - whisker avoidance (see enemySteering.ts) handles convex
    * obstacles, but a concave trap (e.g. a tight gap between buildings) can still wedge an enemy.
    * Rather than freezing indefinitely, an enemy that's tried to move but barely progressed over
-   * ENEMY_STUCK_WINDOW gives up on its current destination and picks a new one. */
-  private updateStuckDetection(dt: number, current: { x: number; y: number; z: number }): void {
+   * ENEMY_STUCK_WINDOW gives up - by default that means a fresh patrol destination (`repath`), but
+   * `onStuck` lets other movement (kite retreat) substitute its own "give up" action instead. */
+  private updateStuckDetection(
+    dt: number,
+    current: { x: number; y: number; z: number },
+    onStuck: () => void = () => this.repath(),
+  ): void {
     this.stuckCheckTimer += dt;
     if (this.stuckCheckTimer < ENEMY_STUCK_WINDOW) return;
 
     const moved = horizontalDistance(current, this.stuckCheckPos);
     if (this.isMoving && moved < ENEMY_STUCK_EPSILON) {
-      this.repath();
+      onStuck();
     }
     this.stuckCheckTimer = 0;
     this.stuckCheckPos.set(current.x, current.y, current.z);

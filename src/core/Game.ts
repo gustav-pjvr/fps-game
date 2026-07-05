@@ -64,6 +64,7 @@ export interface GameDebugApi {
   lookAt(x: number, y: number, z: number): void;
   getLiveEntityPositions(): { x: number; y: number; z: number }[];
   getLiveEntityStates(): (string | undefined)[];
+  getLiveEntityArchetypes(): (string | undefined)[];
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
   getCameraFov(): number;
   getCameraChildrenDebug(): unknown[];
@@ -135,6 +136,7 @@ export class Game {
       getLiveEntityPositions: () =>
         this.entityManager.getLiveEntityPositions().map((p) => ({ x: p.x, y: p.y, z: p.z })),
       getLiveEntityStates: () => this.entityManager.getLiveEntityStates(),
+      getLiveEntityArchetypes: () => this.entityManager.getLiveEntityArchetypes(),
       raycastForward: () => {
         const origin = this.renderer.camera.position.clone();
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.renderer.camera.quaternion);

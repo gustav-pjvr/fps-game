@@ -4,15 +4,18 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Player } from './Player.ts';
 import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
 import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks } from './enemies/Enemy.ts';
+import { createArchetypePicker } from './enemies/archetypes.ts';
 import { EngagementSlots } from './enemies/engagementSlots.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
 import { ENEMY_MAX_CONCURRENT_ENGAGERS } from '../core/config.ts';
+import { getWorldSeed } from '../core/worldSeed.ts';
 
 interface ManagedEntity {
   readonly mesh: THREE.Object3D;
   readonly isDead: boolean;
   readonly killFeedLabel: string;
   readonly debugState?: string;
+  readonly debugArchetype?: string;
   dispose(): void;
   update?(dt: number, player: Player): void;
 }
@@ -23,6 +26,9 @@ export class EntityManager {
   /** Shared across every enemy spawned by this manager (i.e. one per match) - see
    * engagementSlots.ts for why this needs to be shared rather than per-enemy. */
   private readonly engagementSlots = new EngagementSlots(ENEMY_MAX_CONCURRENT_ENGAGERS);
+  /** Seeded once per match (getWorldSeed()) so a given world's enemy loadout composition is
+   * reproducible - each spawnEnemy call advances the same stream, so spawn order matters too. */
+  private readonly pickArchetype = createArchetypePicker(getWorldSeed());
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -54,7 +60,8 @@ export class EntityManager {
   }
 
   spawnEnemy(position: THREE.Vector3): void {
-    const enemy = new Enemy(this.physics, position, this.enemyGltf, this.engagementSlots, this.enemyCombatHooks);
+    const archetype = this.pickArchetype();
+    const enemy = new Enemy(this.physics, position, this.enemyGltf, archetype, this.engagementSlots, this.enemyCombatHooks);
     this.scene.add(enemy.mesh);
     this.entities.push(enemy);
   }
@@ -97,5 +104,11 @@ export class EntityManager {
    * like targets, which have no state machine). */
   getLiveEntityStates(): (string | undefined)[] {
     return this.entities.map((entity) => entity.debugState);
+  }
+
+  /** Debug/test helper - per-archetype loadouts: which real archetype each live enemy actually got
+   * assigned (undefined for non-enemy entities like targets). */
+  getLiveEntityArchetypes(): (string | undefined)[] {
+    return this.entities.map((entity) => entity.debugArchetype);
   }
 }
