@@ -630,11 +630,30 @@ touching the sensor while holding forward suspends gravity and moves straight up
 forward until climbing naturally starts and ends, per-frame `grounded`/position confirmed stable
 afterward) landed on the roof and stayed there; the fifth didn't engage climbing within the test's
 timeout (alignment/timing, not a landing failure). Full smoke suite (16/16) and world-bounds green
-throughout. **Not yet independently re-confirmed by the user in normal (non-automated) play** after
-the width/mantle/handle-lock fixes above - the original report that prompted fix #2 was against the
-pre-fix version, so a fresh manual check would be worth doing before considering this fully closed.
-Deferred per user direction ("not game-breaking, doesn't affect future tasks") to keep moving on
-the larger enemy AI/weapon-variety overhaul next.
+throughout.
+
+**Follow-up verification (2026-07-05), re-run at higher volume:** re-tested against ~15 fresh
+teleport-and-climb trials across several different worlds/ladders. Roughly 60% climbed cleanly with
+sensible height gains matching the mantle formula (`groundY + height + PLAYER_HEIGHT/2 +
+LADDER_ROOF_CLEARANCE`). The remaining ~40% reproduced a real, distinct failure mode not covered by
+the fixes above: `climbing` flips to `true` (contact + forward held, as expected) but the player's Y
+position then stays frozen at the ladder's base indefinitely - `computeColliderMovement`'s returned
+`computed.y` is apparently ~0 even though `desiredMovement.y = LADDER_CLIMB_SPEED * dt` was requested
+every frame. Ruled out one candidate cause directly: an initial version of this re-test teleported
+the capsule to `wallFaceZ - 0.3` (0.1m *inside* the solid wall collider, given `PLAYER_RADIUS = 0.4`)
+which produced this exact symptom very reliably; moving the approach distance out to `wallFaceZ -
+0.45` (flush against the wall, no overlap - matching where a normally-walked-up player's capsule
+actually rests) reduced but did **not eliminate** the freeze, so wall overlap is a contributing factor
+at most, not the root cause. Suspect the Rapier `KinematicCharacterController`'s own slide/autostep
+resolution is, in some frames, treating the ladder's flat vertical wall as an obstruction to a
+pure-vertical move even without lateral input - worth a closer look at whether climbing should
+bypass `computeColliderMovement` entirely (direct `setNextKinematicTranslation`, the same pattern
+already used for the mantle) rather than routing vertical ladder movement through the general-purpose
+collision solver at all. **Not yet independently re-confirmed by the user in normal (non-automated)
+play** - deferred per user direction ("not game-breaking, doesn't affect future tasks") to keep
+moving through the rest of the todo list; a real player who gets stuck mid-climb can still exit by
+holding backward (release condition doesn't depend on the frozen movement working), so this isn't a
+hard-lock, just a bad climb.
 
 ## Enemy AI overhaul - design pass and Phase A: goal-directed patrol (2026-07-05)
 
