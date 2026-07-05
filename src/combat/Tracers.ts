@@ -14,17 +14,22 @@ export class Tracers {
   private readonly active: ActiveTracer[] = [];
   private readonly geometry: THREE.CylinderGeometry;
   private readonly material = new THREE.MeshBasicMaterial({ color: TRACER_COLOR });
+  private readonly materialsByColor = new Map<number, THREE.MeshBasicMaterial>();
 
   constructor(private readonly scene: THREE.Scene) {
     this.geometry = new THREE.CylinderGeometry(0.015, 0.015, TRACER_LENGTH, 6);
     this.geometry.rotateX(Math.PI / 2);
   }
 
-  spawn(start: THREE.Vector3, end: THREE.Vector3): void {
+  /** `color` defaults to the player's own tracer color - enemy fire (fair combat, Phase C) passes a
+   * distinct color so the player has a real visual signal of incoming shots, not just a health bar
+   * tick. */
+  spawn(start: THREE.Vector3, end: THREE.Vector3, color?: number): void {
     const distance = start.distanceTo(end);
     const duration = Math.max(0.03, distance / TRACER_SPEED);
 
-    const mesh = new THREE.Mesh(this.geometry, this.material);
+    const material = color === undefined ? this.material : this.materialFor(color);
+    const mesh = new THREE.Mesh(this.geometry, material);
     mesh.position.copy(start);
     mesh.lookAt(end);
     this.scene.add(mesh);
@@ -46,6 +51,15 @@ export class Tracers {
         this.active.splice(i, 1);
       }
     }
+  }
+
+  private materialFor(color: number): THREE.MeshBasicMaterial {
+    let material = this.materialsByColor.get(color);
+    if (!material) {
+      material = new THREE.MeshBasicMaterial({ color });
+      this.materialsByColor.set(color, material);
+    }
+    return material;
   }
 
   clear(): void {

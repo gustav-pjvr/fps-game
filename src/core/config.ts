@@ -57,7 +57,6 @@ export const ENEMY_HEALTH = 60;
 export const ENEMY_RADIUS = 0.45;
 export const ENEMY_HEIGHT = 1.7;
 export const ENEMY_SPEED = 2.5;
-export const ENEMY_STOP_DISTANCE = 3;
 export const ENEMY_ATTACK_RANGE = 3;
 export const ENEMY_ATTACK_DAMAGE = 8;
 export const ENEMY_ATTACK_INTERVAL = 1;
@@ -79,6 +78,33 @@ export const ENEMY_SEARCH_STOP_DISTANCE = 1.5;
 /** Re-checking LOS every frame is wasted raycasts once several enemies are chasing at once -
  * this is a per-enemy cadence, not a global one, so it doesn't create a single frame-spike. */
 export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
+
+/**
+ * Fair enemy ranged combat (enemy AI overhaul, Phase C). Once chasing and within ENEMY_RANGED_RANGE
+ * with a clear line-of-sight, an engaging enemy stops closing distance and fires real hitscan shots
+ * with a visible tracer - actual missed shots the player can see and react to, not a hidden
+ * hit-chance roll. Aim error is a real angular cone (not a fixed linear miss distance), so it widens
+ * with range for free - a given angular error covers more lateral distance the farther away the
+ * target is - and narrows the longer the enemy holds aim on an unbroken line of sight
+ * (ENEMY_AIM_ERROR_MAX_DEG -> ENEMY_AIM_ERROR_MIN_DEG over ENEMY_AIM_SETTLE_TIME), rewarding a
+ * player who breaks sightlines over one who stands still in the open. Below ENEMY_ATTACK_RANGE,
+ * ranged combat stands aside entirely for the existing melee attack - "falls back to melee at close
+ * range" from the design doc.
+ */
+export const ENEMY_RANGED_RANGE = 16;
+export const ENEMY_RANGED_DAMAGE = 6;
+export const ENEMY_RANGED_FIRE_INTERVAL = 0.5;
+export const ENEMY_RANGED_BURST_COUNT = 3;
+export const ENEMY_RANGED_BURST_PAUSE = 1.6;
+export const ENEMY_AIM_ERROR_MAX_DEG = 9;
+export const ENEMY_AIM_ERROR_MIN_DEG = 1.5;
+export const ENEMY_AIM_SETTLE_TIME = 2.5;
+/** Global cap (shared across every enemy in the match, see engagementSlots.ts) on how many can be
+ * actively firing at once - without it, every enemy that spots the player opens fire the instant
+ * it's in range, which reads as an unfair dogpile rather than a fight fought piece by piece. An
+ * enemy that can't get a slot still tracks/faces the player, it just doesn't shoot yet. */
+export const ENEMY_MAX_CONCURRENT_ENGAGERS = 2;
+export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
 
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which

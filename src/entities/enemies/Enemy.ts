@@ -7,9 +7,14 @@ import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
+import { castHitscan } from '../../combat/hitscan.ts';
 import { ACTIVE_ENEMY_ARCHETYPE } from './archetypes.ts';
 import { hasLineOfSight, pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
+import type { EngagementSlots } from './engagementSlots.ts';
 import {
+  ENEMY_AIM_ERROR_MAX_DEG,
+  ENEMY_AIM_ERROR_MIN_DEG,
+  ENEMY_AIM_SETTLE_TIME,
   ENEMY_ALERT_REACTION_TIME,
   ENEMY_ATTACK_DAMAGE,
   ENEMY_ATTACK_INTERVAL,
@@ -24,10 +29,14 @@ import {
   ENEMY_PATROL_SPEED,
   ENEMY_PATROL_STOP_DISTANCE,
   ENEMY_RADIUS,
+  ENEMY_RANGED_BURST_COUNT,
+  ENEMY_RANGED_BURST_PAUSE,
+  ENEMY_RANGED_DAMAGE,
+  ENEMY_RANGED_FIRE_INTERVAL,
+  ENEMY_RANGED_RANGE,
   ENEMY_SEARCH_DURATION,
   ENEMY_SEARCH_STOP_DISTANCE,
   ENEMY_SPEED,
-  ENEMY_STOP_DISTANCE,
   ENEMY_STUCK_EPSILON,
   ENEMY_STUCK_WINDOW,
   EYE_OFFSET,
@@ -35,6 +44,12 @@ import {
 } from '../../core/config.ts';
 
 export const ENEMY_MODEL_PATH = '/assets/models/enemies/character-male-a.glb';
+
+/** Fired once per enemy hitscan shot (hit or miss) - the game wires this to Tracers/ImpactMarkers/
+ * sound, matching how the player's own WeaponManager reports its shots. */
+export interface EnemyCombatHooks {
+  onRangedShotFired: (origin: THREE.Vector3, end: THREE.Vector3, hitPlayer: boolean) => void;
+}
 
 const HEAD_RADIUS = ENEMY_RADIUS * 0.55;
 const HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - HEAD_RADIUS;
@@ -53,12 +68,18 @@ type EnemyState = 'idle' | 'alert' | 'chase' | 'search';
  * Alert/chase/search (Phase B): detection requires both ENEMY_DETECTION_RANGE and a clear
  * line-of-sight raycast, not distance alone - a player behind a wall no longer gets "sensed"
  * through it. Spotting the player enters alert (a short stationary reaction beat, facing the
- * threat) before committing to chase, which beelines for them and attacks in range. Losing LOS
- * mid-chase (rather than just leashing out of range) drops to search - beelines the last-seen
- * position for ENEMY_SEARCH_DURATION before giving up back to idle, reading as "I saw you go around
- * that corner" instead of instantly forgetting the player. Getting further than ENEMY_LEASH_RANGE
- * away from any of alert/chase/search always drops straight back to idle (a wider radius than
- * detection, so it doesn't flicker between states right at the detection boundary).
+ * threat) before committing to chase. Losing LOS mid-chase (rather than just leashing out of range)
+ * drops to search - beelines the last-seen position for ENEMY_SEARCH_DURATION before giving up back
+ * to idle, reading as "I saw you go around that corner" instead of instantly forgetting the player.
+ * Getting further than ENEMY_LEASH_RANGE away from any of alert/chase/search always drops straight
+ * back to idle (a wider radius than detection, so it doesn't flicker right at the detection boundary).
+ *
+ * Chase itself (Phase C): beyond ENEMY_ATTACK_RANGE, closes distance until within ENEMY_RANGED_RANGE
+ * with a clear sightline, then stands and fires real hitscan shots with a visible tracer and a
+ * narrowing angular aim-error cone rather than a hidden hit-chance roll - see updateRangedCombat.
+ * Within ENEMY_ATTACK_RANGE, melee always wins regardless of gun (the "universal fallback" from the
+ * design doc, Phase D makes this a real weapon-style attack; for now it's the original flat-damage
+ * tick from Phase A/B, unchanged).
  *
  * Visuals are the real character-male-a.glb (Kenney "Mini Characters", CC0), animated with its
  * bundled "idle"/"walk" clips. Hit detection still uses the same invisible capsule+ball
@@ -87,6 +108,10 @@ export class Enemy implements Entity, Damageable {
    * checks don't all land on the same frame. */
   private losCheckTimer: number;
   private hasLineOfSightToPlayer = false;
+  private hasEngagementSlot = false;
+  private aimHoldTimer = 0;
+  private burstShotsFired = 0;
+  private burstCooldown = 0;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
   private readonly headCollider: RAPIER.Collider;
@@ -100,6 +125,8 @@ export class Enemy implements Entity, Damageable {
     private readonly physics: PhysicsWorld,
     position: THREE.Vector3,
     gltf: GLTF,
+    private readonly engagementSlots: EngagementSlots,
+    private readonly combatHooks: EnemyCombatHooks,
   ) {
     this.spawnPosition = position.clone();
     this.patrolDestination = position.clone();
@@ -230,9 +257,11 @@ export class Enemy implements Entity, Damageable {
       case 'chase':
         if (distanceToPlayer > ENEMY_LEASH_RANGE) {
           this.state = 'idle';
+          this.releaseEngagementSlot();
         } else if (!this.hasLineOfSightToPlayer) {
           this.state = 'search';
           this.searchTimer = ENEMY_SEARCH_DURATION;
+          this.releaseEngagementSlot();
         }
         break;
       case 'search':
@@ -256,15 +285,89 @@ export class Enemy implements Entity, Damageable {
     // for where the player actually was, not a stale position from several frames earlier.
     this.searchDestination.copy(player.position);
 
-    if (distanceToPlayer > ENEMY_STOP_DISTANCE) {
-      this.moveToward(player.position.x, player.position.z, ENEMY_SPEED, dt, current);
-    } else {
-      if (distanceToPlayer <= ENEMY_ATTACK_RANGE && this.attackCooldown <= 0 && !player.isDead) {
+    if (distanceToPlayer <= ENEMY_ATTACK_RANGE) {
+      // Melee always wins at close range regardless of gun (Phase D's "universal fallback"), so
+      // ranged combat stands aside entirely here rather than trying to also fire at point-blank.
+      this.releaseEngagementSlot();
+      this.aimHoldTimer = 0;
+      if (this.attackCooldown <= 0 && !player.isDead) {
         player.takeDamage(ENEMY_ATTACK_DAMAGE);
         this.attackCooldown = ENEMY_ATTACK_INTERVAL;
       }
       this.faceToward(player.position.x, player.position.z, current);
+    } else if (distanceToPlayer <= ENEMY_RANGED_RANGE && this.hasLineOfSightToPlayer) {
+      this.updateRangedCombat(dt, player, current);
+    } else {
+      this.releaseEngagementSlot();
+      this.aimHoldTimer = 0;
+      this.moveToward(player.position.x, player.position.z, ENEMY_SPEED, dt, current);
     }
+  }
+
+  /** Stands and fires real hitscan shots once in range with a clear sightline, instead of closing
+   * distance further - "fair" ranged combat (Phase C): a visible tracer per shot (hit or miss), an
+   * angular aim-error cone that narrows the longer the sightline holds, and a burst-then-pause
+   * cadence rather than a continuous stream. Gated by `engagementSlots` (ENEMY_MAX_CONCURRENT_
+   * ENGAGERS) so not every enemy that spots the player opens fire simultaneously - one that can't
+   * get a slot still tracks/faces the player, it just holds fire until one frees up. */
+  private updateRangedCombat(dt: number, player: Player, current: { x: number; y: number; z: number }): void {
+    this.faceToward(player.position.x, player.position.z, current);
+
+    if (!this.hasEngagementSlot) {
+      this.hasEngagementSlot = this.engagementSlots.tryAcquire(this.id);
+    }
+    if (!this.hasEngagementSlot) {
+      this.aimHoldTimer = 0;
+      return;
+    }
+
+    this.aimHoldTimer += dt;
+    this.burstCooldown -= dt;
+    if (this.burstCooldown > 0) return;
+
+    this.fireRangedShot(player, current);
+    this.burstShotsFired += 1;
+    if (this.burstShotsFired >= ENEMY_RANGED_BURST_COUNT) {
+      this.burstShotsFired = 0;
+      this.burstCooldown = ENEMY_RANGED_BURST_PAUSE;
+    } else {
+      this.burstCooldown = ENEMY_RANGED_FIRE_INTERVAL;
+    }
+  }
+
+  private fireRangedShot(player: Player, current: { x: number; y: number; z: number }): void {
+    const origin = new THREE.Vector3(current.x, current.y + HEAD_OFFSET_Y, current.z);
+    const target = player.position.clone();
+    target.y += EYE_OFFSET;
+
+    const direction = target.clone().sub(origin).normalize();
+
+    // A real angular cone, not a fixed linear miss distance - it widens with range "for free"
+    // (the same angular error covers more lateral distance the farther the target is) and narrows
+    // the longer the sightline has held (see ENEMY_AIM_SETTLE_TIME), same spread-by-two-axis-angle
+    // technique WeaponManager already uses for the player's own weapons.
+    const holdT = Math.min(1, this.aimHoldTimer / ENEMY_AIM_SETTLE_TIME);
+    const errorDeg = ENEMY_AIM_ERROR_MAX_DEG - (ENEMY_AIM_ERROR_MAX_DEG - ENEMY_AIM_ERROR_MIN_DEG) * holdT;
+    const errorRad = THREE.MathUtils.degToRad(errorDeg);
+    direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2 * errorRad);
+    direction.applyAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 2 * errorRad);
+
+    const maxRange = ENEMY_RANGED_RANGE + 5;
+    const hit = castHitscan(this.physics, origin, direction, maxRange, undefined, this.rigidBody);
+    const tracerEnd = hit ? hit.point : origin.clone().add(direction.multiplyScalar(maxRange));
+
+    const hitPlayer = hit?.colliderHandle === player.ownCollider.handle;
+    if (hitPlayer && !player.isDead) {
+      player.takeDamage(ENEMY_RANGED_DAMAGE);
+    }
+
+    this.combatHooks.onRangedShotFired(origin, tracerEnd, hitPlayer);
+  }
+
+  private releaseEngagementSlot(): void {
+    if (!this.hasEngagementSlot) return;
+    this.engagementSlots.release(this.id);
+    this.hasEngagementSlot = false;
   }
 
   /** Picks a fresh destination, moves toward it with whisker obstacle avoidance, and reroutes if
@@ -385,6 +488,7 @@ export class Enemy implements Entity, Damageable {
   }
 
   dispose(): void {
+    this.releaseEngagementSlot();
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.unregisterCollider(this.headCollider);
     this.physics.world.removeCollider(this.bodyCollider, true);

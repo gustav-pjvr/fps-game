@@ -845,9 +845,70 @@ with LOS now being a real geometric check rather than a distance formula - not c
 the sample size and that this is exactly the kind of variance a real sightline check should produce.
 Full smoke suite (16/16) green throughout.
 
-**Still to do (Phases C-E):** fair enemy ranged combat (the highest-stakes remaining piece - this
-phase deliberately didn't touch combat, only the state machine deciding *when* to engage), player
-knife + universal enemy melee fallback, and per-weapon archetype behavior differentiation.
+**Still to do at the time (Phases C-E):** fair enemy ranged combat (the highest-stakes remaining
+piece - this phase deliberately didn't touch combat, only the state machine deciding *when* to
+engage), player knife + universal enemy melee fallback, and per-weapon archetype behavior
+differentiation. Phase C below.
+
+### Phase C: fair enemy ranged combat (2026-07-05)
+
+**What changed.** Chase previously only ever beelined the player and did one thing once close
+enough: a flat-damage melee tick (`ENEMY_ATTACK_RANGE`, unchanged from Phase A). `updateChase` now
+splits into three distance bands:
+
+- **≤ `ENEMY_ATTACK_RANGE` (3):** melee, unchanged - "falls back to melee at close range" from the
+  design doc always wins here regardless of what the enemy would otherwise be doing.
+- **≤ `ENEMY_RANGED_RANGE` (16) with a clear line-of-sight (reusing Phase B's `hasLineOfSightToPlayer`):**
+  stops closing distance and fires real hitscan shots (`updateRangedCombat`/`fireRangedShot`) - a
+  visible tracer per shot whether it hits or misses, not a hidden hit-chance roll. Aim error is a
+  real angular cone applied via the same "rotate direction by two random axis-angles" technique
+  `WeaponManager.firePellet` already uses for the player's own weapons, which gets "widens with
+  range" for free - a fixed angular error covers more lateral miss distance the farther the target
+  is, no separate range multiplier needed. The cone narrows from `ENEMY_AIM_ERROR_MAX_DEG` (9°) to
+  `ENEMY_AIM_ERROR_MIN_DEG` (1.5°) over `ENEMY_AIM_SETTLE_TIME` (2.5s) of continuously held sightline
+  - rewards a player who breaks line of sight over one standing in the open. Fires in
+  `ENEMY_RANGED_BURST_COUNT` (3)-round bursts at `ENEMY_RANGED_FIRE_INTERVAL` (0.5s) apart, then
+  pauses `ENEMY_RANGED_BURST_PAUSE` (1.6s) - a cadence, not a continuous stream.
+- **Beyond `ENEMY_RANGED_RANGE`, or LOS blocked:** closes distance, same as before.
+- **New: a concurrent-engager cap.** `engagementSlots.ts` (new file) is a tiny shared counter -
+  one `EngagementSlots` instance per match, held by every `Enemy` - capping how many can hold a
+  "firing slot" at once (`ENEMY_MAX_CONCURRENT_ENGAGERS`, 2). An enemy that can't acquire a slot
+  still tracks/faces the player in range, it just holds fire until one frees up (another engager
+  dies, leashes off, or loses LOS) - without this, every enemy that spots the player opens fire
+  simultaneously the instant it's in range, which reads as an unfair dogpile rather than a fight
+  fought piece by piece. Slots are released on leaving chase (leash/LOS-loss), on melee engaging
+  (ranged stands aside entirely at that range), and on `dispose()`.
+- Enemy tracers render in a distinct color (`ENEMY_RANGED_TRACER_COLOR`, orange-red vs. the
+  player's own pale-yellow `TRACER_COLOR`) - `Tracers.spawn()` gained an optional `color` param
+  (lazily caches one extra material per distinct color used) so the player has a real visual tell
+  for incoming fire, directly serving "not a hidden roll" rather than decoration.
+
+**A real bug caught before ranged combat ever fired a shot: wrong exclusion, again.** First version
+of `fireRangedShot` excluded the enemy's body capsule from the hitscan, matching the pattern already
+used elsewhere in this file. Every shot reported a miss even standing right next to the player in
+the open - actually the *same* head-ball self-hit bug fixed for LOS earlier this phase, reintroduced
+in a second call site, since `castHitscan` didn't have the rigid-body exclusion the first time this
+function was written this session. Fixed the same way: pass `this.rigidBody` as `excludeRigidBody`
+instead of a single collider.
+
+**Verified:** a temporary e2e test placed the player 10 units from a live enemy (inside
+`ENEMY_RANGED_RANGE`, well outside `ENEMY_ATTACK_RANGE`) and confirmed the player actually took
+damage over time while the enemy's distance to the player stayed > 3 units throughout (i.e. it
+never closed to melee) - 6 of 7 runs passed; the one failure timed out before any damage landed,
+plausibly an aim-error miss streak or an LOS-blocking obstacle at that particular random world/spawn,
+consistent with the same kind of geometry-dependent variance Phase B's verification saw, not chased
+further for the same reason. Full smoke suite (16/16) green throughout.
+
+**Deliberately trimmed from the full design for this phase:** no explicit "widens with movement"
+term (only range + hold-time feed the cone - the angular-cone insight already covers range "for
+free," see above) and no repositioning/cover-seeking (`engage/reposition` from the original design
+doc's state list) - a stationary enemy that stops and returns fire once in range already reads as
+real ranged combat; cover-seeking would need real pathfinding this codebase doesn't have. Revisit in
+Phase E's tuning pass if it reads as too static in practice.
+
+**Still to do (Phases D-E):** player knife + universal enemy melee fallback (melee is currently still
+the Phase A/B flat-damage tick, not a real weapon-style attack), and per-weapon archetype behavior
+differentiation with seeded randomized enemy loadouts.
 
 ## Lobby redesign (2026-07-05)
 

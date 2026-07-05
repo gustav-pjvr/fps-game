@@ -3,8 +3,10 @@ import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Player } from './Player.ts';
 import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
-import { Enemy, ENEMY_MODEL_PATH } from './enemies/Enemy.ts';
+import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks } from './enemies/Enemy.ts';
+import { EngagementSlots } from './enemies/engagementSlots.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
+import { ENEMY_MAX_CONCURRENT_ENGAGERS } from '../core/config.ts';
 
 interface ManagedEntity {
   readonly mesh: THREE.Object3D;
@@ -18,6 +20,9 @@ interface ManagedEntity {
 /** Owns spawned targets/enemies: advances moving ones, and cleans up + reports kills once they die. */
 export class EntityManager {
   private readonly entities: ManagedEntity[] = [];
+  /** Shared across every enemy spawned by this manager (i.e. one per match) - see
+   * engagementSlots.ts for why this needs to be shared rather than per-enemy. */
+  private readonly engagementSlots = new EngagementSlots(ENEMY_MAX_CONCURRENT_ENGAGERS);
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -25,19 +30,21 @@ export class EntityManager {
     private readonly onKilled: (label: string) => void,
     private readonly targetGltf: GLTF,
     private readonly enemyGltf: GLTF,
+    private readonly enemyCombatHooks: EnemyCombatHooks,
   ) {}
 
   static async create(
     scene: THREE.Scene,
     physics: PhysicsWorld,
     onKilled: (label: string) => void,
+    enemyCombatHooks: EnemyCombatHooks,
   ): Promise<EntityManager> {
     const models = await preloadGLTFs([TARGET_MODEL_PATH, ENEMY_MODEL_PATH]);
     const targetGltf = models.get(TARGET_MODEL_PATH);
     const enemyGltf = models.get(ENEMY_MODEL_PATH);
     if (!targetGltf || !enemyGltf) throw new Error('Failed to preload target/enemy models');
 
-    return new EntityManager(scene, physics, onKilled, targetGltf, enemyGltf);
+    return new EntityManager(scene, physics, onKilled, targetGltf, enemyGltf, enemyCombatHooks);
   }
 
   spawnTarget(position: THREE.Vector3, facePoint: THREE.Vector3): void {
@@ -47,7 +54,7 @@ export class EntityManager {
   }
 
   spawnEnemy(position: THREE.Vector3): void {
-    const enemy = new Enemy(this.physics, position, this.enemyGltf);
+    const enemy = new Enemy(this.physics, position, this.enemyGltf, this.engagementSlots, this.enemyCombatHooks);
     this.scene.add(enemy.mesh);
     this.entities.push(enemy);
   }

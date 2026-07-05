@@ -25,7 +25,15 @@ import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
-import { ENEMY_RING_BASE_RADIUS, SPAWN_X, SPAWN_Z, SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z } from './config.ts';
+import {
+  ENEMY_RANGED_TRACER_COLOR,
+  ENEMY_RING_BASE_RADIUS,
+  SPAWN_X,
+  SPAWN_Z,
+  SUN_DIRECTION_X,
+  SUN_DIRECTION_Y,
+  SUN_DIRECTION_Z,
+} from './config.ts';
 import { getWorldSeed, randomizeWorldSeed } from './worldSeed.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
@@ -235,10 +243,24 @@ export class Game {
     );
 
     onProgress?.('Loading combatants…', 0.1);
-    const entityManager = await EntityManager.create(renderer.scene, physics, (label) => {
-      scoreState.value += 1;
-      killFeed.show(label);
-    });
+    const entityManager = await EntityManager.create(
+      renderer.scene,
+      physics,
+      (label) => {
+        scoreState.value += 1;
+        killFeed.show(label);
+      },
+      {
+        // hitPlayer damage/hurt-sound already happens inside Enemy.fireRangedShot via
+        // player.takeDamage (which itself triggers Player's onDamaged hook) - this callback is
+        // purely the cosmetic side (tracer/impact/gunshot), matching WeaponManager's own onFire wiring.
+        onRangedShotFired: (origin, end, hitPlayer) => {
+          tracers.spawn(origin, end, ENEMY_RANGED_TRACER_COLOR);
+          impactMarkers.spawn(end, hitPlayer);
+          sound.playGunshot('enemy-rifle');
+        },
+      },
+    );
 
     await Game.spawnEncountersAsync(entityManager, matchConfig.targetCount, matchConfig.enemyCount, (status, spawnRatio) => {
       onProgress?.(status, 0.15 + spawnRatio * 0.85);
