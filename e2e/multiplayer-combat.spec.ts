@@ -18,6 +18,19 @@ async function waitForMatchReady(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 20000 });
 }
 
+// Several candidate offsets to teleport the host to, relative to the opponent - see
+// multiplayer-matchend.spec.ts's identical KILL_ATTEMPT_OFFSETS for why a single fixed offset
+// isn't reliable: a fresh multiplayer seed generates different terrain/buildings around the same
+// relative spot every run, and the world shrinking (WORLD_SIZE_CHUNKS 6 -> 4, see NOTES.md) packs
+// obstructions closer to spawn than before, making this matter even for a close-range test like
+// this one, not just the longer-range kill-limit test that originally needed it.
+const APPROACH_OFFSETS: Array<[number, number]> = [
+  [12, 0],
+  [-12, 0],
+  [0, 12],
+  [0, -12],
+];
+
 /** Phase 3 of MULTIPLAYER_PLAN.md: fire/damage/death/respawn/score, all crossing the network for
  * real (two independent browser contexts, no mocking). Pistol deals 20 damage (100 max health) -
  * five landed shots kills.
@@ -39,7 +52,7 @@ async function waitForMatchReady(page: Page): Promise<void> {
  * damage/death sequence (100 -> 80 -> 60 -> 40 -> 20 -> 0) was always correct - the failure was
  * purely test overhead racing the respawn timer, not a product bug. */
 test('shooting the opponent damages, kills, respawns, and scores across the network', async ({ browser }) => {
-  test.setTimeout(90000);
+  test.setTimeout(150000);
 
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();
@@ -80,24 +93,32 @@ test('shooting the opponent damages, kills, respawns, and scores across the netw
   // teleporting straight down from a known-good spot avoids the project's known "teleport sideways
   // with a stale y goes stale" failure mode (see NOTES.md), and waiting for the fall to fully
   // settle *before* aiming avoids computing yaw/pitch against a position about to move out from
-  // under it.
-  await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.teleport(x + 12, y + 8, z), opponentPosition);
-  await hostPage.waitForTimeout(1000);
-
-  await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), opponentPosition);
-  // debugLookAt sets yaw/pitch; the camera quaternion only updates on the next fixed-timestep tick.
-  await hostPage.waitForTimeout(100);
-
-  // Pistol deals 20 damage, fire rate is 4/s (250ms cooldown) - five spaced shots kills exactly
-  // (100 max health); stops firing the instant health reaches 0 rather than always firing a fixed
-  // count, so there's no extra delay between the killing shot and the health check below racing
-  // the 3-second auto-respawn timer (see the class comment).
+  // under it. Retries from a different side if a whole round of shots misses - see
+  // APPROACH_OFFSETS's comment.
   let guestHealth = 100;
-  for (let i = 0; i < 6 && guestHealth > 0; i++) {
-    await hostPage.mouse.down();
-    await hostPage.mouse.up();
-    await hostPage.waitForTimeout(300);
-    guestHealth = (await guestPage.evaluate(() => window.__gameDebug?.getPlayerHealth())) ?? 100;
+  for (const [offsetX, offsetZ] of APPROACH_OFFSETS) {
+    await hostPage.evaluate(
+      ({ x, y, z, dx, dz }) => window.__gameDebug?.teleport(x + dx, y + 8, z + dz),
+      { ...opponentPosition, dx: offsetX, dz: offsetZ },
+    );
+    await hostPage.waitForTimeout(1000);
+
+    await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), opponentPosition);
+    // debugLookAt sets yaw/pitch; the camera quaternion only updates on the next fixed-timestep tick.
+    await hostPage.waitForTimeout(100);
+
+    // Pistol deals 20 damage, fire rate is 4/s (250ms cooldown) - five spaced shots kills exactly
+    // (100 max health); stops firing the instant health reaches 0 rather than always firing a fixed
+    // count, so there's no extra delay between the killing shot and the health check below racing
+    // the 3-second auto-respawn timer (see the class comment).
+    guestHealth = 100;
+    for (let i = 0; i < 6 && guestHealth > 0; i++) {
+      await hostPage.mouse.down();
+      await hostPage.mouse.up();
+      await hostPage.waitForTimeout(300);
+      guestHealth = (await guestPage.evaluate(() => window.__gameDebug?.getPlayerHealth())) ?? 100;
+    }
+    if (guestHealth <= 0) break;
   }
 
   // Health is authoritative on the guest's own client (MULTIPLAYER_PLAN.md §3/§6) - confirms the

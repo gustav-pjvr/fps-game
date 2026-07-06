@@ -1915,3 +1915,87 @@ deliberately left out of this pass (see below) rather than claimed as done.
 `e2e/multiplayer-match.spec.ts`/`multiplayer-combat.spec.ts` still green with the new
 `RemotePlayer.create()` async factory in place, confirming the skin swap didn't regress hit
 detection or movement sync. This commit deliberately excludes all ladder-related changes.
+
+## Second playtest round: facing flip, hit registration, damage feedback, dual HUD, minimap range,
+## map shrink (2026-07-06)
+
+More real bugs found by the user actually playing, plus three requested features and a second map
+shrink - same "test on real code, not just reasoning" discipline as every entry above.
+
+- **Opponent model faced backwards.** Not the model asset - a coordinate-convention mismatch.
+  `Player.facingYaw` is a *camera*-forward convention (yaw=0 means the camera faces -Z, per
+  `applyMovement`'s `forward = (0,0,-1).applyQuaternion(...)`), but the Kenney model faces +Z at
+  rotation.y=0 (the same convention `Enemy.ts`'s own `atan2(dx,dz)` facing logic already assumes).
+  Applying the raw camera yaw straight to `RemotePlayer.mesh.rotation.y` showed the model turned
+  exactly backwards from wherever the real player was actually looking. Fixed with a `+ Math.PI`
+  offset in `applySnapshot`. Verified with a real screenshot: teleported the host near the guest,
+  had the guest look directly at the host, and confirmed the host now sees the guest's face (visible
+  glasses/shirt front), not the back of their head as before.
+- **Hit registration was unreliable against a moving target, worst with the sniper at range, but
+  present with pistol/shotgun too (per the user: "we're just hitting each other, but it wasn't
+  registering... sometimes the bullets would register").** Two real, fixable causes, not an
+  inherent limit of the snapshot-sync model:
+  1. `RemotePlayer.update()` (advances its damped position and commits the new kinematic
+     translation) ran *after* `weaponManager.update()` in the same tick - every shot's raycast
+     checked a collider position that was a whole extra frame stale on top of the network sync lag
+     already inherent to snapshot-sync, for no reason. Moved earlier in `Game.update()` so the
+     collider is current for that same tick's own raycast.
+  2. Snapshot send rate (`PLAYER_SNAPSHOT_SEND_INTERVAL`, ~18Hz) and `RemotePlayer`'s damping rate
+     were both tuned assuming a slower, purely-cosmetic use of the data - at sprint speed (8
+     units/sec) the old ~55ms interval let real position drift up to ~0.44 units between updates,
+     close to the target's own 0.4-unit hit-radius, before damping's own further lag stacked on top.
+     Raised to 30Hz (~33ms) and damp rate 12 -> 18.
+  Verified with a new `e2e/multiplayer-moving-target.spec.ts` - the first combat test to fire at a
+  genuinely *moving* target (real held-key movement, not a stationary teleport); every earlier
+  combat test would have missed this whole bug class entirely. Deliberately doesn't assert "the
+  target always dies" - this environment's own per-step CDP round-trip overhead adds lag a real
+  mouse click never pays, so a strict kill-every-time bar would partly grade the test harness, not
+  the fix (same "don't let this sandbox's own performance quirks dictate an overclaimed pass/fail
+  bar" lesson as the ladder work below) - it checks that *some* hits land against real movement,
+  which is what the bug actually broke (real playtesting reported long zero-hit stretches).
+- **Hit acknowledgment (`DamageVignette`, new).** A faded red screen-edge vignette flashes briefly
+  every time the player takes damage, mirroring the existing `HitMarker` (which confirms *landing* a
+  hit) from the receiving side. Wired to `Player`'s existing `onDamaged` hook, which already fires
+  on every non-fatal `takeDamage` call regardless of source (enemy fire, network `damageEvent`) - one
+  injection point covers single-player and multiplayer both. Confirmed firing correctly via direct
+  polling (caught `opacity=1` mid-flash) - a single screenshot often missed it entirely, because this
+  environment's fixed-timestep catch-up loop can burn through the whole 0.4s fade's worth of ticks in
+  one burst before ever rendering a frame in between; unrelated to whether the feature works, a real
+  60fps session sees the full flash normally.
+- **Multiplayer HUD redesign (`MultiplayerHud`, new).** Replaces the single-player-shaped top-left
+  score text and bottom-left health bar (hidden via new `Hud.setScoreVisible`/`setHealthVisible`)
+  with a top-left pair of health bars (both players, not just your own) and a top-center scoreboard
+  bar. Opponent health piggybacks on their existing `playerSnapshot` message (`health` field added)
+  rather than a new message type - already sent at 30Hz, no reason to duplicate the delivery
+  mechanism for one more number. Verified with a screenshot: damaged the guest, confirmed the host's
+  screen showed "OPPONENT 55" with a proportionally-drained bar within ~1.5s.
+- **Minimap radius, round 2.** Raised 120 -> 220 in the very first playtest-fixes round (see above)
+  when spawns were still ~280 units apart; brought back down to 90 in *this* round once the map
+  shrink below pulled spawns to ~70 units apart - 220 would have made the *entire* shrunk world fit
+  inside a small fraction of the minimap's represented range, the opposite failure mode (too little
+  dot-movement resolution) from the one the original fix addressed.
+- **Map shrunk again, `WORLD_SIZE_CHUNKS` 6 -> 4**, per user request for a tighter 1v1 arena -
+  flagged the real consequence *before* implementing, unlike the WORLD_SIZE_CHUNKS=7 mistake earlier
+  in this project's history: the zone-placement ceiling (`ZONE_EDGE_MARGIN` already at its
+  established safe floor of 5) only allows ~17.5-unit zones at 4 chunks, a real ~70% cut from the
+  6-chunk world's 40-60/45-65 ranges, not a mild trim. User's own suggestion - growing zones
+  organically outward from a point until hitting a boundary, instead of a fixed-radius disc checked
+  against both boundaries - is a genuinely promising way to reclaim some of that loss (an irregular
+  footprint can pack more usable area into a tight annulus than a circle constrained to fit its
+  narrowest dimension), but it would touch terrain flattening's falloff too, not just placement, so
+  it's a system rework earmarked for its own pass, not folded into this one. For now: `FLAT_ZONE_
+  RADIUS_MIN/MAX` and `FOREST_ZONE_RADIUS_MIN/MAX` cut to 10-16 (both, from 40-60/45-65), their cell
+  sizes shrunk proportionally (230->50, 200->45) so a full grid of cells still fits across the
+  smaller world instead of only one or two, and `MULTIPLAYER_SPAWN_A/B_X` pulled in from +/-140 to
+  +/-35 (now ~70 units apart, actually *closer* combat than before - fits the "tighter arena" goal).
+  Confirmed visually (not just via the ceiling arithmetic): an overhead screenshot of a generated
+  town shows a real, functional 5-6-building cluster - clearly smaller than before, but not broken
+  or empty.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green (including `ZoneMap.test.ts`'s
+guaranteed-site invariants across many seeds, unaffected by the radius/cell-size retune).
+`e2e/world-bounds.spec.ts` and `e2e/multiplayer-match.spec.ts` green at the new world size.
+`e2e/multiplayer-combat.spec.ts`/`multiplayer-matchend.spec.ts`/`multiplayer-moving-target.spec.ts`
+re-run green after the spawn-point change, confirming combat/win-condition/rematch flows aren't
+sensitive to the exact spawn distance. Two overhead/close-up screenshots (opponent facing, shrunk
+town) used to confirm real visual outcomes rather than trusting the underlying math alone.
