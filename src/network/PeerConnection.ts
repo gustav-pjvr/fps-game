@@ -7,6 +7,48 @@ import { isNetworkMessage, type NetworkMessage } from './protocol.ts';
  * unrelated app's peer IDs. Never shown to the player - only the code after it is. */
 const ROOM_ID_PREFIX = 'fpsgame-';
 
+/** How long to wait for TURN credentials (see buildIceServers) before giving up and connecting
+ * with just the defaults below - a slow or unreachable endpoint must never meaningfully delay room
+ * creation, since PeerJS's own defaults already work for most network pairings (extra TURN options
+ * are a fallback for the ones they don't). */
+const TURN_FETCH_TIMEOUT_MS = 2000;
+
+/** PeerJS's own built-in default (mirrored here, not imported - it's internal to the library, not
+ * part of its public API) - one Google STUN server plus a shared public TURN relay
+ * (turn.peerjs.com) it already ships with. Passing a `config` to `new Peer(...)` at all
+ * *replaces* PeerJS's own default entirely rather than merging with it (confirmed by reading
+ * PeerJS's source - `config` is forwarded as-is to `RTCPeerConnection`), so any additional ICE
+ * servers this app wants to offer (see fetchIceServers) have to be explicitly combined with these,
+ * never just appended on top of "whatever PeerJS would have used by default" - that default stops
+ * existing the moment `config` is set at all. */
+const PEERJS_DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+];
+
+/** Fetches *additional* TURN relay credentials from this app's own Netlify function
+ * (netlify/functions/turn-credentials.mts), which proxies Metered.ca's free tier server-side so
+ * the API key never reaches the client - combined with PEERJS_DEFAULT_ICE_SERVERS (never in place
+ * of them) into the full list passed to `new Peer(...)`. Falls back to just the defaults on any
+ * failure: no function deployed (e.g. local `vite dev`, which doesn't run Netlify functions at
+ * all), no credentials configured yet, a timeout, or Metered's API being down - this is a fallback
+ * path for network pairings PeerJS's own defaults can't traverse (MULTIPLAYER_PLAN.md §2/§7), never
+ * a hard dependency for connecting at all. */
+async function buildIceServers(): Promise<RTCIceServer[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TURN_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch('/.netlify/functions/turn-credentials', { signal: controller.signal });
+    if (!response.ok) return PEERJS_DEFAULT_ICE_SERVERS;
+    const data = (await response.json()) as { iceServers?: RTCIceServer[] };
+    return [...PEERJS_DEFAULT_ICE_SERVERS, ...(data.iceServers ?? [])];
+  } catch {
+    return PEERJS_DEFAULT_ICE_SERVERS;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const CODE_LENGTH = 6;
 /** Alphanumeric only (PeerJS peer IDs must start/end alphanumeric), excluding visually ambiguous
  * characters (0/O, 1/I/L) since a room code gets read aloud or typed by hand between two people. */
@@ -47,17 +89,21 @@ export class PeerConnection {
     peer.on('error', (error) => this.callbacks.onError(describePeerError(error)));
   }
 
-  /** Registers this browser under the room code and waits for the guest to connect. */
-  static hostRoom(code: string, callbacks: PeerConnectionCallbacks): PeerConnection {
-    const peer = new Peer(ROOM_ID_PREFIX + code);
+  /** Registers this browser under the room code and waits for the guest to connect. Async only
+   * because of the TURN credential fetch (see buildIceServers) - bounded by
+   * TURN_FETCH_TIMEOUT_MS, so this never hangs room creation waiting on it. */
+  static async hostRoom(code: string, callbacks: PeerConnectionCallbacks): Promise<PeerConnection> {
+    const iceServers = await buildIceServers();
+    const peer = new Peer(ROOM_ID_PREFIX + code, { config: { iceServers } });
     const instance = new PeerConnection(peer, callbacks);
     peer.on('connection', (connection) => instance.attachConnection(connection));
     return instance;
   }
 
   /** Connects to an existing room by code. */
-  static joinRoom(code: string, callbacks: PeerConnectionCallbacks): PeerConnection {
-    const peer = new Peer();
+  static async joinRoom(code: string, callbacks: PeerConnectionCallbacks): Promise<PeerConnection> {
+    const iceServers = await buildIceServers();
+    const peer = new Peer({ config: { iceServers } });
     const instance = new PeerConnection(peer, callbacks);
     // Must wait for our own peer to finish registering with the broker before connecting outward -
     // connecting before `open` fires would queue on a socket that isn't ready yet.

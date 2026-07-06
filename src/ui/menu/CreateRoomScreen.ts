@@ -17,6 +17,11 @@ export class CreateRoomScreen {
   private readonly statusText: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
   private connection: PeerConnection | null = null;
+  /** Bumped by show()/close() - PeerConnection.hostRoom is async now (the TURN credential fetch),
+   * so a Cancel click can land while a hostRoom() call is still in flight. Without this, that
+   * in-flight call would resolve *after* close() and incorrectly resurrect `this.connection`,
+   * leaking a PeerJS peer this screen no longer thinks it owns. */
+  private showGeneration = 0;
 
   constructor(
     root: HTMLElement,
@@ -101,7 +106,8 @@ export class CreateRoomScreen {
     this.codeDisplay.textContent = code;
     this.setStatus('Waiting for the other player to join…');
 
-    this.connection = PeerConnection.hostRoom(code, {
+    const generation = ++this.showGeneration;
+    void PeerConnection.hostRoom(code, {
       onConnected: () => {
         this.setStatus('Connected! Verifying the connection…');
         this.connection?.send({ type: 'hello' });
@@ -114,6 +120,15 @@ export class CreateRoomScreen {
           this.startButton.style.display = 'block';
         }
       },
+    }).then((connection) => {
+      // This screen moved on (closed, or reopened as a fresh attempt) while the TURN credential
+      // fetch was still in flight - the just-created connection is now an orphan, not this
+      // attempt's connection, and must be disposed rather than assigned.
+      if (generation !== this.showGeneration) {
+        connection.dispose();
+        return;
+      }
+      this.connection = connection;
     });
   }
 
@@ -144,6 +159,7 @@ export class CreateRoomScreen {
   }
 
   private close(): void {
+    this.showGeneration++;
     this.connection?.dispose();
     this.connection = null;
     this.overlay.style.display = 'none';
@@ -151,6 +167,7 @@ export class CreateRoomScreen {
   }
 
   dispose(): void {
+    this.showGeneration++;
     this.connection?.dispose();
     this.overlay.remove();
   }

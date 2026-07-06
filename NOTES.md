@@ -2027,3 +2027,54 @@ with `MULTIPLAYER_SPAWN_POINTS` (a 6-point ring at the same 35-unit distance) in
 flaked once mid-batch on an already-known, pre-existing line-of-sight retry pattern - see that
 test's own history earlier in this file - and passed cleanly re-run alone immediately after, so
 treated as the established flake, not a new regression from this change).
+
+## TURN server fallback for cross-network multiplayer (2026-07-06)
+
+User report: joining a room from a different network/device than the host got stuck at
+"connecting…" indefinitely. Root cause understood, not (yet) confirmed fixed live: WebRTC needs a
+direct P2P path between the two browsers, and some NAT/firewall combinations can't establish one
+with STUN alone - a TURN relay server is the standard fallback, but there's no custom "detect same
+network, pick STUN vs TURN" logic to write; ICE already tries every candidate (direct, STUN,
+TURN) automatically and uses whichever works, once TURN servers are actually offered as options.
+
+- **A real discovery while implementing this: PeerJS already ships a default TURN relay**
+  (`turn.peerjs.com`, shared public credentials) alongside Google's STUN server - this game was
+  never purely STUN-only to begin with. Confirmed by reading PeerJS's own source
+  (`DEFAULT_CONFIG` in its bundle), not assumed. Whatever caused the user's stuck connection might
+  already be addressed by that existing relay in most cases; this change adds a *second*,
+  independent TURN option on top, for the cases where even PeerJS's own relay can't be reached.
+- **`netlify/functions/turn-credentials.mts` (new)** proxies Metered.ca's free-tier TURN credential
+  API server-side, so the API key never reaches the client bundle - a client-side fetch straight to
+  Metered's API would need the key embedded in shipped JS, readable by anyone. Returns an empty
+  `iceServers` array (not an error) if `METERED_API_KEY`/`METERED_APP_NAME` aren't set as Netlify
+  environment variables, so multiplayer keeps working exactly as before until those are configured.
+- **`PeerConnection.hostRoom`/`joinRoom` are now async**, fetching this extra TURN option (bounded
+  by a 2-second timeout, so a slow/unreachable endpoint can't meaningfully delay room creation)
+  before constructing the underlying `Peer`. A real subtlety caught before shipping, not after:
+  passing a `config` to `new Peer(...)` at all *replaces* PeerJS's own default ICE server list
+  rather than merging with it (confirmed by reading PeerJS's source) - naively setting
+  `config: { iceServers: [...fetched] }` would have *removed* the default STUN/TURN the moment this
+  shipped, making connections *less* reliable whenever Metered isn't configured (an empty array) or
+  down, not more. Fixed by explicitly combining `PEERJS_DEFAULT_ICE_SERVERS` (mirrored from PeerJS's
+  own source) with whatever Metered.ca contributes, always - never in place of the defaults.
+- **Room screens updated for the new async gap.** `CreateRoomScreen.show()`/`JoinRoomScreen.
+  attemptJoin()` used to assign `this.connection` synchronously from `hostRoom`/`joinRoom`'s return
+  value; now that both are promises, a Cancel click (or a repeat Join click) can land while one is
+  still in flight. Without a guard, that in-flight call resolving *after* the screen already moved
+  on would incorrectly resurrect `this.connection` and leak an orphaned PeerJS peer. Fixed with a
+  generation counter on each screen, bumped on every show()/close()/dispose() - a resolved
+  connection whose generation no longer matches gets disposed immediately instead of assigned.
+- **Still needs the user to actually activate it** - this is plumbing, not yet a working relay:
+  sign up free at Metered.ca (20GB/month), then set `METERED_API_KEY`/`METERED_APP_NAME` as
+  environment variables in Netlify's dashboard (never committed to this repo). Until then, the
+  function returns an empty array and behavior is unchanged from before this pass - verified
+  locally, where no Netlify function runs at all (`vite dev` doesn't serve `netlify/functions/`),
+  exercising the exact same fallback path a misconfigured or down Metered account would hit.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green, `npm run build` (which runs the
+same `tsc --noEmit` the Netlify build itself does) succeeds. `e2e/multiplayer.spec.ts` (both create
+and join flows) and `e2e/multiplayer-match.spec.ts` green - directly exercising the new async
+`hostRoom`/`joinRoom` path and its STUN/peerjs-TURN-only fallback (no Metered credentials
+configured in this environment), since that's the path every developer/CI run will actually take
+until the user finishes the Metered.ca signup. The actual Metered relay path itself is unverifiable
+from here - it needs the user's own account and a real cross-network test.

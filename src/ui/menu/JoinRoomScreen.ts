@@ -13,6 +13,11 @@ export class JoinRoomScreen {
   private readonly joinButton: HTMLButtonElement;
   private readonly statusText: HTMLDivElement;
   private connection: PeerConnection | null = null;
+  /** Bumped by attemptJoin()/close() - PeerConnection.joinRoom is async now (the TURN credential
+   * fetch), so a repeat Join click or a Cancel can land while an earlier joinRoom() call is still
+   * in flight. Without this, that in-flight call would resolve *after* this screen moved on and
+   * incorrectly resurrect `this.connection`, leaking a PeerJS peer this screen no longer owns. */
+  private joinGeneration = 0;
 
   constructor(
     root: HTMLElement,
@@ -89,7 +94,8 @@ export class JoinRoomScreen {
     this.joinButton.disabled = true;
     this.setStatus('Connecting…');
 
-    this.connection = PeerConnection.joinRoom(code, {
+    const generation = ++this.joinGeneration;
+    void PeerConnection.joinRoom(code, {
       onConnected: () => {
         this.setStatus('Connected! Verifying the connection…');
         this.connection?.send({ type: 'hello' });
@@ -113,6 +119,15 @@ export class JoinRoomScreen {
           });
         }
       },
+    }).then((connection) => {
+      // This screen moved on (closed, or a repeat Join click superseded this attempt) while the
+      // TURN credential fetch was still in flight - dispose the now-orphaned connection rather
+      // than assigning it.
+      if (generation !== this.joinGeneration) {
+        connection.dispose();
+        return;
+      }
+      this.connection = connection;
     });
   }
 
@@ -130,6 +145,7 @@ export class JoinRoomScreen {
   }
 
   private close(): void {
+    this.joinGeneration++;
     this.connection?.dispose();
     this.connection = null;
     this.joinButton.disabled = false;
@@ -138,6 +154,7 @@ export class JoinRoomScreen {
   }
 
   dispose(): void {
+    this.joinGeneration++;
     this.connection?.dispose();
     this.overlay.remove();
   }
