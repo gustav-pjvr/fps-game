@@ -1,0 +1,87 @@
+import { test, expect, type Page } from '@playwright/test';
+import { lockPointer, openPauseMenu } from './helpers.ts';
+
+declare global {
+  interface Window {
+    __gameDebug?: {
+      getPlayerHealth(): number;
+      getOpponentPosition(): { x: number; y: number; z: number } | null;
+      isPointerLocked(): boolean;
+      lookAt(x: number, y: number, z: number): void;
+      teleport(x: number, y: number, z: number): void;
+    };
+  }
+}
+
+async function waitForMatchReady(page: Page): Promise<void> {
+  await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 20000 });
+}
+
+/** Real exploit reported during playtesting: pausing (releasing pointer lock) used to freeze
+ * *all* of Game's per-tick logic, including applying already-arrived network damage and the
+ * death transition that reports a kill - so a paused player took no damage and could not die
+ * no matter how many hits actually landed, until they unpaused. A player could sit in the pause
+ * menu indefinitely and be functionally invincible. Fixed by letting network damage/death/respawn
+ * keep flowing while paused in multiplayer specifically (local movement/shooting/AI still freeze -
+ * see Game.ts's update()); single-player still freezes everything, since nothing else is "live"
+ * to exploit there. */
+test('pausing does not grant invincibility in multiplayer - damage still applies and kills while paused', async ({ browser }) => {
+  test.setTimeout(90000);
+
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  const hostPage = await hostContext.newPage();
+  const guestPage = await guestContext.newPage();
+
+  await hostPage.goto('/');
+  await hostPage.getByRole('button', { name: 'MULTIPLAYER', exact: true }).click();
+  await hostPage.getByRole('button', { name: 'Create Room', exact: true }).click();
+
+  const codeLocator = hostPage.locator('div').filter({ hasText: /^[A-Z2-9]{6}$/ }).last();
+  await codeLocator.waitFor({ state: 'visible', timeout: 10000 });
+  const code = await codeLocator.textContent();
+  if (!code) throw new Error('room code never appeared');
+
+  await guestPage.goto('/');
+  await guestPage.getByRole('button', { name: 'MULTIPLAYER', exact: true }).click();
+  await guestPage.getByRole('button', { name: 'Join Room', exact: true }).click();
+  await guestPage.getByPlaceholder('ABCDEF').fill(code);
+  await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
+
+  const startButton = hostPage.getByRole('button', { name: 'Start Match', exact: true });
+  await startButton.waitFor({ state: 'visible', timeout: 20000 });
+  await startButton.click();
+
+  await waitForMatchReady(hostPage);
+  await waitForMatchReady(guestPage);
+  await lockPointer(hostPage);
+  await lockPointer(guestPage);
+
+  // The guest pauses and stays paused for the rest of the test - the exact scenario reported: a
+  // player sitting in the pause menu while the opponent keeps shooting.
+  await openPauseMenu(guestPage);
+  expect(await guestPage.evaluate(() => window.__gameDebug?.isPointerLocked())).toBe(false);
+
+  const opponentPosition = await hostPage.evaluate(() => window.__gameDebug?.getOpponentPosition());
+  if (!opponentPosition) throw new Error('host has no opponent position yet');
+
+  await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.teleport(x + 12, y + 8, z), opponentPosition);
+  await hostPage.waitForTimeout(1000);
+  await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), opponentPosition);
+  await hostPage.waitForTimeout(100);
+
+  let guestHealth = 100;
+  for (let i = 0; i < 6 && guestHealth > 0; i++) {
+    await hostPage.mouse.down();
+    await hostPage.mouse.up();
+    await hostPage.waitForTimeout(300);
+    guestHealth = (await guestPage.evaluate(() => window.__gameDebug?.getPlayerHealth())) ?? 100;
+  }
+
+  // Checked while STILL paused - the whole point is that this must not require unpausing first.
+  expect(await guestPage.evaluate(() => window.__gameDebug?.isPointerLocked())).toBe(false);
+  expect(guestHealth).toBeLessThanOrEqual(0);
+
+  await hostContext.close();
+  await guestContext.close();
+});

@@ -470,25 +470,26 @@ export class Game {
     // opponentSpawn is non-null exactly when multiplayer is present (see the destructure above) -
     // the RemotePlayer's initial position doesn't need to wait for a first network snapshot,
     // since both sides already know where the opponent starts.
-    const activeMultiplayer: ActiveMultiplayer | null =
-      multiplayer && opponentSpawn
-        ? {
-            session: multiplayer,
-            remotePlayer: new RemotePlayer(
-              physics,
-              renderer.scene,
-              new THREE.Vector3(opponentSpawn.x, sampleHeight(opponentSpawn.x, opponentSpawn.y) + SPAWN_HEIGHT_OFFSET, opponentSpawn.y),
-              // The opponent's own client is what actually applies this to its health - see the
-              // class comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
-              (amount) => multiplayer.connection.send({ type: 'damageEvent', amount }),
-            ),
-            minimap: new Minimap(hudRoot),
-            ownSpawn,
-            killLimit: multiplayer.killLimit,
-            snapshotAccumulator: 0,
-            deathTimer: 0,
-          }
-        : null;
+    let activeMultiplayer: ActiveMultiplayer | null = null;
+    if (multiplayer && opponentSpawn) {
+      const remotePlayer = await RemotePlayer.create(
+        physics,
+        renderer.scene,
+        new THREE.Vector3(opponentSpawn.x, sampleHeight(opponentSpawn.x, opponentSpawn.y) + SPAWN_HEIGHT_OFFSET, opponentSpawn.y),
+        // The opponent's own client is what actually applies this to its health - see the class
+        // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
+        (amount) => multiplayer.connection.send({ type: 'damageEvent', amount }),
+      );
+      activeMultiplayer = {
+        session: multiplayer,
+        remotePlayer,
+        minimap: new Minimap(hudRoot),
+        ownSpawn,
+        killLimit: multiplayer.killLimit,
+        snapshotAccumulator: 0,
+        deathTimer: 0,
+      };
+    }
 
     const hud = new Hud(hudRoot);
     const hotbar = new Hotbar(hudRoot);
@@ -804,12 +805,19 @@ export class Game {
     // cases should show the pause menu and freeze simulation. Death has its own overlay instead.
     const isPaused = !this.input.isLocked && !this.player.isDead;
     this.pauseMenu.setVisible(isPaused);
-    if (isPaused) {
+
+    // Single-player can freeze everything unconditionally while paused - nothing else is "live"
+    // to notice. Multiplayer can't: the opponent's client keeps running and keeps sending
+    // damageEvent/playerDied regardless of this client's own pause state, so pausing must never be
+    // a way to dodge incoming damage - without this exception, all queued damage would just pile
+    // up unapplied and land in one lump the instant the player unpaused, meaning they could simply
+    // never unpause to become effectively unkillable while still looking alive to the opponent.
+    if (isPaused && !this.multiplayer) {
       this.input.consumeLookDelta();
       return;
     }
 
-    if (this.input.consumeJustPressed('resetPlay')) {
+    if (!isPaused && this.input.consumeJustPressed('resetPlay')) {
       this.resetPlay();
     }
 
@@ -825,8 +833,10 @@ export class Game {
       this.pendingDebugDamage = 0;
     }
 
-    if (this.player.isDead) {
-      // Keep draining look input so it doesn't build up a stale jump in camera angle on respawn.
+    if (this.player.isDead || isPaused) {
+      // Keep draining look input so it doesn't build up a stale jump in camera angle on
+      // respawn/unpause. Also covers the multiplayer-paused case above: local simulation (movement,
+      // shooting, AI) stays frozen while paused - only network damage/death/respawn keeps flowing.
       this.input.consumeLookDelta();
     } else {
       this.player.update(dt, this.input);

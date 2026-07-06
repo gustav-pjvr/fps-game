@@ -1,9 +1,12 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { allocateEntityId, type Entity } from './Entity.ts';
 import type { Damageable } from '../combat/damage.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../core/config.ts';
+import { ENEMY_MODEL_PATH } from './enemies/Enemy.ts';
+import { loadGLTF } from '../core/AssetLoader.ts';
 
 /** How quickly the visual mesh catches up to the latest received snapshot (MathUtils.damp's rate
  * parameter - larger closes the gap faster). Deliberately a damped follow rather than true
@@ -15,11 +18,21 @@ import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../core/config.ts';
 const POSITION_DAMP_RATE = 12;
 const ROTATION_DAMP_RATE = 12;
 
+/** Same model Enemy.ts uses (Kenney "Mini Characters", CC0) - the only downloaded character skin
+ * this project has; there's no separate "player" model since the local player never sees their own
+ * body (first-person). Reusing it means the opponent finally looks like an actual character
+ * instead of the flat-red capsule placeholder this used to be. */
+const MODEL_BIND_HEIGHT = 0.671;
+const MODEL_SCALE = PLAYER_HEIGHT / MODEL_BIND_HEIGHT;
+
+/** Below this squared distance moved in a frame, treat the opponent as standing still rather than
+ * walking - damping technically never reaches exactly zero, so a raw "moved at all" check would
+ * flicker between idle/walk while the opponent is stationary and floating-point noise nudges the
+ * damped position by a hair each frame. */
+const MOVING_THRESHOLD_SQ = 0.0004;
+
 /** The opponent, as this client sees them - never simulated locally (no physics, no input), purely
- * a mesh driven by whatever the network last reported. See MULTIPLAYER_PLAN.md §3/§5. Visual is a
- * plain capsule placeholder for now, sized to match the local player's own collision capsule
- * (PLAYER_HEIGHT/PLAYER_RADIUS) - a real character model is a later polish pass, not required to
- * prove the sync mechanism.
+ * a mesh driven by whatever the network last reported. See MULTIPLAYER_PLAN.md §3/§5.
  *
  * Implements Damageable so WeaponManager's existing hitscan pipeline (isDamageable/takeDamage)
  * needs zero changes to hit this - but `takeDamage` doesn't apply damage locally at all: this
@@ -32,34 +45,47 @@ const ROTATION_DAMP_RATE = 12;
 export class RemotePlayer implements Entity, Damageable {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
-  readonly mesh: THREE.Mesh;
+  readonly mesh: THREE.Group;
 
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly collider: RAPIER.Collider;
 
+  private readonly mixer: THREE.AnimationMixer;
+  private readonly idleAction: THREE.AnimationAction | undefined;
+  private readonly walkAction: THREE.AnimationAction | undefined;
+  private isMoving = false;
+
   private targetPosition: THREE.Vector3;
   private targetYaw: number;
 
-  constructor(
+  private constructor(
     private readonly physics: PhysicsWorld,
     scene: THREE.Scene,
     initialPosition: THREE.Vector3,
+    model: THREE.Group,
+    mixer: THREE.AnimationMixer,
+    idleAction: THREE.AnimationAction | undefined,
+    walkAction: THREE.AnimationAction | undefined,
     private readonly onHit: (amount: number) => void,
   ) {
-    const geometry = new THREE.CapsuleGeometry(PLAYER_RADIUS, PLAYER_HEIGHT - PLAYER_RADIUS * 2, 4, 8);
-    const material = new THREE.MeshStandardMaterial({ color: 0xd9483c, roughness: 0.7 });
-    this.mesh = new THREE.Mesh(geometry, material);
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
+    this.mesh = new THREE.Group();
+    this.mesh.add(model);
     this.mesh.position.copy(initialPosition);
     scene.add(this.mesh);
+
+    this.mixer = mixer;
+    this.idleAction = idleAction;
+    this.walkAction = walkAction;
+    this.idleAction?.play();
 
     this.targetPosition = initialPosition.clone();
     this.targetYaw = 0;
 
     // Kinematic, not simulated - this body only ever gets pushed to wherever the mesh already is
     // (see update()), it never falls, collides, or reacts to anything itself. It exists purely so
-    // other colliders (the local player's hitscan raycasts) have something real to hit.
+    // other colliders (the local player's hitscan raycasts) have something real to hit. Sized to
+    // match the local player's own collision capsule (PLAYER_HEIGHT/PLAYER_RADIUS), not the visual
+    // model's own silhouette - the model is cosmetic only, same as Enemy's.
     const cylinderHalfHeight = PLAYER_HEIGHT / 2 - PLAYER_RADIUS;
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       initialPosition.x,
@@ -70,6 +96,39 @@ export class RemotePlayer implements Entity, Damageable {
     const colliderDesc = RAPIER.ColliderDesc.capsule(cylinderHalfHeight, PLAYER_RADIUS);
     this.collider = physics.world.createCollider(colliderDesc, this.rigidBody);
     physics.registerCollider(this.collider, this);
+  }
+
+  /** Async because the model has to be loaded (and cached - see AssetLoader.loadGLTF, shared with
+   * Enemy so a match only ever fetches character-male-a.glb once regardless of how many
+   * enemies/opponents end up using it). */
+  static async create(
+    physics: PhysicsWorld,
+    scene: THREE.Scene,
+    initialPosition: THREE.Vector3,
+    onHit: (amount: number) => void,
+  ): Promise<RemotePlayer> {
+    const gltf = await loadGLTF(ENEMY_MODEL_PATH);
+
+    // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - see Enemy.ts's
+    // identical comment; a plain clone would leave this instance's bones pointing at Enemy's (or
+    // any other clone's) shared skeleton.
+    const model = cloneSkeleton(gltf.scene) as THREE.Group;
+    model.scale.setScalar(MODEL_SCALE);
+    model.position.y = -PLAYER_HEIGHT / 2; // model origin is at its feet; group origin is capsule-center
+    model.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    const mixer = new THREE.AnimationMixer(model);
+    const idleClip = gltf.animations.find((clip) => clip.name === 'idle');
+    const walkClip = gltf.animations.find((clip) => clip.name === 'walk');
+    const idleAction = idleClip ? mixer.clipAction(idleClip) : undefined;
+    const walkAction = walkClip ? mixer.clipAction(walkClip) : undefined;
+
+    return new RemotePlayer(physics, scene, initialPosition, model, mixer, idleAction, walkAction, onHit);
   }
 
   /** Always false from this client's perspective - it has no authority over the opponent's health
@@ -100,11 +159,26 @@ export class RemotePlayer implements Entity, Damageable {
   }
 
   update(dt: number): void {
+    const previousX = this.mesh.position.x;
+    const previousZ = this.mesh.position.z;
+
     this.mesh.position.x = THREE.MathUtils.damp(this.mesh.position.x, this.targetPosition.x, POSITION_DAMP_RATE, dt);
     this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, this.targetPosition.y, POSITION_DAMP_RATE, dt);
     this.mesh.position.z = THREE.MathUtils.damp(this.mesh.position.z, this.targetPosition.z, POSITION_DAMP_RATE, dt);
     this.mesh.rotation.y = THREE.MathUtils.damp(this.mesh.rotation.y, this.targetYaw, ROTATION_DAMP_RATE, dt);
     this.rigidBody.setNextKinematicTranslation(this.mesh.position);
+
+    const dx = this.mesh.position.x - previousX;
+    const dz = this.mesh.position.z - previousZ;
+    const isMoving = dx * dx + dz * dz > MOVING_THRESHOLD_SQ;
+    if (isMoving !== this.isMoving) {
+      this.isMoving = isMoving;
+      const next = isMoving ? this.walkAction : this.idleAction;
+      const previous = isMoving ? this.idleAction : this.walkAction;
+      previous?.fadeOut(0.2);
+      next?.reset().fadeIn(0.2).play();
+    }
+    this.mixer.update(dt);
   }
 
   get position(): THREE.Vector3 {
@@ -116,7 +190,10 @@ export class RemotePlayer implements Entity, Damageable {
     this.physics.world.removeCollider(this.collider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
     scene.remove(this.mesh);
-    this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
+    this.mesh.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+      }
+    });
   }
 }
