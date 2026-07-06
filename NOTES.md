@@ -1779,3 +1779,80 @@ factored out). Fires until the *guest's own* health (not the host's belief it hi
 confirms auto-respawn brings the guest back to full health at its own spawn point within
 `MULTIPLAYER_RESPAWN_DELAY`, and confirms the host's view of the opponent snaps to match. Full
 `npx playwright test` (all 22 specs, one worker) green.
+
+## Multiplayer, Phase 4: host match settings + match lifecycle (2026-07-06)
+
+Fourth and final step of `MULTIPLAYER_PLAN.md`'s original build order: a win condition that
+actually ends the match on both sides, a MatchEndScreen showing the right result to each player,
+a host-only Rematch that starts a genuinely fresh match on the same still-open room, and a
+disconnect ending the match cleanly instead of leaving the remaining player's `RemotePlayer`
+frozen in place forever.
+
+- **Win condition (§4).** Host picks a kill limit (10/15/25, default 15 -
+  `MULTIPLAYER_KILL_LIMIT_OPTIONS`/`DEFAULT_MULTIPLAYER_KILL_LIMIT`) from a plain `<select>` added
+  directly to `CreateRoomScreen` rather than a standalone `RoomSettingsPanel` file - one control
+  didn't earn its own component (YAGNI); promote it if match settings ever grow past this. Carried
+  on `MatchStartMessage` (now `{ seed, killLimit }`) so the guest never picks, only receives.
+- **Independent win detection, not a synced "the match is over" message.** Each client already
+  knows its own kill count (`scoreState.value`, incremented on `playerDied` receipt) and derives the
+  opponent's kill count as its own death count (`multiplayerDeathCount` - every death here is a kill
+  for them). `Game.updateMultiplayer()` checks both against `killLimit` every tick and calls
+  `endMultiplayerMatch()` the moment either crosses it - both sides converge on the same result
+  independently off messages already flowing, no new "match over" message needed. Freezes
+  simulation permanently via a new `matchEnded` flag (checked at the very top of `update()`, same
+  early-return shape as the existing pause/death checks) - unlike a death, there's no respawn timer
+  to eventually clear it.
+- **MatchEndScreen lives in App, not Game (`src/ui/matchEndScreen.ts`).** Unlike `DeathScreen`
+  (per-match HUD chrome, disposed with the rest of `Game`), this has to survive a Rematch's
+  Game-teardown-and-recreate cycle, so it's a persistent App-level overlay like
+  `MainMenu`/`CreateRoomScreen`. `Game.create()` gained two more trailing optional callbacks
+  (`onMultiplayerMatchEnd`, `onMultiplayerRematchReceived`) rather than Game trying to recreate or
+  dispose itself - App already owns every other match-lifecycle transition
+  (`startMatch`/`returnToLobby`), and match-end/rematch is just another one of those, not a new kind
+  of thing for Game to manage on its own.
+- **Rematch reuses the connection, not a fresh room.** Only the host ever sees the Rematch button
+  (`MatchEndScreen.show()`'s own rule) - clicking it generates a new seed, sends a fresh
+  `matchStart` over the *same* `PeerConnection`, and calls `App.restartMultiplayerMatch()`, which
+  disposes the old `Game` with a new `dispose({ keepConnectionAlive: true })` option (the ordinary
+  `dispose()` call from `returnToLobby` still tears the connection down as before) and creates a new
+  one on it. The guest never clicks anything - `Game.ts`'s `onMessage` switch gained a `'matchStart'`
+  case specifically for this: the *first* `matchStart` a match ever sees is always consumed by the
+  room screen before `Game.create()` attaches its own handler, so any `matchStart` `Game` itself
+  receives is unambiguously this second-match signal, and it just calls
+  `onMultiplayerRematchReceived` to trigger the same teardown-and-recreate on the guest's side.
+  Before disposing the old `Game`, `restartMultiplayerMatch` resets the connection's callbacks to
+  no-ops first - otherwise there's a real gap between the old `Game`'s disposal and the new one's
+  `setCallbacks` call where a stray message could reach closures over an already-freed physics world.
+- **Disconnect ends the match too (§6's "not solved yet" list, now solved for the 2-player case).**
+  `PeerConnection`'s `onDisconnected` *and* `onError` (a dropped connection can surface as either,
+  depending on how it failed) both now call `endMultiplayerMatch(false, 'opponentDisconnected')`
+  instead of being no-ops - `MatchEndScreen` shows "Opponent Disconnected" with no Rematch option
+  regardless of role, since the connection itself is gone.
+- **A real testability gap, not a product bug: WebRTC disconnection has no bounded detection time.**
+  The first version of the disconnect e2e test closed the guest's whole browser tab and waited for
+  the host's `onDisconnected`/`onError` to fire - neither ever fired within 90s. Confirmed (via
+  temporary diagnostic logging) this wasn't the product code failing to react; the underlying
+  `RTCDataChannel`/ICE layer simply has no guaranteed-fast close signal for an abrupt disappearance,
+  only its own failure-detection timers, which have no useful upper bound for a test to wait on.
+  Added a test-only `debugDisconnect()` hook (mirroring the existing `damagePlayer` debug-API
+  exception) that calls `PeerConnection.dispose()` directly - this exercises the exact same product
+  code path (`DataConnection` 'close' -> `Game`'s `onDisconnected` -> `endMultiplayerMatch`) via a
+  deterministic, fast trigger instead of waiting on browser/WebRTC teardown timing that isn't this
+  feature's concern to test.
+- **A real flaky test found and fixed, not a product bug.** The kill-limit e2e test (10 kills in a
+  row, each teleporting the host to a fixed offset from the opponent) failed once during a full-suite
+  run with a missed final shot - a fresh multiplayer seed generates different terrain around the
+  same relative teleport spot every run, and a single fixed offset occasionally lands somewhere
+  without a clean line of sight. Fixed by retrying a missed round from three other offsets
+  (`KILL_ATTEMPT_OFFSETS`) before giving up, the same way a real player would just reposition after
+  a miss rather than the test needing a single lucky spot every time.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green. New
+`e2e/multiplayer-matchend.spec.ts`, two tests: (1) drives a full 10-kill match to its win condition,
+confirms both sides' `isMultiplayerMatchEnded()`/score/opponent-score converge and MatchEndScreen
+shows VICTORY/DEFEAT to the right side with Rematch visible only to the host, clicks Rematch, and
+confirms a genuinely fresh `Game` starts on both sides (score back to 0, match-ended flag cleared,
+screen hidden) rather than the old frozen match still sitting underneath; (2) confirms a mid-match
+disconnect ends the match for the remaining player with no Rematch option. Full `npx playwright
+test` (all 24 specs, one worker, ~16 minutes) green - including a full re-run after the flaky-test
+fix above to confirm it actually holds, not just that it happened to pass once.

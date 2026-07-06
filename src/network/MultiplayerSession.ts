@@ -10,4 +10,6 @@ export interface MultiplayerSession {
   connection: PeerConnection;
   role: MultiplayerRole;
   seed: number;
+  /** Win condition (MULTIPLAYER_PLAN.md §4) - the host's choice, carried on the same MatchStartMessage as `seed`. */
+  killLimit: number;
 }

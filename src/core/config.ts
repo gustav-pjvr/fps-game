@@ -44,6 +44,12 @@ export const MULTIPLAYER_RESPAWN_DELAY = 3;
  * pointing the right way. */
 export const MINIMAP_WORLD_RADIUS = 120;
 
+/** Win condition (MULTIPLAYER_PLAN.md §4): first to this many kills wins. Host picks from
+ * MULTIPLAYER_KILL_LIMIT_OPTIONS before starting the room (see CreateRoomScreen); this is only the
+ * pre-selected default and the fallback if a match is somehow started without an explicit choice. */
+export const DEFAULT_MULTIPLAYER_KILL_LIMIT = 15;
+export const MULTIPLAYER_KILL_LIMIT_OPTIONS = [10, 15, 25] as const;
+
 export const CAMERA_FOV = 75;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;

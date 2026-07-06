@@ -1,14 +1,17 @@
 import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
-import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS } from '../../core/config.ts';
+import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
 /** Host side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): generates a code, shows it,
  * waits for a guest to connect, verifies the connection with a `hello` exchange, then offers
- * "Start Match" - clicking it picks the one seed both players will use, sends it across, and hands
- * the now-established connection off to whoever's starting the actual match (see onStartMatch). */
+ * "Start Match" - clicking it picks the one seed both players will use plus the host's chosen win
+ * condition (§4), sends both across, and hands the now-established connection off to whoever's
+ * starting the actual match (see onStartMatch). */
 export class CreateRoomScreen {
   private readonly overlay: HTMLDivElement;
   private readonly codeDisplay: HTMLDivElement;
+  private readonly killLimitSelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
   private connection: PeerConnection | null = null;
@@ -16,7 +19,7 @@ export class CreateRoomScreen {
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
-    private readonly onStartMatch: (connection: PeerConnection, seed: number) => void,
+    private readonly onStartMatch: (connection: PeerConnection, seed: number, killLimit: number) => void,
   ) {
     this.overlay = createOverlay();
 
@@ -42,6 +45,27 @@ export class CreateRoomScreen {
       void navigator.clipboard.writeText(this.codeDisplay.textContent ?? '');
     });
     panel.appendChild(copyButton);
+
+    const killLimitLabel = document.createElement('div');
+    killLimitLabel.textContent = 'First to how many kills wins?';
+    killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
+    panel.appendChild(killLimitLabel);
+
+    // Host-only setting (MULTIPLAYER_PLAN.md §4): the guest never picks this, only receives it as
+    // part of MatchStartMessage. A plain <select> rather than a dedicated RoomSettingsPanel file -
+    // one control doesn't earn its own component yet; promote it if match settings grow past this.
+    this.killLimitSelect = document.createElement('select');
+    this.killLimitSelect.style.cssText =
+      `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; cursor:pointer;`;
+    for (const option of MULTIPLAYER_KILL_LIMIT_OPTIONS) {
+      const optionElement = document.createElement('option');
+      optionElement.value = String(option);
+      optionElement.textContent = `${option} kills`;
+      if (option === DEFAULT_MULTIPLAYER_KILL_LIMIT) optionElement.selected = true;
+      this.killLimitSelect.appendChild(optionElement);
+    }
+    panel.appendChild(this.killLimitSelect);
 
     this.statusText = document.createElement('div');
     this.statusText.style.cssText = `font-size:0.9rem; color:${TEXT}; opacity:0.85; margin-top:18px; text-align:center; min-height:1.4em;`;
@@ -94,13 +118,14 @@ export class CreateRoomScreen {
   private startMatch(): void {
     if (!this.connection) return;
     const seed = generateMultiplayerSeed();
-    this.connection.send({ type: 'matchStart', seed });
+    const killLimit = Number(this.killLimitSelect.value);
+    this.connection.send({ type: 'matchStart', seed, killLimit });
     const connection = this.connection;
     // Ownership of the connection moves to the match now - `close()` must not dispose it, and this
     // screen shouldn't react to anything on it anymore (Game.create() takes over via setCallbacks).
     this.connection = null;
     this.overlay.style.display = 'none';
-    this.onStartMatch(connection, seed);
+    this.onStartMatch(connection, seed, killLimit);
   }
 
   private setStatus(text: string): void {

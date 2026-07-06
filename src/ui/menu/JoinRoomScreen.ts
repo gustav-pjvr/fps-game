@@ -16,7 +16,7 @@ export class JoinRoomScreen {
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
-    private readonly onStartMatch: (connection: PeerConnection, seed: number) => void,
+    private readonly onStartMatch: (connection: PeerConnection, seed: number, killLimit: number) => void,
   ) {
     this.overlay = createOverlay();
 
@@ -103,18 +103,18 @@ export class JoinRoomScreen {
       },
       onMessage: (message) => {
         if (message.type === 'hello') this.setStatus('Connection verified both ways. Waiting for the host to start the match…');
-        if (message.type === 'matchStart') this.startMatch(message.seed);
+        if (message.type === 'matchStart') this.startMatch(message.seed, message.killLimit);
       },
     });
   }
 
-  private startMatch(seed: number): void {
+  private startMatch(seed: number, killLimit: number): void {
     if (!this.connection) return;
     const connection = this.connection;
     // Same handoff as CreateRoomScreen.startMatch - the match owns this connection from here on.
     this.connection = null;
     this.overlay.style.display = 'none';
-    this.onStartMatch(connection, seed);
+    this.onStartMatch(connection, seed, killLimit);
   }
 
   private setStatus(text: string): void {

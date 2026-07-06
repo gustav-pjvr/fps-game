@@ -20,6 +20,7 @@ import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
+import type { MultiplayerMatchEndResult } from '../ui/matchEndScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
@@ -84,6 +85,9 @@ interface ActiveMultiplayer {
   /** This client's own designated spawn point (XZ) - kept around so a later respawn can return to
    * it without re-deriving role -> spawn-point logic mid-match. */
   readonly ownSpawn: THREE.Vector2;
+  /** Win condition (MULTIPLAYER_PLAN.md §4): first to this many kills wins. Fixed for the match -
+   * the host's choice at room-creation time, carried on MatchStartMessage. */
+  readonly killLimit: number;
   snapshotAccumulator: number;
   /** Counts up while this client's own player is dead; 0 whenever alive. Compared against
    * MULTIPLAYER_RESPAWN_DELAY in updateMultiplayer() to trigger the automatic respawn. */
@@ -146,6 +150,19 @@ export interface GameDebugApi {
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */
   getOpponentPosition(): { x: number; y: number; z: number } | null;
+  /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 4) - this client's own death count, which
+   * equals the opponent's kill count from this client's point of view (see Game's
+   * multiplayerDeathCount comment). 0 outside a multiplayer match. */
+  getOpponentScore(): number;
+  /** Multiplayer only - true once the win condition (or a disconnect) has ended the match and
+   * simulation has frozen. Always false outside a multiplayer match. */
+  isMultiplayerMatchEnded(): boolean;
+  /** Test-only, like damagePlayer above: explicitly closes this client's own connection, the same
+   * way PeerConnection.dispose() would, so a disconnect-handling test can trigger Game's
+   * onDisconnected path deterministically and quickly. A real opponent vanishing (closed tab, lost
+   * network) is instead detected via WebRTC's own close/ICE-failure signals, which - unlike this -
+   * have no bound on how long they take to fire; that timing isn't this feature's concern to test. */
+  debugDisconnect(): void;
 }
 
 declare global {
@@ -178,6 +195,13 @@ export class Game {
    * transition unobservable (isDead would already be true before wasDead is captured), and
    * neither the death screen nor the `playerDied` reply would ever fire. */
   private pendingNetworkDamage = 0;
+  /** Counts this client's own deaths in multiplayer - equivalently, the opponent's kill count,
+   * since every death here is a kill for them (see the death-transition block in update()). */
+  private multiplayerDeathCount = 0;
+  /** True once the win condition (or a disconnect) has ended a multiplayer match - freezes
+   * simulation the same way `player.isDead` does, but permanently for the rest of this Game
+   * instance's life rather than until a respawn (see the top of update()). */
+  private matchEnded = false;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -208,6 +232,12 @@ export class Game {
     private readonly sun: THREE.DirectionalLight,
     private readonly ambientLight: THREE.AmbientLight,
     private readonly multiplayer: ActiveMultiplayer | null,
+    private readonly onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
+    /** Fired when a matchStart message arrives *after* this Game already exists - the guest's
+     * signal that the host clicked Rematch (see MatchEndScreen / App.restartMultiplayerMatch); the
+     * initial matchStart is always consumed by the room screen before Game.create() ever attaches
+     * its own message handler, so any matchStart Game itself sees is necessarily this case. */
+    private readonly onMultiplayerRematchReceived?: (seed: number, killLimit: number) => void,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
@@ -290,6 +320,9 @@ export class Game {
         const p = this.multiplayer.remotePlayer.position;
         return { x: p.x, y: p.y, z: p.z };
       },
+      getOpponentScore: () => this.multiplayerDeathCount,
+      isMultiplayerMatchEnded: () => this.matchEnded,
+      debugDisconnect: () => this.multiplayer?.session.connection.dispose(),
     };
   }
 
@@ -300,6 +333,8 @@ export class Game {
     onProgress?: (status: string, ratio: number) => void,
     onReturnToLobby?: () => void,
     multiplayer?: MultiplayerSession,
+    onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
+    onMultiplayerRematchReceived?: (seed: number, killLimit: number) => void,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
     // Single-player: a new seed per match (not per practice-reset) so each new game generates a
@@ -449,6 +484,7 @@ export class Game {
             ),
             minimap: new Minimap(hudRoot),
             ownSpawn,
+            killLimit: multiplayer.killLimit,
             snapshotAccumulator: 0,
             deathTimer: 0,
           }
@@ -512,21 +548,30 @@ export class Game {
       sun,
       ambientLight,
       activeMultiplayer,
+      onMultiplayerMatchEnd,
+      onMultiplayerRematchReceived,
     );
     gameRef.current = game;
 
     // Takes over from the room screen's own connection callbacks (which only knew how to update
-    // now-hidden UI) - see PeerConnection.setCallbacks. Only the message handler matters for
-    // gameplay right now; disconnect/error handling for an in-progress match is phase 4's job
-    // (MULTIPLAYER_PLAN.md §7) - a drop mid-match currently just leaves the RemotePlayer frozen in
-    // place rather than ending the match cleanly.
+    // now-hidden UI) - see PeerConnection.setCallbacks. `onDisconnected` ends the match rather than
+    // leaving the RemotePlayer frozen in place (MULTIPLAYER_PLAN.md §7 phase 4) - there's no
+    // Rematch option once the connection itself is gone, only Return to Lobby.
     if (activeMultiplayer) {
       activeMultiplayer.session.connection.setCallbacks({
         onConnected: () => {},
-        onDisconnected: () => {},
-        onError: () => {},
+        onDisconnected: () => game.endMultiplayerMatch(false, 'opponentDisconnected'),
+        // A dropped connection can surface as a WebRTC/PeerJS error rather than a clean 'close'
+        // event (e.g. an abrupt network loss instead of a graceful page unload) - either way, from
+        // the remaining player's perspective the match is over the same way.
+        onError: () => game.endMultiplayerMatch(false, 'opponentDisconnected'),
         onMessage: (message) => {
           switch (message.type) {
+            case 'matchStart':
+              // The initial matchStart is always consumed by the room screen before this handler
+              // ever attaches - any matchStart seen here is the host's Rematch signal.
+              game.onMultiplayerRematchReceived?.(message.seed, message.killLimit);
+              break;
             case 'playerSnapshot':
               activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
               break;
@@ -568,8 +613,12 @@ export class Game {
 
   /** Tears down everything this Game instance owns - WebGL context, DOM-appended HUD/menu
    * elements, and input listeners - so App can cleanly return to the lobby and later start a
-   * fresh match without leaking GL contexts or stacking duplicate HUD nodes. */
-  dispose(): void {
+   * fresh match without leaking GL contexts or stacking duplicate HUD nodes.
+   *
+   * `keepConnectionAlive` (MULTIPLAYER_PLAN.md §7 phase 4): set when App is tearing this Game down
+   * to immediately create a fresh one on the same room for a rematch - the underlying
+   * PeerConnection must survive the swap, or there'd be no connection left for the new Game to use. */
+  dispose(options?: { keepConnectionAlive?: boolean }): void {
     this.loop.stop();
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
@@ -588,7 +637,9 @@ export class Game {
     this.sound.dispose();
     this.multiplayer?.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer?.minimap.dispose();
-    this.multiplayer?.session.connection.dispose();
+    if (!options?.keepConnectionAlive) {
+      this.multiplayer?.session.connection.dispose();
+    }
     // Invalidate any in-flight spawnEncountersAsync loop *before* freeing the physics world -
     // its frame-yielded batches would otherwise call createRigidBody on freed WASM memory.
     this.spawnGeneration++;
@@ -740,6 +791,14 @@ export class Game {
   }
 
   private readonly update = (dt: number): void => {
+    // Match end (MULTIPLAYER_PLAN.md §7 phase 4) freezes simulation permanently for the rest of
+    // this Game instance, unlike a single death - MatchEndScreen (shown by App, not Game) is what
+    // the player sees, and it stays alive underneath until Rematch/Return to Lobby is clicked.
+    if (this.matchEnded) {
+      this.input.consumeLookDelta();
+      return;
+    }
+
     // Pointer lock is the single source of truth for "paused": pressing Escape forces the browser
     // to release it (can't be prevented), and a freshly loaded match starts unlocked too - both
     // cases should show the pause menu and freeze simulation. Death has its own overlay instead.
@@ -794,9 +853,13 @@ export class Game {
     if (this.player.isDead && !wasDead) {
       this.deathScreen.show(this.scoreState.value);
       this.input.releasePointerLock();
-      // The opponent has no visibility into this client's health - this is the only way they
-      // learn a kill actually landed (MULTIPLAYER_PLAN.md §3).
-      this.multiplayer?.session.connection.send({ type: 'playerDied' });
+      if (this.multiplayer) {
+        // The opponent has no visibility into this client's health - this is the only way they
+        // learn a kill actually landed (MULTIPLAYER_PLAN.md §3). Every death here is a kill for
+        // them, so this also doubles as their score from this client's point of view.
+        this.multiplayer.session.connection.send({ type: 'playerDied' });
+        this.multiplayerDeathCount += 1;
+      }
     }
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
@@ -815,6 +878,19 @@ export class Game {
 
     this.multiplayer.remotePlayer.update(dt);
     this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position);
+
+    // Win condition (MULTIPLAYER_PLAN.md §4): first to killLimit ends the match. Checked here
+    // rather than where each score actually changes (the `playerDied` handler for my own kills,
+    // the death-transition block for the opponent's) so there's exactly one place that decides
+    // "the match is over," regardless of which side's counter just crossed the line.
+    if (!this.matchEnded) {
+      if (this.scoreState.value >= this.multiplayer.killLimit) {
+        this.endMultiplayerMatch(true, 'killLimit');
+      } else if (this.multiplayerDeathCount >= this.multiplayer.killLimit) {
+        this.endMultiplayerMatch(false, 'killLimit');
+      }
+    }
+    if (this.matchEnded) return;
 
     if (this.player.isDead) {
       this.multiplayer.deathTimer += dt;
@@ -854,6 +930,27 @@ export class Game {
     this.deathScreen.hide();
     this.input.requestPointerLock();
     this.multiplayer.session.connection.send({ type: 'respawnEvent', x, y: spawnY, z });
+  }
+
+  /** Ends a multiplayer match, either because the win condition was reached (checked in
+   * updateMultiplayer, both sides call this independently off their own local counters - see
+   * MULTIPLAYER_PLAN.md §6 on why exact simultaneity isn't worth solving here) or because the
+   * opponent disconnected (wired to PeerConnection's onDisconnected in create()). Freezes
+   * simulation via `matchEnded` (see the top of update()) and hands off to App, which owns
+   * MatchEndScreen and any rematch - Game itself never recreates or disposes itself. */
+  private endMultiplayerMatch(won: boolean, reason: MultiplayerMatchEndResult['reason']): void {
+    if (this.matchEnded || !this.multiplayer) return;
+    this.matchEnded = true;
+    this.input.releasePointerLock();
+    this.onMultiplayerMatchEnd?.({
+      reason,
+      won,
+      myScore: this.scoreState.value,
+      opponentScore: this.multiplayerDeathCount,
+      killLimit: this.multiplayer.killLimit,
+      role: this.multiplayer.session.role,
+      connection: this.multiplayer.session.connection,
+    });
   }
 
   private readonly render = (alpha: number): void => {
