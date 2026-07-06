@@ -38,48 +38,172 @@ export interface ZoneSample {
 
 const NO_ZONE: ZoneSample = { type: 'none', membership: 0, siteX: 0, siteZ: 0, gx: 0, gz: 0 };
 
+/**
+ * Organic zone growth (WORLD_PLAN.md follow-up, promised in the WORLD_SIZE_CHUNKS history in
+ * config.ts): a zone's shape is no longer a single scalar radius, but ZONE_RAY_COUNT evenly-spaced
+ * rays from its site center, each ray's length being however far it can go in that direction
+ * before hitting a boundary (the world-edge mountain ramp, the spawn/combat ring, or its own cell
+ * size - see computeRadii). This fills the tight safe annulus far better than a fixed circle ever
+ * could: a badly-centered site can still grow a usable (if lopsided) shape instead of being
+ * rejected outright the moment a full circle doesn't fit at its exact position.
+ *
+ * 16 rays is a deliberate middle ground: enough angular resolution that the shape reads as
+ * organic rather than faceted at the sizes these zones actually reach (radius ~10-20), while
+ * keeping the per-query interpolation (radiusAtAngle) cheap - this runs on every terrain-vertex/
+ * vegetation/building zone query, same as the old single-radius comparison did.
+ */
+const ZONE_RAY_COUNT = 16;
+
+function rayAngle(index: number): number {
+  return (index / ZONE_RAY_COUNT) * Math.PI * 2;
+}
+
+/** Distance along a ray from (originX, originZ) in direction (dirX, dirZ) until it exits a circle
+ * of `radius` centered at the world origin - assumes the ray's start is already inside that
+ * circle (every zone site is checked/constructed to start inside WORLD_EDGE_RAMP_START before
+ * this is ever called), which guarantees exactly one positive root. */
+function rayExitDistance(originX: number, originZ: number, dirX: number, dirZ: number, radius: number): number {
+  const b = 2 * (originX * dirX + originZ * dirZ);
+  const c = originX * originX + originZ * originZ - radius * radius;
+  const discriminant = Math.max(0, b * b - 4 * c);
+  return (-b + Math.sqrt(discriminant)) / 2;
+}
+
+/** Distance along a ray until it *enters* a circle of `radius` centered at the world origin, or
+ * Infinity if it never does going forward (misses entirely, or the circle sits entirely behind
+ * the ray's direction) - assumes the ray's start is already outside that circle (every zone site
+ * is checked/constructed to start outside the spawn/combat ring before this is called). */
+function rayEntryDistance(originX: number, originZ: number, dirX: number, dirZ: number, radius: number): number {
+  const b = 2 * (originX * dirX + originZ * dirZ);
+  const c = originX * originX + originZ * originZ - radius * radius;
+  const discriminant = b * b - 4 * c;
+  if (discriminant < 0) return Infinity;
+  const sqrtDiscriminant = Math.sqrt(discriminant);
+  const nearRoot = (-b - sqrtDiscriminant) / 2;
+  if (nearRoot >= 0) return nearRoot;
+  const farRoot = (-b + sqrtDiscriminant) / 2;
+  return farRoot >= 0 ? farRoot : Infinity;
+}
+
+/** A site's shape can never reach beyond this fraction of its own cell size - the standard
+ * Worley-noise search bound (see findNearestSite) requires every site's extent to stay under one
+ * full cell, and jitter alone (placing a site arbitrarily close to its cell's edge) already
+ * pushes that to the theoretical limit; this shaves a small, cheap margin off so floating-point
+ * rounding at that limit can never be the thing that breaks the 3x3-neighbor search's coverage. */
+const CELL_SIZE_SAFETY_FACTOR = 0.98;
+
+/**
+ * Computes a zone's organic shape: how far it can grow in each of ZONE_RAY_COUNT directions
+ * before hitting the world-edge mountain ramp, the spawn/combat ring, or its own cell-size cap.
+ * Unlike the old single-radius model, this can never produce an out-of-bounds shape - each ray is
+ * already clipped to respect both boundaries in its own direction, so there's no separate
+ * "does this fit, yes/no" rejection step for the boundaries themselves (see hasMinimumRoom for
+ * the one rejection case that remains: a site with almost no room in *any* direction).
+ */
+function computeRadii(siteX: number, siteZ: number, cellSize: number): number[] {
+  const outerRadius = WORLD_EDGE_RAMP_START - ZONE_EDGE_MARGIN;
+  const innerRadius = ENEMY_RING_BASE_RADIUS + ZONE_EDGE_MARGIN;
+  const siteRelSpawnX = siteX - SPAWN_X;
+  const siteRelSpawnZ = siteZ - SPAWN_Z;
+  const cellSizeCap = cellSize * CELL_SIZE_SAFETY_FACTOR;
+
+  const radii: number[] = [];
+  for (let i = 0; i < ZONE_RAY_COUNT; i++) {
+    const angle = rayAngle(i);
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+
+    const outerBound = rayExitDistance(siteX, siteZ, dirX, dirZ, outerRadius);
+    const innerBound = rayEntryDistance(siteRelSpawnX, siteRelSpawnZ, dirX, dirZ, innerRadius);
+    radii.push(Math.max(0, Math.min(outerBound, innerBound, cellSizeCap)));
+  }
+  return radii;
+}
+
+/** Interpolates a zone's ray lengths at an arbitrary angle - linear between the two rays that
+ * bracket it, which is all the falloff math (membershipFor) or building placement
+ * (BuildingManager.getTownLayout) ever needs: "how far does this zone's shape extend in exactly
+ * this direction." */
+function radiusAtAngle(radii: readonly number[], angle: number): number {
+  const normalizedAngle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const rayIndexFloat = (normalizedAngle / (Math.PI * 2)) * ZONE_RAY_COUNT;
+  const lowerIndex = Math.floor(rayIndexFloat) % ZONE_RAY_COUNT;
+  const upperIndex = (lowerIndex + 1) % ZONE_RAY_COUNT;
+  const t = rayIndexFloat - Math.floor(rayIndexFloat);
+  const lower = radii[lowerIndex]!;
+  const upper = radii[upperIndex]!;
+  return lower + (upper - lower) * t;
+}
+
+/** The one remaining rejection case for an organic shape: a site positioned with almost no room
+ * in *any* direction (e.g. jittered right against the spawn ring or the world edge) isn't worth
+ * keeping even though every individual ray is technically valid. Mirrors the old isSiteClear's
+ * role of demoting a site entirely rather than shrinking it - but the bar is "every direction has
+ * at least radiusMin," not "a full circle of radiusMin fits," since there's no longer a single
+ * circle to test. */
+function hasMinimumRoom(radii: readonly number[], radiusMin: number): boolean {
+  return radii.every((radius) => radius >= radiusMin);
+}
+
 interface ZoneSite {
   gx: number;
   gz: number;
   siteX: number;
   siteZ: number;
-  radius: number;
+  radii: readonly number[];
 }
 
 /** A guaranteed zone's fully-formed site, precomputed directly (not derived from the per-cell hash
- * jitter) - see computeGuaranteedSites for why. */
-interface GuaranteedSite {
-  gx: number;
-  gz: number;
-  siteX: number;
-  siteZ: number;
-  radius: number;
-}
+ * jitter) - see computeGuaranteedSites for why. Same shape as ZoneSite; kept as a distinct name
+ * since the two are constructed very differently and callers care about that distinction. */
+type GuaranteedSite = ZoneSite;
 
 function findGuaranteedSite(sites: readonly GuaranteedSite[], gx: number, gz: number): GuaranteedSite | undefined {
   return sites.find((site) => site.gx === gx && site.gz === gz);
 }
 
-/** Largest radius a site centered at (siteX, siteZ) could have and still pass isSiteClear (see
- * below) - used defensively when constructing a guaranteed site, in case its rolled radius doesn't
- * quite fit its chosen position. */
-function maxClearRadius(siteX: number, siteZ: number): number {
-  const distanceFromOrigin = Math.sqrt(siteX * siteX + siteZ * siteZ);
-  const maxByEdge = WORLD_EDGE_RAMP_START - ZONE_EDGE_MARGIN - distanceFromOrigin;
+/** siteForCell (below) is called once per candidate cell in findNearestSite's 3x3-neighbor
+ * search, which itself runs on every terrain-vertex/vegetation/building zone query - i.e. very
+ * often. Computing ZONE_RAY_COUNT ray-circle intersections on every one of those calls would be a
+ * real regression from the old model's single multiply-add. This cache (mirroring the
+ * townLayoutCache/guaranteedSitesCache pattern already used elsewhere in this codebase) means a
+ * cell's shape is computed once per world seed, never per-query - wholesale-cleared on seed
+ * change rather than keyed by seed, so it can't grow unboundedly across a long session of
+ * restarts/rematches the way a seed-keyed map would. */
+let siteCacheSeed: number | null = null;
+const siteCache = new Map<string, ZoneSite | null>();
 
-  const dxSpawn = siteX - SPAWN_X;
-  const dzSpawn = siteZ - SPAWN_Z;
-  const distanceFromSpawn = Math.sqrt(dxSpawn * dxSpawn + dzSpawn * dzSpawn);
-  const maxBySpawn = distanceFromSpawn - (ENEMY_RING_BASE_RADIUS + ZONE_EDGE_MARGIN);
+function cachedSiteForCell(
+  gx: number,
+  gz: number,
+  cellSize: number,
+  seed: number,
+  density: number,
+  radiusMin: number,
+  radiusMax: number,
+  guaranteedSites: readonly GuaranteedSite[],
+): ZoneSite | null {
+  if (siteCacheSeed !== seed) {
+    siteCache.clear();
+    siteCacheSeed = seed;
+  }
+  const key = `${cellSize}:${gx},${gz}`;
+  const cached = siteCache.get(key);
+  if (cached !== undefined) return cached;
 
-  return Math.min(maxByEdge, maxBySpawn);
+  const site = siteForCell(gx, gz, cellSize, seed, density, radiusMin, radiusMax, guaranteedSites);
+  siteCache.set(key, site);
+  return site;
 }
 
 /** Deterministic jittered hash-grid ("Worley" style): each cell either has one candidate site
- * (jittered within the cell, radius randomized in [radiusMin, radiusMax]) or none, decided purely
- * from a hash of the cell coordinates - no state, reload-identical, cheap to query. If this exact
- * cell is one of the world's guaranteed sites (see computeGuaranteedSites), that precomputed site
- * is returned instead, regardless of what the density roll would have said. */
+ * (jittered within the cell) or none, decided purely from a hash of the cell coordinates - no
+ * state, reload-identical, cheap to query. If this exact cell is one of the world's guaranteed
+ * sites (see computeGuaranteedSites), that precomputed site is returned instead, regardless of
+ * what the density roll would have said. A site whose computed shape has no minimum room anywhere
+ * (see hasMinimumRoom) is demoted to null the same as a failed density roll - there's no partial
+ * "shrink it to fit" step since computeRadii already can't produce an out-of-bounds shape, only
+ * a shape with too little room to be worth having at all. */
 function siteForCell(
   gx: number,
   gz: number,
@@ -97,20 +221,22 @@ function siteForCell(
   const jitterX = rng();
   const jitterZ = rng();
   const presenceRoll = rng();
-  const radiusRoll = rng();
   if (presenceRoll >= density) return null;
 
-  return {
-    gx,
-    gz,
-    siteX: (gx + jitterX) * cellSize,
-    siteZ: (gz + jitterZ) * cellSize,
-    radius: radiusMin + radiusRoll * (radiusMax - radiusMin),
-  };
+  const siteX = (gx + jitterX) * cellSize;
+  const siteZ = (gz + jitterZ) * cellSize;
+  const radii = computeRadii(siteX, siteZ, cellSize);
+  if (!hasMinimumRoom(radii, radiusMin)) return null;
+
+  // radiusMax caps how big a natural (non-guaranteed) site can roll even when there's more than
+  // enough room, so density-rolled zones stay within the tuned min/max band rather than always
+  // maxing out whatever the annulus happens to allow at that position.
+  const cappedRadii = radii.map((radius) => Math.min(radius, radiusMax));
+  return { gx, gz, siteX, siteZ, radii: cappedRadii };
 }
 
 /** A point can only ever fall within a site whose cell is among its own or its 8 neighbors, since
- * every site's radius is capped below its cell size - the standard Worley-noise search bound. */
+ * every site's shape is capped below its cell size - the standard Worley-noise search bound. */
 function findNearestSite(
   x: number,
   z: number,
@@ -120,19 +246,19 @@ function findNearestSite(
   radiusMin: number,
   radiusMax: number,
   guaranteedSites: readonly GuaranteedSite[],
-): { site: ZoneSite; distance: number } | null {
+): { site: ZoneSite; distance: number; angle: number } | null {
   const gx = Math.floor(x / cellSize);
   const gz = Math.floor(z / cellSize);
 
-  let best: { site: ZoneSite; distance: number } | null = null;
+  let best: { site: ZoneSite; distance: number; angle: number } | null = null;
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
-      const site = siteForCell(gx + dx, gz + dz, cellSize, seed, density, radiusMin, radiusMax, guaranteedSites);
+      const site = cachedSiteForCell(gx + dx, gz + dz, cellSize, seed, density, radiusMin, radiusMax, guaranteedSites);
       if (!site) continue;
       const ddx = x - site.siteX;
       const ddz = z - site.siteZ;
       const distance = Math.sqrt(ddx * ddx + ddz * ddz);
-      if (!best || distance < best.distance) best = { site, distance };
+      if (!best || distance < best.distance) best = { site, distance, angle: Math.atan2(ddz, ddx) };
     }
   }
   return best;
@@ -143,30 +269,13 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** Flat-topped falloff: full membership through the inner fraction of the radius, then eases to 0
- * by the edge - a genuinely flat core plus a seam-free transition, not a dome or a hard cutoff. */
+/** Flat-topped falloff: full membership through the inner fraction of the radius-at-this-angle,
+ * then eases to 0 by the edge - a genuinely flat core plus a seam-free transition, not a dome or
+ * a hard cutoff. Same falloff shape as the old circular model, just measured against an
+ * interpolated per-angle radius instead of a fixed scalar one. */
 function membershipFor(distance: number, radius: number, innerFraction: number): number {
   if (distance > radius) return 0;
   return 1 - smoothstep(radius * innerFraction, radius, distance);
-}
-
-/** A zone site too close to the world edge or the spawn/combat ring is demoted entirely (not just
- * partially excluded), so a town or forest can never spill into either regardless of its radius.
- * Culled against WORLD_EDGE_RAMP_START (where the mountain ring begins), not the far-away hard
- * clamp radius - a flat zone sited on the ramp would fight the steep mountain slope with its own
- * flatten-blend, producing a sharp, jagged transition (verified in-browser: this wedged the
- * character controller against what looked like a plain hillside, same failure class as the
- * original ridge-noise wedge bug in WORLD_PLAN.md §2 - see NOTES.md). */
-export function isSiteClear(siteX: number, siteZ: number, radius: number): boolean {
-  const distanceFromOrigin = Math.sqrt(siteX * siteX + siteZ * siteZ);
-  if (distanceFromOrigin + radius > WORLD_EDGE_RAMP_START - ZONE_EDGE_MARGIN) return false;
-
-  const dxSpawn = siteX - SPAWN_X;
-  const dzSpawn = siteZ - SPAWN_Z;
-  const distanceFromSpawn = Math.sqrt(dxSpawn * dxSpawn + dzSpawn * dzSpawn);
-  if (distanceFromSpawn - radius < ENEMY_RING_BASE_RADIUS + ZONE_EDGE_MARGIN) return false;
-
-  return true;
 }
 
 /**
@@ -185,21 +294,23 @@ export function isSiteClear(siteX: number, siteZ: number, radius: number): boole
  *
  * This instead picks the sites' positions directly: `count` angles spread evenly around spawn
  * (with per-seed jitter for variety), each at a distance chosen from the exact band where a
- * full-radiusMin zone is guaranteed to fit both the world edge and the spawn ring. Evenly-spread
- * angles at a shared rough distance keep the sites far apart from each other by construction, so
- * they always land in distinct grid cells without needing to search for that separately.
+ * full-radiusMin zone is guaranteed to have room everywhere (see hasMinimumRoom) regardless of
+ * angle. Evenly-spread angles at a shared rough distance keep the sites far apart from each other
+ * by construction, so they always land in distinct grid cells without needing to search for that
+ * separately.
  *
- * Two subtleties fixed after code review caught them with direct numeric testing:
+ * Two subtleties fixed after code review caught them with direct numeric testing (both predate
+ * the organic-shape rework and still apply identically, since they're about *where* a guaranteed
+ * site's center goes, not the shape grown from it):
  * - The distance band is measured from SPAWN (siteX/siteZ are constructed at exactly `distance`
- *   from SPAWN_X/SPAWN_Z), but isSiteClear's edge check measures distance from the *origin* -
+ *   from SPAWN_X/SPAWN_Z), but the edge/spawn-ring boundaries are measured from the *origin* -
  *   since SPAWN_Z is nonzero, those two distances differ by up to `spawnOffsetMagnitude`
- *   depending on angle. `maxDistance` subtracts that worst case so the edge check always holds
- *   at radiusMin regardless of angle (previously this was missing, and ~11% of guaranteed flat
- *   sites silently ended up smaller than radiusMin as a result).
+ *   depending on angle. `maxDistance` subtracts that worst case so every direction still has room
+ *   for at least radiusMin regardless of angle.
  * - The jitter (±half a sector) could bring two sites as close as 90° apart for
- *   GUARANTEED_ZONE_COUNT=2, occasionally (confirmed via sampling: ~0.1% of angle/distance
- *   combinations) landing them in the same grid cell, silently dropping the guarantee from 2
- *   sites to 1. The dedup pass below re-jitters any colliding site into a fresh, distinct cell.
+ *   GUARANTEED_ZONE_COUNT=2, occasionally landing them in the same grid cell, silently dropping
+ *   the guarantee from 2 sites to 1. The dedup pass below re-jitters any colliding site into a
+ *   fresh, distinct cell.
  */
 function computeGuaranteedSites(pickerSeed: number, cellSize: number, radiusMin: number, radiusMax: number): GuaranteedSite[] {
   const spawnOffsetMagnitude = Math.sqrt(SPAWN_X * SPAWN_X + SPAWN_Z * SPAWN_Z);
@@ -215,9 +326,8 @@ function computeGuaranteedSites(pickerSeed: number, cellSize: number, radiusMin:
     const distance = minDistance + picker() * (maxDistance - minDistance);
     const siteX = SPAWN_X + Math.cos(angle) * distance;
     const siteZ = SPAWN_Z + Math.sin(angle) * distance;
-    const rolledRadius = radiusMin + picker() * (radiusMax - radiusMin);
-    const radius = Math.min(rolledRadius, maxClearRadius(siteX, siteZ));
-    return { gx: Math.floor(siteX / cellSize), gz: Math.floor(siteZ / cellSize), siteX, siteZ, radius };
+    const radii = computeRadii(siteX, siteZ, cellSize).map((radius) => Math.min(radius, radiusMax));
+    return { gx: Math.floor(siteX / cellSize), gz: Math.floor(siteZ / cellSize), siteX, siteZ, radii };
   };
 
   for (let i = 0; i < GUARANTEED_ZONE_COUNT; i++) {
@@ -229,7 +339,7 @@ function computeGuaranteedSites(pickerSeed: number, cellSize: number, radiusMin:
     // (not identical) cells are fine, since findGuaranteedSite matches by exact (gx, gz) and
     // getFlatZoneSite's nearest-site-wins check is always trivially satisfied by a site's distance
     // of 0 to its own center regardless of what's in a neighboring cell (the same reasoning that
-    // already lets adjacent *natural* sites' discs overlap - see getFlatZoneSite's docstring).
+    // already lets adjacent *natural* sites' shapes overlap - see getFlatZoneSite's docstring).
     // Checking only exact equality (not adjacency) matters here because the safe annulus a
     // guaranteed site can sit in is narrower than one grid cell, so nearly every valid position at
     // any angle ends up adjacent to any other - an adjacency-based check left this loop unable to
@@ -254,10 +364,10 @@ interface GuaranteedSitesCache {
 let guaranteedFlatSitesCache: GuaranteedSitesCache | null = null;
 let guaranteedForestSitesCache: GuaranteedSitesCache | null = null;
 
-/** Exported (along with getGuaranteedForestSites/isSiteClear) for the unit-test layer - the
- * guaranteed-sites mechanism has already been broken twice in subtle numeric ways caught only by
- * hand (see computeGuaranteedSites's docstring), so the invariant is locked in by tests across
- * many seeds rather than by comment alone. */
+/** Exported (along with getGuaranteedForestSites) for the unit-test layer - the guaranteed-sites
+ * mechanism has already been broken twice in subtle numeric ways caught only by hand (see
+ * computeGuaranteedSites's docstring), so the invariant is locked in by tests across many seeds
+ * rather than by comment alone. */
 export function getGuaranteedFlatSites(): GuaranteedSite[] {
   const seed = getWorldSeed();
   if (!guaranteedFlatSitesCache || guaranteedFlatSitesCache.seed !== seed) {
@@ -295,10 +405,9 @@ export function sampleFlatZone(x: number, z: number): ZoneSample {
     getGuaranteedFlatSites(),
   );
   if (!found) return NO_ZONE;
-  const { site, distance } = found;
-  if (!isSiteClear(site.siteX, site.siteZ, site.radius)) return NO_ZONE;
+  const { site, distance, angle } = found;
 
-  const membership = membershipFor(distance, site.radius, FLAT_ZONE_INNER_FRACTION);
+  const membership = membershipFor(distance, radiusAtAngle(site.radii, angle), FLAT_ZONE_INNER_FRACTION);
   if (membership <= 0) return NO_ZONE;
   return { type: 'flat', membership, siteX: site.siteX, siteZ: site.siteZ, gx: site.gx, gz: site.gz };
 }
@@ -318,10 +427,9 @@ export function sampleForestZone(x: number, z: number): ZoneSample {
     getGuaranteedForestSites(),
   );
   if (!found) return NO_ZONE;
-  const { site, distance } = found;
-  if (!isSiteClear(site.siteX, site.siteZ, site.radius)) return NO_ZONE;
+  const { site, distance, angle } = found;
 
-  const membership = membershipFor(distance, site.radius, FOREST_ZONE_INNER_FRACTION);
+  const membership = membershipFor(distance, radiusAtAngle(site.radii, angle), FOREST_ZONE_INNER_FRACTION);
   if (membership <= 0) return NO_ZONE;
   return { type: 'forest', membership, siteX: site.siteX, siteZ: site.siteZ, gx: site.gx, gz: site.gz };
 }
@@ -331,25 +439,23 @@ export interface FlatZoneSite {
   gz: number;
   siteX: number;
   siteZ: number;
-  radius: number;
+  radii: readonly number[];
 }
 
 /** Direct cell lookup (not a nearest-point query) - lets BuildingManager enumerate every flat-zone
  * cell that could overlap a given chunk's bounds, so a town's layout can be generated once and its
  * buildings spawned into whichever chunk each one's world position actually falls into.
  *
- * Two adjacent cells' sites can jitter close enough for their discs to overlap (radius up to
- * FLAT_ZONE_RADIUS_MAX, jitter unconstrained by cell boundaries) - without a check, a building
- * could be placed as if it belongs to this cell's site while sampleFlatZone (which drives terrain
- * flattening and vegetation suppression, via nearest-site-wins) actually resolves that exact point
- * to the *neighboring* site instead, silently building a town on unflattened ground. Confirmed by
- * code review as a real, reachable inconsistency in the algorithm (not just theoretical) - fixed by
- * requiring this cell's site to also win the nearest-site contest at its own center. */
+ * Two adjacent cells' sites can jitter close enough for their shapes to overlap (jitter
+ * unconstrained by cell boundaries) - without a check, a building could be placed as if it
+ * belongs to this cell's site while sampleFlatZone (which drives terrain flattening and
+ * vegetation suppression, via nearest-site-wins) actually resolves that exact point to the
+ * *neighboring* site instead, silently building a town on unflattened ground. Fixed by requiring
+ * this cell's site to also win the nearest-site contest at its own center. */
 export function getFlatZoneSite(gx: number, gz: number): FlatZoneSite | null {
   const guaranteedSites = getGuaranteedFlatSites();
-  const site = siteForCell(gx, gz, FLAT_ZONE_CELL_SIZE, getWorldSeed() + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX, guaranteedSites);
+  const site = cachedSiteForCell(gx, gz, FLAT_ZONE_CELL_SIZE, getWorldSeed() + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX, guaranteedSites);
   if (!site) return null;
-  if (!isSiteClear(site.siteX, site.siteZ, site.radius)) return null;
 
   const nearest = findNearestSite(
     site.siteX,
@@ -364,4 +470,11 @@ export function getFlatZoneSite(gx: number, gz: number): FlatZoneSite | null {
   if (!nearest || nearest.site.gx !== gx || nearest.site.gz !== gz) return null;
 
   return site;
+}
+
+/** Exported so BuildingManager can sample a random point within a flat zone's *actual* organic
+ * footprint (angle first, then however far the shape extends in that exact direction) instead of
+ * assuming a uniform circular disc. */
+export function radiusOfFlatZoneAtAngle(site: FlatZoneSite, angle: number): number {
+  return radiusAtAngle(site.radii, angle);
 }

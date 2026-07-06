@@ -616,6 +616,9 @@ export class Game {
               // damage it's dealt - this is how it learns a kill actually landed.
               scoreState.value += 1;
               killFeed.show('Opponent eliminated');
+              // Per user request: the survivor's health resets too, not just the dying player's -
+              // both sides start the next exchange at full health, same as a round reset.
+              game.healLocalPlayerToFull();
               break;
             case 'respawnEvent':
               activeMultiplayer.remotePlayer.teleportTo(message.x, message.y, message.z);
@@ -979,13 +982,25 @@ export class Game {
   private multiplayerRespawn(): void {
     if (!this.multiplayer) return;
 
-    const { x, z } = pickRandomRespawnPoint();
+    const opponentPosition = this.multiplayer.remotePlayer.position;
+    const { x, z } = pickRandomRespawnPoint({ x: opponentPosition.x, z: opponentPosition.z });
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.deathTimer = 0;
     this.deathScreen.hide();
     this.input.requestPointerLock();
     this.multiplayer.session.connection.send({ type: 'respawnEvent', x, y: spawnY, z });
+  }
+
+  /** Per user request: a kill resets both players' health, not just the one who died - the dying
+   * player's own health already resets via player.respawn() above (delayed by
+   * MULTIPLAYER_RESPAWN_DELAY); this is the *other* side of that same round-reset, called the
+   * instant this client learns its shot was the kill (see the `playerDied` message handler in
+   * create()). Reuses Player.respawn() at the player's own current position - a no-op positionally,
+   * but it resets health/velocity/recoil/bob the same way a real respawn does, which is the actual
+   * point here, not a bespoke narrower "heal" method for a one-line difference. */
+  healLocalPlayerToFull(): void {
+    this.player.respawn(this.player.position);
   }
 
   /** Ends a multiplayer match, either because the win condition was reached (checked in

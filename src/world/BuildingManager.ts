@@ -6,7 +6,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
-import { getFlatZoneSite, type FlatZoneSite } from './ZoneMap.ts';
+import { getFlatZoneSite, radiusOfFlatZoneAtAngle, type FlatZoneSite } from './ZoneMap.ts';
 import {
   CRATE_MANTLE_ROOF_CLEARANCE,
   CRATE_MANTLE_SENSOR_DEPTH,
@@ -266,7 +266,9 @@ export class BuildingManager {
 
       const halfDiagonal = Math.sqrt(preset.footprintWidth ** 2 + preset.footprintDepth ** 2) / 2;
       const angle = rng() * Math.PI * 2;
-      const distance = rng() * site.radius * TOWN_BUILD_FRACTION;
+      // Organic zones aren't a circle - a building's max distance from the site center depends on
+      // which direction it's placed in, not one shared radius (see ZoneMap.ts's per-angle shape).
+      const distance = rng() * radiusOfFlatZoneAtAngle(site, angle) * TOWN_BUILD_FRACTION;
       const localX = Math.cos(angle) * distance;
       const localZ = Math.sin(angle) * distance;
       const rotationY = Math.floor(rng() * 4) * (Math.PI / 2);

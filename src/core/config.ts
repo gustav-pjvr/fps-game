@@ -42,6 +42,11 @@ export const MULTIPLAYER_SPAWN_POINTS: ReadonlyArray<{ x: number; z: number }> =
  * a 35-radius hexagon) so a pick isn't forced into always choosing near-opposite points, which
  * would make "random" spawns look barely different from the old fixed two-point layout in practice. */
 export const MULTIPLAYER_SPAWN_MIN_SEPARATION = 40;
+/** Per user request: a mid-match respawn must land at least "half a map size" from the opponent's
+ * current position - "map size" here is this pool's own diameter (2x the 35-unit spawn radius, the
+ * one concrete spatial scale this spawn system actually has), so half of that is 35. See
+ * pickRandomRespawnPoint (multiplayerSpawn.ts). */
+export const MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT = 35;
 
 /** How often this client broadcasts its own player's transform to the opponent (MULTIPLAYER_PLAN.md
  * §3) - well below the 60Hz simulation rate, since a remote player's on-screen position only needs

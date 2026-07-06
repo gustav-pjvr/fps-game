@@ -2214,3 +2214,69 @@ Follow-up to the two items above, per direct user request.
   as a loose pile while crates still sit flush against the wall) - discarded after confirming, not
   kept as a permanent test since it was purely a one-off visual check, not a regression the CI
   suite needs to keep guarding.
+
+### Death screen repositioned, kill resets both players' health, respawn distance criterion
+
+Three small, independent playtest requests, all uncommitted pending explicit sign-off per user
+instruction (not pushed).
+
+- **`DeathScreen`** - Respawn/Return to Lobby buttons (and the title/score above them) moved from
+  screen-center to a `padding-top` block near the top, clearing MultiplayerHud's top-left health
+  rows and top-center scoreboard (both keep updating live underneath the death overlay). Verified
+  visually via a temporary Playwright screenshot.
+- **Survivor health reset** - a kill now resets *both* players' health, not just the one who
+  died. The dying player's own reset already existed (`Player.respawn()`, on the delayed
+  mid-match respawn). Added `Game.healLocalPlayerToFull()` (reuses `Player.respawn()` at the
+  player's own current position - a positional no-op, but it resets health/velocity/recoil/bob
+  the same way a real respawn does), called the instant a client receives the opponent's
+  `playerDied` message - i.e. the moment this client's own shot is confirmed as the kill.
+- **Respawn distance criterion** - `pickRandomRespawnPoint` (`multiplayerSpawn.ts`) now takes the
+  opponent's current position and filters `MULTIPLAYER_SPAWN_POINTS` to those at least
+  `MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT` (35 - half the spawn ring's own 70-unit
+  diameter) away, falling back to the single farthest point if none qualify. A respawn can no
+  longer drop a player back in sight of whoever just killed them.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green, `npm run build` succeeds.
+
+### Organic zone growth - towns/forests no longer fixed-radius circles
+
+Bigger rework, planned and confirmed with the user before implementation (see the session's plan
+file) - the deferred idea already noted in this file's own `WORLD_SIZE_CHUNKS` history. The
+circular-disc zone model was the actual ceiling on how big/dense towns and forests could get in
+the tight post-shrink annulus (not the annulus itself): `isSiteClear` rejected a candidate site
+entirely the moment its full-radius circle didn't fit at that exact position, even when a smaller
+or differently-shaped zone would fit fine there.
+
+- **`ZoneMap.ts`**: each site's shape is now `radii: readonly number[]` - 16 evenly-spaced rays
+  from the site center, each ray's length computed via ray-circle intersection against both
+  existing boundaries (the world-edge mountain ramp and the spawn/combat ring), capped at 98% of
+  the zone's own cell size to preserve `findNearestSite`'s 3x3-neighbor-search assumption that no
+  site's extent exceeds one cell. This can't produce an out-of-bounds shape by construction, so
+  `isSiteClear` is gone - replaced by `hasMinimumRoom` (every ray must clear `radiusMin`) for the
+  one remaining rejection case, a site with no usable space in *any* direction.
+  `membershipFor`/building placement now interpolate the two nearest rays at a query's actual
+  angle instead of comparing against one scalar. Added a per-cell shape cache
+  (`cachedSiteForCell`, cleared wholesale on world-seed change, mirroring this file's existing
+  `guaranteedSitesCache` pattern) since ray-circle intersection is meaningfully more expensive
+  than the old single multiply-add and `siteForCell` runs on every terrain-vertex/vegetation/
+  building zone query.
+- **Consumer audit before touching anything**: traced every consumer of zone data outside
+  `ZoneMap.ts`. `TerrainGenerator.ts`, `VegetationManager.ts`, `enemySteering.ts`, and
+  `RoadManager.ts` all only read `.membership`/`.siteX`/`.siteZ` - untouched by this rework, since
+  those are unaffected by how the shape is computed internally. Only `BuildingManager.
+  getTownLayout` used `site.radius` directly (uniform-sampling building positions within a disc) -
+  changed to pick the angle first, then sample distance against `radiusOfFlatZoneAtAngle` for
+  that exact angle, so buildings can now use a zone's actual organic footprint in every direction
+  rather than whatever fit inside the tightest circle that used to bound the whole zone.
+- **`ZoneMap.test.ts`** rewritten (not preserved as-is - the new model has no single scalar radius
+  to check) to assert the organic equivalents of the same invariants across the same 1000-seed
+  sweep: every guaranteed site's rays independently re-verified against both boundaries (via a
+  boundary check written separately from `ZoneMap.ts`'s own ray-circle math, not just re-running
+  production code against itself), every ray clears `radiusMin`, distinct cells, determinism, and
+  `getFlatZoneSite` consistency.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green including the rewritten
+1000-seed sweep, `npm run build` succeeds. Visually confirmed via the dev server (grid-searched
+for a live town, screenshotted from directly overhead): a real multi-building town on visibly
+smooth flattened ground, no terrain seams, no console/page errors. Uncommitted pending explicit
+sign-off per user instruction (not pushed).

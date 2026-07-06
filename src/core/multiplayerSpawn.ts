@@ -1,4 +1,8 @@
-import { MULTIPLAYER_SPAWN_MIN_SEPARATION, MULTIPLAYER_SPAWN_POINTS } from './config.ts';
+import {
+  MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT,
+  MULTIPLAYER_SPAWN_MIN_SEPARATION,
+  MULTIPLAYER_SPAWN_POINTS,
+} from './config.ts';
 
 export interface SpawnPoint {
   x: number;
@@ -30,7 +34,20 @@ export function pickMultiplayerSpawnPoints(): [SpawnPoint, SpawnPoint] {
 /** Picks one fresh spawn point for a mid-match respawn - independent of pickMultiplayerSpawnPoints
  * (which only runs once, at match start), and independent per client: each player's own client
  * picks where *it* respawns and reports the result via the existing respawnEvent message, so this
- * never needs to avoid the opponent's current position or agree with anything cross-client. */
-export function pickRandomRespawnPoint(): SpawnPoint {
-  return MULTIPLAYER_SPAWN_POINTS[Math.floor(Math.random() * MULTIPLAYER_SPAWN_POINTS.length)]!;
+ * never needs to agree with anything cross-client. Per user request, does need to avoid the
+ * opponent's *current* position though - filters to points at least
+ * MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT away and picks randomly among whichever qualify,
+ * so a respawn never drops the player back in sight of (or right next to) whoever just killed
+ * them. Falls back to the single farthest point if the opponent is positioned such that nothing
+ * qualifies (shouldn't happen with the current pool/distance values, but a future pool change
+ * shouldn't be able to leave this with zero candidates and no result). */
+export function pickRandomRespawnPoint(opponentPosition: SpawnPoint): SpawnPoint {
+  const candidates = MULTIPLAYER_SPAWN_POINTS.filter(
+    (point) => distance(point, opponentPosition) >= MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT,
+  );
+  if (candidates.length > 0) return candidates[Math.floor(Math.random() * candidates.length)]!;
+
+  return MULTIPLAYER_SPAWN_POINTS.reduce((farthest, point) =>
+    distance(point, opponentPosition) > distance(farthest, opponentPosition) ? point : farthest,
+  );
 }
