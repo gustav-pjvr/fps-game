@@ -41,10 +41,6 @@ import {
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
   MULTIPLAYER_RESPAWN_DELAY,
-  MULTIPLAYER_SPAWN_A_X,
-  MULTIPLAYER_SPAWN_A_Z,
-  MULTIPLAYER_SPAWN_B_X,
-  MULTIPLAYER_SPAWN_B_Z,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_X,
   SPAWN_Z,
@@ -57,9 +53,10 @@ import {
   SUN_SHADOW_ORTHO_HALF_EXTENT,
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
+import { pickRandomRespawnPoint } from './multiplayerSpawn.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
-import type { MultiplayerSession } from '../network/MultiplayerSession.ts';
+import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 const TARGET_RING_BASE_RADIUS = 15;
@@ -85,9 +82,6 @@ interface ActiveMultiplayer {
   readonly remotePlayer: RemotePlayer;
   readonly minimap: Minimap;
   readonly multiplayerHud: MultiplayerHud;
-  /** This client's own designated spawn point (XZ) - kept around so a later respawn can return to
-   * it without re-deriving role -> spawn-point logic mid-match. */
-  readonly ownSpawn: THREE.Vector2;
   /** Win condition (MULTIPLAYER_PLAN.md §4): first to this many kills wins. Fixed for the match -
    * the host's choice at room-creation time, carried on MatchStartMessage. */
   readonly killLimit: number;
@@ -106,12 +100,14 @@ function waitForNextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-/** Host always spawns at A, guest always at B - fixed for the whole match (MULTIPLAYER_PLAN.md
- * §4a), never randomized or swapped. Returns [ownSpawn, opponentSpawn]. */
-function multiplayerSpawnPoints(role: MultiplayerSession['role']): [THREE.Vector2, THREE.Vector2] {
-  const spawnA = new THREE.Vector2(MULTIPLAYER_SPAWN_A_X, MULTIPLAYER_SPAWN_A_Z);
-  const spawnB = new THREE.Vector2(MULTIPLAYER_SPAWN_B_X, MULTIPLAYER_SPAWN_B_Z);
-  return role === 'host' ? [spawnA, spawnB] : [spawnB, spawnA];
+/** Host always spawns at spawnA, guest always at spawnB - fixed for the whole match
+ * (MULTIPLAYER_PLAN.md §4a), never randomized or swapped *within* a match, though the points
+ * themselves are picked fresh by the host each match (see multiplayerSpawn.ts and the
+ * MultiplayerSession comment). Returns [ownSpawn, opponentSpawn]. */
+function multiplayerSpawnPoints(session: MultiplayerSession): [THREE.Vector2, THREE.Vector2] {
+  const spawnA = new THREE.Vector2(session.spawnA.x, session.spawnA.z);
+  const spawnB = new THREE.Vector2(session.spawnB.x, session.spawnB.z);
+  return session.role === 'host' ? [spawnA, spawnB] : [spawnB, spawnA];
 }
 
 /** Linear gain falloff for enemy gunshots: full volume inside FULL_VOLUME_RANGE, fading to
@@ -246,7 +242,7 @@ export class Game {
      * signal that the host clicked Rematch (see MatchEndScreen / App.restartMultiplayerMatch); the
      * initial matchStart is always consumed by the room screen before Game.create() ever attaches
      * its own message handler, so any matchStart Game itself sees is necessarily this case. */
-    private readonly onMultiplayerRematchReceived?: (seed: number, killLimit: number) => void,
+    private readonly onMultiplayerRematchReceived?: (params: MultiplayerMatchStartParams) => void,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
@@ -343,7 +339,7 @@ export class Game {
     onReturnToLobby?: () => void,
     multiplayer?: MultiplayerSession,
     onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
-    onMultiplayerRematchReceived?: (seed: number, killLimit: number) => void,
+    onMultiplayerRematchReceived?: (params: MultiplayerMatchStartParams) => void,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
     // Single-player: a new seed per match (not per practice-reset) so each new game generates a
@@ -386,7 +382,7 @@ export class Game {
     // Multiplayer: each client spawns at its own designated point (MULTIPLAYER_PLAN.md §4a), not
     // the shared single-player one - host always A, guest always B.
     const [ownSpawn, opponentSpawn] = multiplayer
-      ? multiplayerSpawnPoints(multiplayer.role)
+      ? multiplayerSpawnPoints(multiplayer)
       : [new THREE.Vector2(SPAWN_X, SPAWN_Z), null];
 
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
@@ -498,7 +494,6 @@ export class Game {
         remotePlayer,
         minimap: new Minimap(hudRoot),
         multiplayerHud: new MultiplayerHud(hudRoot),
-        ownSpawn,
         killLimit: multiplayer.killLimit,
         snapshotAccumulator: 0,
         deathTimer: 0,
@@ -594,7 +589,12 @@ export class Game {
             case 'matchStart':
               // The initial matchStart is always consumed by the room screen before this handler
               // ever attaches - any matchStart seen here is the host's Rematch signal.
-              game.onMultiplayerRematchReceived?.(message.seed, message.killLimit);
+              game.onMultiplayerRematchReceived?.({
+                seed: message.seed,
+                killLimit: message.killLimit,
+                spawnA: { x: message.spawnAX, z: message.spawnAZ },
+                spawnB: { x: message.spawnBX, z: message.spawnBZ },
+              });
               break;
             case 'playerSnapshot':
               activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
@@ -970,15 +970,20 @@ export class Game {
     }
   }
 
-  /** Respawns this client's own player at its own designated spawn point (MULTIPLAYER_PLAN.md
-   * §4a) - triggered automatically MULTIPLAYER_RESPAWN_DELAY seconds after death (see
+  /** Respawns this client's own player at a fresh random spawn point (per user request - every
+   * death picks a new spot from MULTIPLAYER_SPAWN_POINTS, not always the same one used at match
+   * start) - triggered automatically MULTIPLAYER_RESPAWN_DELAY seconds after death (see
    * updateMultiplayer), or immediately via the death screen's Respawn button/T key (see
    * resetPlay). Deliberately does not touch scoreState - a kill/death in multiplayer shouldn't
-   * reset the running score the way single-player's practice-reset does. */
+   * reset the running score the way single-player's practice-reset does.
+   *
+   * Picked independently by this client alone, using plain Math.random() (no cross-client
+   * agreement needed) - the chosen position rides on the respawnEvent message already sent below,
+   * which is how the opponent's RemotePlayer learns where to snap to either way. */
   private multiplayerRespawn(): void {
     if (!this.multiplayer) return;
 
-    const { x, y: z } = this.multiplayer.ownSpawn;
+    const { x, z } = pickRandomRespawnPoint();
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.deathTimer = 0;

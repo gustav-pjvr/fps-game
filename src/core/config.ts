@@ -11,29 +11,37 @@ export const SPAWN_X = 0;
 export const SPAWN_Z = 8;
 export const ENEMY_RING_BASE_RADIUS = 25;
 
-/** Multiplayer (MULTIPLAYER_PLAN.md §4a): two fixed spawn points on opposite sides of the map, far
- * enough apart that players have to advance toward each other rather than spawning in sight of one
- * another, but both safely inside WORLD_EDGE_RAMP_START (70 at the current WORLD_SIZE_CHUNKS) so
- * neither sits on the boundary mountain ramp. Host always spawns at A, guest always at B - fixed
- * for the whole match, not randomized or swapped.
+/** Multiplayer (MULTIPLAYER_PLAN.md §4a, later revised per user request for random spawns): a
+ * pool of candidate spawn points around the map, all at the same safe distance (35, replacing the
+ * old fixed +/-35 two-point layout - see the prior history of that number in git blame) but spread
+ * across 6 angles so which two get used, and where, actually varies match to match and death to
+ * death, rather than the same two fixed points every time. `pickMultiplayerSpawnPoints`
+ * (multiplayerSpawn.ts) draws two of these far enough apart (MULTIPLAYER_SPAWN_MIN_SEPARATION) for
+ * the host's initial pick at match start; individual respawns during the match pick fresh points
+ * independently (see Game.ts's multiplayerRespawn) using the *receiving* client's own
+ * Math.random() - no cross-client agreement needed there, since the chosen position already rides
+ * on the existing respawnEvent network message.
  *
- * Pulled in from +/-140 to +/-35 alongside the WORLD_SIZE_CHUNKS 6 -> 4 shrink - the old distance
- * would have put both spawns out past the new, much closer WORLD_EDGE_RAMP_START, embedded in the
- * boundary mountain ramp. +/-35 keeps a healthy margin inside 70 while still leaving the two
- * players 70 units apart at the start of a match - actually *closer* combat than before, which
- * fits the "tighter 1v1 arena" goal of shrinking the map in the first place.
- *
- * Known gap, not solved yet: unlike SPAWN_X/SPAWN_Z, these two points are not currently excluded
- * from flat/forest zone placement (ZoneMap.ts's isSiteClear only measures clearance from the
+ * Known gap, not solved yet: unlike SPAWN_X/SPAWN_Z, these points are not currently excluded from
+ * flat/forest zone placement (ZoneMap.ts's isSiteClear only measures clearance from the
  * single-player spawn) - a town or forest could rarely generate overlapping one of them. Vegetation
- * *is* covered (see VEGETATION_SPAWN_CLEARANCE below, checked against all three spawn points), since
- * that was a small, low-risk addition; doing the same for zone placement would mean touching the
- * guaranteed-zone system ZoneMap.test.ts locks in across 1000 seeds, which isn't something to do
- * incidentally while building movement sync. */
-export const MULTIPLAYER_SPAWN_A_X = 35;
-export const MULTIPLAYER_SPAWN_A_Z = 0;
-export const MULTIPLAYER_SPAWN_B_X = -35;
-export const MULTIPLAYER_SPAWN_B_Z = 0;
+ * *is* covered (see VEGETATION_SPAWN_CLEARANCE below, checked against every point in this pool),
+ * since that was a small, low-risk addition; doing the same for zone placement would mean touching
+ * the guaranteed-zone system ZoneMap.test.ts locks in across 1000 seeds, which isn't something to
+ * do incidentally alongside this. */
+export const MULTIPLAYER_SPAWN_POINTS: ReadonlyArray<{ x: number; z: number }> = [0, 60, 120, 180, 240, 300].map(
+  (angleDeg) => {
+    const angle = (angleDeg * Math.PI) / 180;
+    const distance = 35;
+    return { x: Math.cos(angle) * distance, z: Math.sin(angle) * distance };
+  },
+);
+/** Minimum distance apart the host's two initial spawn picks must be (see
+ * pickMultiplayerSpawnPoints) - players should have to advance toward each other, not spawn in
+ * sight of one another. Below the pool's own point-to-point spacing (60 units, adjacent points on
+ * a 35-radius hexagon) so a pick isn't forced into always choosing near-opposite points, which
+ * would make "random" spawns look barely different from the old fixed two-point layout in practice. */
+export const MULTIPLAYER_SPAWN_MIN_SEPARATION = 40;
 
 /** How often this client broadcasts its own player's transform to the opponent (MULTIPLAYER_PLAN.md
  * §3) - well below the 60Hz simulation rate, since a remote player's on-screen position only needs

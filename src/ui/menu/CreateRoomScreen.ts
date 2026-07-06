@@ -1,13 +1,15 @@
 import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
+import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
+import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS } from '../../core/config.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
 /** Host side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): generates a code, shows it,
  * waits for a guest to connect, verifies the connection with a `hello` exchange, then offers
- * "Start Match" - clicking it picks the one seed both players will use plus the host's chosen win
- * condition (§4), sends both across, and hands the now-established connection off to whoever's
- * starting the actual match (see onStartMatch). */
+ * "Start Match" - clicking it picks the one seed both players will use, this match's two random
+ * spawn points, and the host's chosen win condition (§4), sends all of it across, and hands the
+ * now-established connection off to whoever's starting the actual match (see onStartMatch). */
 export class CreateRoomScreen {
   private readonly overlay: HTMLDivElement;
   private readonly codeDisplay: HTMLDivElement;
@@ -19,7 +21,7 @@ export class CreateRoomScreen {
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
-    private readonly onStartMatch: (connection: PeerConnection, seed: number, killLimit: number) => void,
+    private readonly onStartMatch: (connection: PeerConnection, params: MultiplayerMatchStartParams) => void,
   ) {
     this.overlay = createOverlay();
 
@@ -119,13 +121,22 @@ export class CreateRoomScreen {
     if (!this.connection) return;
     const seed = generateMultiplayerSeed();
     const killLimit = Number(this.killLimitSelect.value);
-    this.connection.send({ type: 'matchStart', seed, killLimit });
+    const [spawnA, spawnB] = pickMultiplayerSpawnPoints();
+    this.connection.send({
+      type: 'matchStart',
+      seed,
+      killLimit,
+      spawnAX: spawnA.x,
+      spawnAZ: spawnA.z,
+      spawnBX: spawnB.x,
+      spawnBZ: spawnB.z,
+    });
     const connection = this.connection;
     // Ownership of the connection moves to the match now - `close()` must not dispose it, and this
     // screen shouldn't react to anything on it anymore (Game.create() takes over via setCallbacks).
     this.connection = null;
     this.overlay.style.display = 'none';
-    this.onStartMatch(connection, seed, killLimit);
+    this.onStartMatch(connection, { seed, killLimit, spawnA, spawnB });
   }
 
   private setStatus(text: string): void {

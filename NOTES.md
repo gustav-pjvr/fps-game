@@ -1999,3 +1999,31 @@ guaranteed-site invariants across many seeds, unaffected by the radius/cell-size
 re-run green after the spawn-point change, confirming combat/win-condition/rematch flows aren't
 sensitive to the exact spawn distance. Two overhead/close-up screenshots (opponent facing, shrunk
 town) used to confirm real visual outcomes rather than trusting the underlying math alone.
+
+## Random multiplayer spawn points (2026-07-06)
+
+Per user request: every spawn/respawn now picks a fresh point, not always the same fixed
+host-spawns-here/guest-spawns-there layout. `MULTIPLAYER_SPAWN_A/B_X/Z` (two fixed points) replaced
+with `MULTIPLAYER_SPAWN_POINTS` (a 6-point ring at the same 35-unit distance) in config.ts.
+
+- **Match start:** the host picks two points at least `MULTIPLAYER_SPAWN_MIN_SEPARATION` apart
+  (`pickMultiplayerSpawnPoints`, plain `Math.random()` - no reason this needs to be seed-reproducible
+  the way world generation does) and sends them on the same `MatchStartMessage` that already carries
+  the seed/kill-limit, so the guest never has to pick or guess - same "one side decides, transmits
+  the result" shape the win-condition/seed already used, just two more numbers on it. Also re-picked
+  fresh on every Rematch (`App.handleRematchClick`), not reused from the previous match.
+- **Respawns:** each client picks its *own* fresh point independently on death
+  (`pickRandomRespawnPoint`, `Game.multiplayerRespawn`) - no cross-client agreement needed here at
+  all, since the chosen position already rides on the existing `respawnEvent` message that tells
+  the opponent's `RemotePlayer` where to snap to. Simpler than the match-start case, not a special
+  case of it.
+- `VegetationManager`'s multiplayer-spawn clearance check (previously two fixed points) now loops
+  over the whole pool, and `MultiplayerMatchStartParams` (new type in `MultiplayerSession.ts`)
+  bundles seed/killLimit/spawnA/spawnB as one object through the room-screen -> App.ts handoff
+  instead of letting that callback's positional parameter list keep growing.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green.
+`e2e/multiplayer.spec.ts`/`multiplayer-match.spec.ts`/`multiplayer-combat.spec.ts` green (the latter
+flaked once mid-batch on an already-known, pre-existing line-of-sight retry pattern - see that
+test's own history earlier in this file - and passed cleanly re-run alone immediately after, so
+treated as the established flake, not a new regression from this change).

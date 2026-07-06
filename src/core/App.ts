@@ -11,8 +11,9 @@ import { MatchEndScreen, type MultiplayerMatchEndResult } from '../ui/matchEndSc
 import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 import { generateMultiplayerSeed } from './worldSeed.ts';
+import { pickMultiplayerSpawnPoints } from './multiplayerSpawn.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
-import type { MultiplayerRole, MultiplayerSession } from '../network/MultiplayerSession.ts';
+import type { MultiplayerMatchStartParams, MultiplayerRole, MultiplayerSession } from '../network/MultiplayerSession.ts';
 
 /** Top-level state machine: lobby (with menu overlays) -> match setup -> loading -> gameplay,
  * with gameplay able to hand control back to a fresh lobby via the death screen. */
@@ -63,12 +64,12 @@ export class App {
     this.createRoomScreen = new CreateRoomScreen(
       overlayRoot,
       () => this.multiplayerMenu.show(),
-      (connection, seed, killLimit) => void this.startMultiplayerMatch(connection, 'host', seed, killLimit),
+      (connection, params) => void this.startMultiplayerMatch(connection, 'host', params),
     );
     this.joinRoomScreen = new JoinRoomScreen(
       overlayRoot,
       () => this.multiplayerMenu.show(),
-      (connection, seed, killLimit) => void this.startMultiplayerMatch(connection, 'guest', seed, killLimit),
+      (connection, params) => void this.startMultiplayerMatch(connection, 'guest', params),
     );
     this.matchEndScreen = new MatchEndScreen(
       overlayRoot,
@@ -131,9 +132,9 @@ export class App {
   /** Wired from CreateRoomScreen/JoinRoomScreen once a match is actually starting (see
    * MULTIPLAYER_PLAN.md §7 phase 2). Also the entry point restartMultiplayerMatch reuses for a
    * rematch, so it must not assume this is the *first* match on this connection. */
-  private async startMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, seed: number, killLimit: number): Promise<void> {
+  private async startMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     this.multiplayerMenu.hide();
-    await this.createMultiplayerGame(connection, role, seed, killLimit);
+    await this.createMultiplayerGame(connection, role, params);
   }
 
   /** Shared by the initial startMultiplayerMatch and restartMultiplayerMatch (phase 4's rematch
@@ -141,14 +142,14 @@ export class App {
    * multiplayer session instead of a MatchSetupConfig. `enemyCount`/`targetCount` are passed as 0
    * and are otherwise unused: Game.create() skips AI spawning entirely once a multiplayer session
    * is present, since multiplayer matches are pure PvP. */
-  private async createMultiplayerGame(connection: PeerConnection, role: MultiplayerRole, seed: number, killLimit: number): Promise<void> {
+  private async createMultiplayerGame(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     this.mainMenu.hide();
     this.matchEndScreen.hide();
     this.loadingScreen.show();
 
     this.lobby?.dispose();
     this.lobby = null;
-    this.currentMultiplayerSession = { connection, role, seed, killLimit };
+    this.currentMultiplayerSession = { connection, role, ...params };
 
     const game = await Game.create(
       this.gameContainer,
@@ -156,9 +157,9 @@ export class App {
       { enemyCount: 0, targetCount: 0 },
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
       () => void this.returnToLobby(),
-      { connection, role, seed, killLimit },
+      { connection, role, ...params },
       (result) => this.handleMultiplayerMatchEnd(result),
-      (rematchSeed, rematchKillLimit) => void this.restartMultiplayerMatch(connection, role, rematchSeed, rematchKillLimit),
+      (rematchParams) => void this.restartMultiplayerMatch(connection, role, rematchParams),
     );
 
     this.loadingScreen.hide();
@@ -170,14 +171,14 @@ export class App {
    * still-open connection (MULTIPLAYER_PLAN.md §7 phase 4) - triggered by the host's Rematch click
    * (handleRematchClick) or, on the guest's side, by receiving the fresh matchStart that click
    * sends (Game.ts's onMultiplayerRematchReceived). */
-  private async restartMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, seed: number, killLimit: number): Promise<void> {
+  private async restartMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     // Silences the old Game's message handling before tearing it down - Game.create() re-attaches
     // its own callbacks once the new match is ready, but there's a gap in between where a stray
     // message must not reach a Game instance that's about to be disposed.
     connection.setCallbacks({ onConnected: () => {}, onDisconnected: () => {}, onError: () => {}, onMessage: () => {} });
     this.currentGame?.dispose({ keepConnectionAlive: true });
     this.currentGame = null;
-    await this.createMultiplayerGame(connection, role, seed, killLimit);
+    await this.createMultiplayerGame(connection, role, params);
   }
 
   /** Wired to Game's onMultiplayerMatchEnd - shows MatchEndScreen and remembers the result so
@@ -187,14 +188,24 @@ export class App {
   }
 
   /** MatchEndScreen only ever shows this button to the host (see its own comment) - generates a
-   * fresh seed, sends it to the guest on the same connection, and restarts locally. The guest
-   * restarts on its own once that message arrives (Game.ts's onMultiplayerRematchReceived). */
+   * fresh seed and spawn points, sends them to the guest on the same connection, and restarts
+   * locally. The guest restarts on its own once that message arrives (Game.ts's
+   * onMultiplayerRematchReceived). */
   private handleRematchClick(): void {
     if (!this.currentMultiplayerSession) return;
     const { connection, role, killLimit } = this.currentMultiplayerSession;
     const seed = generateMultiplayerSeed();
-    connection.send({ type: 'matchStart', seed, killLimit });
-    void this.restartMultiplayerMatch(connection, role, seed, killLimit);
+    const [spawnA, spawnB] = pickMultiplayerSpawnPoints();
+    connection.send({
+      type: 'matchStart',
+      seed,
+      killLimit,
+      spawnAX: spawnA.x,
+      spawnAZ: spawnA.z,
+      spawnBX: spawnB.x,
+      spawnBZ: spawnB.z,
+    });
+    void this.restartMultiplayerMatch(connection, role, { seed, killLimit, spawnA, spawnB });
   }
 
   private handleReturnToLobbyFromMatchEnd(): void {

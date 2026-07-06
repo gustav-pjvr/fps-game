@@ -7,9 +7,10 @@ export interface HelloMessage {
 
 /** Host -> guest, right before both sides call Game.create() - the single piece of data that
  * needs to cross the network for the whole world to generate identically on both machines (see
- * MULTIPLAYER_PLAN.md §1), plus the host's chosen win condition (§4). Spawn point assignment isn't
- * part of this message: it's always host=A/guest=B, a fixed rule both sides already know (see the
- * MULTIPLAYER_SPAWN_* comment in config.ts), not something that needs negotiating per match.
+ * MULTIPLAYER_PLAN.md §1), plus the host's chosen win condition (§4) and this match's two spawn
+ * points (host always at spawnA, guest always at spawnB - fixed for the match once picked, but the
+ * points themselves are randomized fresh per match by the host - see multiplayerSpawn.ts - not the
+ * fixed two-point layout the original plan used).
  *
  * Sent twice in a match's lifetime, not once: the initial send (from CreateRoomScreen) starts the
  * first match, and the host's "Rematch" button (MatchEndScreen, phase 4) sends a fresh one with a
@@ -21,6 +22,10 @@ export interface MatchStartMessage {
   type: 'matchStart';
   seed: number;
   killLimit: number;
+  spawnAX: number;
+  spawnAZ: number;
+  spawnBX: number;
+  spawnBZ: number;
 }
 
 /** Broadcast periodically by each client for its own player (MULTIPLAYER_PLAN.md §3) - the only
