@@ -1585,3 +1585,46 @@ full-size, clear flat and forest sites - the definitive check for this change, s
 exact formula this whole exercise was reasoning about by hand. Full `npx playwright test
 e2e/smoke.spec.ts` 15/16 green (the one failure was the same pre-existing GLTF-texture-load flake
 this file already documents elsewhere, confirmed unrelated by a clean isolated re-run).
+
+## Multiplayer, Phase 1: room-code connection layer (2026-07-06)
+
+First step of `MULTIPLAYER_PLAN.md` (see that doc for the full architecture and the reasoning behind
+every choice below) - no gameplay yet, just proving two browsers can find and talk to each other.
+
+- **`peerjs` added as a dependency** (1.5.5) - wraps the WebRTC handshake (SDP offer/answer, ICE)
+  behind a simple `Peer`/`DataConnection` API, using PeerJS's free public broker so this project
+  needs zero backend infrastructure of its own for now (see the plan doc's §2 for the self-hosting
+  fallback if that broker ever becomes a reliability concern).
+- **`src/network/protocol.ts`** (new) - the `NetworkMessage` discriminated union both sides agree
+  on; deliberately just `{ type: 'hello' }` for this phase, not pre-built out with message types
+  later phases will need - those get added when combat/movement sync actually needs them.
+- **`src/network/PeerConnection.ts`** (new) - thin wrapper around PeerJS for this game's exact
+  shape (one host, one guest, connected by a short room code rather than PeerJS's own generated
+  ID). Room codes are namespaced with a `fpsgame-` prefix before being used as the actual PeerJS
+  peer ID - the public broker is shared by every app using PeerJS's default config, so a short,
+  human-typeable code needs that prefix to avoid colliding with some unrelated app's peer IDs.
+  `generateRoomCode()` excludes visually ambiguous characters (0/O, 1/I/L) since a code gets read
+  aloud or typed by hand between two people.
+- **`CreateRoomScreen.ts`/`JoinRoomScreen.ts`/`MultiplayerMenu.ts`** (new, in `src/ui/menu/`) - the
+  create/join UI, following this project's existing one-class-per-screen overlay convention
+  (`PlaySetupModal.ts` etc.). Both screens send a `hello` the moment the connection opens and only
+  report "verified" once they've received the *other* side's `hello` back - proves the DataChannel
+  actually works bidirectionally, not just that a connection object exists. `MainMenu.ts` gained a
+  "MULTIPLAYER" button; `App.ts` wires the three new screens together the same way it already wires
+  Settings/Inventory/PlaySetup.
+- **Real end-to-end verification, not just typecheck-and-hope**: `e2e/multiplayer.spec.ts` (new,
+  permanent) opens two independent Playwright browser *contexts* (not just tabs - contexts, so
+  there's no shared storage), has one create a room and the other join with the generated code, and
+  asserts both sides see "Connection verified both ways." This actually exercises the public PeerJS
+  broker and a real WebRTC connection from this sandbox, not a mock - confirmed working before
+  committing. A second test confirms joining a nonexistent code surfaces a clear error instead of
+  hanging.
+
+**Verification:** `npx tsc --noEmit` clean. `npm run test:unit` 19/19 green (unaffected - this phase
+touches no game-simulation code). `npx playwright test e2e/smoke.spec.ts` 16/16 green (unaffected,
+single-player is untouched). `npx playwright test e2e/multiplayer.spec.ts` 2/2 green, run standalone
+against the real public broker multiple times during development to confirm it wasn't a fluke.
+
+**Not yet done** (see `MULTIPLAYER_PLAN.md` §7 for the rest of the roadmap): no shared world/seed
+sync, no `RemotePlayer`, no combat, no per-player spawn points, no minimap, no host match settings.
+This phase is purely "can two browsers find each other and talk."

@@ -1,0 +1,94 @@
+import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
+import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+
+/** Host side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7 phase 1): generates a code,
+ * shows it, waits for a guest to connect, then proves the connection actually works end-to-end by
+ * exchanging a `hello` message - phase 1 stops there, there's no match to launch into yet. */
+export class CreateRoomScreen {
+  private readonly overlay: HTMLDivElement;
+  private readonly codeDisplay: HTMLDivElement;
+  private readonly statusText: HTMLDivElement;
+  private connection: PeerConnection | null = null;
+
+  constructor(
+    root: HTMLElement,
+    private readonly onClose: () => void,
+  ) {
+    this.overlay = createOverlay();
+
+    const panel = createPanel();
+    panel.style.width = '400px';
+    panel.appendChild(createPanelTitle('CREATE ROOM'));
+
+    const label = document.createElement('div');
+    label.textContent = 'Share this code with the other player:';
+    label.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:10px;';
+    panel.appendChild(label);
+
+    this.codeDisplay = document.createElement('div');
+    this.codeDisplay.style.cssText =
+      `font-size:2.2rem; font-weight:700; letter-spacing:0.3em; text-align:center; color:${ACCENT};` +
+      ' padding:18px 0; background:rgba(255,255,255,0.05); border-radius:8px; margin-bottom:14px;' +
+      ' font-variant-numeric:tabular-nums;';
+    panel.appendChild(this.codeDisplay);
+
+    const copyButton = createButton('Copy Code');
+    copyButton.style.width = '100%';
+    copyButton.addEventListener('click', () => {
+      void navigator.clipboard.writeText(this.codeDisplay.textContent ?? '');
+    });
+    panel.appendChild(copyButton);
+
+    this.statusText = document.createElement('div');
+    this.statusText.style.cssText = `font-size:0.9rem; color:${TEXT}; opacity:0.85; margin-top:18px; text-align:center; min-height:1.4em;`;
+    panel.appendChild(this.statusText);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex; justify-content:flex-end; margin-top:20px;';
+    const cancelButton = createButton('Cancel');
+    cancelButton.addEventListener('click', () => this.close());
+    footer.appendChild(cancelButton);
+    panel.appendChild(footer);
+
+    this.overlay.appendChild(panel);
+    root.appendChild(this.overlay);
+  }
+
+  /** Starts a fresh room each time this screen is opened, rather than reusing whatever room a
+   * previous visit created - an abandoned "Create Room" attempt shouldn't leave a stale room
+   * live on the broker that a stale code might still (confusingly) connect to. */
+  show(): void {
+    this.overlay.style.display = 'flex';
+    const code = generateRoomCode();
+    this.codeDisplay.textContent = code;
+    this.setStatus('Waiting for the other player to join…');
+
+    this.connection = PeerConnection.hostRoom(code, {
+      onConnected: () => {
+        this.setStatus('Connected! Verifying the connection…');
+        this.connection?.send({ type: 'hello' });
+      },
+      onDisconnected: () => this.setStatus('The other player disconnected.'),
+      onError: (message) => this.setStatus(message),
+      onMessage: (message) => {
+        if (message.type === 'hello') this.setStatus('Connection verified both ways. (Multiplayer matches are coming in a later update.)');
+      },
+    });
+  }
+
+  private setStatus(text: string): void {
+    this.statusText.textContent = text;
+  }
+
+  private close(): void {
+    this.connection?.dispose();
+    this.connection = null;
+    this.overlay.style.display = 'none';
+    this.onClose();
+  }
+
+  dispose(): void {
+    this.connection?.dispose();
+    this.overlay.remove();
+  }
+}

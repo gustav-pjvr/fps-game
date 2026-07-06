@@ -1,0 +1,47 @@
+import { test, expect } from '@playwright/test';
+
+/** Phase 1 of MULTIPLAYER_PLAN.md: the connection layer only, no gameplay yet. Two independent
+ * browser contexts (not just tabs - contexts, so there's no shared storage/state) verify that
+ * create-room -> generated code -> join-room -> code entry actually establishes a real WebRTC
+ * connection via the public PeerJS broker and that messages flow both ways across it. */
+test('creating and joining a room establishes a working connection', async ({ browser }) => {
+  const hostContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  const hostPage = await hostContext.newPage();
+  const guestPage = await guestContext.newPage();
+
+  await hostPage.goto('/');
+  await hostPage.getByRole('button', { name: 'MULTIPLAYER', exact: true }).click();
+  await hostPage.getByRole('button', { name: 'Create Room', exact: true }).click();
+
+  const codeLocator = hostPage.locator('div').filter({ hasText: /^[A-Z2-9]{6}$/ }).last();
+  await codeLocator.waitFor({ state: 'visible', timeout: 10000 });
+  const code = await codeLocator.textContent();
+  expect(code).toMatch(/^[A-Z2-9]{6}$/);
+  if (!code) throw new Error('room code never appeared');
+
+  await guestPage.goto('/');
+  await guestPage.getByRole('button', { name: 'MULTIPLAYER', exact: true }).click();
+  await guestPage.getByRole('button', { name: 'Join Room', exact: true }).click();
+  await guestPage.getByPlaceholder('ABCDEF').fill(code);
+  await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
+
+  // Both sides send `hello` once connected and only report "verified" once they've received the
+  // other side's - proves the DataChannel actually works in both directions, not just that a
+  // connection object exists.
+  await expect(hostPage.getByText('Connection verified both ways')).toBeVisible({ timeout: 20000 });
+  await expect(guestPage.getByText('Connection verified both ways')).toBeVisible({ timeout: 20000 });
+
+  await hostContext.close();
+  await guestContext.close();
+});
+
+test('joining a nonexistent room shows an error instead of hanging', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'MULTIPLAYER', exact: true }).click();
+  await page.getByRole('button', { name: 'Join Room', exact: true }).click();
+  await page.getByPlaceholder('ABCDEF').fill('ZZZZZZ');
+  await page.getByRole('button', { name: 'Join', exact: true }).click();
+
+  await expect(page.getByText('No room found with that code.')).toBeVisible({ timeout: 15000 });
+});

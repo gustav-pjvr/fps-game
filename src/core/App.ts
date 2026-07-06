@@ -4,6 +4,9 @@ import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { InventoryPanel } from '../ui/menu/InventoryPanel.ts';
 import { PlaySetupModal, type MatchSetupConfig } from '../ui/menu/PlaySetupModal.ts';
 import { LoadingScreen } from '../ui/menu/LoadingScreen.ts';
+import { MultiplayerMenu } from '../ui/menu/MultiplayerMenu.ts';
+import { CreateRoomScreen } from '../ui/menu/CreateRoomScreen.ts';
+import { JoinRoomScreen } from '../ui/menu/JoinRoomScreen.ts';
 import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 
@@ -19,6 +22,9 @@ export class App {
   private inventoryPanel!: InventoryPanel;
   private readonly loadingScreen: LoadingScreen;
   private playSetupModal: PlaySetupModal | null = null;
+  private readonly multiplayerMenu: MultiplayerMenu;
+  private readonly createRoomScreen: CreateRoomScreen;
+  private readonly joinRoomScreen: JoinRoomScreen;
 
   private constructor(
     private readonly lobbyContainer: HTMLElement,
@@ -28,11 +34,25 @@ export class App {
   ) {
     this.mainMenu = new MainMenu(overlayRoot, {
       onPlay: () => this.openPlaySetup(),
+      onMultiplayer: () => this.multiplayerMenu.show(),
       onSettings: () => this.settingsPanel.show(),
       onInventory: () => this.inventoryPanel.show(),
     });
     this.settingsPanel = new SettingsPanel(overlayRoot, () => this.settingsPanel.hide());
     this.loadingScreen = new LoadingScreen(overlayRoot);
+    this.multiplayerMenu = new MultiplayerMenu(overlayRoot, {
+      onCreateRoom: () => {
+        this.multiplayerMenu.hide();
+        this.createRoomScreen.show();
+      },
+      onJoinRoom: () => {
+        this.multiplayerMenu.hide();
+        this.joinRoomScreen.show();
+      },
+      onClose: () => this.multiplayerMenu.hide(),
+    });
+    this.createRoomScreen = new CreateRoomScreen(overlayRoot, () => this.multiplayerMenu.show());
+    this.joinRoomScreen = new JoinRoomScreen(overlayRoot, () => this.multiplayerMenu.show());
   }
 
   static async create(

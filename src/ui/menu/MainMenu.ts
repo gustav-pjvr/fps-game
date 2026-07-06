@@ -3,6 +3,7 @@ import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts'
 
 export interface MainMenuCallbacks {
   onPlay: () => void;
+  onMultiplayer: () => void;
   onSettings: () => void;
   onInventory: () => void;
 }
@@ -72,6 +73,10 @@ export class MainMenu {
     playButton.style.minWidth = '200px';
     playButton.addEventListener('click', callbacks.onPlay);
 
+    const multiplayerButton = createButton('MULTIPLAYER');
+    multiplayerButton.style.minWidth = '200px';
+    multiplayerButton.addEventListener('click', callbacks.onMultiplayer);
+
     const settingsButton = createButton('SETTINGS');
     settingsButton.style.minWidth = '200px';
     settingsButton.addEventListener('click', callbacks.onSettings);
@@ -80,7 +85,7 @@ export class MainMenu {
     inventoryButton.style.minWidth = '200px';
     inventoryButton.addEventListener('click', callbacks.onInventory);
 
-    buttonRow.append(playButton, settingsButton, inventoryButton);
+    buttonRow.append(playButton, multiplayerButton, settingsButton, inventoryButton);
     this.element.appendChild(buttonRow);
 
     // Faint divider echoing a HUD scope line, purely atmospheric - ties the left (identity) and
