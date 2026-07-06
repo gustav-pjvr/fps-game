@@ -1856,3 +1856,62 @@ screen hidden) rather than the old frozen match still sitting underneath; (2) co
 disconnect ends the match for the remaining player with no Rematch option. Full `npx playwright
 test` (all 24 specs, one worker, ~16 minutes) green - including a full re-run after the flaky-test
 fix above to confirm it actually holds, not just that it happened to pass once.
+
+## Multiplayer playtest fixes: opponent skin + pause-invincibility exploit (2026-07-06)
+
+Two real bugs the user found by actually playing a multiplayer match, not by reasoning about the
+code - see this session's third one, ladder climbing, for the counter-example of a "fix" that
+looked solid in automated testing but didn't hold up when the user tried it live; that one was
+deliberately left out of this pass (see below) rather than claimed as done.
+
+- **Opponent skin.** `RemotePlayer` was still the plain red capsule placeholder from Phase 2/3 -
+  functionally correct (hittable, damageable) but visually nothing like a character. Now loads and
+  clones the same `character-male-a.glb` (Kenney "Mini Characters") `Enemy.ts` already uses, via
+  `AssetLoader.loadGLTF` (shared cache, so a match only fetches the model once regardless of how
+  many enemies/opponents end up using it), with the same idle/walk animation swap Enemy.ts does
+  based on whether the damped visual position actually moved this frame. `RemotePlayer`'s
+  constructor became a private constructor behind a new `static async create()` (the GLTF load is
+  async), matching this codebase's existing factory-method convention for anything that needs to
+  await asset loading. The Rapier collider is unchanged - sized to the local player's own capsule,
+  not the visual model, exactly as before; the model is cosmetic only, same as Enemy's own comment
+  already said about itself. Verified with a real screenshot (not just a passing test) showing the
+  actual character model in a live two-browser match, not the capsule.
+- **Pause-invincibility exploit.** Reported directly by the user: pausing (releasing pointer lock)
+  during a multiplayer match made a player briefly *unkillable* - shots that landed while paused
+  didn't register until the player unpaused. Root cause: `Game.update()`'s pause check returned
+  early before *anything* else ran, including applying already-arrived `pendingNetworkDamage` and
+  the death-transition block that sends `playerDied`. The opponent's own client keeps running and
+  keeps sending damage regardless of this client's pause state, so all of it just sat queued,
+  unapplied, until the paused player actually unpaused - at which point it would land as one lump
+  sum. A player who simply never unpaused was functionally invincible for as long as they stayed in
+  the pause menu. Fixed by only letting the early-return skip *local* simulation (movement,
+  shooting, AI) - `if (isPaused && !this.multiplayer) return;` instead of `if (isPaused) return;` -
+  so network damage/death/respawn keep flowing through the rest of `update()` even while paused in
+  multiplayer specifically. Single-player pause behavior is byte-for-byte unchanged (no `multiplayer`
+  session, same unconditional freeze as always - nothing else is "live" to exploit there anyway).
+  Verified with a dedicated two-browser test: guest pauses, host lands enough shots to kill them,
+  guest's health reads 0 while *still* paused (checked without ever unpausing first).
+- **Ladder climbing (attempted, not confirmed - deliberately not shipped this pass).** Also
+  reported by the user ("only worked once," "doesn't let me climb when I walk into them"). Made two
+  real-looking fixes in isolation - bypassing the character controller's shape-cast solver for
+  climbing's vertical move (direct kinematic translation, mirroring the existing mantle-teleport
+  technique) since it was returning near-zero movement against a flat wall in a large fraction of
+  attempts, and replacing the sensor-contact-based "still climbing" check with a height-threshold
+  one (the per-frame `isTouchingSpecificClimbable` query was intermittently reading "lost contact"
+  within a tick or two of a climb starting, well before any real rise) - and built an e2e test
+  around them that passed repeatedly, including 15/15 trials across three clean full runs. The user
+  then tested it live and reported it still doesn't work. The test's own "did Y increase" assertion
+  turned out not to be trustworthy enough to prove the mechanic actually works end-to-end (it can't
+  distinguish "climbed the ladder" from "gained height some other way," and this session's own
+  history already has a precedent for that gap - see the original "Ladder climbing" entry's
+  documented 40%-failure-rate bug that automated testing initially missed too). Rather than keep
+  guessing at fixes an automated test can't actually validate, the `Player.ts`/`PhysicsWorld.ts`/
+  `config.ts` changes are left uncommitted in the working tree and the new `e2e/ladder-climb.spec.ts`
+  is untracked - none of it is in this commit, none of it is claimed as fixed. Revisit with the user
+  actually testing live, not another round of automated-test iteration.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green. New
+`e2e/multiplayer-pause-damage.spec.ts` (the exploit test described above). Existing
+`e2e/multiplayer-match.spec.ts`/`multiplayer-combat.spec.ts` still green with the new
+`RemotePlayer.create()` async factory in place, confirming the skin swap didn't regress hit
+detection or movement sync. This commit deliberately excludes all ladder-related changes.
