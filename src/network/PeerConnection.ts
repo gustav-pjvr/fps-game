@@ -42,9 +42,9 @@ export class PeerConnection {
 
   private constructor(
     private readonly peer: Peer,
-    private readonly callbacks: PeerConnectionCallbacks,
+    private callbacks: PeerConnectionCallbacks,
   ) {
-    peer.on('error', (error) => callbacks.onError(describePeerError(error)));
+    peer.on('error', (error) => this.callbacks.onError(describePeerError(error)));
   }
 
   /** Registers this browser under the room code and waits for the guest to connect. */
@@ -77,6 +77,14 @@ export class PeerConnection {
 
   send(message: NetworkMessage): void {
     void this.dataConnection?.send(message);
+  }
+
+  /** Full handoff, not a merge - whoever calls this takes complete ownership of reacting to this
+   * connection from here on (used when a room screen hands its now-established connection off to
+   * Game.create(): the room screen's own UI is about to be hidden/torn down, so its old callbacks
+   * updating that UI must stop firing entirely, not run alongside the new ones). */
+  setCallbacks(callbacks: PeerConnectionCallbacks): void {
+    this.callbacks = callbacks;
   }
 
   dispose(): void {

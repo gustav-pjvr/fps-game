@@ -8,6 +8,10 @@ import { sampleHeight } from './TerrainGenerator.ts';
 import { sampleFlatZone, sampleForestZone } from './ZoneMap.ts';
 import {
   FOREST_TREE_THRESHOLD_DROP,
+  MULTIPLAYER_SPAWN_A_X,
+  MULTIPLAYER_SPAWN_A_Z,
+  MULTIPLAYER_SPAWN_B_X,
+  MULTIPLAYER_SPAWN_B_Z,
   SPAWN_X,
   SPAWN_Z,
   VEGETATION_BUSH_PROBABILITY,
@@ -213,6 +217,15 @@ export class VegetationManager {
       const dzSpawn = worldZ - SPAWN_Z;
       const distanceFromSpawn = Math.sqrt(dxSpawn * dxSpawn + dzSpawn * dzSpawn);
       if (distanceFromSpawn < VEGETATION_SPAWN_CLEARANCE) continue;
+
+      // Also clears the two multiplayer spawn points (see the MULTIPLAYER_SPAWN_* comment in
+      // config.ts) - checked unconditionally, not just in multiplayer matches, since a
+      // single-player match never uses these coordinates anyway and it keeps world generation
+      // itself mode-agnostic rather than branching on match type.
+      const distanceFromSpawnA = Math.hypot(worldX - MULTIPLAYER_SPAWN_A_X, worldZ - MULTIPLAYER_SPAWN_A_Z);
+      if (distanceFromSpawnA < VEGETATION_SPAWN_CLEARANCE) continue;
+      const distanceFromSpawnB = Math.hypot(worldX - MULTIPLAYER_SPAWN_B_X, worldZ - MULTIPLAYER_SPAWN_B_Z);
+      if (distanceFromSpawnB < VEGETATION_SPAWN_CLEARANCE) continue;
 
       // Keep town pads entirely clear of vegetation - a tree or boulder in the middle of a
       // building cluster would look wrong and a rock's collider could interfere with a building.

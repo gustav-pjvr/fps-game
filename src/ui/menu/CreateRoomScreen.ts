@@ -1,18 +1,22 @@
 import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
+import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
-/** Host side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7 phase 1): generates a code,
- * shows it, waits for a guest to connect, then proves the connection actually works end-to-end by
- * exchanging a `hello` message - phase 1 stops there, there's no match to launch into yet. */
+/** Host side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): generates a code, shows it,
+ * waits for a guest to connect, verifies the connection with a `hello` exchange, then offers
+ * "Start Match" - clicking it picks the one seed both players will use, sends it across, and hands
+ * the now-established connection off to whoever's starting the actual match (see onStartMatch). */
 export class CreateRoomScreen {
   private readonly overlay: HTMLDivElement;
   private readonly codeDisplay: HTMLDivElement;
   private readonly statusText: HTMLDivElement;
+  private readonly startButton: HTMLButtonElement;
   private connection: PeerConnection | null = null;
 
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
+    private readonly onStartMatch: (connection: PeerConnection, seed: number) => void,
   ) {
     this.overlay = createOverlay();
 
@@ -43,6 +47,13 @@ export class CreateRoomScreen {
     this.statusText.style.cssText = `font-size:0.9rem; color:${TEXT}; opacity:0.85; margin-top:18px; text-align:center; min-height:1.4em;`;
     panel.appendChild(this.statusText);
 
+    this.startButton = createButton('Start Match', 'primary');
+    this.startButton.style.width = '100%';
+    this.startButton.style.marginTop = '14px';
+    this.startButton.style.display = 'none';
+    this.startButton.addEventListener('click', () => this.startMatch());
+    panel.appendChild(this.startButton);
+
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; margin-top:20px;';
     const cancelButton = createButton('Cancel');
@@ -59,6 +70,7 @@ export class CreateRoomScreen {
    * live on the broker that a stale code might still (confusingly) connect to. */
   show(): void {
     this.overlay.style.display = 'flex';
+    this.startButton.style.display = 'none';
     const code = generateRoomCode();
     this.codeDisplay.textContent = code;
     this.setStatus('Waiting for the other player to join…');
@@ -71,9 +83,24 @@ export class CreateRoomScreen {
       onDisconnected: () => this.setStatus('The other player disconnected.'),
       onError: (message) => this.setStatus(message),
       onMessage: (message) => {
-        if (message.type === 'hello') this.setStatus('Connection verified both ways. (Multiplayer matches are coming in a later update.)');
+        if (message.type === 'hello') {
+          this.setStatus('Connection verified both ways. Ready when you are.');
+          this.startButton.style.display = 'block';
+        }
       },
     });
+  }
+
+  private startMatch(): void {
+    if (!this.connection) return;
+    const seed = generateMultiplayerSeed();
+    this.connection.send({ type: 'matchStart', seed });
+    const connection = this.connection;
+    // Ownership of the connection moves to the match now - `close()` must not dispose it, and this
+    // screen shouldn't react to anything on it anymore (Game.create() takes over via setCallbacks).
+    this.connection = null;
+    this.overlay.style.display = 'none';
+    this.onStartMatch(connection, seed);
   }
 
   private setStatus(text: string): void {

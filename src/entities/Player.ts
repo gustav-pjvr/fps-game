@@ -352,6 +352,16 @@ export class Player implements Entity {
     return new THREE.Vector3(t.x, t.y, t.z);
   }
 
+  /** Multiplayer (MULTIPLAYER_PLAN.md §3) - broadcast in this client's own outgoing snapshots so
+   * the opponent's RemotePlayer can face the right way, not just stand at the right position. */
+  get facingYaw(): number {
+    return this.yaw;
+  }
+
+  get facingPitch(): number {
+    return this.pitch;
+  }
+
   /** So hitscan can exclude the shooter's own capsule - camera.position sits inside it, which was self-hitting. */
   get ownCollider(): RAPIER.Collider {
     return this.collider;

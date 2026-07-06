@@ -4,6 +4,7 @@ import { InputManager } from '../input/InputManager.ts';
 import { Loop } from './Loop.ts';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
+import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
@@ -22,6 +23,7 @@ import { DeathScreen } from '../ui/deathScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
+import { Minimap } from '../ui/minimap.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
@@ -35,6 +37,11 @@ import {
   ENEMY_GUNSHOT_MIN_VOLUME,
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
+  MULTIPLAYER_SPAWN_A_X,
+  MULTIPLAYER_SPAWN_A_Z,
+  MULTIPLAYER_SPAWN_B_X,
+  MULTIPLAYER_SPAWN_B_Z,
+  PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_X,
   SPAWN_Z,
   SUN_DIRECTION_X,
@@ -45,9 +52,10 @@ import {
   SUN_SHADOW_NORMAL_BIAS,
   SUN_SHADOW_ORTHO_HALF_EXTENT,
 } from './config.ts';
-import { getWorldSeed, randomizeWorldSeed } from './worldSeed.ts';
+import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
+import type { MultiplayerSession } from '../network/MultiplayerSession.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 const TARGET_RING_BASE_RADIUS = 15;
@@ -64,8 +72,27 @@ export interface MatchConfig {
   targetCount: number;
 }
 
+/** Everything Game tracks about an in-progress multiplayer match beyond the MultiplayerSession it
+ * was handed (see network/MultiplayerSession.ts) - the parts that only exist once the match is
+ * actually running, not at hand-off time. `snapshotAccumulator` is mutated every tick (see
+ * update()); the object itself is still only ever assigned once, at construction. */
+interface ActiveMultiplayer {
+  readonly session: MultiplayerSession;
+  readonly remotePlayer: RemotePlayer;
+  readonly minimap: Minimap;
+  snapshotAccumulator: number;
+}
+
 function waitForNextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/** Host always spawns at A, guest always at B - fixed for the whole match (MULTIPLAYER_PLAN.md
+ * §4a), never randomized or swapped. Returns [ownSpawn, opponentSpawn]. */
+function multiplayerSpawnPoints(role: MultiplayerSession['role']): [THREE.Vector2, THREE.Vector2] {
+  const spawnA = new THREE.Vector2(MULTIPLAYER_SPAWN_A_X, MULTIPLAYER_SPAWN_A_Z);
+  const spawnB = new THREE.Vector2(MULTIPLAYER_SPAWN_B_X, MULTIPLAYER_SPAWN_B_Z);
+  return role === 'host' ? [spawnA, spawnB] : [spawnB, spawnA];
 }
 
 /** Linear gain falloff for enemy gunshots: full volume inside FULL_VOLUME_RANGE, fading to
@@ -108,6 +135,10 @@ export interface GameDebugApi {
    * user's own hardware/browser instead of relying on this environment's software-rendered GPU,
    * which can't produce a meaningful number (see PERFORMANCE.md). */
   getFrameStats(): { fps: number; avgMs: number; p95Ms: number };
+  /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
+   * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
+   * actually reaching the other client, not just that a connection exists. */
+  getOpponentPosition(): { x: number; y: number; z: number } | null;
 }
 
 declare global {
@@ -163,6 +194,7 @@ export class Game {
     private readonly matchConfig: MatchConfig,
     private readonly sun: THREE.DirectionalLight,
     private readonly ambientLight: THREE.AmbientLight,
+    private readonly multiplayer: ActiveMultiplayer | null,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
@@ -240,6 +272,11 @@ export class Game {
       },
       getActiveLadderPositions: () => this.buildings.getActiveLadderPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
+      getOpponentPosition: () => {
+        if (!this.multiplayer) return null;
+        const p = this.multiplayer.remotePlayer.position;
+        return { x: p.x, y: p.y, z: p.z };
+      },
     };
   }
 
@@ -249,11 +286,18 @@ export class Game {
     matchConfig: MatchConfig,
     onProgress?: (status: string, ratio: number) => void,
     onReturnToLobby?: () => void,
+    multiplayer?: MultiplayerSession,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
-    // A new seed per match (not per practice-reset) so each new game generates a different world,
-    // while staying fixed for the rest of this match so chunk streaming/reload stays deterministic.
-    randomizeWorldSeed();
+    // Single-player: a new seed per match (not per practice-reset) so each new game generates a
+    // different world. Multiplayer: both sides use the exact same externally-generated seed (see
+    // MULTIPLAYER_PLAN.md §1) - never randomizeWorldSeed() here, or the two players' worlds would
+    // diverge. Either way the seed then stays fixed for the rest of this match.
+    if (multiplayer) {
+      setWorldSeed(multiplayer.seed);
+    } else {
+      randomizeWorldSeed();
+    }
     // Initial value only - the pause menu's Settings panel can change this live afterward (see
     // applyGraphicsQuality), this is just what a freshly created match starts with.
     const quality = GRAPHICS_QUALITY_PRESETS[Settings.getGraphicsQuality()];
@@ -281,16 +325,23 @@ export class Game {
         roads.removeChunk(cx, cz);
       },
     });
+
+    // Multiplayer: each client spawns at its own designated point (MULTIPLAYER_PLAN.md §4a), not
+    // the shared single-player one - host always A, guest always B.
+    const [ownSpawn, opponentSpawn] = multiplayer
+      ? multiplayerSpawnPoints(multiplayer.role)
+      : [new THREE.Vector2(SPAWN_X, SPAWN_Z), null];
+
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
     for (let i = 0; i < 30; i++) {
-      chunkManager.update(SPAWN_X, SPAWN_Z);
+      chunkManager.update(ownSpawn.x, ownSpawn.y);
     }
 
     const sound = await SoundEngine.create();
     document.addEventListener('click', () => sound.resume(), { once: true });
 
-    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
-    const player = new Player(physics, renderer.camera, new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z), {
+    const spawnY = sampleHeight(ownSpawn.x, ownSpawn.y) + SPAWN_HEIGHT_OFFSET;
+    const player = new Player(physics, renderer.camera, new THREE.Vector3(ownSpawn.x, spawnY, ownSpawn.y), {
       onDamaged: () => sound.playPlayerHurt(),
       onFootstep: () => sound.playFootstep(),
     });
@@ -347,9 +398,29 @@ export class Game {
       },
     );
 
-    await Game.spawnEncountersAsync(entityManager, matchConfig.targetCount, matchConfig.enemyCount, (status, spawnRatio) => {
-      onProgress?.(status, 0.15 + spawnRatio * 0.85);
-    });
+    // Multiplayer matches are pure PvP (MULTIPLAYER_PLAN.md's premise: the bot/enemy system is
+    // single-player "training" only) - never spawn AI encounters here, regardless of matchConfig.
+    if (!multiplayer) {
+      await Game.spawnEncountersAsync(entityManager, matchConfig.targetCount, matchConfig.enemyCount, (status, spawnRatio) => {
+        onProgress?.(status, 0.15 + spawnRatio * 0.85);
+      });
+    }
+
+    // opponentSpawn is non-null exactly when multiplayer is present (see the destructure above) -
+    // the RemotePlayer's initial position doesn't need to wait for a first network snapshot,
+    // since both sides already know where the opponent starts.
+    const activeMultiplayer: ActiveMultiplayer | null =
+      multiplayer && opponentSpawn
+        ? {
+            session: multiplayer,
+            remotePlayer: new RemotePlayer(
+              renderer.scene,
+              new THREE.Vector3(opponentSpawn.x, sampleHeight(opponentSpawn.x, opponentSpawn.y) + SPAWN_HEIGHT_OFFSET, opponentSpawn.y),
+            ),
+            minimap: new Minimap(hudRoot),
+            snapshotAccumulator: 0,
+          }
+        : null;
 
     const hud = new Hud(hudRoot);
     const hotbar = new Hotbar(hudRoot);
@@ -408,8 +479,27 @@ export class Game {
       matchConfig,
       sun,
       ambientLight,
+      activeMultiplayer,
     );
     gameRef.current = game;
+
+    // Takes over from the room screen's own connection callbacks (which only knew how to update
+    // now-hidden UI) - see PeerConnection.setCallbacks. Only the message handler matters for
+    // gameplay right now; disconnect/error handling for an in-progress match is phase 4's job
+    // (MULTIPLAYER_PLAN.md §7) - a drop mid-match currently just leaves the RemotePlayer frozen in
+    // place rather than ending the match cleanly.
+    if (activeMultiplayer) {
+      activeMultiplayer.session.connection.setCallbacks({
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+        onMessage: (message) => {
+          if (message.type === 'playerSnapshot') {
+            activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
+          }
+        },
+      });
+    }
 
     return game;
   }
@@ -438,6 +528,9 @@ export class Game {
     this.settingsPanel.dispose();
     this.perfOverlay.dispose();
     this.sound.dispose();
+    this.multiplayer?.remotePlayer.dispose(this.renderer.scene);
+    this.multiplayer?.minimap.dispose();
+    this.multiplayer?.session.connection.dispose();
     // Invalidate any in-flight spawnEncountersAsync loop *before* freeing the physics world -
     // its frame-yielded batches would otherwise call createRigidBody on freed WASM memory.
     this.spawnGeneration++;
@@ -449,8 +542,16 @@ export class Game {
    * ammo on every weapon, full health, score back to 0 - a clean slate without needing a page
    * reload. Works even while dead. Reuses the enemy/target counts chosen at match setup, not the
    * class defaults. Also re-requests pointer lock, since it may be the death screen calling this
-   * after releasePointerLock() freed the mouse to make its buttons clickable. */
+   * after releasePointerLock() freed the mouse to make its buttons clickable.
+   *
+   * Multiplayer: a no-op for now - full multiplayer respawn/reset semantics (per-player spawn
+   * point, no AI to reset, both sides needing to agree) are phase 3/4's job (MULTIPLAYER_PLAN.md
+   * §4a/§7), not something to half-implement here. Without this guard, pressing T mid-multiplayer-
+   * match would call spawnEncountersAsync with matchConfig's counts and spawn AI bots into what's
+   * supposed to be a pure PvP match. */
   private resetPlay(): void {
+    if (this.multiplayer) return;
+
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
     this.weaponManager.resetAllAmmo();
@@ -620,6 +721,7 @@ export class Game {
     this.weaponCaption.update(dt);
     this.longShotCallout.update(dt);
     this.killFeed.update(dt);
+    this.updateMultiplayer(dt);
 
     if (this.player.isDead && !wasDead) {
       this.deathScreen.show(this.scoreState.value);
@@ -632,6 +734,31 @@ export class Game {
     this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
+
+  /** RemotePlayer always smooths toward its last snapshot every tick, independent of send timing -
+   * `snapshotAccumulator` only gates how often *this* client broadcasts its own state
+   * (PLAYER_SNAPSHOT_SEND_INTERVAL, ~18Hz - see MULTIPLAYER_PLAN.md §3), not how often the
+   * opponent's visual position gets smoothed. */
+  private updateMultiplayer(dt: number): void {
+    if (!this.multiplayer) return;
+
+    this.multiplayer.remotePlayer.update(dt);
+    this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position);
+
+    this.multiplayer.snapshotAccumulator += dt;
+    if (this.multiplayer.snapshotAccumulator >= PLAYER_SNAPSHOT_SEND_INTERVAL) {
+      this.multiplayer.snapshotAccumulator = 0;
+      const p = this.player.position;
+      this.multiplayer.session.connection.send({
+        type: 'playerSnapshot',
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        yaw: this.player.facingYaw,
+        pitch: this.player.facingPitch,
+      });
+    }
+  }
 
   private readonly render = (alpha: number): void => {
     const now = performance.now();

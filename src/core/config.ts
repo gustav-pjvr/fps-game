@@ -11,6 +11,34 @@ export const SPAWN_X = 0;
 export const SPAWN_Z = 8;
 export const ENEMY_RING_BASE_RADIUS = 25;
 
+/** Multiplayer (MULTIPLAYER_PLAN.md §4a): two fixed spawn points on opposite sides of the map, far
+ * enough apart that players have to advance toward each other rather than spawning in sight of one
+ * another, but both safely inside WORLD_EDGE_RAMP_START (170 at the current WORLD_SIZE_CHUNKS) so
+ * neither sits on the boundary mountain ramp. Host always spawns at A, guest always at B - fixed
+ * for the whole match, not randomized or swapped.
+ *
+ * Known gap, not solved yet: unlike SPAWN_X/SPAWN_Z, these two points are not currently excluded
+ * from flat/forest zone placement (ZoneMap.ts's isSiteClear only measures clearance from the
+ * single-player spawn) - a town or forest could rarely generate overlapping one of them. Vegetation
+ * *is* covered (see VEGETATION_SPAWN_CLEARANCE below, checked against all three spawn points), since
+ * that was a small, low-risk addition; doing the same for zone placement would mean touching the
+ * guaranteed-zone system ZoneMap.test.ts locks in across 1000 seeds, which isn't something to do
+ * incidentally while building movement sync. */
+export const MULTIPLAYER_SPAWN_A_X = 140;
+export const MULTIPLAYER_SPAWN_A_Z = 0;
+export const MULTIPLAYER_SPAWN_B_X = -140;
+export const MULTIPLAYER_SPAWN_B_Z = 0;
+
+/** How often this client broadcasts its own player's transform to the opponent (MULTIPLAYER_PLAN.md
+ * §3) - well below the 60Hz simulation rate, since a remote player's on-screen position only needs
+ * to look smooth, not be physically exact; RemotePlayer smooths between updates on the receiving end. */
+export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 18;
+
+/** World-distance the opponent-position minimap (MULTIPLAYER_PLAN.md §4b) represents at its edge -
+ * inside this radius the dot is placed proportionally; beyond it, the dot clamps to the rim, still
+ * pointing the right way. */
+export const MINIMAP_WORLD_RADIUS = 120;
+
 export const CAMERA_FOV = 75;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
@@ -253,19 +281,32 @@ export const MAX_CHUNK_GENERATIONS_PER_TICK = 2;
 
 /** World is bounded (arena-style), not infinite — see WORLD_PLAN.md §2. Chunk coordinates outside
  * [WORLD_MIN_CHUNK, WORLD_MAX_CHUNK] on either axis are never generated. Shrunk from 12 to 8, then
- * later to 7, per user feedback that the world still felt too large to reach the edges of.
+ * later to 6, per user feedback that the world still felt too large to reach the edges of.
  *
- * This constant sets a hard ceiling on how large any flat/forest zone can ever be (see
+ * MUST STAY EVEN. Briefly set to 7 and shipped, then reverted after a real bug: with chunks
+ * indexed as integers around the origin (WORLD_MIN_CHUNK = -floor(n/2), WORLD_MAX_CHUNK =
+ * WORLD_MIN_CHUNK + n - 1), an *odd* n generates an asymmetric span - 7 generated x/z from -300 to
+ * +400, not a symmetric +/-350, because there's no integer chunk boundary that sits exactly at the
+ * true center for an odd count. WORLD_BOUNDARY_RADIUS/WORLD_HARD_CLAMP_RADIUS/
+ * WORLD_SOFT_PUSH_START_RADIUS below all assume symmetric coverage in every direction, so a player
+ * pushed toward the boundary on the shorted side got clamped to a radius that terrain was never
+ * generated to reach at all, and fell through into empty space - caught by
+ * e2e/world-bounds.spec.ts sprinting a player toward the edge, not found until a full-suite run
+ * happened to include that file. Even n always spans symmetrically (confirmed: 8 -> +/-400 exactly,
+ * 6 -> +/-300 exactly), so this must never be set to an odd number again without also reworking the
+ * chunk-index-to-world-position mapping itself (a bigger structural change, not a constant tweak).
+ *
+ * This constant also sets a hard ceiling on how large any flat/forest zone can ever be (see
  * isSiteClear/maxClearRadius in ZoneMap.ts): a site's disc must clear both the world-edge mountain
  * ramp and the spawn/combat ring, and shrinking the world narrows that clearance for every site,
- * everywhere, simultaneously. At 6 chunks, even the best-positioned site in the entire world can't
- * clear enough room for the original zone radii (65-90 flat, 78-92 forest) - isSiteClear would
- * reject every candidate and towns/forests would stop spawning entirely, not just shrink. 7 chunks
- * plus the reduced ZONE_EDGE_MARGIN below keeps that ceiling comfortably above both ranges (with a
- * small trim - see FLAT_ZONE_RADIUS_MAX/FOREST_ZONE_RADIUS_MAX). Shrinking this further requires
- * re-deriving that ceiling and re-tuning those ranges together again, not just changing this one
- * number. */
-export const WORLD_SIZE_CHUNKS = 7;
+ * everywhere, simultaneously. At 6 chunks with the original zone radii (65-90 flat, 78-92 forest),
+ * even the best-positioned site in the entire world couldn't clear enough room - isSiteClear would
+ * reject every candidate and towns/forests would stop spawning entirely, not just shrink. Per user
+ * decision, the fix leans on the smallest safe ZONE_EDGE_MARGIN (5, down from the original 30)
+ * rather than a bigger radius cut, minimizing how much smaller towns/forests actually get - see
+ * FLAT_ZONE_RADIUS_MAX/FOREST_ZONE_RADIUS_MAX for the resulting range. Changing WORLD_SIZE_CHUNKS
+ * again means re-deriving that ceiling and re-tuning those ranges together, not just this number. */
+export const WORLD_SIZE_CHUNKS = 6;
 export const WORLD_MIN_CHUNK = -Math.floor(WORLD_SIZE_CHUNKS / 2);
 export const WORLD_MAX_CHUNK = WORLD_MIN_CHUNK + WORLD_SIZE_CHUNKS - 1;
 
@@ -377,14 +418,15 @@ export const FLAT_ZONE_SEED_OFFSET = 10;
  * cell size stays comfortably above 2x the max radius to keep site-overlap rejections rare. */
 export const FLAT_ZONE_CELL_SIZE = 230;
 export const FLAT_ZONE_DENSITY = 0.45;
-/** Narrowed from 60-100 to 65-90, then trimmed to 65-85 when the world shrank to
- * WORLD_SIZE_CHUNKS=7: isSiteClear rejects any site whose radius plus its distance from
- * spawn/world-edge doesn't fit the available annulus, which - given ENEMY_RING_BASE_RADIUS,
- * ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START below - makes radii above ~87.5 always fail
- * regardless of position at the current world size. This range stays fully inside that feasible
- * band (with a few units of headroom) so no roll is wasted. */
-export const FLAT_ZONE_RADIUS_MIN = 65;
-export const FLAT_ZONE_RADIUS_MAX = 85;
+/** Narrowed from 60-100 to 65-90, then re-tuned to 40-60 when the world settled at
+ * WORLD_SIZE_CHUNKS=6 (see that constant's comment for why it couldn't stay odd/7, and why
+ * ZONE_EDGE_MARGIN below took most of the resulting squeeze instead of this range): isSiteClear
+ * rejects any site whose radius plus its distance from spawn/world-edge doesn't fit the available
+ * annulus, which - given ENEMY_RING_BASE_RADIUS, ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START below
+ * - makes radii above ~67.5 always fail regardless of position at the current world size. This
+ * range stays fully inside that feasible band (with a few units of headroom) so no roll is wasted. */
+export const FLAT_ZONE_RADIUS_MIN = 40;
+export const FLAT_ZONE_RADIUS_MAX = 60;
 /** Raised from 0.6 - a town needs a genuinely large flat plateau to fit 30+ buildings without
  * their footprints creeping onto the smoothstep rim (still-sloping ground near the zone's edge). */
 export const FLAT_ZONE_INNER_FRACTION = 0.85;
@@ -394,27 +436,29 @@ export const FOREST_ZONE_SEED_OFFSET = 11;
  * rejections at the larger radius - see the matching FLAT_ZONE_CELL_SIZE comment). */
 export const FOREST_ZONE_CELL_SIZE = 200;
 export const FOREST_ZONE_DENSITY = 0.45;
-/** Raised from 50-90 per project decision ("forest radius should increase a lot"), then trimmed
- * from a 78-92 max of 92 down to 85 when the world shrank to WORLD_SIZE_CHUNKS=7 - pushed right up
- * to the world's current geometric ceiling: isSiteClear (see below) rejects any site whose radius
- * plus its distance from spawn/world-edge doesn't fit the available annulus, which given
- * ENEMY_RING_BASE_RADIUS, ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START makes radii above ~87.5
- * always fail regardless of position - this is the largest a forest zone can ever be without
- * enlarging the world itself (WORLD_BOUNDARY_RADIUS) or narrowing ZONE_EDGE_MARGIN further. */
-export const FOREST_ZONE_RADIUS_MIN = 78;
-export const FOREST_ZONE_RADIUS_MAX = 85;
+/** Raised from 50-90 per project decision ("forest radius should increase a lot"), then re-tuned to
+ * 45-65 when the world settled at WORLD_SIZE_CHUNKS=6 - pushed right up to the world's current
+ * geometric ceiling: isSiteClear (see below) rejects any site whose radius plus its distance from
+ * spawn/world-edge doesn't fit the available annulus, which given ENEMY_RING_BASE_RADIUS,
+ * ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START makes radii above ~67.5 always fail regardless of
+ * position - this is the largest a forest zone can ever be without enlarging the world itself
+ * (WORLD_BOUNDARY_RADIUS) or narrowing ZONE_EDGE_MARGIN further. */
+export const FOREST_ZONE_RADIUS_MIN = 45;
+export const FOREST_ZONE_RADIUS_MAX = 65;
 export const FOREST_ZONE_INNER_FRACTION = 0.6;
 
 /** Keeps zone sites clear of both the world edge (mountain ring/hard clamp) and the spawn/combat
  * ring, at the zone-presence level so a town or forest can never partially spill into either.
- * Narrowed from 30 to 10 per user decision (denser world, more towns/forests over open space -
- * zone-to-zone overlap and zones crowding the spawn ring are both acceptable trade-offs): a smaller
- * margin means far more candidate sites clear the check at a large radius, which is the main lever
- * on how many towns/forests actually spawn per match, not just how big any one of them can be. Not
- * dropped to zero - buildings have no clearance check of their own (unlike vegetation, see
- * VEGETATION_SPAWN_CLEARANCE), so this is what keeps a town's buildings from touching the actual
- * encounter ring's edge, not just approximately near it. */
-export const ZONE_EDGE_MARGIN = 10;
+ * Narrowed from 30 to 10, then to 5, per user decision (denser world, more towns/forests over open
+ * space - zone-to-zone overlap and zones crowding the spawn ring are both acceptable trade-offs,
+ * and when WORLD_SIZE_CHUNKS had to drop from 7 to 6 for the symmetry fix described on that
+ * constant, user explicitly chose to squeeze this margin further rather than cut zone radii any
+ * more than necessary). A smaller margin means far more candidate sites clear the check at a large
+ * radius, which is the main lever on how many towns/forests actually spawn per match, not just how
+ * big any one of them can be. Not dropped to zero - buildings have no clearance check of their own
+ * (unlike vegetation, see VEGETATION_SPAWN_CLEARANCE), so this is what keeps a town's buildings
+ * from touching the actual encounter ring's edge, not just approximately near it. */
+export const ZONE_EDGE_MARGIN = 5;
 
 /** At least this many flat-zone (town) and forest-zone sites are force-placed every world,
  * regardless of the density roll below, so a run of bad luck can never generate a world with too

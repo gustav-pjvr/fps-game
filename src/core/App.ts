@@ -9,6 +9,8 @@ import { CreateRoomScreen } from '../ui/menu/CreateRoomScreen.ts';
 import { JoinRoomScreen } from '../ui/menu/JoinRoomScreen.ts';
 import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
+import type { PeerConnection } from '../network/PeerConnection.ts';
+import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 
 /** Top-level state machine: lobby (with menu overlays) -> match setup -> loading -> gameplay,
  * with gameplay able to hand control back to a fresh lobby via the death screen. */
@@ -51,8 +53,16 @@ export class App {
       },
       onClose: () => this.multiplayerMenu.hide(),
     });
-    this.createRoomScreen = new CreateRoomScreen(overlayRoot, () => this.multiplayerMenu.show());
-    this.joinRoomScreen = new JoinRoomScreen(overlayRoot, () => this.multiplayerMenu.show());
+    this.createRoomScreen = new CreateRoomScreen(
+      overlayRoot,
+      () => this.multiplayerMenu.show(),
+      (connection, seed) => void this.startMultiplayerMatch(connection, 'host', seed),
+    );
+    this.joinRoomScreen = new JoinRoomScreen(
+      overlayRoot,
+      () => this.multiplayerMenu.show(),
+      (connection, seed) => void this.startMultiplayerMatch(connection, 'guest', seed),
+    );
   }
 
   static async create(
@@ -99,6 +109,33 @@ export class App {
       config,
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
       () => void this.returnToLobby(),
+    );
+
+    this.loadingScreen.hide();
+    this.currentGame = game;
+    game.start();
+  }
+
+  /** Wired from CreateRoomScreen/JoinRoomScreen once a match is actually starting (see
+   * MULTIPLAYER_PLAN.md §7 phase 2) - mirrors startMatch's lobby-teardown/loading-screen shape,
+   * but hands Game.create() a multiplayer session instead of a MatchSetupConfig. `enemyCount`/
+   * `targetCount` are passed as 0 and are otherwise unused: Game.create() skips AI spawning
+   * entirely once a multiplayer session is present, since multiplayer matches are pure PvP. */
+  private async startMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, seed: number): Promise<void> {
+    this.multiplayerMenu.hide();
+    this.mainMenu.hide();
+    this.loadingScreen.show();
+
+    this.lobby?.dispose();
+    this.lobby = null;
+
+    const game = await Game.create(
+      this.gameContainer,
+      this.hudRoot,
+      { enemyCount: 0, targetCount: 0 },
+      (status, ratio) => this.loadingScreen.setProgress(status, ratio),
+      () => void this.returnToLobby(),
+      { connection, role, seed },
     );
 
     this.loadingScreen.hide();

@@ -14,11 +14,32 @@ export function setWorldSeedForTesting(seed: number): void {
   currentSeed = seed >>> 0;
 }
 
+function generateRandomSeed(): number {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
 /** Called once per match start (Game.create(), not the in-match practice-reset) so each new game
  * generates a different world. Terrain/vegetation/building/zone systems all read the seed via
  * getWorldSeed() rather than a frozen constant, so this takes effect for everything generated after
  * it's called. */
 export function randomizeWorldSeed(): number {
-  currentSeed = Math.floor(Math.random() * 0x7fffffff);
+  currentSeed = generateRandomSeed();
   return currentSeed;
+}
+
+/** Multiplayer only (MULTIPLAYER_PLAN.md §1): the host picks a seed via generateMultiplayerSeed()
+ * before either side calls Game.create(), sends it to the guest over the DataChannel, and *both*
+ * sides then call setWorldSeed() with that exact value - never randomizeWorldSeed() - so their
+ * independently-generated worlds are byte-for-byte identical. Kept distinct from
+ * setWorldSeedForTesting even though the mechanism is the same: that one's a test-only escape
+ * hatch by convention, this one is a real production path with its own reason to exist. */
+export function setWorldSeed(seed: number): void {
+  currentSeed = seed >>> 0;
+}
+
+/** Host-side only - generates the one seed value both players will use, without applying it to
+ * this client's own currentSeed yet (setWorldSeed does that, uniformly for both host and guest,
+ * once the match is actually starting). */
+export function generateMultiplayerSeed(): number {
+  return generateRandomSeed();
 }

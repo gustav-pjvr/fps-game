@@ -1,8 +1,11 @@
 import { PeerConnection } from '../../network/PeerConnection.ts';
 import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
-/** Guest side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7 phase 1): type in a code someone
- * gave you, connect, verify the connection with a `hello` exchange. Mirrors CreateRoomScreen. */
+/** Guest side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): type in a code someone gave
+ * you, connect, verify the connection with a `hello` exchange, then wait for the host to start the
+ * match - the guest never picks the seed itself, only receives the one the host generated (see
+ * MatchStartMessage in protocol.ts), so there's nothing for the guest to click here. Mirrors
+ * CreateRoomScreen. */
 export class JoinRoomScreen {
   private readonly overlay: HTMLDivElement;
   private readonly codeInput: HTMLInputElement;
@@ -13,6 +16,7 @@ export class JoinRoomScreen {
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
+    private readonly onStartMatch: (connection: PeerConnection, seed: number) => void,
   ) {
     this.overlay = createOverlay();
 
@@ -98,9 +102,19 @@ export class JoinRoomScreen {
         this.joinButton.disabled = false;
       },
       onMessage: (message) => {
-        if (message.type === 'hello') this.setStatus('Connection verified both ways. (Multiplayer matches are coming in a later update.)');
+        if (message.type === 'hello') this.setStatus('Connection verified both ways. Waiting for the host to start the match…');
+        if (message.type === 'matchStart') this.startMatch(message.seed);
       },
     });
+  }
+
+  private startMatch(seed: number): void {
+    if (!this.connection) return;
+    const connection = this.connection;
+    // Same handoff as CreateRoomScreen.startMatch - the match owns this connection from here on.
+    this.connection = null;
+    this.overlay.style.display = 'none';
+    this.onStartMatch(connection, seed);
   }
 
   private setStatus(text: string): void {

@@ -1586,6 +1586,30 @@ exact formula this whole exercise was reasoning about by hand. Full `npx playwri
 e2e/smoke.spec.ts` 15/16 green (the one failure was the same pre-existing GLTF-texture-load flake
 this file already documents elsewhere, confirmed unrelated by a clean isolated re-run).
 
+**Follow-up (2026-07-06): 7 was a real bug, reverted to 6.** Only found because a full,
+unfiltered `npx playwright test` run (done for an unrelated reason - verifying the multiplayer
+Phase 2 work below) happened to include `e2e/world-bounds.spec.ts`, a pre-existing test this
+session had never actually run (every prior check in this file only ever ran `smoke.spec.ts`
+directly by name). It failed: a player sprinting toward the boundary fell through into empty space
+(`y = -2281`). Root cause: `WORLD_MIN_CHUNK`/`WORLD_MAX_CHUNK` are computed as
+`-floor(n/2)` / `-floor(n/2) + n - 1` - symmetric only for *even* `n`. At `n=7` this generates
+terrain from x/z -300 to +400, not a symmetric +/-350, but `WORLD_HARD_CLAMP_RADIUS` (345) assumes
+symmetric coverage in every direction - so the boundary clamp pushed the player to a radius the
+terrain generator never actually reached on the shorted side. Confirmed by direct calculation, not
+just theory, before touching any code. Fixed by moving to `WORLD_SIZE_CHUNKS=6` (confirmed
+symmetric: exactly +/-300) instead - the nearest smaller even number - and re-deriving the zone-radius
+squeeze this reopens: per user decision, `ZONE_EDGE_MARGIN` absorbs most of it (10 -> 5) rather than
+cutting zone radii further than necessary (`FLAT_ZONE_RADIUS` 65-85 -> 40-60, `FOREST_ZONE_RADIUS`
+78-85 -> 45-65 - both re-derived from the same ceiling formula, now ~67.5 instead of ~87.5). Also
+moved the multiplayer spawn points inward (+/-180 -> +/-140) since the ramp start radius shrank
+under them too (220 -> 170). `WORLD_SIZE_CHUNKS`'s own comment now states in bold that it must stay
+even, with the full derivation, so this can't quietly regress again.
+
+**Re-verification:** `npx tsc --noEmit` clean. `npm run test:unit` 19/19 green (the 1000-seed zone
+sweep passing again with the new 40-60/45-65 ranges is the definitive check that towns/forests still
+reliably spawn). `e2e/world-bounds.spec.ts` - the test that caught this - now passes (1.5m). Full
+`npx playwright test` (every spec file together) re-run clean after the fix.
+
 ## Multiplayer, Phase 1: room-code connection layer (2026-07-06)
 
 First step of `MULTIPLAYER_PLAN.md` (see that doc for the full architecture and the reasoning behind
@@ -1628,3 +1652,77 @@ against the real public broker multiple times during development to confirm it w
 **Not yet done** (see `MULTIPLAYER_PLAN.md` §7 for the rest of the roadmap): no shared world/seed
 sync, no `RemotePlayer`, no combat, no per-player spawn points, no minimap, no host match settings.
 This phase is purely "can two browsers find each other and talk."
+
+## Multiplayer, Phase 2: shared world + movement sync (2026-07-06)
+
+Second step of `MULTIPLAYER_PLAN.md`: an actual match now starts on both sides, in the same
+generated world, each player at their own spawn point, seeing the opponent move around - still no
+combat (that's phase 3).
+
+- **Seed sync.** `worldSeed.ts` gained `setWorldSeed(seed)` (a real production path, distinct from
+  the test-only `setWorldSeedForTesting`) and `generateMultiplayerSeed()`. The host generates one
+  seed via `CreateRoomScreen`'s new "Start Match" button, sends it in a `matchStart` message, and
+  `Game.create()` calls `setWorldSeed(multiplayer.seed)` on *both* sides instead of
+  `randomizeWorldSeed()` - never independently randomized per client, or the two worlds would diverge.
+- **Per-player spawn points (MULTIPLAYER_PLAN.md §4a).** New `MULTIPLAYER_SPAWN_A_X/Z` and
+  `_B_X/Z` in config.ts, on opposite sides of the map. Host always spawns at A, guest always at B -
+  `Game.create()`'s new `multiplayerSpawnPoints(role)` helper picks both this client's own spawn
+  and the opponent's starting position from one fixed rule, never negotiated per match.
+  `VegetationManager.ts` now also excludes both points from tree/bush/rock placement (extending the
+  same clearance check it already does for the single-player spawn) - cheap and applied
+  unconditionally (harmless in single-player, since nothing ever stands at those coordinates then).
+  Explicitly **not** done: `ZoneMap.ts`'s flat/forest zone placement still only knows about the
+  single-player spawn, so a town or forest could rarely generate overlapping one of the multiplayer
+  points - documented as a known gap in config.ts rather than silently ignored, since fixing it
+  properly means touching the guaranteed-zone system `ZoneMap.test.ts` locks in across 1000 seeds,
+  not something to do incidentally here.
+- **`RemotePlayer.ts`** (new) - the opponent, never simulated locally. A capsule placeholder sized
+  to match the local player's own collision capsule (a real character model is later polish, not
+  required to prove sync). No Rapier collider yet - hit detection is phase 3's problem, no reason to
+  guess at that shape now. Visual position/rotation *damps* toward the latest received snapshot
+  (`THREE.MathUtils.damp`) rather than interpolating between two buffered, timestamped snapshots -
+  a deliberate v1 simplification (documented in the class itself) that reads smoothly enough at an
+  18Hz send rate without the extra bookkeeping true interpolation would need.
+- **`Minimap.ts`** (new, `src/ui/`) - the opponent-position radar (MULTIPLAYER_PLAN.md §4b), a
+  `Hud`-sibling widget matching the existing one-class-per-widget convention. World-oriented
+  (north/-Z always "up"), reusing the exact snapshot data already flowing for movement sync - no
+  extra network traffic. Confirmed this engine's forward=-Z/+X=right convention needs no axis
+  inversion when mapping world offsets onto screen offsets.
+- **`Game.ts`** - the biggest diff: `create()` takes an optional `multiplayer?: MultiplayerSession`;
+  when present it skips `EntityManager`'s AI spawn call entirely (multiplayer is pure PvP per this
+  whole plan's premise), spawns the local `Player` at its own designated point instead of the
+  shared single-player one, constructs the `RemotePlayer`/`Minimap`, and takes over the
+  `PeerConnection`'s callbacks from the room screen (`PeerConnection.setCallbacks`, a full handoff
+  not a merge) to route incoming `playerSnapshot` messages into `RemotePlayer.applySnapshot`. A new
+  `updateMultiplayer(dt)` runs every non-paused tick: advances `RemotePlayer`'s damping, updates the
+  minimap, and throttled-broadcasts this client's own transform at `PLAYER_SNAPSHOT_SEND_INTERVAL`
+  (~18Hz). `resetPlay()` (T key/death-screen Respawn) now no-ops entirely in multiplayer - without
+  the guard it would spawn AI bots into a PvP match via the single-player reset path; full
+  multiplayer reset/respawn semantics are phase 3/4's job, not something to half-implement here.
+- **Room screens extended, not replaced.** `CreateRoomScreen`/`JoinRoomScreen` keep phase 1's
+  `hello` verification step, then add the real next step on top: host gets a "Start Match" button
+  once verified, guest gets "waiting for host" and reacts to the incoming `matchStart`. Both hand
+  their now-established `PeerConnection` up to `App.startMultiplayerMatch` without disposing it -
+  ownership moves to the match, not torn down when the room screen itself hides.
+- **A real bug found while writing the first version of the movement-sync e2e test**, not a
+  product bug: the test moved the host but never locked the *guest's* pointer, so the guest's own
+  `Game.update()` sat in the paused early-return the whole time - and `RemotePlayer` damping (like
+  every other per-tick widget) only advances on an unpaused tick. Incoming snapshots were still
+  being recorded correctly (`applySnapshot` runs from the network callback, independent of the game
+  loop), just never visually applied. Fixed by locking both pages' pointers in the test, matching
+  how two real players would actually both be playing, not a product change.
+- **A second, real bug found the same way, in the test *infrastructure* itself**: running
+  `multiplayer.spec.ts` and `multiplayer-match.spec.ts` together picked up 2 Playwright workers
+  (`fullyParallel: false` only serializes tests *within* one file, not across files) and one test
+  failed on resource contention that vanished under a forced single worker. Fixed properly by
+  adding `workers: 1` to `playwright.config.ts` project-wide, rather than leaving it to depend on
+  which spec files happen to get run together - multiplayer tests are only going to get heavier
+  (two real browser contexts, WASM physics, a live WebRTC connection, each) as more phases land.
+
+**Verification:** `npx tsc --noEmit` clean. `npm run test:unit` 19/19 green (unaffected). New
+`e2e/multiplayer-match.spec.ts`: starts a real match on both sides, asserts `getEntityCount() === 0`
+on both (pure PvP, no bots), asserts each side's own position matches what the *other* side reports
+as the opponent's spawn position, then moves the host and confirms the guest's view of the opponent's
+position actually changes - not just that a connection exists, that movement genuinely crosses it.
+Full `npx playwright test` (all spec files together, the real regression-risk scenario given the
+worker-contention bug above) run clean after the `workers: 1` fix.
