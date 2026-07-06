@@ -2191,3 +2191,26 @@ landing far short - exactly the reported symptom.
 **Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green (including the
 `ZoneMap.ts` guaranteed-sites coverage this project already treats as load-bearing regression
 protection). `npm run build` succeeds.
+
+### Denser forests + crate pile visual polish
+
+Follow-up to the two items above, per direct user request.
+
+- **`FOREST_ZONE_DENSITY`** raised 0.45 → 0.7 - the actual lever for "more forests, more often"
+  (raises the odds any given density-noise cell rolls a forest site at all; doesn't touch the
+  radius/geometric-ceiling math at all, so no risk to the guaranteed-forest-zone invariant).
+  **`FOREST_ZONE_RADIUS_MAX`** nudged 16 → 17 (min left at 10) - close to the world's ~17.5
+  geometric ceiling without meaningfully raising the natural-site rejection rate. Verified:
+  `npx tsc --noEmit` clean, unit tests 19/19 green (including `ZoneMap.ts`'s guaranteed-sites
+  coverage).
+- **Crate stack visual** (`BuildingManager.ts`'s `createCrateStackVisual`) now applies small
+  deterministic per-crate jitter - position offset, Y-rotation, tint variance - seeded from each
+  building's own position (mulberry32/hashChunkSeed, same pattern this file already uses for town
+  layouts, so a reloaded world looks identical, not randomized every visit). Purely cosmetic: the
+  actual collision boxes in `createCrateStack` are untouched, so climbing behavior is unchanged.
+  Addresses playtest feedback that the un-jittered 3-tier stack read as an obvious geometric
+  staircase rather than a casual pile of crates. Verified visually via a screenshot from a
+  temporary Playwright script (teleported next to a live crate stack, confirmed the jitter reads
+  as a loose pile while crates still sit flush against the wall) - discarded after confirming, not
+  kept as a permanent test since it was purely a one-off visual check, not a regression the CI
+  suite needs to keep guarding.

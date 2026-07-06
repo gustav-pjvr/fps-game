@@ -496,16 +496,31 @@ export const FOREST_ZONE_SEED_OFFSET = 11;
 /** Shrunk 200 -> 45 alongside the WORLD_SIZE_CHUNKS 6 -> 4 cut - see the matching
  * FLAT_ZONE_CELL_SIZE comment for why the old value was wildly oversized for the new max radius. */
 export const FOREST_ZONE_CELL_SIZE = 45;
-export const FOREST_ZONE_DENSITY = 0.45;
+/** Raised 0.45 -> 0.7 per playtest report of a seed with almost no visible trees - unlike the
+ * radius (below), this doesn't touch the geometric ceiling at all: it only raises the chance any
+ * given candidate cell in the density-noise grid actually rolls a site. The 4-chunk world's safe
+ * annulus (spawn ring to mountain ramp) only fits ~5 forest-cell-sized candidates total regardless
+ * of density, so at the old 0.45 the *expected* count of non-guaranteed forest patches (on top of
+ * the 2 always-guaranteed ones - see GUARANTEED_ZONE_COUNT) was only ~2, with real seed-to-seed
+ * variance landing some runs at 0 extra - exactly the "seed with no trees" report, since the
+ * player may simply not have wandered into either guaranteed site. At 0.7 the expected extra count
+ * roughly doubles to ~3.5, without changing anything about how big any single forest is. */
+export const FOREST_ZONE_DENSITY = 0.7;
 /** Raised from 50-90 per project decision ("forest radius should increase a lot"), re-tuned to
- * 45-65 at WORLD_SIZE_CHUNKS=6, then to 10-16 when the world shrunk again to 4 - pushed right up to
- * the world's current geometric ceiling: isSiteClear (see below) rejects any site whose radius plus
- * its distance from spawn/world-edge doesn't fit the available annulus, which given
- * ENEMY_RING_BASE_RADIUS, ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START makes radii above ~17.5 always
- * fail regardless of position - this is the largest a forest zone can ever be without enlarging the
- * world itself (WORLD_BOUNDARY_RADIUS) or narrowing ZONE_EDGE_MARGIN further. */
+ * 45-65 at WORLD_SIZE_CHUNKS=6, then to 10-16 when the world shrunk again to 4. Nudged 16 -> 17 on
+ * the max (min left at 10, unchanged) per a later request to make forests denser-looking: the
+ * world's geometric ceiling here is ~17.5 (isSiteClear rejects any site whose radius plus its
+ * distance from spawn/world-edge doesn't fit the available annulus, given ENEMY_RING_BASE_RADIUS,
+ * ZONE_EDGE_MARGIN, and WORLD_EDGE_RAMP_START) - this is about as far as the max can go without
+ * raising the natural (non-guaranteed) rejection rate, since isSiteClear drops a site entirely
+ * (not just clamps its radius) when it doesn't fit at its rolled position. The min was left alone
+ * deliberately - computeGuaranteedSites' feasibility band for the 2 always-guaranteed forest sites
+ * is `WORLD_EDGE_RAMP_START - ZONE_EDGE_MARGIN - radiusMin - spawnOffsetMagnitude` vs.
+ * `ENEMY_RING_BASE_RADIUS + ZONE_EDGE_MARGIN + radiusMin` - raising radiusMin narrows that band on
+ * both sides at once, and it's already a fairly thin 7-unit band at the current value; the real
+ * lever for "more forest, more often" is FOREST_ZONE_DENSITY above, not squeezing this further. */
 export const FOREST_ZONE_RADIUS_MIN = 10;
-export const FOREST_ZONE_RADIUS_MAX = 16;
+export const FOREST_ZONE_RADIUS_MAX = 17;
 export const FOREST_ZONE_INNER_FRACTION = 0.6;
 
 /** Keeps zone sites clear of both the world edge (mountain ring/hard clamp) and the spawn/combat

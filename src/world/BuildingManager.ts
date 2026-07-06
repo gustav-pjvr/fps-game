@@ -429,25 +429,44 @@ export class BuildingManager {
   /** Simple procedural crate boxes (a main body plus a darker banding box, per tier) rather than a
    * sourced/textured asset - matches the project's existing placeholder-primitive style for
    * non-hero geometry (rocks, targets, etc. - see NOTES.md), and keeps this feature self-contained
-   * without a new asset dependency. Positioned identically to createCrateStack's physical
-   * colliders (same tier/distanceFromWall formulas) so the visible crates are exactly what the
-   * player is standing/jumping on, not a decorative approximation of it. */
+   * without a new asset dependency. Each crate's *base* position matches createCrateStack's
+   * physical colliders exactly (same tier/distanceFromWall formulas) - the small per-crate
+   * position/rotation/tint jitter below is cosmetic only, offset from that base position by less
+   * than the collider's own margin from its neighbors, so the visible crates still read as sitting
+   * on what the player is actually standing/jumping on, never floating clear of it or appearing to
+   * block a step that isn't really there. Per playtest feedback the un-jittered version read as an
+   * obvious geometric staircase rather than a casual pile of stacked crates - the jitter is
+   * deterministic (seeded from this exact building's position, mirroring how TownLayout/RNG usage
+   * elsewhere in this file seeds off cell coordinates) so a reloaded world still looks identical,
+   * not different crates on every visit. */
   private createCrateStackVisual(worldX: number, groundY: number, wallFaceZ: number): THREE.Group {
     const group = new THREE.Group();
     const crateGeometry = new THREE.BoxGeometry(CRATE_SIZE * 0.96, CRATE_SIZE * 0.96, CRATE_SIZE * 0.96);
     const bandGeometry = new THREE.BoxGeometry(CRATE_SIZE * 0.98, CRATE_SIZE * 0.16, CRATE_SIZE * 0.98);
+    const rng = mulberry32(hashChunkSeed(Math.round(worldX * 10), Math.round(wallFaceZ * 10), getWorldSeed() + 40));
+
+    const jitterRange = CRATE_SIZE * 0.12;
+    const rotationRange = Math.PI / 5;
 
     for (let tier = 0; tier < CRATE_TIER_COUNT; tier++) {
       const distanceFromWall = (CRATE_TIER_COUNT - tier) * CRATE_SIZE;
       const y = tier * CRATE_SIZE + CRATE_SIZE / 2;
       const z = -(distanceFromWall - CRATE_SIZE / 2);
+      const jitterX = (rng() - 0.5) * jitterRange;
+      const jitterZ = (rng() - 0.5) * jitterRange;
+      const rotationY = (rng() - 0.5) * rotationRange;
 
-      const crate = new THREE.Mesh(crateGeometry, this.crateMaterial);
-      crate.position.set(0, y, z);
+      const crate = new THREE.Mesh(crateGeometry, this.crateMaterial.clone());
+      crate.position.set(jitterX, y, z + jitterZ);
+      crate.rotation.y = rotationY;
+      // Slight per-crate tint variance so a stack of identical boxes doesn't read as obviously
+      // instanced/copy-pasted - each crate's own clone keeps this from bleeding into siblings.
+      (crate.material as THREE.MeshStandardMaterial).color.offsetHSL(0, 0, (rng() - 0.5) * 0.08);
       group.add(crate);
 
       const band = new THREE.Mesh(bandGeometry, this.crateBandMaterial);
-      band.position.set(0, y, z);
+      band.position.copy(crate.position);
+      band.rotation.y = rotationY;
       group.add(band);
     }
 
