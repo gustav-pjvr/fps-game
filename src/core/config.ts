@@ -34,6 +34,11 @@ export const MULTIPLAYER_SPAWN_B_Z = 0;
  * to look smooth, not be physically exact; RemotePlayer smooths between updates on the receiving end. */
 export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 18;
 
+/** How long a dead player waits before automatically respawning at their own spawn point
+ * (MULTIPLAYER_PLAN.md §4a/§4) - a PvP match should keep flowing after a kill, not stop at a death
+ * screen until someone clicks a button the way single-player's practice-reset flow does. */
+export const MULTIPLAYER_RESPAWN_DELAY = 3;
+
 /** World-distance the opponent-position minimap (MULTIPLAYER_PLAN.md §4b) represents at its edge -
  * inside this radius the dot is placed proportionally; beyond it, the dot clamps to the rim, still
  * pointing the right way. */

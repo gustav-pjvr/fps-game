@@ -1726,3 +1726,56 @@ as the opponent's spawn position, then moves the host and confirms the guest's v
 position actually changes - not just that a connection exists, that movement genuinely crosses it.
 Full `npx playwright test` (all spec files together, the real regression-risk scenario given the
 worker-contention bug above) run clean after the `workers: 1` fix.
+
+## Multiplayer, Phase 3: combat sync (2026-07-06)
+
+Third step of `MULTIPLAYER_PLAN.md`: shooting the opponent now actually damages, kills, and
+respawns them, with kills correctly scored across the network - the last piece of the core 1v1
+loop before phase 4 (host match settings, match lifecycle).
+
+- **`RemotePlayer` is now hittable.** Gave it a real Rapier collider - a
+  `kinematicPositionBased()` rigid body with a capsule collider sized identically to the local
+  `Player`'s own, registered via `physics.registerCollider()` and kept in sync every tick with
+  `setNextKinematicTranslation()`. This is the same pattern `Enemy`/`Target` already use, and it
+  means the *existing* `WeaponManager`/`castHitscan`/`isDamageable` pipeline can hit `RemotePlayer`
+  with zero changes to that pipeline - `RemotePlayer` just implements `Damageable`, and its
+  `takeDamage()` forwards to an injected callback instead of applying damage locally.
+- **Trust model (MULTIPLAYER_PLAN.md §3/§6): the shooter resolves the hit, the victim owns their
+  own health.** When the local player's raycast hits the `RemotePlayer` placeholder,
+  `Game.ts` sends a `damageEvent {amount}` - not "I killed you," just "you took N." The receiving
+  client applies that to its own `Player.takeDamage()` and is the only one that ever decides it's
+  dead. The dying client then sends `playerDied` so the *other* client (which has no visibility
+  into the victim's actual health) knows to credit the kill. `fireEvent` (tracer + muzzle flash)
+  rides the same channel purely for the shooter's visual feedback on the other screen - cosmetic
+  only, the receiving side never treats it as an actual hit.
+- **A real bug, not a test artifact: network damage silently never triggered death.**
+  `Game.update()` detects "the player just died this frame" by comparing `isDead` across the tick
+  (`wasDead`, captured at the top of `update()`) - the *existing* debug-damage path
+  (`pendingDebugDamage`) already queues its damage to apply *inside* that tick specifically so this
+  comparison can see the before/after change. The new `damageEvent` handler applied
+  `player.takeDamage()` directly from the WebRTC message callback instead, which fires at an
+  arbitrary point *between* ticks - by the time the next `update()` ran, `wasDead` was captured
+  *already dead*, so `isDead && !wasDead` was never true, the death screen never showed, and the
+  `playerDied` reply (the only way the shooter's client learns about the kill) never got sent.
+  Fixed by adding a `pendingNetworkDamage` field mirroring `pendingDebugDamage` exactly, applied at
+  the same point in the tick. Found by writing the phase 3 e2e test end-to-end with two real browser
+  contexts (no mocking) and temporary diagnostic logging that proved the shooter's raycast and the
+  victim's health value were both correct the whole time - the damage pipeline worked; only the
+  *transition detection* silently swallowed the kill.
+- **Auto-respawn, not click-to-respawn (MULTIPLAYER_PLAN.md §4a).** `MULTIPLAYER_RESPAWN_DELAY`
+  (3s) after death, `Game.multiplayerRespawn()` fires automatically: moves the local player back to
+  its own fixed spawn point (never the opponent's), sends `respawnEvent {x,y,z}` so the other
+  client's `RemotePlayer` snaps there immediately via `teleportTo()` rather than slowly damping
+  across the whole map. `resetPlay()` (T key) now routes through the same auto-respawn in
+  multiplayer instead of the single-player reset-match behavior it still is otherwise.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green (unaffected). New
+`e2e/multiplayer-combat.spec.ts`: two real browser contexts create/join a room, start a match, and
+teleport the host next to the guest (deliberately not walking there - the 280-unit spawn separation
+across real procedural terrain is `world-bounds.spec.ts`'s concern, not this test's, and an earlier
+walking-based version of this test spent several minutes stuck against terrain before this was
+factored out). Fires until the *guest's own* health (not the host's belief it hit something) reads
+0, confirms the host's score increments only after the guest's `playerDied` round-trips back,
+confirms auto-respawn brings the guest back to full health at its own spawn point within
+`MULTIPLAYER_RESPAWN_DELAY`, and confirms the host's view of the opponent snaps to match. Full
+`npx playwright test` (all 22 specs, one worker) green.

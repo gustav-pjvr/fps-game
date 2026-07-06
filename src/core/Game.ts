@@ -37,6 +37,7 @@ import {
   ENEMY_GUNSHOT_MIN_VOLUME,
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
+  MULTIPLAYER_RESPAWN_DELAY,
   MULTIPLAYER_SPAWN_A_X,
   MULTIPLAYER_SPAWN_A_Z,
   MULTIPLAYER_SPAWN_B_X,
@@ -80,7 +81,13 @@ interface ActiveMultiplayer {
   readonly session: MultiplayerSession;
   readonly remotePlayer: RemotePlayer;
   readonly minimap: Minimap;
+  /** This client's own designated spawn point (XZ) - kept around so a later respawn can return to
+   * it without re-deriving role -> spawn-point logic mid-match. */
+  readonly ownSpawn: THREE.Vector2;
   snapshotAccumulator: number;
+  /** Counts up while this client's own player is dead; 0 whenever alive. Compared against
+   * MULTIPLAYER_RESPAWN_DELAY in updateMultiplayer() to trigger the automatic respawn. */
+  deathTimer: number;
 }
 
 function waitForNextFrame(): Promise<void> {
@@ -165,6 +172,12 @@ export class Game {
   private spawnGeneration = 0;
   /** Damage requested via the debug API, applied inside the next update tick (see installDebugApi). */
   private pendingDebugDamage = 0;
+  /** Damage from a network `damageEvent`, applied inside the next update tick rather than
+   * immediately in the WebRTC message callback - update() detects death by comparing isDead
+   * across the tick (wasDead), so applying it outside a tick boundary would make the death
+   * transition unobservable (isDead would already be true before wasDead is captured), and
+   * neither the death screen nor the `playerDied` reply would ever fire. */
+  private pendingNetworkDamage = 0;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -369,7 +382,20 @@ export class Game {
           sound.playHitConfirm();
         }
       },
-      (start, end) => tracers.spawn(start, end),
+      (start, end) => {
+        tracers.spawn(start, end);
+        // Purely cosmetic on the receiving end (MULTIPLAYER_PLAN.md §3) - the shot itself already
+        // resolved locally (damage, if any, is reported separately via the hit pipeline below).
+        multiplayer?.connection.send({
+          type: 'fireEvent',
+          originX: start.x,
+          originY: start.y,
+          originZ: start.z,
+          endX: end.x,
+          endY: end.y,
+          endZ: end.z,
+        });
+      },
       (weaponId) => sound.playGunshot(weaponId),
       (weaponId) => sound.playReloadClick(weaponId),
       (distance) => longShotCallout.show(distance),
@@ -414,11 +440,17 @@ export class Game {
         ? {
             session: multiplayer,
             remotePlayer: new RemotePlayer(
+              physics,
               renderer.scene,
               new THREE.Vector3(opponentSpawn.x, sampleHeight(opponentSpawn.x, opponentSpawn.y) + SPAWN_HEIGHT_OFFSET, opponentSpawn.y),
+              // The opponent's own client is what actually applies this to its health - see the
+              // class comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
+              (amount) => multiplayer.connection.send({ type: 'damageEvent', amount }),
             ),
             minimap: new Minimap(hudRoot),
+            ownSpawn,
             snapshotAccumulator: 0,
+            deathTimer: 0,
           }
         : null;
 
@@ -494,8 +526,34 @@ export class Game {
         onDisconnected: () => {},
         onError: () => {},
         onMessage: (message) => {
-          if (message.type === 'playerSnapshot') {
-            activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
+          switch (message.type) {
+            case 'playerSnapshot':
+              activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
+              break;
+            case 'fireEvent': {
+              // Purely cosmetic (MULTIPLAYER_PLAN.md §3) - the opponent's own client already
+              // resolved whether this shot actually hit anything; this just makes it visible here too.
+              const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
+              const end = new THREE.Vector3(message.endX, message.endY, message.endZ);
+              tracers.spawn(origin, end);
+              muzzleFlash.spawn(origin);
+              break;
+            }
+            case 'damageEvent':
+              // This client is authoritative over its own player's health (MULTIPLAYER_PLAN.md
+              // §3/§6) - the opponent only ever reports "you took N," never "you're dead."
+              // Queued rather than applied here directly - see pendingNetworkDamage.
+              game.pendingNetworkDamage += message.amount;
+              break;
+            case 'playerDied':
+              // The opponent has no visibility into this client's actual health, only whatever
+              // damage it's dealt - this is how it learns a kill actually landed.
+              scoreState.value += 1;
+              killFeed.show('Opponent eliminated');
+              break;
+            case 'respawnEvent':
+              activeMultiplayer.remotePlayer.teleportTo(message.x, message.y, message.z);
+              break;
           }
         },
       });
@@ -544,13 +602,18 @@ export class Game {
    * class defaults. Also re-requests pointer lock, since it may be the death screen calling this
    * after releasePointerLock() freed the mouse to make its buttons clickable.
    *
-   * Multiplayer: a no-op for now - full multiplayer respawn/reset semantics (per-player spawn
-   * point, no AI to reset, both sides needing to agree) are phase 3/4's job (MULTIPLAYER_PLAN.md
-   * §4a/§7), not something to half-implement here. Without this guard, pressing T mid-multiplayer-
-   * match would call spawnEncountersAsync with matchConfig's counts and spawn AI bots into what's
-   * supposed to be a pure PvP match. */
+   * Multiplayer: routes to multiplayerRespawn() instead, and only while actually dead - pressing T
+   * (or clicking the death screen's Respawn button, which calls this same method) mid-match while
+   * still alive must stay a no-op, or it'd let a losing player escape a fight by teleporting home
+   * on demand. Auto-respawn (MULTIPLAYER_RESPAWN_DELAY after death, see updateMultiplayer) already
+   * calls multiplayerRespawn() on its own, so this is just a way to skip that wait, not a separate
+   * reset path - it must never touch matchConfig/entityManager (there's no AI to reset, and
+   * spawnEncountersAsync must never run in a multiplayer match at all). */
   private resetPlay(): void {
-    if (this.multiplayer) return;
+    if (this.multiplayer) {
+      if (this.player.isDead) this.multiplayerRespawn();
+      return;
+    }
 
     const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
@@ -693,6 +756,11 @@ export class Game {
 
     const wasDead = this.player.isDead;
 
+    if (this.pendingNetworkDamage > 0) {
+      this.player.takeDamage(this.pendingNetworkDamage);
+      this.pendingNetworkDamage = 0;
+    }
+
     if (this.pendingDebugDamage > 0) {
       this.player.takeDamage(this.pendingDebugDamage);
       this.pendingDebugDamage = 0;
@@ -726,6 +794,9 @@ export class Game {
     if (this.player.isDead && !wasDead) {
       this.deathScreen.show(this.scoreState.value);
       this.input.releasePointerLock();
+      // The opponent has no visibility into this client's health - this is the only way they
+      // learn a kill actually landed (MULTIPLAYER_PLAN.md §3).
+      this.multiplayer?.session.connection.send({ type: 'playerDied' });
     }
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
@@ -745,6 +816,14 @@ export class Game {
     this.multiplayer.remotePlayer.update(dt);
     this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position);
 
+    if (this.player.isDead) {
+      this.multiplayer.deathTimer += dt;
+      if (this.multiplayer.deathTimer >= MULTIPLAYER_RESPAWN_DELAY) {
+        this.multiplayerRespawn();
+      }
+      return;
+    }
+
     this.multiplayer.snapshotAccumulator += dt;
     if (this.multiplayer.snapshotAccumulator >= PLAYER_SNAPSHOT_SEND_INTERVAL) {
       this.multiplayer.snapshotAccumulator = 0;
@@ -758,6 +837,23 @@ export class Game {
         pitch: this.player.facingPitch,
       });
     }
+  }
+
+  /** Respawns this client's own player at its own designated spawn point (MULTIPLAYER_PLAN.md
+   * §4a) - triggered automatically MULTIPLAYER_RESPAWN_DELAY seconds after death (see
+   * updateMultiplayer), or immediately via the death screen's Respawn button/T key (see
+   * resetPlay). Deliberately does not touch scoreState - a kill/death in multiplayer shouldn't
+   * reset the running score the way single-player's practice-reset does. */
+  private multiplayerRespawn(): void {
+    if (!this.multiplayer) return;
+
+    const { x, y: z } = this.multiplayer.ownSpawn;
+    const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
+    this.player.respawn(new THREE.Vector3(x, spawnY, z));
+    this.multiplayer.deathTimer = 0;
+    this.deathScreen.hide();
+    this.input.requestPointerLock();
+    this.multiplayer.session.connection.send({ type: 'respawnEvent', x, y: spawnY, z });
   }
 
   private readonly render = (alpha: number): void => {

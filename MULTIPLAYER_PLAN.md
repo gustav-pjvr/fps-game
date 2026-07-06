@@ -1,8 +1,8 @@
 # Multiplayer Plan — fps-game
 
-Status: **Phase 1 (connection layer) and Phase 2 (shared world + movement sync) implemented and
+Status: **Phases 1-3 (connection layer, shared world + movement sync, combat sync) implemented and
 verified.** See NOTES.md's "Multiplayer" entries for what actually landed and how it was verified.
-Phases 3-4 (combat sync, host match settings/lifecycle) are still just this plan.
+Phase 4 (host match settings, match lifecycle) is still just this plan.
 
 Scope, per user request: a "party" model, not public matchmaking. One player clicks **Multiplayer → Create Room**, gets a short room code, shares it out of band (voice chat, text, whatever); the other player clicks **Multiplayer → Join Room**, enters the code, connects. The room owner (host) picks match settings and clicks **Play**; both players load into the same match and fight each other. The existing bot/enemy system (`EntityManager`'s AI-controlled `Enemy`/`Target`) stays exactly as it is today, but only for the existing single-player "training" mode — multiplayer matches are pure player-vs-player, no AI entities spawned at all.
 
