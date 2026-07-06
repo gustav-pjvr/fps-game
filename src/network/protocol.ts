@@ -25,7 +25,11 @@ export interface MatchStartMessage {
 
 /** Broadcast periodically by each client for its own player (MULTIPLAYER_PLAN.md §3) - the only
  * state a RemotePlayer needs to look right: where it is, which way it's facing, and what it's
- * holding (so the opponent's view model matches, once weapon visuals matter for combat sync). */
+ * holding (so the opponent's view model matches, once weapon visuals matter for combat sync).
+ * `health` piggybacks on this same message rather than a separate one - it's already sent at
+ * PLAYER_SNAPSHOT_SEND_INTERVAL (~30Hz), plenty fresh for a live opponent health display, and a
+ * second message type would just be more protocol surface for the same delivery guarantee this
+ * one already has. */
 export interface PlayerSnapshotMessage {
   type: 'playerSnapshot';
   x: number;
@@ -33,6 +37,7 @@ export interface PlayerSnapshotMessage {
   z: number;
   yaw: number;
   pitch: number;
+  health: number;
 }
 
 /** Sent by the shooter on every shot (MULTIPLAYER_PLAN.md §3's "drives muzzle flash/tracer on the

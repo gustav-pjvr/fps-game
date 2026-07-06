@@ -31,8 +31,13 @@ export const MULTIPLAYER_SPAWN_B_Z = 0;
 
 /** How often this client broadcasts its own player's transform to the opponent (MULTIPLAYER_PLAN.md
  * §3) - well below the 60Hz simulation rate, since a remote player's on-screen position only needs
- * to look smooth, not be physically exact; RemotePlayer smooths between updates on the receiving end. */
-export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 18;
+ * to look smooth, not be physically exact; RemotePlayer smooths between updates on the receiving
+ * end. Raised from 1/18 (~55ms) to 1/30 (~33ms) after players reported hits frequently not
+ * registering, worst with the sniper - at sprint speed (PLAYER_MOVE_SPEED * SPRINT_MULTIPLIER = 8
+ * units/sec) the old interval let real position drift up to ~0.44 units between updates, close to
+ * the target's own hit-radius (PLAYER_RADIUS = 0.4), before RemotePlayer's damping smoothing even
+ * adds its own further lag on top. More frequent, tiny snapshot messages is a fine trade for a 1v1. */
+export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 30;
 
 /** How long a dead player waits before automatically respawning at their own spawn point
  * (MULTIPLAYER_PLAN.md §4a/§4) - a PvP match should keep flowing after a kill, not stop at a death
@@ -41,8 +46,14 @@ export const MULTIPLAYER_RESPAWN_DELAY = 3;
 
 /** World-distance the opponent-position minimap (MULTIPLAYER_PLAN.md §4b) represents at its edge -
  * inside this radius the dot is placed proportionally; beyond it, the dot clamps to the rim, still
- * pointing the right way. */
-export const MINIMAP_WORLD_RADIUS = 120;
+ * pointing the right way. Raised from 120 - the two multiplayer spawn points start ~280 units
+ * apart (MULTIPLAYER_SPAWN_A/B_X), well outside the old radius, so for most of a match the dot just
+ * sat pinned at the rim barely moving regardless of real movement - technically correct (still
+ * pointing the right way) but read as "the minimap doesn't work" in real play, since its one
+ * remaining signal (direction) rarely changes either once both players have simply moved toward
+ * the map's middle. 220 keeps the two spawns just outside range at the very start of a match (still
+ * meaningful - "they're far away") while bringing ordinary mid-map engagement distances inside it. */
+export const MINIMAP_WORLD_RADIUS = 220;
 
 /** Win condition (MULTIPLAYER_PLAN.md §4): first to this many kills wins. Host picks from
  * MULTIPLAYER_KILL_LIMIT_OPTIONS before starting the room (see CreateRoomScreen); this is only the
@@ -254,6 +265,13 @@ export const ENEMY_STUCK_EPSILON = 0.5;
 export const PLAYER_HEALTH = 100;
 
 export const HIT_MARKER_DURATION = 0.2;
+
+/** How long the screen-edge red vignette (DamageVignette) stays visible after the player takes
+ * damage before fading out - a faded, temporary "you got hit" acknowledgment alongside the health
+ * bar, not a replacement for it. Longer than HIT_MARKER_DURATION (that's confirming *you* landed a
+ * hit on something else) since this needs to be noticeable enough to register mid-fight rather
+ * than flash past in a fifth of a second. */
+export const DAMAGE_VIGNETTE_DURATION = 0.4;
 
 /** World units already read as meters throughout this codebase (PLAYER_HEIGHT = 1.8, etc.) - a
  * player hit landing at or beyond this distance gets a quick on-screen callout (see
@@ -537,6 +555,14 @@ export const LADDER_CLIMB_SPEED = 4;
  * doesn't spawn exactly flush with the roof (risking a jittery floating-point contact) - settles
  * onto the roof from a hair above it instead. */
 export const LADDER_ROOF_CLEARANCE = 0.05;
+/** Minimum height a climb must actually rise before the mantle-height exit condition is honored
+ * (see Player.ts's applyMovement) - guards against the registered mantle target's `y` (computed
+ * from the *building's own* sampled ground height in BuildingManager.createBuilding) sometimes
+ * sitting at or below the player's actual current height if the terrain right at the wall slopes
+ * away from what was sampled at the building's placement anchor. Without this guard, that mismatch
+ * insta-mantled the player on the very first climbing frame, before any observable rise - shorter
+ * than the shortest building preset's height, so it never blocks a legitimate short climb. */
+export const LADDER_MIN_CLIMB_RISE = 1;
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;

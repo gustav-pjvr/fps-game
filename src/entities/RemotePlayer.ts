@@ -10,13 +10,17 @@ import { loadGLTF } from '../core/AssetLoader.ts';
 
 /** How quickly the visual mesh catches up to the latest received snapshot (MathUtils.damp's rate
  * parameter - larger closes the gap faster). Deliberately a damped follow rather than true
- * interpolation between the last two snapshots: with an 18Hz send rate, a snapshot arrives roughly
- * every 3-4 render frames, and dampening toward whatever the latest one is reads smoothly enough
+ * interpolation between the last two snapshots: with a 30Hz send rate, a snapshot arrives roughly
+ * every 2 render frames, and dampening toward whatever the latest one is reads smoothly enough
  * without needing a second snapshot buffered and timestamped - a reasonable v1 simplification per
  * MULTIPLAYER_PLAN.md §7 (true interpolation is a documented possible refinement, not required to
- * prove movement sync works). */
-const POSITION_DAMP_RATE = 12;
-const ROTATION_DAMP_RATE = 12;
+ * prove movement sync works). Raised from 12 to 18 alongside the snapshot-rate increase (see
+ * PLAYER_SNAPSHOT_SEND_INTERVAL's comment) - damping itself adds lag on top of the network delay
+ * (it only ever asymptotically approaches the target, never instantly reaching it), and that stacked
+ * with the old, slower snapshot rate was part of why hits against a moving target - especially at
+ * sniper range - frequently missed a target that looked like it was standing right there. */
+const POSITION_DAMP_RATE = 18;
+const ROTATION_DAMP_RATE = 18;
 
 /** Same model Enemy.ts uses (Kenney "Mini Characters", CC0) - the only downloaded character skin
  * this project has; there's no separate "player" model since the local player never sees their own
@@ -143,10 +147,17 @@ export class RemotePlayer implements Entity, Damageable {
   }
 
   /** Called whenever a `playerSnapshot` message arrives - just records where the opponent should
-   * be; `update()` is what actually moves the mesh there, smoothly, every rendered frame. */
+   * be; `update()` is what actually moves the mesh there, smoothly, every rendered frame.
+   *
+   * `yaw` is `Player.facingYaw` - a camera-forward convention where yaw=0 means the *camera*
+   * faces -Z (see Player.applyMovement's `forward = (0,0,-1).applyQuaternion(...)`). The model
+   * itself faces +Z at rotation.y=0 (the same convention Enemy.ts's own atan2(dx,dz) facing logic
+   * assumes), so applying the raw camera yaw directly showed the model facing exactly backwards -
+   * the model's face turned away from wherever the real player was actually looking. The +π offset
+   * corrects for that mismatch. */
   applySnapshot(x: number, y: number, z: number, yaw: number): void {
     this.targetPosition.set(x, y, z);
-    this.targetYaw = yaw;
+    this.targetYaw = yaw + Math.PI;
   }
 
   /** Snaps instantly instead of smoothing - for the moment a match starts or a player respawns:

@@ -19,12 +19,14 @@ import { Hud } from '../ui/hud.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
+import { DamageVignette } from '../ui/damageVignette.ts';
 import { DeathScreen } from '../ui/deathScreen.ts';
 import type { MultiplayerMatchEndResult } from '../ui/matchEndScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
 import { Minimap } from '../ui/minimap.ts';
+import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
@@ -82,6 +84,7 @@ interface ActiveMultiplayer {
   readonly session: MultiplayerSession;
   readonly remotePlayer: RemotePlayer;
   readonly minimap: Minimap;
+  readonly multiplayerHud: MultiplayerHud;
   /** This client's own designated spawn point (XZ) - kept around so a later respawn can return to
    * it without re-deriving role -> spawn-point logic mid-match. */
   readonly ownSpawn: THREE.Vector2;
@@ -92,6 +95,11 @@ interface ActiveMultiplayer {
   /** Counts up while this client's own player is dead; 0 whenever alive. Compared against
    * MULTIPLAYER_RESPAWN_DELAY in updateMultiplayer() to trigger the automatic respawn. */
   deathTimer: number;
+  /** The opponent's last-reported health (piggybacked on their own playerSnapshot messages - see
+   * protocol.ts) - this client has no other way to know it, since it's never authoritative over
+   * the opponent's health (MULTIPLAYER_PLAN.md §3/§6). Starts at full health, matching what a
+   * freshly spawned opponent actually has before their first snapshot ever arrives. */
+  opponentHealth: number;
 }
 
 function waitForNextFrame(): Promise<void> {
@@ -218,6 +226,7 @@ export class Game {
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
+    private readonly damageVignette: DamageVignette,
     private readonly deathScreen: DeathScreen,
     private readonly weaponCaption: WeaponCaption,
     private readonly longShotCallout: LongShotCallout,
@@ -388,9 +397,13 @@ export class Game {
     const sound = await SoundEngine.create();
     document.addEventListener('click', () => sound.resume(), { once: true });
 
+    const damageVignette = new DamageVignette(hudRoot);
     const spawnY = sampleHeight(ownSpawn.x, ownSpawn.y) + SPAWN_HEIGHT_OFFSET;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(ownSpawn.x, spawnY, ownSpawn.y), {
-      onDamaged: () => sound.playPlayerHurt(),
+      onDamaged: () => {
+        sound.playPlayerHurt();
+        damageVignette.trigger();
+      },
       onFootstep: () => sound.playFootstep(),
     });
 
@@ -484,14 +497,23 @@ export class Game {
         session: multiplayer,
         remotePlayer,
         minimap: new Minimap(hudRoot),
+        multiplayerHud: new MultiplayerHud(hudRoot),
         ownSpawn,
         killLimit: multiplayer.killLimit,
         snapshotAccumulator: 0,
         deathTimer: 0,
+        opponentHealth: player.currentHealth,
       };
     }
 
     const hud = new Hud(hudRoot);
+    if (activeMultiplayer) {
+      // MultiplayerHud (constructed above, alongside the rest of activeMultiplayer) shows both
+      // players' health/score in different positions - the single-player-shaped elements here
+      // would just be a redundant, incomplete (own-only) duplicate.
+      hud.setScoreVisible(false);
+      hud.setHealthVisible(false);
+    }
     const hotbar = new Hotbar(hudRoot);
     hotbar.setSlots(weaponManager.weaponSlotNames);
     const weaponCaption = new WeaponCaption(hudRoot);
@@ -535,6 +557,7 @@ export class Game {
       hud,
       hotbar,
       hitMarker,
+      damageVignette,
       deathScreen,
       weaponCaption,
       longShotCallout,
@@ -575,6 +598,7 @@ export class Game {
               break;
             case 'playerSnapshot':
               activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
+              activeMultiplayer.opponentHealth = message.health;
               break;
             case 'fireEvent': {
               // Purely cosmetic (MULTIPLAYER_PLAN.md §3) - the opponent's own client already
@@ -627,6 +651,7 @@ export class Game {
     this.hud.dispose();
     this.hotbar.dispose();
     this.hitMarker.dispose();
+    this.damageVignette.dispose();
     this.deathScreen.dispose();
     this.weaponCaption.dispose();
     this.longShotCallout.dispose();
@@ -638,6 +663,7 @@ export class Game {
     this.sound.dispose();
     this.multiplayer?.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer?.minimap.dispose();
+    this.multiplayer?.multiplayerHud.dispose();
     if (!options?.keepConnectionAlive) {
       this.multiplayer?.session.connection.dispose();
     }
@@ -833,6 +859,14 @@ export class Game {
       this.pendingDebugDamage = 0;
     }
 
+    // Advances the RemotePlayer's damped position/collider *before* this tick's own hitscan can
+    // fire, not after - moved here from the end of update() (see the old updateMultiplayer, which
+    // ran after weaponManager.update()) because that ordering meant every shot raycast against a
+    // collider position that was one whole extra frame stale on top of the network sync lag
+    // already inherent to the snapshot-sync model, silently shrinking the real hit window on top
+    // of that inherent lag for no reason - fixable, unlike the network lag itself.
+    this.multiplayer?.remotePlayer.update(dt);
+
     if (this.player.isDead || isPaused) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause. Also covers the multiplayer-paused case above: local simulation (movement,
@@ -855,6 +889,7 @@ export class Game {
     this.tracers.update(dt);
     this.muzzleFlash.update(dt);
     this.hitMarker.update(dt);
+    this.damageVignette.update(dt);
     this.weaponCaption.update(dt);
     this.longShotCallout.update(dt);
     this.killFeed.update(dt);
@@ -886,8 +921,17 @@ export class Game {
   private updateMultiplayer(dt: number): void {
     if (!this.multiplayer) return;
 
-    this.multiplayer.remotePlayer.update(dt);
+    // RemotePlayer's own position/collider is advanced earlier in update(), before this tick's
+    // hitscan can fire (see that call site's comment) - this just reads the already-updated
+    // position for the minimap.
     this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position);
+    this.multiplayer.multiplayerHud.update(
+      this.player.currentHealth,
+      this.player.maxHealth,
+      this.multiplayer.opponentHealth,
+      this.scoreState.value,
+      this.multiplayerDeathCount,
+    );
 
     // Win condition (MULTIPLAYER_PLAN.md §4): first to killLimit ends the match. Checked here
     // rather than where each score actually changes (the `playerDied` handler for my own kills,
@@ -921,6 +965,7 @@ export class Game {
         z: p.z,
         yaw: this.player.facingYaw,
         pitch: this.player.facingPitch,
+        health: this.player.currentHealth,
       });
     }
   }

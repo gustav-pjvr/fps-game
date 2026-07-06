@@ -75,6 +75,20 @@ export class Hud {
     this.healthTextElement.textContent = `${Math.ceil(current)} HP`;
   }
 
+  /** Multiplayer replaces this top-left score text with MultiplayerHud's scoreboard bar (both
+   * players' scores, top-center) - hidden rather than left showing a redundant, single-player-only
+   * number in the corner. */
+  setScoreVisible(visible: boolean): void {
+    this.scoreElement.style.display = visible ? 'block' : 'none';
+  }
+
+  /** Multiplayer replaces this bottom-left bar with MultiplayerHud's top-left pair (both players'
+   * health, not just this client's own) - hidden for the same reason as setScoreVisible. */
+  setHealthVisible(visible: boolean): void {
+    this.healthFillElement.parentElement!.style.display = visible ? 'block' : 'none';
+    this.healthTextElement.style.display = visible ? 'block' : 'none';
+  }
+
   dispose(): void {
     this.container.remove();
   }
