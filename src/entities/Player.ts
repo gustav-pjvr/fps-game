@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { allocateEntityId, type Entity } from './Entity.ts';
-import type { ClimbableMantleTarget, PhysicsWorld } from '../physics/PhysicsWorld.ts';
+import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import { Settings } from '../settings/Settings.ts';
 import {
@@ -11,7 +11,6 @@ import {
   FOOTSTEP_DISTANCE,
   GRAVITY,
   JUMP_SPEED,
-  LADDER_CLIMB_SPEED,
   MAX_PITCH,
   MOUSE_SENSITIVITY,
   PLAYER_BOB_FREQUENCY,
@@ -44,13 +43,6 @@ export class Player implements Entity {
   private recoilPitch = 0;
   private verticalVelocity = 0;
   private grounded = false;
-  private climbing = false;
-  /** Mantle distance from the last climbable sensor actually touched - see applyMovement's
-   * justReachedTop handling for why this needs to be cached from the previous frame. */
-  private lastClimbMantleTarget: ClimbableMantleTarget | null = null;
-  /** The specific ladder sensor being climbed - captured once when climbing starts so contact
-   * checks stay locked onto that one sensor for the whole climb (see applyMovement). */
-  private activeClimbColliderHandle: number | null = null;
   private health = PLAYER_HEALTH;
   private footstepAccumulator = 0;
 
@@ -207,79 +199,44 @@ export class Player implements Entity {
     const movingForward = input.isActionActive('moveForward');
     const movingBackward = input.isActionActive('moveBackward');
 
-    // Ladder climb-by-contact (WORLD_PLAN.md §3): touching a climbable sensor while holding
-    // forward enters climbing; losing contact (reaching the top or stepping off the ladder's
-    // width), releasing forward, or holding backward exits it back to normal gravity/movement.
-    // Once climbing, contact is checked against that *specific* sensor only (not "any climbable")
-    // - in a dense town, two neighboring buildings' ladder sensors can both be in reach at once,
-    // and re-querying "any" each frame could silently swap which building's mantle target gets
-    // used mid-climb (confirmed via direct testing: this caused climbs to intermittently land
-    // nowhere near a roof and fall straight through to the ground).
-    let touchingClimbable: boolean;
-    if (this.climbing && this.activeClimbColliderHandle !== null) {
-      touchingClimbable = this.physics.isTouchingSpecificClimbable(this.collider, this.activeClimbColliderHandle);
-    } else {
-      const target = this.physics.getClimbableMantleTarget(this.collider);
-      touchingClimbable = target !== null;
-      if (target) this.lastClimbMantleTarget = target;
-    }
-
-    const wasClimbing = this.climbing;
-    if (!this.climbing && touchingClimbable && movingForward) {
-      this.climbing = true;
-      this.verticalVelocity = 0;
-      this.activeClimbColliderHandle = this.lastClimbMantleTarget?.colliderHandle ?? null;
-    } else if (this.climbing && (!touchingClimbable || movingBackward || !movingForward)) {
-      this.climbing = false;
-      this.verticalVelocity = 0;
-    }
-    // Climbing has zero horizontal drift (see below), so the only way to lose sensor contact
-    // mid-climb is by rising past its top - never by stepping sideways off it. So losing contact
-    // (rather than an explicit backward/release-forward dismount) always means "reached the top."
-    const justReachedTop = wasClimbing && !this.climbing && !touchingClimbable && !movingBackward;
-
     const currentBeforeMove = this.rigidBody.translation();
     let next: { x: number; y: number; z: number };
 
-    if (justReachedTop && this.lastClimbMantleTarget) {
-      // Mantle onto the rooftop (WORLD_PLAN.md §3's "payoff" for climbing): teleport straight to
-      // the precomputed roof-center landing spot (registered per-building in BuildingManager.ts)
-      // instead of nudging there through the physics shape-cast solver - confirmed via direct
-      // testing that a shape-cast nudge sometimes clipped the wall's own top corner and dropped
-      // the player back to the ground, missing the roof, rather than landing on it reliably.
-      next = { x: this.lastClimbMantleTarget.x, y: this.lastClimbMantleTarget.y, z: this.lastClimbMantleTarget.z };
+    // Crate-stack mantle (WORLD_PLAN.md §3, now crate-based - see BuildingManager.ts): the crates
+    // themselves are real, solid, jumpable colliders that do the actual climbing, so this is a
+    // one-shot teleport closing the short remaining gap between the top crate and the roof edge,
+    // not a sustained climb - reached by standing on the top crate (grounded) and walking forward
+    // into the wall-mounted sensor that marks that gap.
+    const mantleTarget = this.grounded ? this.physics.getClimbableMantleTarget(this.collider) : null;
+
+    if (mantleTarget && movingForward && !movingBackward) {
+      next = { x: mantleTarget.x, y: mantleTarget.y, z: mantleTarget.z };
       this.verticalVelocity = 0;
       this.grounded = true;
     } else {
-      let desiredMovement: { x: number; y: number; z: number };
+      const moveDir = new THREE.Vector3();
+      if (movingForward) moveDir.add(forward);
+      if (movingBackward) moveDir.sub(forward);
+      if (input.isActionActive('moveRight')) moveDir.add(right);
+      if (input.isActionActive('moveLeft')) moveDir.sub(right);
+      if (moveDir.lengthSq() > 0) moveDir.normalize();
 
-      if (this.climbing) {
-        desiredMovement = { x: 0, y: LADDER_CLIMB_SPEED * dt, z: 0 };
-      } else {
-        const moveDir = new THREE.Vector3();
-        if (movingForward) moveDir.add(forward);
-        if (movingBackward) moveDir.sub(forward);
-        if (input.isActionActive('moveRight')) moveDir.add(right);
-        if (input.isActionActive('moveLeft')) moveDir.sub(right);
-        if (moveDir.lengthSq() > 0) moveDir.normalize();
+      const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
+      moveDir.multiplyScalar(speed * dt);
 
-        const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
-        moveDir.multiplyScalar(speed * dt);
+      this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
 
-        this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
-
-        if (this.grounded && input.isActionActive('jump')) {
-          this.verticalVelocity = JUMP_SPEED;
-        }
-        this.verticalVelocity += GRAVITY * dt;
-
-        desiredMovement = { x: moveDir.x, y: this.verticalVelocity * dt, z: moveDir.z };
+      if (this.grounded && input.isActionActive('jump')) {
+        this.verticalVelocity = JUMP_SPEED;
       }
+      this.verticalVelocity += GRAVITY * dt;
+
+      const desiredMovement = { x: moveDir.x, y: this.verticalVelocity * dt, z: moveDir.z };
 
       this.controller.computeColliderMovement(this.collider, desiredMovement);
 
       const computed = this.controller.computedMovement();
-      this.grounded = this.climbing ? false : this.controller.computedGrounded();
+      this.grounded = this.controller.computedGrounded();
       if (this.grounded && this.verticalVelocity < 0) {
         this.verticalVelocity = 0;
       }
@@ -365,15 +322,6 @@ export class Player implements Entity {
   /** So hitscan can exclude the shooter's own capsule - camera.position sits inside it, which was self-hitting. */
   get ownCollider(): RAPIER.Collider {
     return this.collider;
-  }
-
-  /** Debug-only introspection for the e2e suite - not a gameplay cheat. */
-  get isClimbing(): boolean {
-    return this.climbing;
-  }
-
-  get isTouchingClimbable(): boolean {
-    return this.physics.isTouchingClimbable(this.collider);
   }
 
   /** Shared movement-bob phase (see the PLAYER_BOB_* comment in config.ts) - WeaponManager reads

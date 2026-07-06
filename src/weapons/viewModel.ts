@@ -32,7 +32,7 @@ export function weaponModelPaths(): string[] {
 }
 
 /** No sourced .glb exists for the knife (Phase D) - matches this project's existing precedent for
- * non-hero placeholder geometry (see the procedural ladder rungs in BuildingManager.ts) rather than
+ * non-hero placeholder geometry (see the procedural crate boxes in BuildingManager.ts) rather than
  * blocking on a new asset. A simple blade + handle silhouette built from boxes, tinted by the
  * weapon's own `viewModelColor`. */
 export function createProceduralMeleeViewModel(definition: WeaponDefinition): WeaponViewModel {

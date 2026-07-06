@@ -140,11 +140,9 @@ export interface GameDebugApi {
   getCameraFov(): number;
   getCameraChildrenDebug(): unknown[];
   getWorldSeed(): number;
-  isTouchingClimbable(): boolean;
-  isClimbing(): boolean;
   /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */
   damagePlayer(amount: number): void;
-  getActiveLadderPositions(): { x: number; wallFaceZ: number }[];
+  getActiveCrateStackPositions(): { x: number; wallFaceZ: number }[];
   teleport(x: number, y: number, z: number): void;
   /** Rolling real-frame-time stats (see FpsMeter) - lets a script measure performance on the
    * user's own hardware/browser instead of relying on this environment's software-rendered GPU,
@@ -309,8 +307,6 @@ export class Game {
           })),
         })),
       getWorldSeed: () => getWorldSeed(),
-      isTouchingClimbable: () => this.player.isTouchingClimbable,
-      isClimbing: () => this.player.isClimbing,
       // Queued, not applied immediately: update() detects death by comparing isDead across the
       // tick (wasDead), so damage landing *between* ticks would make the death transition
       // unobservable and the death screen would never show. Queuing routes debug damage through
@@ -318,7 +314,7 @@ export class Game {
       damagePlayer: (amount) => {
         this.pendingDebugDamage += amount;
       },
-      getActiveLadderPositions: () => this.buildings.getActiveLadderPositions(),
+      getActiveCrateStackPositions: () => this.buildings.getActiveCrateStackPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
       getOpponentPosition: () => {
         if (!this.multiplayer) return null;

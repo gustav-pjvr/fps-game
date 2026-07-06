@@ -8,12 +8,14 @@ import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { getFlatZoneSite, type FlatZoneSite } from './ZoneMap.ts';
 import {
+  CRATE_MANTLE_ROOF_CLEARANCE,
+  CRATE_MANTLE_SENSOR_DEPTH,
+  CRATE_MANTLE_SENSOR_WIDTH,
+  CRATE_MANTLE_TOP_MARGIN,
+  CRATE_SIZE,
+  CRATE_TIER_COUNT,
   FLAT_ZONE_CELL_SIZE,
   FLAT_ZONE_RADIUS_MAX,
-  LADDER_ROOF_CLEARANCE,
-  LADDER_SENSOR_DEPTH,
-  LADDER_TOP_MARGIN,
-  LADDER_WIDTH,
   PLAYER_HEIGHT,
   TOWN_BUILD_FRACTION,
   TOWN_BUILDING_SPACING_MARGIN,
@@ -26,19 +28,23 @@ import {
 interface BuildingPresetDef {
   modelPath: string;
   targetHeight: number;
+  /** Only "house" presets get a crate stack (playtest feedback specifically asked for crates near
+   * houses, not the taller towers) - towers keep no roof-access mechanic at all now that ladders
+   * are gone. */
+  hasCrateStack: boolean;
 }
 
 /** Premade sample structures from Kenney's Modular Buildings kit (CC0) - already assembled from
  * the kit's own wall/window/door/roof pieces, so they read as real buildings (not a plain box)
  * without this project needing to hand-place and rotate individual tiles. */
 const BUILDING_PRESET_DEFS: BuildingPresetDef[] = [
-  { modelPath: '/assets/models/buildings/building-sample-house-a.glb', targetHeight: 4 },
-  { modelPath: '/assets/models/buildings/building-sample-house-b.glb', targetHeight: 6.5 },
-  { modelPath: '/assets/models/buildings/building-sample-house-c.glb', targetHeight: 6.5 },
-  { modelPath: '/assets/models/buildings/building-sample-tower-a.glb', targetHeight: 8 },
-  { modelPath: '/assets/models/buildings/building-sample-tower-b.glb', targetHeight: 6 },
-  { modelPath: '/assets/models/buildings/building-sample-tower-c.glb', targetHeight: 10 },
-  { modelPath: '/assets/models/buildings/building-sample-tower-d.glb', targetHeight: 12 },
+  { modelPath: '/assets/models/buildings/building-sample-house-a.glb', targetHeight: 4, hasCrateStack: true },
+  { modelPath: '/assets/models/buildings/building-sample-house-b.glb', targetHeight: 6.5, hasCrateStack: true },
+  { modelPath: '/assets/models/buildings/building-sample-house-c.glb', targetHeight: 6.5, hasCrateStack: true },
+  { modelPath: '/assets/models/buildings/building-sample-tower-a.glb', targetHeight: 8, hasCrateStack: false },
+  { modelPath: '/assets/models/buildings/building-sample-tower-b.glb', targetHeight: 6, hasCrateStack: false },
+  { modelPath: '/assets/models/buildings/building-sample-tower-c.glb', targetHeight: 10, hasCrateStack: false },
+  { modelPath: '/assets/models/buildings/building-sample-tower-d.glb', targetHeight: 12, hasCrateStack: false },
 ];
 
 interface BuildingPreset {
@@ -52,6 +58,7 @@ interface BuildingPreset {
    * rotation is applied. */
   footprintOffsetX: number;
   footprintOffsetZ: number;
+  hasCrateStack: boolean;
 }
 
 /** One building's position within its town, in coordinates local to the town's site center. */
@@ -71,12 +78,17 @@ interface PlacedBuilding {
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandle: number;
-  ladderColliderHandle: number;
-  ladderGroup: THREE.Object3D;
-  /** Exact ladder face position (world X of its center, world Z of the wall it's flush against) -
-   * kept for debug/test tooling to navigate precisely to a known ladder rather than guessing. */
-  ladderX: number;
-  ladderWallFaceZ: number;
+  /** Only set for houses (see BuildingPresetDef.hasCrateStack) - towers have no crate stack, no
+   * mantle sensor, nothing to clean up beyond the base collider/rigid body above. */
+  crateStack: {
+    mantleColliderHandle: number;
+    crateColliderHandles: number[];
+    crateGroup: THREE.Object3D;
+    /** Exact crate-stack face position (world X of its center, world Z of the wall it's flush
+     * against) - kept for debug/test tooling to navigate precisely rather than guessing. */
+    x: number;
+    wallFaceZ: number;
+  } | null;
 }
 
 /** Measures a freshly loaded prefab's real bounding box rather than trusting hand-inspected
@@ -85,7 +97,7 @@ interface PlacedBuilding {
  * center offset from the model's local origin - tower-a/b/c are not modeled symmetrically about
  * (0,0), so assuming the origin IS the footprint center silently misaligns the collider from the
  * visual (caught by code review, verified against the actual accessor bounds in those .glb files). */
-function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPreset {
+function measurePreset(scene: THREE.Object3D, targetHeight: number, hasCrateStack: boolean): BuildingPreset {
   scene.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(scene);
   const rawHeight = box.max.y - box.min.y;
@@ -98,6 +110,7 @@ function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPre
     footprintDepth: (box.max.z - box.min.z) * scaleFactor,
     footprintOffsetX: ((box.max.x + box.min.x) / 2) * scaleFactor,
     footprintOffsetZ: ((box.max.z + box.min.z) / 2) * scaleFactor,
+    hasCrateStack,
   };
 }
 
@@ -117,21 +130,23 @@ export class BuildingManager {
   private readonly townLayoutCache = new Map<string, TownLayout>();
   private readonly activeBuildings = new Map<string, PlacedBuilding>();
   private readonly chunkOwnedBuildingIds = new Map<string, string[]>();
-  private readonly ladderMaterial: THREE.Material;
+  private readonly crateMaterial: THREE.Material;
+  private readonly crateBandMaterial: THREE.Material;
 
   private constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly presets: BuildingPreset[],
   ) {
-    this.ladderMaterial = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 });
+    this.crateMaterial = new THREE.MeshStandardMaterial({ color: 0x8a5a34, roughness: 0.9 });
+    this.crateBandMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3620, roughness: 0.9 });
   }
 
   static async create(scene: THREE.Scene, physics: PhysicsWorld): Promise<BuildingManager> {
     const presets: BuildingPreset[] = [];
     for (const def of BUILDING_PRESET_DEFS) {
       const gltf = await loadGLTF(def.modelPath);
-      presets.push(measurePreset(gltf.scene, def.targetHeight));
+      presets.push(measurePreset(gltf.scene, def.targetHeight, def.hasCrateStack));
     }
     return new BuildingManager(scene, physics, presets);
   }
@@ -183,17 +198,25 @@ export class BuildingManager {
 
       this.scene.remove(building.group);
 
-      this.scene.remove(building.ladderGroup);
-      building.ladderGroup.traverse((child) => {
-        if (child instanceof THREE.Mesh) child.geometry.dispose();
-      });
+      if (building.crateStack) {
+        const { crateStack } = building;
+        this.scene.remove(crateStack.crateGroup);
+        crateStack.crateGroup.traverse((child) => {
+          if (child instanceof THREE.Mesh) child.geometry.dispose();
+        });
 
-      // Ladder collider is a JS-side tag (climbableColliders is not physics-managed), so it must
-      // be cleared explicitly - otherwise a future collider that reuses this same handle number
-      // (Rapier recycles freed handles) would silently inherit "this is climbable" from a building
-      // that no longer exists.
-      const ladderCollider = this.physics.world.getCollider(building.ladderColliderHandle);
-      if (ladderCollider) this.physics.unregisterClimbable(ladderCollider);
+        // Mantle collider is a JS-side tag (climbableMantleTargets is not physics-managed), so it
+        // must be cleared explicitly - otherwise a future collider that reuses this same handle
+        // number (Rapier recycles freed handles) would silently inherit "this mantles" from a
+        // building that no longer exists.
+        const mantleCollider = this.physics.world.getCollider(crateStack.mantleColliderHandle);
+        if (mantleCollider) this.physics.unregisterClimbable(mantleCollider);
+
+        for (const handle of crateStack.crateColliderHandles) {
+          const crateCollider = this.physics.world.getCollider(handle);
+          if (crateCollider) this.physics.world.removeCollider(crateCollider, true);
+        }
+      }
 
       const collider = this.physics.world.getCollider(building.colliderHandle);
       if (collider) this.physics.world.removeCollider(collider, true);
@@ -299,87 +322,136 @@ export class BuildingManager {
     const colliderDesc = RAPIER.ColliderDesc.cuboid(colliderHalfWidth, preset.height / 2, colliderHalfDepth);
     const collider = this.physics.world.createCollider(colliderDesc, rigidBody);
 
-    // Ladder always goes on the world -Z face of the collider box, regardless of the building's
-    // own rotation - simpler than picking a "local" pre-rotation face (WORLD_PLAN.md §3 only calls
-    // for "one face," not a specific one), and every preset's box is axis-aligned after rotation
-    // (only 0/90/180/270 are used) so any face is a valid flat side to hang a ladder on.
-    const ladderHalfHeight = (preset.height + LADDER_TOP_MARGIN) / 2;
-    const ladderColliderDesc = RAPIER.ColliderDesc.cuboid(LADDER_WIDTH / 2, ladderHalfHeight, LADDER_SENSOR_DEPTH / 2)
-      .setTranslation(0, LADDER_TOP_MARGIN / 2, -(colliderHalfDepth + LADDER_SENSOR_DEPTH / 2))
+    const crateStack = preset.hasCrateStack
+      ? this.createCrateStack(rigidBody, preset, groundY, colliderCenterX, colliderCenterZ, colliderHalfDepth)
+      : null;
+
+    return {
+      group,
+      rigidBodyHandle: rigidBody.handle,
+      colliderHandle: collider.handle,
+      crateStack,
+    };
+  }
+
+  /** Crate stack always goes on the world -Z face of the collider box, regardless of the
+   * building's own rotation - simpler than picking a "local" pre-rotation face (WORLD_PLAN.md §3
+   * only calls for "one face," not a specific one), and every preset's box is axis-aligned after
+   * rotation (only 0/90/180/270 are used) so any face is a valid flat side to stack crates
+   * against. A fixed CRATE_TIER_COUNT-step staircase of real, solid, jumpable crates gets the
+   * player most of the way up regardless of the exact house height (they range 4-6.5); a mantle
+   * sensor above the stack (reusing the same registerClimbable/Player.ts machinery the old ladder
+   * used) closes whatever gap remains, sized per-building since it depends on preset.height. */
+  private createCrateStack(
+    rigidBody: RAPIER.RigidBody,
+    preset: BuildingPreset,
+    groundY: number,
+    colliderCenterX: number,
+    colliderCenterZ: number,
+    colliderHalfDepth: number,
+  ): NonNullable<PlacedBuilding['crateStack']> {
+    const wallFaceZ = colliderCenterZ - colliderHalfDepth;
+    const stackTopY = CRATE_TIER_COUNT * CRATE_SIZE;
+
+    const crateColliderHandles: number[] = [];
+    for (let tier = 0; tier < CRATE_TIER_COUNT; tier++) {
+      // Each tier sits one crate-width closer to the wall than the last, so the ascending stack
+      // reads as an actual staircase to walk/jump up, not a sheer pillar.
+      const distanceFromWall = (CRATE_TIER_COUNT - tier) * CRATE_SIZE;
+      const crateColliderDesc = RAPIER.ColliderDesc.cuboid(CRATE_SIZE / 2, CRATE_SIZE / 2, CRATE_SIZE / 2).setTranslation(
+        0,
+        tier * CRATE_SIZE + CRATE_SIZE / 2 - preset.height / 2,
+        -(colliderHalfDepth + distanceFromWall - CRATE_SIZE / 2),
+      );
+      const crateCollider = this.physics.world.createCollider(crateColliderDesc, rigidBody);
+      crateColliderHandles.push(crateCollider.handle);
+    }
+
+    // Bottom bound is clamped to stay comfortably below the roof (never negative/zero) - if a
+    // future preset were shorter than the crate stack itself, the crates alone already reach the
+    // roof and this sensor only needs to cover a token sliver near the top, not invert.
+    const mantleSensorBottomY = Math.min(stackTopY, preset.height - 0.5);
+    const mantleSensorTopY = preset.height + CRATE_MANTLE_TOP_MARGIN;
+    const mantleHalfHeight = (mantleSensorTopY - mantleSensorBottomY) / 2;
+    const mantleCenterY = (mantleSensorBottomY + mantleSensorTopY) / 2 - preset.height / 2;
+
+    const mantleColliderDesc = RAPIER.ColliderDesc.cuboid(
+      CRATE_MANTLE_SENSOR_WIDTH / 2,
+      mantleHalfHeight,
+      CRATE_MANTLE_SENSOR_DEPTH / 2,
+    )
+      .setTranslation(0, mantleCenterY, -(colliderHalfDepth + CRATE_MANTLE_SENSOR_DEPTH / 2))
       .setSensor(true)
       // Rapier's default active collision types (DEFAULT = DYNAMIC_DYNAMIC | DYNAMIC_FIXED |
       // DYNAMIC_KINEMATIC) does NOT include KINEMATIC_FIXED - since the player is a kinematic
       // body and this sensor is on a fixed body, the narrow-phase would never track an
       // intersection pair between them without explicitly opting in, and world.intersectionPairsWith
       // (unlike the character controller's own shape-cast queries) depends on that tracked pair
-      // existing. Confirmed via direct testing: isTouchingClimbable() stayed false even while
-      // visibly wedged against the sensor's building until this was added.
+      // existing. Confirmed via direct testing on the old ladder sensor this pattern is inherited
+      // from: contact stayed unregistered even while visibly wedged against it until this was added.
       .setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED);
-    const ladderCollider = this.physics.world.createCollider(ladderColliderDesc, rigidBody);
+    const mantleCollider = this.physics.world.createCollider(mantleColliderDesc, rigidBody);
     // The mantle snaps the player directly to this exact position rather than moving them there
-    // via the physics shape-cast solver (see Player.ts) - direct teleport-on-reaching-the-top was
-    // confirmed via direct testing to be far more reliable than a shape-cast nudge, which
-    // sometimes clipped the wall's own top corner and dropped the player back to the ground
-    // instead of landing them on the roof. Landing at the roof's exact center (both X and Z) keeps
-    // clearance from every edge regardless of how large or small this particular preset's
-    // footprint is - a fixed mantle distance tuned for a tall tower could send a player clean over
-    // a small house's shallower roof instead of landing on it.
-    this.physics.registerClimbable(ladderCollider, {
-      colliderHandle: ladderCollider.handle,
+    // via the physics shape-cast solver (see Player.ts) - direct teleport-on-contact was confirmed
+    // via direct testing (on the old ladder mechanic this is inherited from) to be far more
+    // reliable than a shape-cast nudge, which sometimes clipped the wall's own top corner and
+    // dropped the player back down instead of landing them on the roof. Landing at the roof's exact
+    // center (both X and Z) keeps clearance from every edge regardless of how large or small this
+    // particular preset's footprint is.
+    this.physics.registerClimbable(mantleCollider, {
+      colliderHandle: mantleCollider.handle,
       x: colliderCenterX,
-      y: groundY + preset.height + PLAYER_HEIGHT / 2 + LADDER_ROOF_CLEARANCE,
+      y: groundY + preset.height + PLAYER_HEIGHT / 2 + CRATE_MANTLE_ROOF_CLEARANCE,
       z: colliderCenterZ,
     });
 
-    const ladderGroup = this.createLadderVisual(preset.height, colliderCenterX, groundY, colliderCenterZ - colliderHalfDepth);
-    this.scene.add(ladderGroup);
+    const crateGroup = this.createCrateStackVisual(colliderCenterX, groundY, wallFaceZ);
+    this.scene.add(crateGroup);
 
     return {
-      group,
-      rigidBodyHandle: rigidBody.handle,
-      colliderHandle: collider.handle,
-      ladderColliderHandle: ladderCollider.handle,
-      ladderGroup,
-      ladderX: colliderCenterX,
-      ladderWallFaceZ: colliderCenterZ - colliderHalfDepth,
+      mantleColliderHandle: mantleCollider.handle,
+      crateColliderHandles,
+      crateGroup,
+      x: colliderCenterX,
+      wallFaceZ,
     };
   }
 
-  /** Debug/test-only: exact ladder positions for every currently-streamed-in building, so e2e
-   * tests can navigate precisely to a known ladder instead of guessing blindly at one. */
-  getActiveLadderPositions(): { x: number; wallFaceZ: number }[] {
-    return Array.from(this.activeBuildings.values(), (b) => ({ x: b.ladderX, wallFaceZ: b.ladderWallFaceZ }));
+  /** Debug/test-only: exact crate-stack positions for every currently-streamed-in house, so e2e
+   * tests can navigate precisely to a known one instead of guessing blindly at one. */
+  getActiveCrateStackPositions(): { x: number; wallFaceZ: number }[] {
+    return Array.from(this.activeBuildings.values())
+      .map((b) => b.crateStack)
+      .filter((crateStack): crateStack is NonNullable<PlacedBuilding['crateStack']> => crateStack !== null)
+      .map((crateStack) => ({ x: crateStack.x, wallFaceZ: crateStack.wallFaceZ }));
   }
 
-  /** Simple procedural rung ladder (two rails + evenly-spaced rungs) rather than a sourced/textured
-   * asset - matches the project's existing placeholder-primitive style for non-hero geometry (rocks,
-   * targets, etc. - see NOTES.md), and keeps this feature self-contained without a new asset
-   * dependency. Positioned flush against a wall's world -Z face, spanning from the ground to the
-   * building's actual roof height (the sensor collider extends further, by LADDER_TOP_MARGIN, but
-   * the visible ladder stopping at the roofline reads correctly). */
-  private createLadderVisual(height: number, worldX: number, groundY: number, wallFaceZ: number): THREE.Group {
+  /** Simple procedural crate boxes (a main body plus a darker banding box, per tier) rather than a
+   * sourced/textured asset - matches the project's existing placeholder-primitive style for
+   * non-hero geometry (rocks, targets, etc. - see NOTES.md), and keeps this feature self-contained
+   * without a new asset dependency. Positioned identically to createCrateStack's physical
+   * colliders (same tier/distanceFromWall formulas) so the visible crates are exactly what the
+   * player is standing/jumping on, not a decorative approximation of it. */
+  private createCrateStackVisual(worldX: number, groundY: number, wallFaceZ: number): THREE.Group {
     const group = new THREE.Group();
-    const railThickness = 0.08;
-    const railInset = LADDER_WIDTH / 2 - railThickness / 2;
-    const railGeometry = new THREE.BoxGeometry(railThickness, height, railThickness);
-    const rungGeometry = new THREE.BoxGeometry(LADDER_WIDTH - railThickness, railThickness, railThickness);
+    const crateGeometry = new THREE.BoxGeometry(CRATE_SIZE * 0.96, CRATE_SIZE * 0.96, CRATE_SIZE * 0.96);
+    const bandGeometry = new THREE.BoxGeometry(CRATE_SIZE * 0.98, CRATE_SIZE * 0.16, CRATE_SIZE * 0.98);
 
-    for (const sideX of [-railInset, railInset]) {
-      const rail = new THREE.Mesh(railGeometry, this.ladderMaterial);
-      rail.position.set(sideX, height / 2, 0);
-      group.add(rail);
+    for (let tier = 0; tier < CRATE_TIER_COUNT; tier++) {
+      const distanceFromWall = (CRATE_TIER_COUNT - tier) * CRATE_SIZE;
+      const y = tier * CRATE_SIZE + CRATE_SIZE / 2;
+      const z = -(distanceFromWall - CRATE_SIZE / 2);
+
+      const crate = new THREE.Mesh(crateGeometry, this.crateMaterial);
+      crate.position.set(0, y, z);
+      group.add(crate);
+
+      const band = new THREE.Mesh(bandGeometry, this.crateBandMaterial);
+      band.position.set(0, y, z);
+      group.add(band);
     }
 
-    const rungSpacing = 0.5;
-    const rungCount = Math.floor(height / rungSpacing);
-    for (let i = 1; i < rungCount; i++) {
-      const rung = new THREE.Mesh(rungGeometry, this.ladderMaterial);
-      rung.position.set(0, i * rungSpacing, 0);
-      group.add(rung);
-    }
-
-    // Nudged slightly outward from the wall face so the rungs don't z-fight with the wall.
-    group.position.set(worldX, groundY, wallFaceZ - 0.05);
+    group.position.set(worldX, groundY, wallFaceZ);
     return group;
   }
 }

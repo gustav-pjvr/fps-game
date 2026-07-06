@@ -2078,3 +2078,116 @@ and join flows) and `e2e/multiplayer-match.spec.ts` green - directly exercising 
 configured in this environment), since that's the path every developer/CI run will actually take
 until the user finishes the Metered.ca signup. The actual Metered relay path itself is unverifiable
 from here - it needs the user's own account and a real cross-network test.
+
+### Death animation shortened (3s → ~1s)
+
+Per playtest feedback: "the character just stands there for long, turns over, and then sinks to
+the ground... make them die immediately, character rotates like falls and then disappears, all in
+the span of a second." The dying-enemy sequence in `EntityManager.ts` (fall → hold upright-tipped →
+sink into ground, then remove the mesh) already had exactly that shape - the problem was purely
+timing, not the sequence itself.
+
+- `config.ts`: `DEATH_HOLD_DURATION` 2s → 0.1s (the actual "stands there" complaint - a 2-second
+  stationary pause between falling over and sinking), `DEATH_FALL_DURATION` 0.4s → 0.3s (snappier
+  topple). `DEATH_SINK_DURATION` left at 0.6s - sinking the mesh below the terrain is what makes the
+  corpse read as "disappeared", and 0.6s is fast enough not to reintroduce the same complaint.
+  `DEATH_TOTAL_DURATION` (`EntityManager.ts`) is derived from these three, so it dropped from 3.0s
+  to 1.0s automatically with no other code change.
+- Scoped to single-player/training-mode enemy deaths only - this is the only place in the codebase
+  this fall/sink animation exists. The local player has no visible third-person body (first-person,
+  no mesh), so they can never see this sequence play on themselves; their own death already shows a
+  separate death-screen UI overlay, untouched by this change. In multiplayer, `RemotePlayer` never
+  plays any death animation at all currently (its `isDead` always reports `false` - the client has
+  no authority over the opponent's health) - the opponent just gets teleported to a new spawn after
+  a delay on `respawnEvent`, no fall/sink visual. That's a separate potential enhancement, not
+  something this change touches.
+
+**Verification:** config-only change (three numeric constants) with no logic touched elsewhere -
+per the risk-based testing approach, a full regression pass isn't warranted. Ran
+`e2e/smoke.spec.ts`'s "dying releases pointer lock and Respawn resets the match without leaving it"
+test alone against the live dev server (exercises the actual death→respawn flow end to end) -
+passed in 40s.
+
+### Ladders removed, replaced with a physical crate staircase
+
+Per playtest feedback: remove ladders entirely, investigate crates near houses that players can
+jump onto instead, reusing some of the ladder codebase where it made sense.
+
+- **`BuildingManager.ts`**: the old wall-mounted ladder (scripted hold-forward-to-climb, sensor
+  spanning ground-to-roof, zero real collision on the visible rungs) is gone. Replaced with
+  `createCrateStack`: a real, solid, 3-tier crate staircase (`CRATE_TIER_COUNT`/`CRATE_SIZE` in
+  `config.ts`) the player actually jumps up tier by tier, each tier one crate-width closer to the
+  wall than the last. Only **house** presets get a crate stack (`hasCrateStack` on
+  `BuildingPresetDef`) - the user specifically asked for crates "near houses," and towers (up to
+  12m tall) have no realistic jump-based staircase equivalent, so they lose roof access entirely
+  now rather than getting an ugly compromise.
+- **Reused from the ladder system**: the `registerClimbable`/`getClimbableMantleTarget`
+  machinery (`PhysicsWorld.ts`) - a sensor collider above the crate stack still teleports the
+  player onto the roof center once they're standing on the top crate and walk into the wall,
+  closing whatever gap remains above the fixed 3-tier stack regardless of the house's actual
+  height (4-6.5m across the three house presets). What's genuinely new/removed: the *sustained
+  climb* state (`climbing`/`LADDER_CLIMB_SPEED`/`activeClimbColliderHandle` in `Player.ts`) is
+  gone entirely - the crates themselves do the real vertical work now, so the mantle is a
+  one-shot teleport triggered by contact, not a scripted multi-second rise. This also let
+  `isTouchingSpecificClimbable`/`isClimbable` (no longer needed once there's no sustained state
+  to lock onto) come out of `PhysicsWorld.ts`, and `isClimbing`/`isTouchingClimbable`'s debug
+  hooks come out of `Player.ts`/`Game.ts`.
+- **Crate visual**: procedural boxes (same placeholder-primitive precedent as the old ladder
+  rungs/rocks/targets - see this file's own history), positioned to exactly match the physical
+  colliders so what's rendered is what's actually walkable, not a decorative approximation.
+- **Known follow-up, not yet done**: the user tried this live and it works, but noted the 3-tier
+  stack reads as an obvious geometric staircase rather than a casual pile of crates - cosmetic
+  polish (jittering crate position/rotation without touching the collision geometry) is a small
+  follow-up, not done this pass (an agent assigned to it hit a session limit before reaching that
+  part - see the building-count fix below, which *did* land).
+
+**Verification:** this is a real risk-tier change (core player movement/physics, not a config
+tweak) - `npx tsc --noEmit` clean, unit tests 19/19 green, `npm run build` succeeds. Manually
+playtested live by the user, who confirmed climbing the crates and mantling onto a house roof
+actually works. My own automated e2e attempt at this (teleport near a found crate stack, walk/jump
+into it, assert the player ends up higher) turned out unreliable in this harness - it repeatedly
+produced inconsistent results (frozen in place, or once a large unexplained fall) that traced back
+to synthetic-input timing quirks (a raw `keyboard.down`/`up` pair spanning several seconds silently
+stopped registering; the codebase's own `holdKey` helper, called repeatedly, didn't have this
+problem) rather than an actual game-logic bug - confirmed by isolated diagnostics showing the
+crate colliders themselves settle correctly at the expected heights. Per this session's own
+established lesson (see the earlier ladder-debugging entries in this file), a flaky test that
+grades the test harness rather than the product isn't worth shipping - removed rather than kept as
+an unreliable permanent regression test.
+
+### Town building-count fix (fallout from the WORLD_SIZE_CHUNKS 6→4 shrink)
+
+Live playtest report: "very little houses spawn." Root cause: `TOWN_MIN_BUILDINGS`/
+`TOWN_MAX_BUILDINGS` (30-45, per an earlier explicit project decision - "towns must consist of a
+minimum of 30 buildings") were tuned for the *old* 40-60 radius flat zones and never rescaled when
+`WORLD_SIZE_CHUNKS` shrunk flat-zone radius down to 10-16 this same session. With
+`TOWN_BUILD_FRACTION = 0.8`, the buildable disc is only radius 8-12.8 now - simulating
+`getTownLayout`'s actual rejection-sampling loop against the presets' real measured footprints
+across 2000 seeds showed towns saturating at roughly 4-8 buildings regardless of how high the
+30-45 target was set, burning the full `TOWN_MAX_PLACEMENT_ATTEMPTS` budget every time and still
+landing far short - exactly the reported symptom.
+
+- Retuned to `TOWN_MIN_BUILDINGS = 8`, `TOWN_MAX_BUILDINGS = 12` - sits at/just above the
+  geometric saturation ceiling for the current zone sizes, so towns stay as dense as the geometry
+  physically allows. This supersedes the "minimum 30" decision, which is no longer reachable at
+  this world size without either enlarging flat zones again or shrinking building footprints -
+  flagged back rather than silently reinterpreted, in case the user wants to revisit the tradeoff
+  differently (e.g., growing flat zones specifically, independent of forest zones).
+- **Investigated forest sparsity separately** (the user also reported a seed with no visible
+  trees): unlike towns, vegetation placement (`VegetationManager.ts`) isn't a fixed-total-count
+  target per zone - it's density-field-gated per candidate-per-chunk, scaled by forest zone
+  membership. So a smaller forest zone (same 10-16 radius shrink as flat zones) naturally produces
+  proportionally fewer trees by area, without any rejection-sampling saturation failure - this is
+  an inherent, expected consequence of the accepted map-shrink tradeoff, not a distinct placement
+  bug. The guaranteed-zone-existence mechanism itself (`computeGuaranteedSites`) still checks out
+  numerically for both flat and forest zones at the current world size (a positive 7-unit
+  distance band for either), so "zero forest zones" specifically shouldn't be happening - a report
+  of a seed reading as treeless is more likely "the forest zones that exist are small and the
+  player didn't walk into one" than a bug. Left vegetation spacing/density constants untouched -
+  bumping forest zone radius specifically (independent of flat zones, since forests carry no
+  competing "minimum N" requirement) is a real option if the user wants denser-looking forests, but
+  is a design tradeoff to confirm with them first, not something to change unilaterally.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 19/19 green (including the
+`ZoneMap.ts` guaranteed-sites coverage this project already treats as load-bearing regression
+protection). `npm run build` succeeds.

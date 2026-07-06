@@ -117,17 +117,19 @@ export const MUZZLE_FLASH_LIFETIME = 0.05;
 export const MUZZLE_FLASH_LIGHT_INTENSITY = 6;
 export const MUZZLE_FLASH_LIGHT_RANGE = 4;
 
-/** Death sequence (VISUAL_REALISM.md §6) - a killed enemy/target now topples, holds, and sinks
- * instead of vanishing the instant its health hits 0 (previously the single worst
- * realism-breaking moment in the game per the review). Only mesh transform (rotation/position) is
- * animated, deliberately not material opacity: enemy models are SkeletonUtils-cloned, which reuses
- * the source material by reference across every clone (see its own docstring - "materials are
- * reused by reference"), so fading one dying enemy's opacity would fade every other enemy sharing
- * that material too. EntityManager disposes the corpse's physics presence (colliders/rigid body)
- * immediately on death, same tick as before - only the mesh removal is delayed, so nothing can
- * still collide with or shoot through a dead body during this sequence. */
-export const DEATH_FALL_DURATION = 0.4;
-export const DEATH_HOLD_DURATION = 2;
+/** Death sequence (VISUAL_REALISM.md §6) - a killed enemy/target now topples and sinks instead of
+ * vanishing the instant its health hits 0 (previously the single worst realism-breaking moment in
+ * the game per the review). Kept snappy per playtest feedback - the original 2s hold read as "the
+ * character just stands there" - total is now ~1s: fall, a brief beat, then sink out of view. Only
+ * mesh transform (rotation/position) is animated, deliberately not material opacity: enemy models
+ * are SkeletonUtils-cloned, which reuses the source material by reference across every clone (see
+ * its own docstring - "materials are reused by reference"), so fading one dying enemy's opacity
+ * would fade every other enemy sharing that material too. EntityManager disposes the corpse's
+ * physics presence (colliders/rigid body) immediately on death, same tick as before - only the
+ * mesh removal is delayed, so nothing can still collide with or shoot through a dead body during
+ * this sequence. */
+export const DEATH_FALL_DURATION = 0.3;
+export const DEATH_HOLD_DURATION = 0.1;
 export const DEATH_SINK_DURATION = 0.6;
 export const DEATH_FALL_ANGLE = Math.PI / 2;
 export const DEATH_SINK_DISTANCE = 1.2;
@@ -525,18 +527,30 @@ export const ZONE_EDGE_MARGIN = 5;
 export const GUARANTEED_ZONE_COUNT = 2;
 
 export const TOWN_LAYOUT_SEED_OFFSET = 12;
-/** Raised from 4-8, then again from 15-30, per project decision ("towns must consist of a
- * minimum of 30 buildings") - paired with the larger flat-zone plateau above and a much higher
- * placement-attempt budget below, since packing this many buildings via rejection sampling needs
- * many more tries to succeed. */
-export const TOWN_MIN_BUILDINGS = 30;
-export const TOWN_MAX_BUILDINGS = 45;
+/** History: raised from 4-8, then to 15-30, then to 30-45 per project decision ("towns must
+ * consist of a minimum of 30 buildings"). That decision predates the WORLD_SIZE_CHUNKS 6 -> 4
+ * shrink, which cut flat zones to radius 10-16 (see FLAT_ZONE_RADIUS_MIN/MAX) and put the two in
+ * direct geometric conflict: with TOWN_BUILD_FRACTION = 0.8 the buildable disc is only radius
+ * 8-12.8, and the presets' real measured footprints (half-diagonals ~4.0-4.9 for houses, ~2.5-2.7
+ * for towers, plus TOWN_BUILDING_SPACING_MARGIN between each pair) saturate rejection sampling at
+ * roughly 4 buildings in a radius-10 zone up to roughly 8 in a radius-16 one - verified by
+ * simulating getTownLayout's exact loop with the measured footprints across 2000 seeds. 30-45 was
+ * therefore unreachable fiction: every town burned all TOWN_MAX_PLACEMENT_ATTEMPTS and still
+ * placed only the saturation count, which is exactly the "very little houses spawn" playtest
+ * report. Retuned to 8-12, superseding the "minimum 30" decision for as long as zones stay this
+ * small: the range sits at/just above the geometric ceiling for every zone size, so towns stay as
+ * dense as the geometry allows (dropping these *below* saturation would actively truncate large
+ * towns - simulated cost of 8-12 vs. the old 30-45 is ~0.03 buildings on average, i.e. none).
+ * Meaningfully more buildings than this requires bigger zones or smaller building footprints,
+ * not a bigger number here. */
+export const TOWN_MIN_BUILDINGS = 8;
+export const TOWN_MAX_BUILDINGS = 12;
 /** Buildings are only placed within this fraction of the flat zone's radius, keeping the whole
  * footprint inside the flat core (membership ~1, given FLAT_ZONE_INNER_FRACTION above) rather than
  * the smoothstep rim where the terrain is still transitioning back to natural height. */
 export const TOWN_BUILD_FRACTION = 0.8;
-/** Tighter than the original 6 - a town with 30-45 buildings should read as a dense, real town,
- * not the same spacing stretched thin over more buildings. */
+/** Tighter than the original 6 - packed close enough that even the now-small 8-12 building count
+ * (see TOWN_MIN_BUILDINGS) still reads as a dense, real town, not sparse spacing stretched thin. */
 export const TOWN_BUILDING_SPACING_MARGIN = 2;
 export const TOWN_MAX_PLACEMENT_ATTEMPTS = 800;
 
@@ -561,38 +575,39 @@ export const ROAD_COLOR = 0x6b5a45;
  */
 
 /**
- * Ladder / climb-by-contact mechanic (WORLD_PLAN.md §3): one fixed local face of each building
- * (before its per-building rotation) gets a procedural low-poly rung ladder plus a sensor
- * collider spanning that face. See BuildingManager.ts (ladder creation) and Player.ts (the
- * climbing movement state).
+ * Crate-stack climb mechanic (WORLD_PLAN.md §3, replaces the old wall-mounted ladder per
+ * playtest feedback - "make ladders into crates you can jump on near houses"): a small staircase
+ * of real, solid, jumpable crate colliders against one fixed local face of each *house* preset
+ * (before its per-building rotation), topped with a sensor that mantles the player the rest of
+ * the way onto the roof once they're standing on the top crate. See BuildingManager.ts (crate
+ * stack creation) and Player.ts (the one-shot mantle trigger).
  */
-/** Widened from 1.2 (±0.6 tolerance) after confirming via playtesting that a band that narrow was
- * nearly impossible to walk into deliberately - pressing forward into a flat wall gives zero
- * sideways slide (no tangential movement component to slide along), so a player can't "feel
- * along" the wall to find a narrow ladder the way they could slide along an angled surface. */
-export const LADDER_WIDTH = 2.6;
+/** Edge length of one crate - roughly a real-world crate/pallet-box size, and a comfortable single
+ * autostep/jump rise per tier (see enableAutostep/JUMP_SPEED in Player.ts). */
+export const CRATE_SIZE = 1;
+/** Number of stair-stepped tiers in the stack - fixed regardless of the house preset's actual
+ * height (they range 4-6.5) rather than scaled to reach the roof outright, since scaling up to
+ * the tallest preset would pile an unrealistic number of crates against a short house. The
+ * mantle sensor above the stack (see below) closes whatever gap remains for taller houses. */
+export const CRATE_TIER_COUNT = 3;
+/** Widened from a narrower band (mirrors the old ladder's own widening, see git history) - pressing
+ * forward into a flat wall gives zero sideways slide (no tangential movement component to slide
+ * along), so a player can't "feel along" the wall to find a narrow sensor the way they could slide
+ * along an angled surface; it needs to be wide enough to walk into deliberately. */
+export const CRATE_MANTLE_SENSOR_WIDTH = 2.6;
 /** How far the sensor protrudes outward from the wall face - must comfortably exceed
  * PLAYER_RADIUS so a player standing flush against the wall (blocked by its solid collider) is
  * already intersecting the sensor, without needing to clip into the wall to reach it. */
-export const LADDER_SENSOR_DEPTH = PLAYER_RADIUS + 0.3;
-/** Extends the sensor above the building's actual roof height, so climbing continues a bit past
- * roof level before contact is lost and the mantle (a direct teleport to the roof's center - see
+export const CRATE_MANTLE_SENSOR_DEPTH = PLAYER_RADIUS + 0.3;
+/** Extends the sensor above the building's actual roof height, so it's still reachable a bit past
+ * roof level before the mantle (a direct teleport to the roof's center - see
  * registerClimbable/Player.ts) fires - without this margin, exiting right at the roof edge would
  * trigger the mantle before the player is even clear of the wall's own solid collider. */
-export const LADDER_TOP_MARGIN = 2;
-export const LADDER_CLIMB_SPEED = 4;
+export const CRATE_MANTLE_TOP_MARGIN = 2;
 /** Extra clearance above the roof surface the mantle teleport targets, so the player's capsule
  * doesn't spawn exactly flush with the roof (risking a jittery floating-point contact) - settles
  * onto the roof from a hair above it instead. */
-export const LADDER_ROOF_CLEARANCE = 0.05;
-/** Minimum height a climb must actually rise before the mantle-height exit condition is honored
- * (see Player.ts's applyMovement) - guards against the registered mantle target's `y` (computed
- * from the *building's own* sampled ground height in BuildingManager.createBuilding) sometimes
- * sitting at or below the player's actual current height if the terrain right at the wall slopes
- * away from what was sampled at the building's placement anchor. Without this guard, that mismatch
- * insta-mantled the player on the very first climbing frame, before any observable rise - shorter
- * than the shortest building preset's height, so it never blocks a legitimate short climb. */
-export const LADDER_MIN_CLIMB_RISE = 1;
+export const CRATE_MANTLE_ROOF_CLEARANCE = 0.05;
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;
