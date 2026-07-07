@@ -203,6 +203,10 @@ export interface GameDebugApi {
    * equals the opponent's kill count from this client's point of view (see Game's
    * multiplayerDeathCount comment). 0 outside a multiplayer match. */
   getOpponentScore(): number;
+  /** Multiplayer only - how many OTHER players are currently in this match (0-3), for verifying a
+   * 3-4 player lobby actually has everyone present instead of just the single opponent the older
+   * getOpponentPosition/getOpponentScore helpers above assume. 0 outside a multiplayer match. */
+  getOpponentCount(): number;
   /** Multiplayer only - true once the win condition (or a disconnect) has ended the match and
    * simulation has frozen. Always false outside a multiplayer match. */
   isMultiplayerMatchEnded(): boolean;
@@ -387,6 +391,7 @@ export class Game {
         return opponent !== undefined ? this.multiplayerScoreboard.get(opponent) ?? 0 : 0;
       },
       isMultiplayerMatchEnded: () => this.matchEnded,
+      getOpponentCount: () => this.multiplayer?.opponents.size ?? 0,
       debugDisconnect: () => this.multiplayer?.session.connection.dispose(),
     };
   }
