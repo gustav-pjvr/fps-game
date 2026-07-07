@@ -8,15 +8,8 @@ import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { getFlatZoneSite, radiusOfFlatZoneAtAngle, type FlatZoneSite } from './ZoneMap.ts';
 import {
-  CRATE_MANTLE_ROOF_CLEARANCE,
-  CRATE_MANTLE_SENSOR_DEPTH,
-  CRATE_MANTLE_SENSOR_WIDTH,
-  CRATE_MANTLE_TOP_MARGIN,
-  CRATE_SIZE,
-  CRATE_TIER_COUNT,
   FLAT_ZONE_CELL_SIZE,
   FLAT_ZONE_RADIUS_MAX,
-  PLAYER_HEIGHT,
   TOWN_BUILD_FRACTION,
   TOWN_BUILDING_SPACING_MARGIN,
   TOWN_LAYOUT_SEED_OFFSET,
@@ -71,15 +64,6 @@ interface PlacedBuilding {
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandle: number;
-  crateStack: {
-    mantleColliderHandle: number;
-    crateColliderHandles: number[];
-    crateGroup: THREE.Object3D;
-    /** Exact crate-stack face position (world X of its center, world Z of the wall it's flush
-     * against) - kept for debug/test tooling to navigate precisely rather than guessing. */
-    x: number;
-    wallFaceZ: number;
-  };
 }
 
 /** Measures a freshly loaded prefab's real bounding box rather than trusting hand-inspected
@@ -120,17 +104,12 @@ export class BuildingManager {
   private readonly townLayoutCache = new Map<string, TownLayout>();
   private readonly activeBuildings = new Map<string, PlacedBuilding>();
   private readonly chunkOwnedBuildingIds = new Map<string, string[]>();
-  private readonly crateMaterial: THREE.Material;
-  private readonly crateBandMaterial: THREE.Material;
 
   private constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly presets: BuildingPreset[],
-  ) {
-    this.crateMaterial = new THREE.MeshStandardMaterial({ color: 0x8a5a34, roughness: 0.9 });
-    this.crateBandMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3620, roughness: 0.9 });
-  }
+  ) {}
 
   static async create(scene: THREE.Scene, physics: PhysicsWorld): Promise<BuildingManager> {
     const presets: BuildingPreset[] = [];
@@ -187,24 +166,6 @@ export class BuildingManager {
       if (!building) continue;
 
       this.scene.remove(building.group);
-
-      const { crateStack } = building;
-      this.scene.remove(crateStack.crateGroup);
-      crateStack.crateGroup.traverse((child) => {
-        if (child instanceof THREE.Mesh) child.geometry.dispose();
-      });
-
-      // Mantle collider is a JS-side tag (climbableMantleTargets is not physics-managed), so it
-      // must be cleared explicitly - otherwise a future collider that reuses this same handle
-      // number (Rapier recycles freed handles) would silently inherit "this mantles" from a
-      // building that no longer exists.
-      const mantleCollider = this.physics.world.getCollider(crateStack.mantleColliderHandle);
-      if (mantleCollider) this.physics.unregisterClimbable(mantleCollider);
-
-      for (const handle of crateStack.crateColliderHandles) {
-        const crateCollider = this.physics.world.getCollider(handle);
-        if (crateCollider) this.physics.world.removeCollider(crateCollider, true);
-      }
 
       const collider = this.physics.world.getCollider(building.colliderHandle);
       if (collider) this.physics.world.removeCollider(collider, true);
@@ -312,150 +273,17 @@ export class BuildingManager {
     const colliderDesc = RAPIER.ColliderDesc.cuboid(colliderHalfWidth, preset.height / 2, colliderHalfDepth);
     const collider = this.physics.world.createCollider(colliderDesc, rigidBody);
 
-    const crateStack = this.createCrateStack(rigidBody, preset, groundY, colliderCenterX, colliderCenterZ, colliderHalfDepth);
-
     return {
       group,
       rigidBodyHandle: rigidBody.handle,
       colliderHandle: collider.handle,
-      crateStack,
     };
   }
 
-  /** Crate stack always goes on the world -Z face of the collider box, regardless of the
-   * building's own rotation - simpler than picking a "local" pre-rotation face (WORLD_PLAN.md §3
-   * only calls for "one face," not a specific one), and every preset's box is axis-aligned after
-   * rotation (only 0/90/180/270 are used) so any face is a valid flat side to stack crates
-   * against. A fixed CRATE_TIER_COUNT-step staircase of real, solid, jumpable crates gets the
-   * player most of the way up regardless of the exact house height (they range 4-6.5); a mantle
-   * sensor above the stack (reusing the same registerClimbable/Player.ts machinery the old ladder
-   * used) closes whatever gap remains, sized per-building since it depends on preset.height. */
-  private createCrateStack(
-    rigidBody: RAPIER.RigidBody,
-    preset: BuildingPreset,
-    groundY: number,
-    colliderCenterX: number,
-    colliderCenterZ: number,
-    colliderHalfDepth: number,
-  ): PlacedBuilding['crateStack'] {
-    const wallFaceZ = colliderCenterZ - colliderHalfDepth;
-    const stackTopY = CRATE_TIER_COUNT * CRATE_SIZE;
-
-    const crateColliderHandles: number[] = [];
-    for (let tier = 0; tier < CRATE_TIER_COUNT; tier++) {
-      // Each tier sits one crate-width closer to the wall than the last, so the ascending stack
-      // reads as an actual staircase to walk/jump up, not a sheer pillar.
-      const distanceFromWall = (CRATE_TIER_COUNT - tier) * CRATE_SIZE;
-      const crateColliderDesc = RAPIER.ColliderDesc.cuboid(CRATE_SIZE / 2, CRATE_SIZE / 2, CRATE_SIZE / 2).setTranslation(
-        0,
-        tier * CRATE_SIZE + CRATE_SIZE / 2 - preset.height / 2,
-        -(colliderHalfDepth + distanceFromWall - CRATE_SIZE / 2),
-      );
-      const crateCollider = this.physics.world.createCollider(crateColliderDesc, rigidBody);
-      crateColliderHandles.push(crateCollider.handle);
-    }
-
-    // Bottom bound is clamped to stay comfortably below the roof (never negative/zero) - if a
-    // future preset were shorter than the crate stack itself, the crates alone already reach the
-    // roof and this sensor only needs to cover a token sliver near the top, not invert.
-    const mantleSensorBottomY = Math.min(stackTopY, preset.height - 0.5);
-    const mantleSensorTopY = preset.height + CRATE_MANTLE_TOP_MARGIN;
-    const mantleHalfHeight = (mantleSensorTopY - mantleSensorBottomY) / 2;
-    const mantleCenterY = (mantleSensorBottomY + mantleSensorTopY) / 2 - preset.height / 2;
-
-    const mantleColliderDesc = RAPIER.ColliderDesc.cuboid(
-      CRATE_MANTLE_SENSOR_WIDTH / 2,
-      mantleHalfHeight,
-      CRATE_MANTLE_SENSOR_DEPTH / 2,
-    )
-      .setTranslation(0, mantleCenterY, -(colliderHalfDepth + CRATE_MANTLE_SENSOR_DEPTH / 2))
-      .setSensor(true)
-      // Rapier's default active collision types (DEFAULT = DYNAMIC_DYNAMIC | DYNAMIC_FIXED |
-      // DYNAMIC_KINEMATIC) does NOT include KINEMATIC_FIXED - since the player is a kinematic
-      // body and this sensor is on a fixed body, the narrow-phase would never track an
-      // intersection pair between them without explicitly opting in, and world.intersectionPairsWith
-      // (unlike the character controller's own shape-cast queries) depends on that tracked pair
-      // existing. Confirmed via direct testing on the old ladder sensor this pattern is inherited
-      // from: contact stayed unregistered even while visibly wedged against it until this was added.
-      .setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED);
-    const mantleCollider = this.physics.world.createCollider(mantleColliderDesc, rigidBody);
-    // The mantle snaps the player directly to this exact position rather than moving them there
-    // via the physics shape-cast solver (see Player.ts) - direct teleport-on-contact was confirmed
-    // via direct testing (on the old ladder mechanic this is inherited from) to be far more
-    // reliable than a shape-cast nudge, which sometimes clipped the wall's own top corner and
-    // dropped the player back down instead of landing them on the roof. Landing at the roof's exact
-    // center (both X and Z) keeps clearance from every edge regardless of how large or small this
-    // particular preset's footprint is.
-    this.physics.registerClimbable(mantleCollider, {
-      colliderHandle: mantleCollider.handle,
-      x: colliderCenterX,
-      y: groundY + preset.height + PLAYER_HEIGHT / 2 + CRATE_MANTLE_ROOF_CLEARANCE,
-      z: colliderCenterZ,
-    });
-
-    const crateGroup = this.createCrateStackVisual(colliderCenterX, groundY, wallFaceZ);
-    this.scene.add(crateGroup);
-
-    return {
-      mantleColliderHandle: mantleCollider.handle,
-      crateColliderHandles,
-      crateGroup,
-      x: colliderCenterX,
-      wallFaceZ,
-    };
-  }
-
-  /** Debug/test-only: exact crate-stack positions for every currently-streamed-in house, so e2e
-   * tests can navigate precisely to a known one instead of guessing blindly at one. */
-  getActiveCrateStackPositions(): { x: number; wallFaceZ: number }[] {
-    return Array.from(this.activeBuildings.values(), (b) => ({ x: b.crateStack.x, wallFaceZ: b.crateStack.wallFaceZ }));
-  }
-
-  /** Simple procedural crate boxes (a main body plus a darker banding box, per tier) rather than a
-   * sourced/textured asset - matches the project's existing placeholder-primitive style for
-   * non-hero geometry (rocks, targets, etc. - see NOTES.md), and keeps this feature self-contained
-   * without a new asset dependency. Each crate's *base* position matches createCrateStack's
-   * physical colliders exactly (same tier/distanceFromWall formulas) - the small per-crate
-   * position/rotation/tint jitter below is cosmetic only, offset from that base position by less
-   * than the collider's own margin from its neighbors, so the visible crates still read as sitting
-   * on what the player is actually standing/jumping on, never floating clear of it or appearing to
-   * block a step that isn't really there. Per playtest feedback the un-jittered version read as an
-   * obvious geometric staircase rather than a casual pile of stacked crates - the jitter is
-   * deterministic (seeded from this exact building's position, mirroring how TownLayout/RNG usage
-   * elsewhere in this file seeds off cell coordinates) so a reloaded world still looks identical,
-   * not different crates on every visit. */
-  private createCrateStackVisual(worldX: number, groundY: number, wallFaceZ: number): THREE.Group {
-    const group = new THREE.Group();
-    const crateGeometry = new THREE.BoxGeometry(CRATE_SIZE * 0.96, CRATE_SIZE * 0.96, CRATE_SIZE * 0.96);
-    const bandGeometry = new THREE.BoxGeometry(CRATE_SIZE * 0.98, CRATE_SIZE * 0.16, CRATE_SIZE * 0.98);
-    const rng = mulberry32(hashChunkSeed(Math.round(worldX * 10), Math.round(wallFaceZ * 10), getWorldSeed() + 40));
-
-    const jitterRange = CRATE_SIZE * 0.12;
-    const rotationRange = Math.PI / 5;
-
-    for (let tier = 0; tier < CRATE_TIER_COUNT; tier++) {
-      const distanceFromWall = (CRATE_TIER_COUNT - tier) * CRATE_SIZE;
-      const y = tier * CRATE_SIZE + CRATE_SIZE / 2;
-      const z = -(distanceFromWall - CRATE_SIZE / 2);
-      const jitterX = (rng() - 0.5) * jitterRange;
-      const jitterZ = (rng() - 0.5) * jitterRange;
-      const rotationY = (rng() - 0.5) * rotationRange;
-
-      const crate = new THREE.Mesh(crateGeometry, this.crateMaterial.clone());
-      crate.position.set(jitterX, y, z + jitterZ);
-      crate.rotation.y = rotationY;
-      // Slight per-crate tint variance so a stack of identical boxes doesn't read as obviously
-      // instanced/copy-pasted - each crate's own clone keeps this from bleeding into siblings.
-      (crate.material as THREE.MeshStandardMaterial).color.offsetHSL(0, 0, (rng() - 0.5) * 0.08);
-      group.add(crate);
-
-      const band = new THREE.Mesh(bandGeometry, this.crateBandMaterial);
-      band.position.copy(crate.position);
-      band.rotation.y = rotationY;
-      group.add(band);
-    }
-
-    group.position.set(worldX, groundY, wallFaceZ);
-    return group;
+  /** Debug/test-only: how many houses are currently streamed in - used as a "did we actually find a
+   * town" signal in place of the old crate-stack-count proxy (crate stacks were removed per user
+   * request). */
+  getActiveBuildingCount(): number {
+    return this.activeBuildings.size;
   }
 }

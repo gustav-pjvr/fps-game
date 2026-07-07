@@ -71,8 +71,8 @@ test('performance check across representative scenarios', async ({ page }) => {
         const z = 8 + gz * step;
         await page.evaluate(({ x, z }) => window.__gameDebug?.teleport(x, 2, z), { x, z });
         await page.waitForTimeout(300);
-        const crateStacks = await page.evaluate(() => window.__gameDebug?.getActiveCrateStackPositions());
-        if (crateStacks && crateStacks.length > 0) foundTown = true;
+        const buildingCount = await page.evaluate(() => window.__gameDebug?.getActiveBuildingCount());
+        if (buildingCount && buildingCount > 0) foundTown = true;
       }
     }
   }

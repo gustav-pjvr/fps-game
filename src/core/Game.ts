@@ -188,7 +188,7 @@ export interface GameDebugApi {
   getWorldSeed(): number;
   /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */
   damagePlayer(amount: number): void;
-  getActiveCrateStackPositions(): { x: number; wallFaceZ: number }[];
+  getActiveBuildingCount(): number;
   getActiveTowerPositions(): { x: number; z: number }[];
   teleport(x: number, y: number, z: number): void;
   /** Rolling real-frame-time stats (see FpsMeter) - lets a script measure performance on the
@@ -371,7 +371,7 @@ export class Game {
       damagePlayer: (amount) => {
         this.pendingDebugDamage += amount;
       },
-      getActiveCrateStackPositions: () => this.buildings.getActiveCrateStackPositions(),
+      getActiveBuildingCount: () => this.buildings.getActiveBuildingCount(),
       getActiveTowerPositions: () => this.watchTowers.getActiveTowerPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
       // e2e coverage predates 4-player support and only ever exercises 2-player matches - "the

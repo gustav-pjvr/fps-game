@@ -409,7 +409,9 @@ export const WORLD_EDGE_PUSH_SPEED = 6;
  */
 export const VEGETATION_CANDIDATES_PER_CHUNK = 24;
 export const VEGETATION_DENSITY_NOISE_FREQUENCY = 0.02;
-export const VEGETATION_TREE_DENSITY_THRESHOLD = 0.62;
+/** Lowered from 0.62 per user request ("masses of trees") - a lower threshold means more of the
+ * density-noise field's range reads as "tree" everywhere, not just inside a dedicated forest zone. */
+export const VEGETATION_TREE_DENSITY_THRESHOLD = 0.5;
 export const VEGETATION_SCALE_VARIANCE = 0.15;
 /** Measured from the actual spawn point (SPAWN_X, SPAWN_Z), not world origin - must clear the
  * largest encounter ring (ENEMY_RING_BASE_RADIUS) so a tree's solid trunk collider can never land
@@ -419,14 +421,15 @@ export const VEGETATION_SPAWN_CLEARANCE = ENEMY_RING_BASE_RADIUS + 5;
  * peak/thicket) so the fixed-capacity InstancedMesh pools below always have room for every loaded
  * chunk. Sized for extreme forest packing (see VEGETATION_TREE_MIN_SPACING_DENSE), not just the
  * gentle clustering this cap originally covered. */
-/** Doubled per project decision ("spawn even more trees in a forest area, like 2x the amount") -
- * paired with the doubled VEGETATION_FOREST_EXTRA_CANDIDATES below so the per-chunk cap isn't the
- * bottleneck on the higher candidate count actually landing more trees. */
-export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 160;
-/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 160 = 7840 worst
- * case per type - comfortable margin above that for the shared instance pools. InstancedMesh
- * handles thousands of instances cheaply, so this is sized for the worst case, not the average. */
-export const VEGETATION_INSTANCE_CAPACITY = 10000;
+/** Doubled per project decision ("spawn even more trees in a forest area, like 2x the amount"),
+ * then raised again per a later "masses of trees" request - paired with the raised
+ * VEGETATION_FOREST_EXTRA_CANDIDATES below so the per-chunk cap isn't the bottleneck on the higher
+ * candidate count actually landing more trees. */
+export const VEGETATION_MAX_PER_CHUNK_PER_TYPE = 220;
+/** (2*UNLOAD_RADIUS_CHUNKS+1)^2 = 49 chunks can be loaded at once at most; 49 * 220 = 10780 worst
+ * case per type - kept comfortably above that for the shared instance pools. InstancedMesh handles
+ * thousands of instances cheaply, so this is sized for the worst case, not the average. */
+export const VEGETATION_INSTANCE_CAPACITY = 14000;
 export const VEGETATION_TRUNK_RADIUS = 0.35;
 /** Leaf/canopy hit volume for tree types only (bushes/rocks are unaffected) - a sensor collider
  * (see VegetationManager.placeInstance), not a solid one: sensors are still hit by ordinary
@@ -441,30 +444,32 @@ export const VEGETATION_CANOPY_RADIUS = 0.9;
 /** Fraction of the tree's total (scaled) height the canopy sensor is centered at - trees' foliage
  * sits in the upper portion of the model, not at the base. */
 export const VEGETATION_CANOPY_CENTER_HEIGHT_FRACTION = 0.7;
-/** Outside any forest zone, trees are rare stragglers rather than absent entirely - reads more
- * natural than a hard cutoff at the forest boundary. */
-export const VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD = 0.95;
-/** How much a forest zone's membership (0..1, 1 at its core) lowers the effective tree threshold -
- * at full membership, threshold drops to TREE_DENSITY_THRESHOLD - this, making forest cores dense. */
+/** How much a forest zone's membership used to lower the effective tree threshold before the "remove
+ * forest spawn and generation restrictions" request below made the drop unconditional (applied to
+ * the whole map, not lerped by membership) - still the one knob for how dense that flat threshold
+ * ends up. */
 export const FOREST_TREE_THRESHOLD_DROP = 0.5;
 /**
  * Per project decision ("forests should be extreme - some areas with just enough space for a
- * character to pass, some more sparse"): a second, much finer noise field textures the *interior*
- * of a forest zone into thicket/clearing patches, on top of the broad forest-vs-not gating above.
- * Chunks touching a forest zone also draw far more candidates, since packing a thicket this tight
- * needs many more placement attempts than gentle clustering did.
+ * character to pass, some more sparse"): a second, much finer noise field textures the ground into
+ * thicket/clearing patches, on top of the density gating above. Per a later user request ("remove
+ * forest spawn and generation restrictions"), this - and the higher per-chunk candidate count
+ * below - now applies everywhere rather than being reserved for chunks touching a dedicated forest
+ * zone; there's no longer a separate "outside forest" sparse tier at all (see the removed
+ * VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD/VEGETATION_TREE_MIN_SPACING_SPARSE and
+ * VegetationManager.ts's pickType/minTreeSpacingFor).
  */
 export const VEGETATION_FOREST_TEXTURE_FREQUENCY = 0.15;
-/** Doubled from 220 (see project decision above) - roughly doubles the number of trees that
- * actually land in a forest chunk, alongside the doubled per-chunk cap and instance pool above. */
-export const VEGETATION_FOREST_EXTRA_CANDIDATES = 440;
+/** Doubled from 220 (see project decision above), then raised again per a later "masses of trees"
+ * request - alongside the raised per-chunk cap and instance pool above, this is the main lever on
+ * how many trees land in a chunk. */
+export const VEGETATION_FOREST_EXTRA_CANDIDATES = 700;
 /** Minimum trunk-center-to-trunk-center spacing enforced between trees placed in the same chunk.
  * DENSE is a deliberately tight squeeze: with VEGETATION_TRUNK_RADIUS = 0.35 trunks and a player
  * capsule radius of 0.4, 1.8 leaves ~1.1 units of clear gap between trunk surfaces - passable, but
- * a real squeeze, not a comfortable walk-through. SPARSE is open ground outside any forest texture. */
+ * a real squeeze, not a comfortable walk-through. */
 export const VEGETATION_TREE_MIN_SPACING_DENSE = 1.8;
 export const VEGETATION_TREE_MIN_SPACING_NORMAL = 3.5;
-export const VEGETATION_TREE_MIN_SPACING_SPARSE = 6;
 /** Bushes/rocks get their own uniform per-candidate roll, independent of the forest density field -
  * per project decision, they should scatter randomly rather than cluster with trees. */
 export const VEGETATION_BUSH_PROBABILITY = 0.1;
@@ -486,7 +491,11 @@ export const FLAT_ZONE_SEED_OFFSET = 10;
  * new ~16-unit one, and left at 230 would have fit only one or two cells across the whole shrunk
  * world's safe annulus. */
 export const FLAT_ZONE_CELL_SIZE = 50;
-export const FLAT_ZONE_DENSITY = 0.45;
+/** Raised from 0.45 per user request ("masses of houses") - keeping the map small (per user
+ * decision) but rolling far more of the non-guaranteed candidate cells into an actual town,
+ * mirroring the same lever FOREST_ZONE_DENSITY below already used for the equivalent forest
+ * report. */
+export const FLAT_ZONE_DENSITY = 0.7;
 /** Narrowed from 60-100 to 65-90, then re-tuned to 40-60 at WORLD_SIZE_CHUNKS=6, then to 10-16 when
  * the world shrunk again to 4 (see that constant's comment for the full history and why
  * ZONE_EDGE_MARGIN below took most of the earlier squeeze instead of this range): isSiteClear
@@ -505,16 +514,19 @@ export const FOREST_ZONE_SEED_OFFSET = 11;
 /** Shrunk 200 -> 45 alongside the WORLD_SIZE_CHUNKS 6 -> 4 cut - see the matching
  * FLAT_ZONE_CELL_SIZE comment for why the old value was wildly oversized for the new max radius. */
 export const FOREST_ZONE_CELL_SIZE = 45;
-/** Raised 0.45 -> 0.7 per playtest report of a seed with almost no visible trees - unlike the
- * radius (below), this doesn't touch the geometric ceiling at all: it only raises the chance any
- * given candidate cell in the density-noise grid actually rolls a site. The 4-chunk world's safe
- * annulus (spawn ring to mountain ramp) only fits ~5 forest-cell-sized candidates total regardless
- * of density, so at the old 0.45 the *expected* count of non-guaranteed forest patches (on top of
- * the 2 always-guaranteed ones - see GUARANTEED_ZONE_COUNT) was only ~2, with real seed-to-seed
- * variance landing some runs at 0 extra - exactly the "seed with no trees" report, since the
- * player may simply not have wandered into either guaranteed site. At 0.7 the expected extra count
- * roughly doubles to ~3.5, without changing anything about how big any single forest is. */
-export const FOREST_ZONE_DENSITY = 0.7;
+/** Raised 0.45 -> 0.7 per playtest report of a seed with almost no visible trees, then 0.7 -> 0.85
+ * per a later "masses of trees" request - unlike the radius (below), this doesn't touch the
+ * geometric ceiling at all: it only raises the chance any given candidate cell in the density-
+ * noise grid actually rolls a site. The 4-chunk world's safe annulus (spawn ring to mountain ramp)
+ * only fits ~5 forest-cell-sized candidates total regardless of density, so at the old 0.45 the
+ * *expected* count of non-guaranteed forest patches (on top of the always-guaranteed ones - see
+ * GUARANTEED_ZONE_COUNT) was only ~2, with real seed-to-seed variance landing some runs at 0 extra
+ * - exactly the "seed with no trees" report. Pushing this all the way to 0.95-1.0 was tried and
+ * reverted: it started colliding guaranteed sites into the same grid cell often enough to break
+ * ZoneMap.test.ts's exact-count invariant and WatchTowerManager.test.ts's zone-avoidance rate (more
+ * of the map being "zoned" squeezes the towers' own independent placement) - 0.85 is the highest
+ * value that still holds both across the full seed sweep. */
+export const FOREST_ZONE_DENSITY = 0.85;
 /** Raised from 50-90 per project decision ("forest radius should increase a lot"), re-tuned to
  * 45-65 at WORLD_SIZE_CHUNKS=6, then to 10-16 when the world shrunk again to 4. Nudged 16 -> 17 on
  * the max (min left at 10, unchanged) per a later request to make forests denser-looking: the
@@ -547,8 +559,16 @@ export const ZONE_EDGE_MARGIN = 5;
 
 /** At least this many flat-zone (town) and forest-zone sites are force-placed every world,
  * regardless of the density roll below, so a run of bad luck can never generate a world with too
- * few or zero towns/forests - see ZoneMap.ts's guaranteed-cell mechanism. */
-export const GUARANTEED_ZONE_COUNT = 2;
+ * few or zero towns/forests - see ZoneMap.ts's guaranteed-cell mechanism. Raised from 2 per user
+ * request ("masses of trees... masses of houses"): with the map staying this size (user decision),
+ * more *guaranteed* sites is the one lever that doesn't depend on a density roll's luck at all -
+ * computeGuaranteedSites spreads them evenly around spawn regardless of count, so this scales
+ * cleanly without needing to re-derive anything else. 4 was tried and reverted - the safe annulus
+ * is narrow enough relative to a zone's own cell size that computeGuaranteedSites' own dedup-retry
+ * budget couldn't always find 4 distinct cells, occasionally silently dropping back to 3 anyway
+ * (caught by ZoneMap.test.ts's exact-count assertion, not assumed); 3 is the highest value that
+ * holds across the full seed sweep. */
+export const GUARANTEED_ZONE_COUNT = 3;
 
 export const TOWN_LAYOUT_SEED_OFFSET = 12;
 /** History: raised from 4-8, then to 15-30, then to 30-45 per project decision ("towns must
@@ -575,15 +595,23 @@ export const TOWN_LAYOUT_SEED_OFFSET = 12;
  * footprint mix) to confirm this range still holds; see the watch-tower work's own verification
  * notes in NOTES.md for the actual result. */
 export const TOWN_MIN_BUILDINGS = 8;
-export const TOWN_MAX_BUILDINGS = 12;
+/** Raised from 12 alongside the tighter TOWN_BUILDING_SPACING_MARGIN below per user request
+ * ("masses of houses") - the saturation ceiling documented above still applies (this is a cap on
+ * what rejection sampling is *allowed* to reach, not a promise it always will), but a tighter
+ * margin genuinely raises that ceiling a bit, so the cap needed to move too or it would truncate
+ * towns the looser margin now lets saturate higher. */
+export const TOWN_MAX_BUILDINGS = 20;
 /** Buildings are only placed within this fraction of the flat zone's radius, keeping the whole
  * footprint inside the flat core (membership ~1, given FLAT_ZONE_INNER_FRACTION above) rather than
  * the smoothstep rim where the terrain is still transitioning back to natural height. */
 export const TOWN_BUILD_FRACTION = 0.8;
-/** Tighter than the original 6 - packed close enough that even the now-small 8-12 building count
- * (see TOWN_MIN_BUILDINGS) still reads as a dense, real town, not sparse spacing stretched thin. */
-export const TOWN_BUILDING_SPACING_MARGIN = 2;
-export const TOWN_MAX_PLACEMENT_ATTEMPTS = 800;
+/** Tightened from 2 per user request ("masses of houses") - still enough gap between footprints
+ * (~4.0-4.9 unit house half-diagonals) for a player to walk between buildings, just less wasted
+ * space between them, letting more buildings saturate into the same small zone radius. */
+export const TOWN_BUILDING_SPACING_MARGIN = 1;
+/** Raised from 800 alongside the tighter spacing/higher max above - a tighter packing needs more
+ * rejection-sampling attempts to actually find the additional valid spots it now has room for. */
+export const TOWN_MAX_PLACEMENT_ATTEMPTS = 1500;
 
 /**
  * Roads (WORLD_PLAN.md §9 follow-up, per the Opus design already logged there): a minimum spanning
@@ -641,41 +669,6 @@ export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 4;
  * collider top face doubles as the rooftop landing surface - no separate platform collider is
  * needed since an axis-aligned box's top is already flat and walkable.
  */
-
-/**
- * Crate-stack climb mechanic (WORLD_PLAN.md §3, replaces the old wall-mounted ladder per
- * playtest feedback - "make ladders into crates you can jump on near houses"): a small staircase
- * of real, solid, jumpable crate colliders against one fixed local face of each *house* preset
- * (before its per-building rotation), topped with a sensor that mantles the player the rest of
- * the way onto the roof once they're standing on the top crate. See BuildingManager.ts (crate
- * stack creation) and Player.ts (the one-shot mantle trigger).
- */
-/** Edge length of one crate - roughly a real-world crate/pallet-box size, and a comfortable single
- * autostep/jump rise per tier (see enableAutostep/JUMP_SPEED in Player.ts). */
-export const CRATE_SIZE = 1;
-/** Number of stair-stepped tiers in the stack - fixed regardless of the house preset's actual
- * height (they range 4-6.5) rather than scaled to reach the roof outright, since scaling up to
- * the tallest preset would pile an unrealistic number of crates against a short house. The
- * mantle sensor above the stack (see below) closes whatever gap remains for taller houses. */
-export const CRATE_TIER_COUNT = 3;
-/** Widened from a narrower band (mirrors the old ladder's own widening, see git history) - pressing
- * forward into a flat wall gives zero sideways slide (no tangential movement component to slide
- * along), so a player can't "feel along" the wall to find a narrow sensor the way they could slide
- * along an angled surface; it needs to be wide enough to walk into deliberately. */
-export const CRATE_MANTLE_SENSOR_WIDTH = 2.6;
-/** How far the sensor protrudes outward from the wall face - must comfortably exceed
- * PLAYER_RADIUS so a player standing flush against the wall (blocked by its solid collider) is
- * already intersecting the sensor, without needing to clip into the wall to reach it. */
-export const CRATE_MANTLE_SENSOR_DEPTH = PLAYER_RADIUS + 0.3;
-/** Extends the sensor above the building's actual roof height, so it's still reachable a bit past
- * roof level before the mantle (a direct teleport to the roof's center - see
- * registerClimbable/Player.ts) fires - without this margin, exiting right at the roof edge would
- * trigger the mantle before the player is even clear of the wall's own solid collider. */
-export const CRATE_MANTLE_TOP_MARGIN = 2;
-/** Extra clearance above the roof surface the mantle teleport targets, so the player's capsule
- * doesn't spawn exactly flush with the roof (risking a jittery floating-point contact) - settles
- * onto the roof from a hair above it instead. */
-export const CRATE_MANTLE_ROOF_CLEARANCE = 0.05;
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;

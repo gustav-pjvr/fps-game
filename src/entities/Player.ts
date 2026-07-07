@@ -64,7 +64,7 @@ export class Player implements Entity {
   private readonly currentCameraQuaternion = new THREE.Quaternion();
 
   constructor(
-    private readonly physics: PhysicsWorld,
+    physics: PhysicsWorld,
     private readonly camera: THREE.PerspectiveCamera,
     spawnPosition: THREE.Vector3,
     private readonly sounds: PlayerSoundHooks,
@@ -200,70 +200,56 @@ export class Player implements Entity {
     const movingBackward = input.isActionActive('moveBackward');
 
     const currentBeforeMove = this.rigidBody.translation();
-    let next: { x: number; y: number; z: number };
 
-    // Crate-stack mantle (WORLD_PLAN.md §3, now crate-based - see BuildingManager.ts): the crates
-    // themselves are real, solid, jumpable colliders that do the actual climbing, so this is a
-    // one-shot teleport closing the short remaining gap between the top crate and the roof edge,
-    // not a sustained climb - reached by standing on the top crate (grounded) and walking forward
-    // into the wall-mounted sensor that marks that gap.
-    const mantleTarget = this.grounded ? this.physics.getClimbableMantleTarget(this.collider) : null;
+    const moveDir = new THREE.Vector3();
+    if (movingForward) moveDir.add(forward);
+    if (movingBackward) moveDir.sub(forward);
+    if (input.isActionActive('moveRight')) moveDir.add(right);
+    if (input.isActionActive('moveLeft')) moveDir.sub(right);
+    if (moveDir.lengthSq() > 0) moveDir.normalize();
 
-    if (mantleTarget && movingForward && !movingBackward) {
-      next = { x: mantleTarget.x, y: mantleTarget.y, z: mantleTarget.z };
-      this.verticalVelocity = 0;
-      this.grounded = true;
-    } else {
-      const moveDir = new THREE.Vector3();
-      if (movingForward) moveDir.add(forward);
-      if (movingBackward) moveDir.sub(forward);
-      if (input.isActionActive('moveRight')) moveDir.add(right);
-      if (input.isActionActive('moveLeft')) moveDir.sub(right);
-      if (moveDir.lengthSq() > 0) moveDir.normalize();
+    const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
+    moveDir.multiplyScalar(speed * dt);
 
-      const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
-      moveDir.multiplyScalar(speed * dt);
+    this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
 
-      this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
-
-      if (this.grounded && input.isActionActive('jump')) {
-        this.verticalVelocity = JUMP_SPEED;
-      }
-      this.verticalVelocity += GRAVITY * dt;
-
-      const desiredMovement = { x: moveDir.x, y: this.verticalVelocity * dt, z: moveDir.z };
-
-      this.controller.computeColliderMovement(this.collider, desiredMovement);
-
-      const computed = this.controller.computedMovement();
-      this.grounded = this.controller.computedGrounded();
-      if (this.grounded && this.verticalVelocity < 0) {
-        this.verticalVelocity = 0;
-      }
-
-      const horizontalMoveDistance = Math.sqrt(computed.x * computed.x + computed.z * computed.z);
-      if (this.grounded) {
-        this.footstepAccumulator += horizontalMoveDistance;
-        if (this.footstepAccumulator >= FOOTSTEP_DISTANCE) {
-          this.footstepAccumulator -= FOOTSTEP_DISTANCE;
-          this.sounds.onFootstep();
-        }
-      }
-
-      // Bob strength (and therefore visible amplitude) reaches 0 exactly when the phase stops
-      // advancing, so the bob always settles back through its own neutral point when the player
-      // slows to a stop instead of freezing mid-swing.
-      this.bobStrength = this.grounded
-        ? Math.min(1, horizontalMoveDistance / dt / PLAYER_BOB_REFERENCE_SPEED)
-        : 0;
-      this.bobPhase += dt * PLAYER_BOB_FREQUENCY * this.bobStrength;
-
-      next = {
-        x: currentBeforeMove.x + computed.x,
-        y: currentBeforeMove.y + computed.y,
-        z: currentBeforeMove.z + computed.z,
-      };
+    if (this.grounded && input.isActionActive('jump')) {
+      this.verticalVelocity = JUMP_SPEED;
     }
+    this.verticalVelocity += GRAVITY * dt;
+
+    const desiredMovement = { x: moveDir.x, y: this.verticalVelocity * dt, z: moveDir.z };
+
+    this.controller.computeColliderMovement(this.collider, desiredMovement);
+
+    const computed = this.controller.computedMovement();
+    this.grounded = this.controller.computedGrounded();
+    if (this.grounded && this.verticalVelocity < 0) {
+      this.verticalVelocity = 0;
+    }
+
+    const horizontalMoveDistance = Math.sqrt(computed.x * computed.x + computed.z * computed.z);
+    if (this.grounded) {
+      this.footstepAccumulator += horizontalMoveDistance;
+      if (this.footstepAccumulator >= FOOTSTEP_DISTANCE) {
+        this.footstepAccumulator -= FOOTSTEP_DISTANCE;
+        this.sounds.onFootstep();
+      }
+    }
+
+    // Bob strength (and therefore visible amplitude) reaches 0 exactly when the phase stops
+    // advancing, so the bob always settles back through its own neutral point when the player
+    // slows to a stop instead of freezing mid-swing.
+    this.bobStrength = this.grounded
+      ? Math.min(1, horizontalMoveDistance / dt / PLAYER_BOB_REFERENCE_SPEED)
+      : 0;
+    this.bobPhase += dt * PLAYER_BOB_FREQUENCY * this.bobStrength;
+
+    const next = {
+      x: currentBeforeMove.x + computed.x,
+      y: currentBeforeMove.y + computed.y,
+      z: currentBeforeMove.z + computed.z,
+    };
 
     this.clampToWorldBounds(next);
     this.rigidBody.setNextKinematicTranslation(next);

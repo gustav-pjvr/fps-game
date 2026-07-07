@@ -271,8 +271,7 @@ export class WatchTowerManager {
   }
 
   /** Debug/test-only: exact tower base positions, so e2e tests can navigate precisely to a known
-   * one instead of guessing blindly at one - same role BuildingManager.getActiveCrateStackPositions
-   * plays for houses. */
+   * one instead of guessing blindly at one. */
   getActiveTowerPositions(): { x: number; z: number }[] {
     return Array.from(this.activeTowers.values(), (tower) => {
       const t = tower.group.position;

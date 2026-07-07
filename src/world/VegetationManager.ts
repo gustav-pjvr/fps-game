@@ -5,7 +5,7 @@ import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
-import { sampleFlatZone, sampleForestZone } from './ZoneMap.ts';
+import { sampleFlatZone } from './ZoneMap.ts';
 import {
   FOREST_TREE_THRESHOLD_DROP,
   MULTIPLAYER_SPAWN_POINTS,
@@ -26,8 +26,6 @@ import {
   VEGETATION_TREE_DENSITY_THRESHOLD,
   VEGETATION_TREE_MIN_SPACING_DENSE,
   VEGETATION_TREE_MIN_SPACING_NORMAL,
-  VEGETATION_TREE_MIN_SPACING_SPARSE,
-  VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD,
   VEGETATION_TRUNK_RADIUS,
   WORLD_HARD_CLAMP_RADIUS,
 } from '../core/config.ts';
@@ -188,20 +186,14 @@ export class VegetationManager {
     const perTypeCount = new Map<VegetationTypeId, number>();
     const placedTreePositions: { x: number; z: number }[] = [];
 
-    // Chunks touching a forest zone draw far more candidates - packing a thicket this tight needs
-    // many more placement attempts than the gentle clustering the base candidate count was tuned
-    // for. Membership is the max over the chunk's center and 4 corners, not the center alone: a
-    // chunk whose corner overlaps a forest but whose center sits outside used to get only the base
-    // candidate budget, which showed up as visible chunk-grid-aligned density cliffs along forest
-    // edges. Five samples still costs almost nothing (once per chunk load, not per candidate).
-    const chunkForestMembership = Math.max(
-      sampleForestZone(originX + size / 2, originZ + size / 2).membership,
-      sampleForestZone(originX, originZ).membership,
-      sampleForestZone(originX + size, originZ).membership,
-      sampleForestZone(originX, originZ + size).membership,
-      sampleForestZone(originX + size, originZ + size).membership,
-    );
-    const candidateCount = VEGETATION_CANDIDATES_PER_CHUNK + Math.round(chunkForestMembership * VEGETATION_FOREST_EXTRA_CANDIDATES);
+    // Per user request ("remove forest spawn and generation restrictions"): every chunk now draws
+    // the full forest-level candidate budget unconditionally, not just chunks that happen to
+    // overlap a forest zone - forest zones are geographically rare (only a handful fit in this
+    // world's safe annulus even at max density), so gating the higher candidate count on forest
+    // membership left most of the explorable map on the much sparser base budget regardless of how
+    // dense forest zones themselves got tuned. See pickType/minTreeSpacingFor below for the
+    // matching change to the density/spacing thresholds themselves.
+    const candidateCount = VEGETATION_CANDIDATES_PER_CHUNK + VEGETATION_FOREST_EXTRA_CANDIDATES;
 
     for (let i = 0; i < candidateCount; i++) {
       const worldX = originX + rng() * size;
@@ -228,14 +220,13 @@ export class VegetationManager {
       // building cluster would look wrong and a rock's collider could interfere with a building.
       if (sampleFlatZone(worldX, worldZ).membership > 0) continue;
 
-      const forestMembership = sampleForestZone(worldX, worldZ).membership;
       const rawNoise = this.densityNoise2D(worldX * VEGETATION_DENSITY_NOISE_FREQUENCY, worldZ * VEGETATION_DENSITY_NOISE_FREQUENCY);
-      const type = pickType(rawNoise, forestMembership, rng);
+      const type = pickType(rawNoise, rng);
       if (!type) continue;
 
       if (TREE_TYPES.includes(type)) {
         const textureNoise = this.forestTextureNoise2D(worldX * VEGETATION_FOREST_TEXTURE_FREQUENCY, worldZ * VEGETATION_FOREST_TEXTURE_FREQUENCY);
-        const minSpacing = minTreeSpacingFor(forestMembership, textureNoise);
+        const minSpacing = minTreeSpacingFor(textureNoise);
         const tooClose = placedTreePositions.some((p) => {
           const dx = worldX - p.x;
           const dz = worldZ - p.z;
@@ -369,19 +360,17 @@ export class VegetationManager {
 }
 
 /**
- * Trees are gated by the density noise field against a threshold that's lerped by forest zone
- * membership - low (rare stragglers) at membership 0, dropping to a dense in-forest value at
- * membership 1. Lerping (not branching on membership > 0) keeps the threshold continuous right
- * through the forest boundary; an earlier version branched between the two formulas, which matched
- * at first glance but actually produced a hard density cliff exactly at membership = 0 (caught by
- * code review, confirmed by evaluating both branches at that boundary). Bushes/rocks get their own
- * uniform roll from the chunk RNG, entirely independent of both the density field and forest
- * membership - per project decision, clutter should scatter randomly rather than cluster with trees.
+ * Trees are gated by the density noise field against a threshold - per user request ("remove
+ * forest spawn and generation restrictions"), this is now a single flat threshold applied
+ * everywhere rather than being lerped by forest zone membership (rare stragglers outside a forest,
+ * a dense in-forest value inside one). The whole map now generates at the same tree density a
+ * forest zone's *core* used to be reserved for. Bushes/rocks get their own uniform roll from the
+ * chunk RNG, entirely independent of the density field - per project decision, clutter should
+ * scatter randomly rather than cluster with trees.
  */
-function pickType(rawNoise: number, forestMembership: number, rng: () => number): VegetationTypeId | null {
+function pickType(rawNoise: number, rng: () => number): VegetationTypeId | null {
   const density = (rawNoise + 1) / 2;
-  const inForestThreshold = VEGETATION_TREE_DENSITY_THRESHOLD - FOREST_TREE_THRESHOLD_DROP;
-  const treeThreshold = VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD + (inForestThreshold - VEGETATION_TREE_OUTSIDE_FOREST_THRESHOLD) * forestMembership;
+  const treeThreshold = VEGETATION_TREE_DENSITY_THRESHOLD - FOREST_TREE_THRESHOLD_DROP;
 
   if (density > treeThreshold) {
     return TREE_TYPES[Math.floor((density * 997) % TREE_TYPES.length)] ?? TREE_TYPES[0]!;
@@ -394,17 +383,16 @@ function pickType(rawNoise: number, forestMembership: number, rng: () => number)
 }
 
 /**
- * Minimum spacing enforced between trees placed in the same chunk. Two-stage lerp: first, forest
- * texture noise (independent of and much finer than the main density field) decides where THIS
- * specific patch of forest sits between "normal forest" and "extreme thicket" spacing; then forest
- * membership blends that result back out to open, sparse spacing outside the forest entirely. This
- * is what produces real internal variance within one forest - not just forest-vs-not, but some
- * parts of the same forest barely walkable and others comfortably open, per project decision.
- */
-function minTreeSpacingFor(forestMembership: number, textureNoise: number): number {
+ * Minimum spacing enforced between trees placed in the same chunk - forest texture noise
+ * (independent of and much finer than the main density field) decides where THIS specific patch
+ * sits between "normal forest" and "extreme thicket" spacing, producing real internal variance
+ * (some patches barely walkable, others comfortably open) per project decision. Per user request
+ * ("remove forest spawn and generation restrictions"), this no longer blends back out to open,
+ * sparse spacing outside a forest zone - the whole map now uses this same normal/thicket range
+ * everywhere. */
+function minTreeSpacingFor(textureNoise: number): number {
   const textureIntensity = (textureNoise + 1) / 2;
-  const inForestSpacing = VEGETATION_TREE_MIN_SPACING_NORMAL - textureIntensity * (VEGETATION_TREE_MIN_SPACING_NORMAL - VEGETATION_TREE_MIN_SPACING_DENSE);
-  return VEGETATION_TREE_MIN_SPACING_SPARSE - forestMembership * (VEGETATION_TREE_MIN_SPACING_SPARSE - inForestSpacing);
+  return VEGETATION_TREE_MIN_SPACING_NORMAL - textureIntensity * (VEGETATION_TREE_MIN_SPACING_NORMAL - VEGETATION_TREE_MIN_SPACING_DENSE);
 }
 
 /** Leaf/canopy sensor geometry for a tree instance - exported (and pulled out as a pure function)
