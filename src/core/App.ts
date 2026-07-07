@@ -7,7 +7,7 @@ import { LoadingScreen } from '../ui/menu/LoadingScreen.ts';
 import { MultiplayerMenu } from '../ui/menu/MultiplayerMenu.ts';
 import { CreateRoomScreen } from '../ui/menu/CreateRoomScreen.ts';
 import { JoinRoomScreen } from '../ui/menu/JoinRoomScreen.ts';
-import { MatchEndScreen, type MultiplayerMatchEndResult } from '../ui/matchEndScreen.ts';
+import { MatchEndScreen, type MultiplayerMatchEndResult, type RematchSettings } from '../ui/matchEndScreen.ts';
 import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 import { generateMultiplayerSeed } from './worldSeed.ts';
@@ -73,7 +73,7 @@ export class App {
     );
     this.matchEndScreen = new MatchEndScreen(
       overlayRoot,
-      () => this.handleRematchClick(),
+      (settings) => this.handleRematchClick(settings),
       () => this.handleReturnToLobbyFromMatchEnd(),
     );
   }
@@ -160,6 +160,12 @@ export class App {
       { connection, role, ...params },
       (result) => this.handleMultiplayerMatchEnd(result),
       (rematchParams) => void this.restartMultiplayerMatch(connection, role, rematchParams),
+      // Only ever fires on the guest's side (see protocol.ts's HostLeftRoomMessage) - the host
+      // never receives its own message back.
+      () => {
+        this.matchEndScreen.hide();
+        void this.returnToLobby();
+      },
     );
 
     this.loadingScreen.hide();
@@ -187,14 +193,15 @@ export class App {
     this.matchEndScreen.show(result);
   }
 
-  /** MatchEndScreen only ever shows this button to the host (see its own comment) - generates a
-   * fresh seed and spawn points, sends them to the guest on the same connection, and restarts
-   * locally. The guest restarts on its own once that message arrives (Game.ts's
-   * onMultiplayerRematchReceived). */
-  private handleRematchClick(): void {
+  /** MatchEndScreen only ever shows this button (and its settings) to the host (see its own
+   * comment) - applies whatever kill limit/new-map choice the host made there, sends the result to
+   * the guest on the same connection, and restarts locally. The guest restarts on its own once
+   * that message arrives (Game.ts's onMultiplayerRematchReceived). */
+  private handleRematchClick(settings: RematchSettings): void {
     if (!this.currentMultiplayerSession) return;
-    const { connection, role, killLimit } = this.currentMultiplayerSession;
-    const seed = generateMultiplayerSeed();
+    const { connection, role, seed: previousSeed, ownUsername, opponentUsername } = this.currentMultiplayerSession;
+    const seed = settings.newMap ? generateMultiplayerSeed() : previousSeed;
+    const killLimit = settings.killLimit;
     const [spawnA, spawnB] = pickMultiplayerSpawnPoints();
     connection.send({
       type: 'matchStart',
@@ -205,10 +212,20 @@ export class App {
       spawnBX: spawnB.x,
       spawnBZ: spawnB.z,
     });
-    void this.restartMultiplayerMatch(connection, role, { seed, killLimit, spawnA, spawnB });
+    // Usernames were already exchanged once via `hello` at room-connect time and don't change
+    // mid-connection, so a rematch just carries the same session's names forward rather than
+    // re-exchanging them.
+    void this.restartMultiplayerMatch(connection, role, { seed, killLimit, spawnA, spawnB, ownUsername, opponentUsername });
   }
 
+  /** Wired to MatchEndScreen's "Return to Lobby" button, shown to both host and guest (per user
+   * request: the guest waits on the podium for the host to rematch, change settings, or leave) -
+   * only the host's click needs to tell the other side, since the guest leaving doesn't end
+   * anything for the host (the room/connection is the host's to keep or close). */
   private handleReturnToLobbyFromMatchEnd(): void {
+    if (this.currentMultiplayerSession?.role === 'host') {
+      this.currentMultiplayerSession.connection.send({ type: 'hostLeftRoom' });
+    }
     this.matchEndScreen.hide();
     void this.returnToLobby();
   }

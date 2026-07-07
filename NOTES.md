@@ -2280,3 +2280,112 @@ or differently-shaped zone would fit fine there.
 for a live town, screenshotted from directly overhead): a real multi-building town on visibly
 smooth flattened ground, no terrain seams, no console/page errors. Uncommitted pending explicit
 sign-off per user instruction (not pushed).
+
+### Standalone watch towers, replacing the generic tower building presets
+
+Per user request: removed the "tower" building presets that used to be mixed into town layouts
+(`BUILDING_PRESET_DEFS` in `BuildingManager.ts` now only lists houses) and replaced them with 4
+standalone watch towers per map, placed independently of towns/forests, each with a real walkable
+switchback staircase - a continuous tilted-box ramp per flight, not the crate-jump mechanic used
+for house roofs, per this project's own hard lesson from that earlier work about jump-timing
+reliability.
+
+- **New `WatchTowerManager.ts`**: `computeWatchTowerPositions()` (pure, exported for testing)
+  places 4 towers via evenly-spread angles + bounded retry, mirroring `ZoneMap.ts`'s
+  `computeGuaranteedSites` - with a second, wider retry pass that drops the "stay in your own
+  sector" ideal if a town/forest zone genuinely covers a tower's whole assigned sector (a real
+  measured failure mode, not theoretical: caught ~6% of seeds in the test sweep before this
+  existed). `WatchTowerManager` itself builds each tower's shaft, 4 ramp flights, landings, top
+  lookout platform, and railings as RAPIER colliders on one fixed rigid body, wired into
+  `Game.ts`'s chunk-streaming hooks alongside `buildings`/`vegetation`/`roads`.
+- **`WatchTowerManager.test.ts`**: seed-swept placement invariants (exact count, world-edge/
+  spawn-ring clearance as a hard 100%-guaranteed check; zone-clearance and inter-tower separation
+  as documented best-effort checks with a real, measured failure-rate ceiling, not false 100%
+  guarantees - see the test file's own comment for why those two specifically can't be made
+  airtight without a disproportionate rework for a low-stakes cosmetic edge case).
+- **Three real bugs found only by actually testing this in the dev server** (automated e2e proved
+  too unreliable for this specific tight polling-loop scenario in this sandboxed environment -
+  repeatedly hung inside plain `page.evaluate()` calls unrelated to any game logic, confirmed by
+  swapping CDP keyboard dispatch for a direct DOM event and seeing the exact same hang move to a
+  different, non-keyboard call; the user's own manual playtesting is what actually caught and
+  diagnosed these):
+  1. **Terrain buried the staircase.** A tower's rigid body was positioned using
+     `sampleHeight` at its own single center point, assuming locally flat ground - but this
+     world's mountainous terrain can vary by many meters over just the tower's own footprint
+     width. Fixed by adding a flattened clearing around each tower's base in
+     `TerrainGenerator.ts` (`nearestWatchTowerClearing`, mirroring the existing spawn-clearing
+     mechanism), with a cached `getWatchTowerPositions()` wrapper in `WatchTowerManager.ts` since
+     `sampleHeight` runs on every terrain-vertex sample and the full placement search is too
+     expensive to redo per-vertex.
+  2. **Railing overlapped the ramp it was supposed to guard.** `createOuterFlightRailing`/
+     `createOuterLandingRailing` offset the railing by only half the stair width from the ramp's
+     centerline - placing the railing's centerline exactly at the ramp's own edge, so the
+     railing's near half-thickness physically overlapped the ramp. A player's capsule walking
+     directly along that overlapping seam caused erratic character-controller ejection. Fixed by
+     offsetting by half the stair width *plus* the railing's own half-thickness, so the railing
+     sits flush against the ramp's edge instead of overlapping it.
+  3. **The last flight merged into the platform.** A tilted ramp box's true walkable surface sits
+     above its own nominal centerline by a thickness-dependent amount once projected through the
+     incline angle - making the last flight's endpoint match the platform's height exactly (the
+     first draft) let the ramp's solid geometry punch up into the platform's own solid volume,
+     merging into one mass with no exposed edge to step onto - exactly matching the user's report
+     ("the last stair piece merges into the main piece... impossible to get onto the tower").
+     Fixed by stopping the last flight `TOP_FLIGHT_CLEARANCE_BELOW_PLATFORM` (0.5) short of the
+     platform's height instead of ending flush with it, leaving a clean, small, autostep-sized
+     step up rather than trying to make a tilted surface flush with a flat one.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 23/23 green (19 existing + 4 new placement
+tests), `npm run build` succeeds. Functional climbability confirmed by the user directly in the
+dev server after each fix, not by the automated e2e harness (see above for why that path was
+abandoned as unreliable for this specific scenario, not because the underlying mechanic is
+untested - the placement math and boundary invariants are still covered by the unit test sweep).
+
+**Follow-up (same feature, later manual playtest):** a fourth real issue, found the same way -
+the last flight's landing point sat right at the edge of its own tower's flattened clearing, in
+the *blending* band back toward natural terrain rather than the guaranteed-flat band, so on
+towers where the surrounding terrain happened to slope steeply the ramp visibly floated above or
+sank into the ground depending on which way that slope ran. Fixed in two parts:
+1. `TerrainGenerator.ts`'s clearing blend now uses the tower's own real footprint radius
+   (`WatchTowerManager.ts`'s new exported `WATCH_TOWER_FOOTPRINT_RADIUS`) as the guaranteed-flat
+   inner radius, instead of a fixed fraction of the outer clearing radius that didn't actually
+   reach the outer flights' own corners.
+2. Per the user's own hands-on iteration (several rounds of "rotate the last flight's endpoint by
+   N degrees, raise it a little") - the last flight's endpoint now pivots around its own start
+   point (`TOP_FLIGHT_SWING_DEGREES`, settled at -15°) instead of running flush along the shaft's
+   fourth face like the other three, landing a touch closer to the platform's own height
+   (`TOP_FLIGHT_CLEARANCE_BELOW_PLATFORM` tightened from 0.5 to 0.3). Confirmed correct by the
+   user directly in the dev server, not by automated e2e (same reasoning as above).
+
+### Multiplayer polish: usernames, a real podium screen, positional gunshot audio
+
+Three smaller multiplayer-quality requests, tackled together:
+
+- **Usernames.** Both room screens (`CreateRoomScreen`/`JoinRoomScreen`) now prompt for a name
+  (persisted via `localStorage`, see `core/username.ts`), exchanged over the existing `hello`
+  handshake (`protocol.ts`'s `HelloMessage` gained a `username` field - no new message type
+  needed, since both sides already know their own name before they ever connect). The host's room
+  screen shows a live "Players in this room" list that updates from "Waiting for a player…" to
+  the guest's real name the moment their `hello` arrives. `MultiplayerHud`'s health rows and
+  scoreboard now show real names (truncated to fit) instead of generic "You"/"Opponent", carried
+  through rematches via `MultiplayerSession.ownUsername`/`opponentUsername`.
+- **Podium screen.** `MatchEndScreen` now shows a ranked 1st/2nd podium with real names instead of
+  a plain score line, plus host-only rematch settings (kill-limit select, "generate a new map"
+  checkbox - unchecked reuses the just-played seed for a direct rematch on the same terrain). Per
+  user correction: both host and guest already saw this screen and waited on the host, but the
+  host's "Return to Lobby" click previously left the guest stranded on it forever once the
+  connection silently closed - fixed with a new `HostLeftRoomMessage` the host sends before
+  leaving, which the guest's still-active `Game` instance reacts to by returning to its own lobby.
+- **Positional gunshot audio.** Opponent gunshots in multiplayer were completely silent before
+  this (the `fireEvent` handler only spawned the tracer/muzzle-flash, never played a sound).
+  `FireEventMessage` now carries the shooter's `weaponId` so the receiving end plays the right
+  gunshot sound, distance-attenuated (reusing the existing `enemyGunshotVolume` falloff) and
+  stereo-panned by a new `computeStereoPan` helper (derived from `Player.facingYaw`'s own
+  forward-vector convention) so a shot from off to the side is audibly distinguishable from one
+  straight ahead. Per user request, the same panning was added to single-player enemy gunshots
+  too, which previously only had distance attenuation with no directionality.
+
+**Verification:** `npx tsc --noEmit` clean, unit tests 23/23 green, `npm run build` succeeds.
+Multiplayer-specific behavior (username exchange, podium/rematch settings, host-leaves handoff,
+positional audio panning) verified by code review and the existing `multiplayer-matchend.spec.ts`
+e2e coverage rather than fresh manual multiplayer playtesting - flag for a manual two-browser
+check if anything here reads wrong once live.

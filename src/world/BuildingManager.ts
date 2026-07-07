@@ -28,23 +28,17 @@ import {
 interface BuildingPresetDef {
   modelPath: string;
   targetHeight: number;
-  /** Only "house" presets get a crate stack (playtest feedback specifically asked for crates near
-   * houses, not the taller towers) - towers keep no roof-access mechanic at all now that ladders
-   * are gone. */
-  hasCrateStack: boolean;
 }
 
 /** Premade sample structures from Kenney's Modular Buildings kit (CC0) - already assembled from
  * the kit's own wall/window/door/roof pieces, so they read as real buildings (not a plain box)
- * without this project needing to hand-place and rotate individual tiles. */
+ * without this project needing to hand-place and rotate individual tiles. Houses only - the
+ * taller "tower" presets that used to live here were removed per user request in favor of
+ * standalone watch towers (see WatchTowerManager.ts), which aren't part of town layouts at all. */
 const BUILDING_PRESET_DEFS: BuildingPresetDef[] = [
-  { modelPath: '/assets/models/buildings/building-sample-house-a.glb', targetHeight: 4, hasCrateStack: true },
-  { modelPath: '/assets/models/buildings/building-sample-house-b.glb', targetHeight: 6.5, hasCrateStack: true },
-  { modelPath: '/assets/models/buildings/building-sample-house-c.glb', targetHeight: 6.5, hasCrateStack: true },
-  { modelPath: '/assets/models/buildings/building-sample-tower-a.glb', targetHeight: 8, hasCrateStack: false },
-  { modelPath: '/assets/models/buildings/building-sample-tower-b.glb', targetHeight: 6, hasCrateStack: false },
-  { modelPath: '/assets/models/buildings/building-sample-tower-c.glb', targetHeight: 10, hasCrateStack: false },
-  { modelPath: '/assets/models/buildings/building-sample-tower-d.glb', targetHeight: 12, hasCrateStack: false },
+  { modelPath: '/assets/models/buildings/building-sample-house-a.glb', targetHeight: 4 },
+  { modelPath: '/assets/models/buildings/building-sample-house-b.glb', targetHeight: 6.5 },
+  { modelPath: '/assets/models/buildings/building-sample-house-c.glb', targetHeight: 6.5 },
 ];
 
 interface BuildingPreset {
@@ -53,12 +47,11 @@ interface BuildingPreset {
   height: number;
   footprintWidth: number;
   footprintDepth: number;
-  /** Some prefabs (e.g. tower-a/b/c) aren't modeled symmetrically about their local origin - the
-   * footprint's true center sits a small offset away from (0,0). Scaled world-space offset, before
-   * rotation is applied. */
+  /** Some prefabs aren't modeled symmetrically about their local origin - the footprint's true
+   * center sits a small offset away from (0,0). Scaled world-space offset, before rotation is
+   * applied. */
   footprintOffsetX: number;
   footprintOffsetZ: number;
-  hasCrateStack: boolean;
 }
 
 /** One building's position within its town, in coordinates local to the town's site center. */
@@ -78,8 +71,6 @@ interface PlacedBuilding {
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandle: number;
-  /** Only set for houses (see BuildingPresetDef.hasCrateStack) - towers have no crate stack, no
-   * mantle sensor, nothing to clean up beyond the base collider/rigid body above. */
   crateStack: {
     mantleColliderHandle: number;
     crateColliderHandles: number[];
@@ -88,16 +79,16 @@ interface PlacedBuilding {
      * against) - kept for debug/test tooling to navigate precisely rather than guessing. */
     x: number;
     wallFaceZ: number;
-  } | null;
+  };
 }
 
 /** Measures a freshly loaded prefab's real bounding box rather than trusting hand-inspected
  * numbers, then computes the uniform scale needed to reach targetHeight - same "verify, don't
  * guess the asset's own dimensions" discipline used for vegetation. Also captures the footprint's
- * center offset from the model's local origin - tower-a/b/c are not modeled symmetrically about
- * (0,0), so assuming the origin IS the footprint center silently misaligns the collider from the
- * visual (caught by code review, verified against the actual accessor bounds in those .glb files). */
-function measurePreset(scene: THREE.Object3D, targetHeight: number, hasCrateStack: boolean): BuildingPreset {
+ * center offset from the model's local origin - not every prefab is modeled symmetrically about
+ * (0,0), so assuming the origin IS the footprint center would silently misalign the collider from
+ * the visual. */
+function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPreset {
   scene.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(scene);
   const rawHeight = box.max.y - box.min.y;
@@ -110,7 +101,6 @@ function measurePreset(scene: THREE.Object3D, targetHeight: number, hasCrateStac
     footprintDepth: (box.max.z - box.min.z) * scaleFactor,
     footprintOffsetX: ((box.max.x + box.min.x) / 2) * scaleFactor,
     footprintOffsetZ: ((box.max.z + box.min.z) / 2) * scaleFactor,
-    hasCrateStack,
   };
 }
 
@@ -146,7 +136,7 @@ export class BuildingManager {
     const presets: BuildingPreset[] = [];
     for (const def of BUILDING_PRESET_DEFS) {
       const gltf = await loadGLTF(def.modelPath);
-      presets.push(measurePreset(gltf.scene, def.targetHeight, def.hasCrateStack));
+      presets.push(measurePreset(gltf.scene, def.targetHeight));
     }
     return new BuildingManager(scene, physics, presets);
   }
@@ -198,24 +188,22 @@ export class BuildingManager {
 
       this.scene.remove(building.group);
 
-      if (building.crateStack) {
-        const { crateStack } = building;
-        this.scene.remove(crateStack.crateGroup);
-        crateStack.crateGroup.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.geometry.dispose();
-        });
+      const { crateStack } = building;
+      this.scene.remove(crateStack.crateGroup);
+      crateStack.crateGroup.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      });
 
-        // Mantle collider is a JS-side tag (climbableMantleTargets is not physics-managed), so it
-        // must be cleared explicitly - otherwise a future collider that reuses this same handle
-        // number (Rapier recycles freed handles) would silently inherit "this mantles" from a
-        // building that no longer exists.
-        const mantleCollider = this.physics.world.getCollider(crateStack.mantleColliderHandle);
-        if (mantleCollider) this.physics.unregisterClimbable(mantleCollider);
+      // Mantle collider is a JS-side tag (climbableMantleTargets is not physics-managed), so it
+      // must be cleared explicitly - otherwise a future collider that reuses this same handle
+      // number (Rapier recycles freed handles) would silently inherit "this mantles" from a
+      // building that no longer exists.
+      const mantleCollider = this.physics.world.getCollider(crateStack.mantleColliderHandle);
+      if (mantleCollider) this.physics.unregisterClimbable(mantleCollider);
 
-        for (const handle of crateStack.crateColliderHandles) {
-          const crateCollider = this.physics.world.getCollider(handle);
-          if (crateCollider) this.physics.world.removeCollider(crateCollider, true);
-        }
+      for (const handle of crateStack.crateColliderHandles) {
+        const crateCollider = this.physics.world.getCollider(handle);
+        if (crateCollider) this.physics.world.removeCollider(crateCollider, true);
       }
 
       const collider = this.physics.world.getCollider(building.colliderHandle);
@@ -324,9 +312,7 @@ export class BuildingManager {
     const colliderDesc = RAPIER.ColliderDesc.cuboid(colliderHalfWidth, preset.height / 2, colliderHalfDepth);
     const collider = this.physics.world.createCollider(colliderDesc, rigidBody);
 
-    const crateStack = preset.hasCrateStack
-      ? this.createCrateStack(rigidBody, preset, groundY, colliderCenterX, colliderCenterZ, colliderHalfDepth)
-      : null;
+    const crateStack = this.createCrateStack(rigidBody, preset, groundY, colliderCenterX, colliderCenterZ, colliderHalfDepth);
 
     return {
       group,
@@ -351,7 +337,7 @@ export class BuildingManager {
     colliderCenterX: number,
     colliderCenterZ: number,
     colliderHalfDepth: number,
-  ): NonNullable<PlacedBuilding['crateStack']> {
+  ): PlacedBuilding['crateStack'] {
     const wallFaceZ = colliderCenterZ - colliderHalfDepth;
     const stackTopY = CRATE_TIER_COUNT * CRATE_SIZE;
 
@@ -422,10 +408,7 @@ export class BuildingManager {
   /** Debug/test-only: exact crate-stack positions for every currently-streamed-in house, so e2e
    * tests can navigate precisely to a known one instead of guessing blindly at one. */
   getActiveCrateStackPositions(): { x: number; wallFaceZ: number }[] {
-    return Array.from(this.activeBuildings.values())
-      .map((b) => b.crateStack)
-      .filter((crateStack): crateStack is NonNullable<PlacedBuilding['crateStack']> => crateStack !== null)
-      .map((crateStack) => ({ x: crateStack.x, wallFaceZ: crateStack.wallFaceZ }));
+    return Array.from(this.activeBuildings.values(), (b) => ({ x: b.crateStack.x, wallFaceZ: b.crateStack.wallFaceZ }));
   }
 
   /** Simple procedural crate boxes (a main body plus a darker banding box, per tier) rather than a

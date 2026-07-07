@@ -473,7 +473,8 @@ export const VEGETATION_ROCK_PROBABILITY = 0.06;
  * "Worley noise" with one candidate site per grid cell, nearest-site-wins membership. Two
  * independent grids since towns and forests want different sizes/densities. See world/ZoneMap.ts.
  * Distinct seed offsets from terrain (the world seed - see worldSeed.ts), the ridge noise (+1),
- * and vegetation density (+2): flat zones use +10, forest zones +11, town layouts +12.
+ * and vegetation density (+2): flat zones use +10, forest zones +11, town layouts +12, watch tower
+ * placement +13 (see WATCH_TOWER_SEED_OFFSET below).
  */
 export const FLAT_ZONE_SEED_OFFSET = 10;
 /** Cell size shrunk 230 -> 50 alongside the WORLD_SIZE_CHUNKS 6 -> 4 cut - stays comfortably above
@@ -562,7 +563,14 @@ export const TOWN_LAYOUT_SEED_OFFSET = 12;
  * dense as the geometry allows (dropping these *below* saturation would actively truncate large
  * towns - simulated cost of 8-12 vs. the old 30-45 is ~0.03 buildings on average, i.e. none).
  * Meaningfully more buildings than this requires bigger zones or smaller building footprints,
- * not a bigger number here. */
+ * not a bigger number here.
+ *
+ * Addendum: the "tower" presets referenced above were later removed entirely (replaced by
+ * standalone watch towers - see WatchTowerManager.ts, not part of town layouts at all), leaving
+ * only the larger house footprints in the sampling pool - re-checked live after that removal
+ * (not just assumed from the old simulation, since houses alone are a different, larger-average
+ * footprint mix) to confirm this range still holds; see the watch-tower work's own verification
+ * notes in NOTES.md for the actual result. */
 export const TOWN_MIN_BUILDINGS = 8;
 export const TOWN_MAX_BUILDINGS = 12;
 /** Buildings are only placed within this fraction of the flat zone's radius, keeping the whole
@@ -584,6 +592,43 @@ export const ROAD_WIDTH = 3;
 /** Small enough to be visually unnoticeable, large enough to avoid z-fighting with the ground mesh. */
 export const ROAD_SURFACE_OFFSET = 0.04;
 export const ROAD_COLOR = 0x6b5a45;
+
+/**
+ * Watch towers (per user request, replacing the generic tower building presets that used to be
+ * mixed into town layouts): exactly WATCH_TOWER_COUNT per map, placed independently of towns and
+ * forests entirely - see WatchTowerManager.ts. A tall square shaft with a real, walkable
+ * switchback staircase wrapping its exterior (a continuous ramp collider per flight, not discrete
+ * steps or the crate-jump mechanic used for house roofs - see WatchTowerManager.ts's own docs for
+ * why), capped with an open lookout platform.
+ */
+export const WATCH_TOWER_COUNT = 4;
+export const WATCH_TOWER_HALF_WIDTH = 3;
+export const WATCH_TOWER_HEIGHT = 16;
+/** Comfortably more than 2x PLAYER_RADIUS (0.4) - wide enough that a player can walk up without
+ * brushing the rails on either side, per user request ("wide enough for players to navigate"). */
+export const WATCH_TOWER_STAIR_WIDTH = 2.4;
+/** How far the top lookout deck extends past the shaft's own footprint on each side - must clear
+ * the outer stair centerline (HALF_WIDTH + STAIR_WIDTH/2) so a flight's top end lands under the
+ * platform with no gap, not just past the shaft's own smaller footprint; kept a bit past that
+ * minimum for a visible overhang, not just the bare geometric floor. */
+export const WATCH_TOWER_PLATFORM_OVERHANG = 1.5;
+/** Solid collider height around both the lookout platform's edge and the staircase's outer edge -
+ * climbing 16m up without this would make one misstep near the edge an unfair instant fall. */
+export const WATCH_TOWER_RAILING_HEIGHT = 1;
+export const WATCH_TOWER_SEED_OFFSET = 13;
+/** How far *beyond* the tower's own footprint (WatchTowerManager.ts's WATCH_TOWER_FOOTPRINT_RADIUS)
+ * TerrainGenerator.ts's clearing blend keeps easing back toward natural terrain, before it's fully
+ * natural again. Everything within the footprint radius itself is forced dead flat, not just
+ * blended - discovered necessary by actually testing a tower in the dev server: an earlier version
+ * of this clearing used a flat radius *smaller* than the tower's own real footprint (a fixed
+ * fraction of a single combined radius, rather than a value keyed to the geometry itself), so the
+ * outer switchback flights' own corners - which reach further out from center than the shaft
+ * alone - sat inside the *blending* band instead of the guaranteed-flat one. The terrain mesh there
+ * faithfully rendered that blend while the flight colliders kept assuming perfectly flat ground at
+ * their own fixed local height, so the visible ramp drifted away from the real ground - floating
+ * above it or sinking into it depending on which way the local slope happened to run (exactly what
+ * the user's manual test screenshots showed: a staircase disconnected from the tower's own base). */
+export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 4;
 
 /**
  * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,

@@ -8,6 +8,7 @@ import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
+import { WatchTowerManager } from '../world/WatchTowerManager.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
@@ -119,6 +120,27 @@ function enemyGunshotVolume(distance: number): number {
   return 1 - clamped * (1 - ENEMY_GUNSHOT_MIN_VOLUME);
 }
 
+/** Stereo pan (-1 full left .. 1 full right) for a sound at `sourcePosition`, from the perspective
+ * of a listener at `listenerPosition` facing `listenerYaw` (see Player.facingYaw's own comment on
+ * this yaw convention - 0 faces -Z) - used for opponent gunshots in multiplayer (per user request:
+ * "positional audio") so a shot fired from off to the player's side is audibly distinguishable
+ * from one straight ahead, not just louder/quieter with distance. Purely horizontal (XZ plane) -
+ * this is a stereo pan, not full 3D audio, so vertical offset (a shot from a watch tower platform
+ * above) doesn't factor in. */
+function computeStereoPan(listenerPosition: THREE.Vector3, listenerYaw: number, sourcePosition: THREE.Vector3): number {
+  const dx = sourcePosition.x - listenerPosition.x;
+  const dz = sourcePosition.z - listenerPosition.z;
+  const distance = Math.hypot(dx, dz);
+  if (distance < 0.001) return 0; // Coincident points - direction is undefined, default centered.
+
+  // The listener's own "right" direction in world space, derived from the same yaw convention
+  // Player.ts's debugLookAt uses (yaw = atan2(-dx, -dz), i.e. forward = (-sin(yaw), -cos(yaw))) -
+  // rotating that forward vector -90 degrees around Y gives right = (cos(yaw), -sin(yaw)).
+  const rightX = Math.cos(listenerYaw);
+  const rightZ = -Math.sin(listenerYaw);
+  return Math.max(-1, Math.min(1, (dx * rightX + dz * rightZ) / distance));
+}
+
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
  * aiming, with one deliberate exception: damagePlayer, which exists so death-*UI-flow* tests don't
  * have to stage up to ~90s of real combat just to reach the death screen. One death-flow test
@@ -143,6 +165,7 @@ export interface GameDebugApi {
   /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */
   damagePlayer(amount: number): void;
   getActiveCrateStackPositions(): { x: number; wallFaceZ: number }[];
+  getActiveTowerPositions(): { x: number; z: number }[];
   teleport(x: number, y: number, z: number): void;
   /** Rolling real-frame-time stats (see FpsMeter) - lets a script measure performance on the
    * user's own hardware/browser instead of relying on this environment's software-rendered GPU,
@@ -212,6 +235,7 @@ export class Game {
     private readonly player: Player,
     private readonly chunkManager: ChunkManager,
     private readonly buildings: BuildingManager,
+    private readonly watchTowers: WatchTowerManager,
     private readonly entityManager: EntityManager,
     private readonly weaponManager: WeaponManager,
     private readonly impactMarkers: ImpactMarkers,
@@ -241,6 +265,10 @@ export class Game {
      * initial matchStart is always consumed by the room screen before Game.create() ever attaches
      * its own message handler, so any matchStart Game itself sees is necessarily this case. */
     private readonly onMultiplayerRematchReceived?: (params: MultiplayerMatchStartParams) => void,
+    /** Fired when a hostLeftRoom message arrives - the guest's signal that the host clicked
+     * "Return to Lobby" from the match-end screen (see protocol.ts's HostLeftRoomMessage). Only
+     * ever received by the guest; the host is the one sending it, never the recipient. */
+    private readonly onOpponentLeftRoom?: () => void,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.loop = new Loop(this.update, this.render);
@@ -315,6 +343,7 @@ export class Game {
         this.pendingDebugDamage += amount;
       },
       getActiveCrateStackPositions: () => this.buildings.getActiveCrateStackPositions(),
+      getActiveTowerPositions: () => this.watchTowers.getActiveTowerPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
       getOpponentPosition: () => {
         if (!this.multiplayer) return null;
@@ -336,6 +365,7 @@ export class Game {
     multiplayer?: MultiplayerSession,
     onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
     onMultiplayerRematchReceived?: (params: MultiplayerMatchStartParams) => void,
+    onOpponentLeftRoom?: () => void,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
     // Single-player: a new seed per match (not per practice-reset) so each new game generates a
@@ -361,17 +391,20 @@ export class Game {
     onProgress?.('Constructing buildings…', 0.04);
     const buildings = await BuildingManager.create(renderer.scene, physics);
     const roads = RoadManager.create(renderer.scene, buildings);
+    const watchTowers = WatchTowerManager.create(renderer.scene, physics);
 
     const chunkManager = new ChunkManager(renderer.scene, physics, {
       onChunkLoaded: (cx, cz, originX, originZ, size) => {
         vegetation.placeForChunk(cx, cz, originX, originZ, size);
         buildings.placeForChunk(cx, cz, originX, originZ, size);
         roads.placeForChunk(cx, cz, originX, originZ, size);
+        watchTowers.placeForChunk(cx, cz, originX, originZ, size);
       },
       onChunkUnloaded: (cx, cz) => {
         vegetation.removeChunk(cx, cz);
         buildings.removeChunk(cx, cz);
         roads.removeChunk(cx, cz);
+        watchTowers.removeChunk(cx, cz);
       },
     });
 
@@ -434,6 +467,10 @@ export class Game {
           endX: end.x,
           endY: end.y,
           endZ: end.z,
+          // weaponManager isn't assigned in this outer scope until after this very call resolves,
+          // but this callback only ever fires later, during gameplay - by then it's safely
+          // assigned, same as every other closure captured in this constructor call.
+          weaponId: weaponManager.weaponSlotNames[weaponManager.activeWeaponIndex] ?? 'pistol',
         });
       },
       (weaponId) => sound.playGunshot(weaponId),
@@ -458,8 +495,14 @@ export class Game {
           tracers.spawn(origin, end, ENEMY_RANGED_TRACER_COLOR);
           impactMarkers.spawn(end, hitPlayer);
           // Attenuated by the shooter's distance from the player - a shot from 30 units away
-          // shouldn't sound identical to one at point-blank (see ENEMY_GUNSHOT_* in config.ts).
-          sound.playGunshot('enemy-rifle', enemyGunshotVolume(origin.distanceTo(player.position)));
+          // shouldn't sound identical to one at point-blank (see ENEMY_GUNSHOT_* in config.ts) -
+          // and panned by direction too (per user request: positional audio should work the same
+          // in single-player against enemies as it does against a multiplayer opponent).
+          sound.playGunshot(
+            'enemy-rifle',
+            enemyGunshotVolume(origin.distanceTo(player.position)),
+            computeStereoPan(player.position, player.facingYaw, origin),
+          );
         },
       },
     );
@@ -489,7 +532,7 @@ export class Game {
         session: multiplayer,
         remotePlayer,
         minimap: new Minimap(hudRoot),
-        multiplayerHud: new MultiplayerHud(hudRoot),
+        multiplayerHud: new MultiplayerHud(hudRoot, multiplayer.ownUsername, multiplayer.opponentUsername),
         killLimit: multiplayer.killLimit,
         snapshotAccumulator: 0,
         deathTimer: 0,
@@ -540,6 +583,7 @@ export class Game {
       player,
       chunkManager,
       buildings,
+      watchTowers,
       entityManager,
       weaponManager,
       impactMarkers,
@@ -565,6 +609,7 @@ export class Game {
       activeMultiplayer,
       onMultiplayerMatchEnd,
       onMultiplayerRematchReceived,
+      onOpponentLeftRoom,
     );
     gameRef.current = game;
 
@@ -590,6 +635,11 @@ export class Game {
                 killLimit: message.killLimit,
                 spawnA: { x: message.spawnAX, z: message.spawnAZ },
                 spawnB: { x: message.spawnBX, z: message.spawnBZ },
+                // Names don't change mid-connection - carry this match's own session forward
+                // rather than re-exchanging them (the host does the same, see App.ts's
+                // handleRematchClick).
+                ownUsername: activeMultiplayer.session.ownUsername,
+                opponentUsername: activeMultiplayer.session.opponentUsername,
               });
               break;
             case 'playerSnapshot':
@@ -598,11 +648,15 @@ export class Game {
               break;
             case 'fireEvent': {
               // Purely cosmetic (MULTIPLAYER_PLAN.md §3) - the opponent's own client already
-              // resolved whether this shot actually hit anything; this just makes it visible here too.
+              // resolved whether this shot actually hit anything; this just makes it visible (and,
+              // per user request, audible with real positioning) here too.
               const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
               const end = new THREE.Vector3(message.endX, message.endY, message.endZ);
               tracers.spawn(origin, end);
               muzzleFlash.spawn(origin);
+              const distance = origin.distanceTo(player.position);
+              const pan = computeStereoPan(player.position, player.facingYaw, origin);
+              sound.playGunshot(message.weaponId, enemyGunshotVolume(distance), pan);
               break;
             }
             case 'damageEvent':
@@ -622,6 +676,9 @@ export class Game {
               break;
             case 'respawnEvent':
               activeMultiplayer.remotePlayer.teleportTo(message.x, message.y, message.z);
+              break;
+            case 'hostLeftRoom':
+              game.onOpponentLeftRoom?.();
               break;
           }
         },
@@ -923,7 +980,7 @@ export class Game {
     // RemotePlayer's own position/collider is advanced earlier in update(), before this tick's
     // hitscan can fire (see that call site's comment) - this just reads the already-updated
     // position for the minimap.
-    this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position);
+    this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position, this.player.facingYaw);
     this.multiplayer.multiplayerHud.update(
       this.player.currentHealth,
       this.player.maxHealth,
@@ -1021,6 +1078,8 @@ export class Game {
       killLimit: this.multiplayer.killLimit,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
+      ownUsername: this.multiplayer.session.ownUsername,
+      opponentUsername: this.multiplayer.session.opponentUsername,
     });
   }
 

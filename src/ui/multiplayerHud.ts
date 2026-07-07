@@ -4,6 +4,14 @@ function healthColor(ratio: number): string {
   return ratio > 0.5 ? '#3ecf5f' : ratio > 0.25 ? '#e0a930' : '#e03b30';
 }
 
+const MAX_LABEL_LENGTH = 10;
+
+/** The health row's label column is a fixed 64px, sized for "You"/"Opponent" - a longer real
+ * username needs a hard cap or it wraps/overflows onto the health bar next to it. */
+function truncateForLabel(name: string): string {
+  return name.length > MAX_LABEL_LENGTH ? `${name.slice(0, MAX_LABEL_LENGTH - 1)}…` : name;
+}
+
 interface HealthRow {
   readonly row: HTMLDivElement;
   readonly fill: HTMLDivElement;
@@ -50,15 +58,23 @@ export class MultiplayerHud {
   private readonly scoreboard: HTMLDivElement;
   private readonly ownScoreElement: HTMLDivElement;
   private readonly opponentScoreElement: HTMLDivElement;
+  private readonly ownName: string;
+  private readonly opponentName: string;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, ownName: string, opponentName: string) {
     this.healthContainer = document.createElement('div');
     this.healthContainer.style.cssText = 'position:absolute; top:24px; left:32px;';
     root.appendChild(this.healthContainer);
 
-    this.ownHealthRow = createHealthRow('You');
-    this.opponentHealthRow = createHealthRow('Opponent');
+    // The row label doubles as this HUD's live player list - with only two players ever in a
+    // match, "who's connected" is already fully shown by these two names, so there's no need for
+    // a separate list panel once real usernames exist (see MULTIPLAYER_PLAN.md follow-up: revisit
+    // if/when 4-player lobbies make the roster bigger than these two rows can show).
+    this.ownHealthRow = createHealthRow(truncateForLabel(ownName));
+    this.opponentHealthRow = createHealthRow(truncateForLabel(opponentName));
     this.healthContainer.append(this.ownHealthRow.row, this.opponentHealthRow.row);
+    this.ownName = ownName;
+    this.opponentName = opponentName;
 
     this.scoreboard = document.createElement('div');
     this.scoreboard.style.cssText =
@@ -82,8 +98,8 @@ export class MultiplayerHud {
   update(ownHealth: number, ownMaxHealth: number, opponentHealth: number, ownScore: number, opponentScore: number): void {
     this.setHealthRow(this.ownHealthRow, ownHealth, ownMaxHealth);
     this.setHealthRow(this.opponentHealthRow, opponentHealth, ownMaxHealth);
-    this.ownScoreElement.textContent = `You ${ownScore}`;
-    this.opponentScoreElement.textContent = `${opponentScore} Opponent`;
+    this.ownScoreElement.textContent = `${truncateForLabel(this.ownName)} ${ownScore}`;
+    this.opponentScoreElement.textContent = `${opponentScore} ${truncateForLabel(this.opponentName)}`;
   }
 
   private setHealthRow(row: HealthRow, current: number, max: number): void {

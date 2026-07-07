@@ -12,11 +12,13 @@ import {
   TERRAIN_LACUNARITY,
   TERRAIN_OCTAVES,
   TERRAIN_PERSISTENCE,
+  WATCH_TOWER_CLEARING_BLEND_MARGIN,
   WORLD_BOUNDARY_RADIUS,
   WORLD_EDGE_MOUNTAIN_HEIGHT,
   WORLD_EDGE_RAMP_START,
 } from '../core/config.ts';
 import { sampleFlatZone } from './ZoneMap.ts';
+import { getWatchTowerPositions, WATCH_TOWER_FOOTPRINT_RADIUS } from './WatchTowerManager.ts';
 
 /**
  * A small, fixed (non-randomized) clearing right around the match spawn point, always flattened
@@ -43,9 +45,43 @@ function spawnClearingMembership(worldX: number, worldZ: number): number {
   return 1 - smoothstep(SPAWN_CLEARING_RADIUS * SPAWN_CLEARING_INNER_FRACTION, SPAWN_CLEARING_RADIUS, distance);
 }
 
+/**
+ * A small flattened clearing around each watch tower's base (see WATCH_TOWER_CLEARING_BLEND_MARGIN's
+ * own comment for why this exists: discovered necessary by actually testing a tower in the dev
+ * server - a tower's colliders assume flat local ground sampled once at its own center, and this
+ * world's mountainous terrain can vary by many meters over just the tower's own footprint width
+ * without this, burying the staircase in a slope or leaving it floating above real ground).
+ * Unlike the spawn clearing above, the flat inner radius here is exactly the tower's own real
+ * footprint (WATCH_TOWER_FOOTPRINT_RADIUS) rather than a fraction of the outer radius - a
+ * fraction-based inner radius was the actual bug behind a staircase floating above (or sinking
+ * into) its own tower's base: the outer switchback flights' own corners reach further out from
+ * center than a smaller fraction-derived flat radius covered, so they landed in the *blending*
+ * band instead of the guaranteed-flat one.
+ */
+const watchTowerClearingOuterRadius = WATCH_TOWER_FOOTPRINT_RADIUS + WATCH_TOWER_CLEARING_BLEND_MARGIN;
+
+function nearestWatchTowerClearing(worldX: number, worldZ: number): { membership: number; index: number } | null {
+  const positions = getWatchTowerPositions();
+  let best: { distance: number; index: number } | null = null;
+
+  for (let index = 0; index < positions.length; index++) {
+    const position = positions[index]!;
+    const distance = Math.hypot(worldX - position.x, worldZ - position.z);
+    if (!best || distance < best.distance) best = { distance, index };
+  }
+
+  if (!best || best.distance >= watchTowerClearingOuterRadius) return null;
+  const membership = 1 - smoothstep(WATCH_TOWER_FOOTPRINT_RADIUS, watchTowerClearingOuterRadius, best.distance);
+  return { membership, index: best.index };
+}
+
 /** Cached per seed (invalidated alongside flatZoneHeightCache below) since it's a pure function of
  * the current seed's noise field sampled at a single fixed point. */
 let spawnClearingHeightCache: number | null = null;
+/** One flattened target height per tower, indexed the same way getWatchTowerPositions() orders
+ * its results - same "pure function of a fixed point, cheap to cache" reasoning as
+ * spawnClearingHeightCache above. */
+let watchTowerHeightCache: number[] = [];
 
 // Noise generators are rebuilt lazily whenever the world seed changes (see worldSeed.ts) rather
 // than created once at module load - a fresh match calls randomizeWorldSeed() before generating
@@ -62,6 +98,7 @@ function ensureNoiseForCurrentSeed(): void {
   ridgeNoise2D = createNoise2D(mulberry32(seed + 1));
   flatZoneHeightCache.clear(); // cached heights from the previous world's seed are no longer valid
   spawnClearingHeightCache = null;
+  watchTowerHeightCache = [];
 }
 
 /** Layered (fBm) simplex noise sampled in continuous world coordinates, so neighboring chunks tile
@@ -109,6 +146,17 @@ export function sampleHeight(worldX: number, worldZ: number): number {
       spawnClearingHeightCache = sampleBaseHeight(SPAWN_X, SPAWN_Z);
     }
     height += (spawnClearingHeightCache - height) * spawnMembership;
+  }
+
+  const towerClearing = nearestWatchTowerClearing(worldX, worldZ);
+  if (towerClearing && towerClearing.membership > 0) {
+    let towerHeight = watchTowerHeightCache[towerClearing.index];
+    if (towerHeight === undefined) {
+      const position = getWatchTowerPositions()[towerClearing.index]!;
+      towerHeight = sampleBaseHeight(position.x, position.z);
+      watchTowerHeightCache[towerClearing.index] = towerHeight;
+    }
+    height += (towerHeight - height) * towerClearing.membership;
   }
 
   const flatZone = sampleFlatZone(worldX, worldZ);

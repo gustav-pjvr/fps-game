@@ -18,6 +18,11 @@ export interface MultiplayerSession {
    * plan used. */
   spawnA: SpawnPoint;
   spawnB: SpawnPoint;
+  /** Exchanged once via the `hello` handshake (see protocol.ts's HelloMessage), not re-sent on
+   * every rematch - a player's name doesn't change mid-connection, so there's no need to thread it
+   * through MatchStartMessage too. */
+  ownUsername: string;
+  opponentUsername: string;
 }
 
 /** Everything a matchStart message carries beyond the connection/role itself - used as one bundle
@@ -29,4 +34,6 @@ export interface MultiplayerMatchStartParams {
   killLimit: number;
   spawnA: SpawnPoint;
   spawnB: SpawnPoint;
+  ownUsername: string;
+  opponentUsername: string;
 }

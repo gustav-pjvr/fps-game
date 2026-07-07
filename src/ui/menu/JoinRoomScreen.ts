@@ -1,6 +1,7 @@
 import { PeerConnection } from '../../network/PeerConnection.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
-import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
+import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
 /** Guest side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): type in a code someone gave
  * you, connect, verify the connection with a `hello` exchange, then wait for the host to start the
@@ -9,6 +10,7 @@ import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitl
  * CreateRoomScreen. */
 export class JoinRoomScreen {
   private readonly overlay: HTMLDivElement;
+  private readonly usernameInput: HTMLInputElement;
   private readonly codeInput: HTMLInputElement;
   private readonly joinButton: HTMLButtonElement;
   private readonly statusText: HTMLDivElement;
@@ -18,6 +20,8 @@ export class JoinRoomScreen {
    * in flight. Without this, that in-flight call would resolve *after* this screen moved on and
    * incorrectly resurrect `this.connection`, leaking a PeerJS peer this screen no longer owns. */
   private joinGeneration = 0;
+  /** The host's own chosen name, learned from their `hello` - null until it arrives. */
+  private hostUsername: string | null = null;
 
   constructor(
     root: HTMLElement,
@@ -29,6 +33,16 @@ export class JoinRoomScreen {
     const panel = createPanel();
     panel.style.width = '400px';
     panel.appendChild(createPanelTitle('JOIN ROOM'));
+
+    const usernameLabel = document.createElement('div');
+    usernameLabel.textContent = 'Your name:';
+    usernameLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    panel.appendChild(usernameLabel);
+
+    this.usernameInput = createTextInput('Player name', 16);
+    this.usernameInput.style.marginBottom = '16px';
+    this.usernameInput.value = loadStoredUsername();
+    panel.appendChild(this.usernameInput);
 
     const label = document.createElement('div');
     label.textContent = 'Enter the room code the other player gave you:';
@@ -93,12 +107,16 @@ export class JoinRoomScreen {
     this.connection?.dispose();
     this.joinButton.disabled = true;
     this.setStatus('Connecting…');
+    this.hostUsername = null;
 
     const generation = ++this.joinGeneration;
     void PeerConnection.joinRoom(code, {
       onConnected: () => {
         this.setStatus('Connected! Verifying the connection…');
-        this.connection?.send({ type: 'hello' });
+        const username = normalizeUsername(this.usernameInput.value);
+        this.usernameInput.value = username;
+        saveUsername(username);
+        this.connection?.send({ type: 'hello', username });
       },
       onDisconnected: () => {
         this.setStatus('The other player disconnected.');
@@ -109,13 +127,21 @@ export class JoinRoomScreen {
         this.joinButton.disabled = false;
       },
       onMessage: (message) => {
-        if (message.type === 'hello') this.setStatus('Connection verified both ways. Waiting for the host to start the match…');
+        if (message.type === 'hello') {
+          this.hostUsername = message.username;
+          this.setStatus('Connection verified both ways. Waiting for the host to start the match…');
+        }
         if (message.type === 'matchStart') {
           this.startMatch({
             seed: message.seed,
             killLimit: message.killLimit,
             spawnA: { x: message.spawnAX, z: message.spawnAZ },
             spawnB: { x: message.spawnBX, z: message.spawnBZ },
+            ownUsername: normalizeUsername(this.usernameInput.value),
+            // matchStart can only arrive after the host has already seen this guest's own hello
+            // and this guest has, symmetrically, already received the host's - see the comment on
+            // CreateRoomScreen's equivalent fallback for why this is never actually reached null.
+            opponentUsername: this.hostUsername ?? 'Host',
           });
         }
       },

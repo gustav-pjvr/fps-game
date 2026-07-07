@@ -1,8 +1,13 @@
 /** Wire format for the multiplayer DataChannel (see MULTIPLAYER_PLAN.md §5) - a discriminated union
  * so every message both sides send/receive is typed in one place. `scoreUpdate`/`matchEnd` still
  * aren't here - they're phase 4's job (host match settings/lifecycle), not needed for combat itself. */
+/** `username` rides along on the same handshake rather than a separate message type - both sides
+ * already know their own name before this is sent (typed into the room screen before connecting),
+ * so there's no ordering problem, and it's the one piece of player identity the other side needs
+ * before a match even starts (for the host's live player list and both sides' HUD labels). */
 export interface HelloMessage {
   type: 'hello';
+  username: string;
 }
 
 /** Host -> guest, right before both sides call Game.create() - the single piece of data that
@@ -57,6 +62,10 @@ export interface FireEventMessage {
   endX: number;
   endY: number;
   endZ: number;
+  /** The shooter's currently-active weapon id (e.g. 'rifle') - lets the receiving end play the
+   * correct gunshot sound for this shot (positional audio, per user request) instead of a fixed
+   * placeholder sound, since PlayerSnapshotMessage never carries the opponent's held weapon. */
+  weaponId: string;
 }
 
 /** Sent by the shooter when their own hitscan registers a hit on the opponent's RemotePlayer
@@ -85,6 +94,15 @@ export interface RespawnEventMessage {
   z: number;
 }
 
+/** Sent by the host when they click "Return to Lobby" from the podium/match-end screen (per user
+ * request: the guest waits on that screen for the host to either rematch, change settings, or
+ * leave - without this, the guest would be stuck there forever once the host's connection just
+ * silently closes, with no signal to explain why). The guest's own client is what actually returns
+ * itself to the lobby on receiving this - see Game.ts's onOpponentLeftRoom. */
+export interface HostLeftRoomMessage {
+  type: 'hostLeftRoom';
+}
+
 export type NetworkMessage =
   | HelloMessage
   | MatchStartMessage
@@ -92,7 +110,8 @@ export type NetworkMessage =
   | FireEventMessage
   | DamageEventMessage
   | PlayerDiedMessage
-  | RespawnEventMessage;
+  | RespawnEventMessage
+  | HostLeftRoomMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -102,6 +121,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'damageEvent',
   'playerDied',
   'respawnEvent',
+  'hostLeftRoom',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

@@ -59,6 +59,17 @@ export function createButton(label: string, variant: 'primary' | 'secondary' = '
   return button;
 }
 
+export function createTextInput(placeholder: string, maxLength: number): HTMLInputElement {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = placeholder;
+  input.maxLength = maxLength;
+  input.style.cssText =
+    `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
+    ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px;`;
+  return input;
+}
+
 export function createPanel(): HTMLDivElement {
   const panel = document.createElement('div');
   panel.style.cssText =
