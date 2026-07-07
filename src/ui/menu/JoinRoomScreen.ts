@@ -24,6 +24,11 @@ export class JoinRoomScreen {
   private readonly playerList: HTMLDivElement;
   private connection: PeerConnection | null = null;
   private ownSlot: PlayerSlot | null = null;
+  /** Set when a `roomFull` message arrives - the host closes this connection shortly afterward
+   * (see PeerConnection.ts's own comment on why that close is delayed, not immediate), which would
+   * otherwise fire onPeerDisconnected and stomp the "room is full" status with a misleading "the
+   * host disconnected" a moment later. Reset at the start of every fresh attempt. */
+  private rejectedAsFull = false;
   /** Bumped by attemptJoin()/close() - PeerConnection.joinRoom is async now (the TURN credential
    * fetch), so a repeat Join click or a Cancel can land while an earlier joinRoom() call is still
    * in flight. Without this, that in-flight call would resolve *after* this screen moved on and
@@ -140,6 +145,7 @@ export class JoinRoomScreen {
     this.joinButton.disabled = true;
     this.setStatus('Connecting…');
     this.ownSlot = null;
+    this.rejectedAsFull = false;
 
     const username = normalizeUsername(this.usernameInput.value);
     this.usernameInput.value = username;
@@ -150,6 +156,7 @@ export class JoinRoomScreen {
     void PeerConnection.joinRoom(code, username, rejoinToken, {
       onConnected: () => {}, // the welcome message itself (below) carries everything worth reacting to
       onPeerDisconnected: () => {
+        if (this.rejectedAsFull) return; // already showing the real reason - don't overwrite it
         this.setStatus('The host disconnected.');
         this.joinButton.disabled = false;
         this.codeInput.style.display = 'block';
@@ -185,6 +192,7 @@ export class JoinRoomScreen {
         }
         if (message.type === 'rosterUpdate') this.renderPlayerRows(message.roster);
         if (message.type === 'roomFull') {
+          this.rejectedAsFull = true;
           this.setStatus('That room is full (4 players max).');
           this.joinButton.disabled = false;
         }

@@ -148,7 +148,12 @@ export class PeerConnection {
       void Promise.resolve(this.callbacks.onHostHello?.(data.username, data.rejoinToken)).then((result) => {
         if (!result || result === 'full') {
           connection.send({ type: 'roomFull' });
-          connection.close();
+          // Closing immediately after send() can race the DataChannel's own flush - confirmed via
+          // an actual 4-player playtest: the rejected guest only ever saw the connection's 'close'
+          // event fire (read by attachHostConnection as "the host disconnected"), never the
+          // roomFull payload, because the channel closed before that just-sent message was
+          // actually transmitted. A short delay gives it time to flush first.
+          setTimeout(() => connection.close(), 500);
           return;
         }
 
