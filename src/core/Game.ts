@@ -1223,6 +1223,10 @@ export class Game {
     const { x, z } = pickRandomRespawnPoint(otherPositions);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
+    // Per user request: a fresh life should mean a fresh loadout, not carrying over whatever ammo
+    // was left in each weapon at the moment of death - single-player's own resetPlay() already
+    // does this same refill, this path (multiplayer's respawn) had just been missing it.
+    this.weaponManager.resetAllAmmo();
     this.multiplayer.deathTimer = 0;
     this.multiplayer.lastDamageSourceSlot = null;
     this.deathScreen.hide();
