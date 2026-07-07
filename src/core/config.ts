@@ -254,6 +254,18 @@ export const ENEMY_GUNSHOT_FULL_VOLUME_RANGE = 10;
 export const ENEMY_GUNSHOT_AUDIBLE_RANGE = 60;
 export const ENEMY_GUNSHOT_MIN_VOLUME = 0.15;
 
+/** Same falloff shape as the ENEMY_GUNSHOT_* trio above, but deliberately separate constants for
+ * multiplayer opponent gunshots specifically (see Game.ts's multiplayerGunshotVolume) - per user
+ * report, the enemy full-volume inner radius (10 units) is tiny next to real PvP engagement
+ * distances (MULTIPLAYER_SPAWN_RADIUS=35, so baseline spawn separation alone is often 35-70
+ * units), so most real close-quarters PvP fights already sat in the linear falloff zone and read
+ * as "too soft" even at what a player would call close range. Widening the ENEMY_* constants in
+ * place would fix this but also change single-player enemy/goose-explosion audio, which nobody
+ * asked for - hence a second, independent set instead of touching the shared one. */
+export const MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE = 25;
+export const MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE = 90;
+export const MULTIPLAYER_GUNSHOT_MIN_VOLUME = 0.15;
+
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
  * picked random points within only 6 units of spawn every 3s and read as running in small circles
@@ -313,25 +325,32 @@ export const GOOSE_MAX_CONCURRENT = 8;
 /** A freshly spawned goose must land at least this far from the player who triggered the spawn. */
 export const GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER = 10;
 
-export type GooseExplosionDifficulty = 'easy' | 'normal' | 'extreme';
+export type GooseExplosionDifficulty = 'easy' | 'normal' | 'extreme' | 'nuke';
 /** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'normal' in single-player (no host
  * to choose it there) - see combat/explosion.ts's computeExplosionDamage. maxDamage is what a
  * player standing exactly at the goose's position would take; it falls off linearly to 0 at
- * `radius`. */
+ * `radius`. Rebalanced (all non-nuke tiers bumped ~15-20%) alongside adding 'nuke' itself, per
+ * user request. */
 export const GOOSE_EXPLOSION_PRESETS: Record<GooseExplosionDifficulty, { radius: number; maxDamage: number }> = {
-  easy: { radius: 4, maxDamage: 35 },
-  normal: { radius: 7, maxDamage: 70 },
+  easy: { radius: 4, maxDamage: 40 },
+  normal: { radius: 7, maxDamage: 85 },
   // Exceeds PLAYER_HEALTH at point-blank, deliberately - "massive," per the original request.
-  extreme: { radius: 13, maxDamage: 130 },
+  extreme: { radius: 13, maxDamage: 150 },
+  // "Massive explosion... instant death" per user request - computeExplosionDamage's linear
+  // falloff means damage only reaches exactly 0 right at the radius boundary, so a radius this
+  // large combined with a maxDamage this far past PLAYER_HEALTH reads as "anyone caught in the
+  // blast dies" without needing a separate non-distance-based instant-kill code path.
+  nuke: { radius: 45, maxDamage: 500 },
 };
 export const DEFAULT_GOOSE_EXPLOSION_DIFFICULTY: GooseExplosionDifficulty = 'normal';
 /** Shared ordering/labels for every difficulty selector (single-player Match Setup, multiplayer
  * Create Room, multiplayer rematch settings) so the three don't each invent their own list. */
-export const GOOSE_EXPLOSION_DIFFICULTIES: readonly GooseExplosionDifficulty[] = ['easy', 'normal', 'extreme'];
+export const GOOSE_EXPLOSION_DIFFICULTIES: readonly GooseExplosionDifficulty[] = ['easy', 'normal', 'extreme', 'nuke'];
 export const GOOSE_EXPLOSION_DIFFICULTY_LABELS: Record<GooseExplosionDifficulty, string> = {
   easy: 'Easy',
   normal: 'Normal',
   extreme: 'Extreme',
+  nuke: 'Nuke',
 };
 /** Host-only broadcast rate for a live goose's wander position (see GooseManager.ts) - much
  * coarser than PLAYER_SNAPSHOT_SEND_INTERVAL since a goose's exact position is cosmetic, not

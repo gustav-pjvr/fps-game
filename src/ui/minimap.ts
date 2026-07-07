@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MINIMAP_WORLD_RADIUS } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
+import { ensureMotionKeyframesInjected } from './menu/menuStyles.ts';
 
 const MAP_DIAMETER_PX = 140;
 const MAP_RADIUS_PX = MAP_DIAMETER_PX / 2;
@@ -43,11 +44,16 @@ export class Minimap {
 
   addDot(slot: PlayerSlot): void {
     if (this.dots.has(slot)) return;
+    ensureMotionKeyframesInjected();
     const dot = document.createElement('div');
+    // A slow, continuous pulse (opacity, via the shared pulseGlow keyframe) - reads as a live
+    // radar blip rather than a static marker. Independent of the per-frame left/top writes in
+    // update() below (different CSS properties), so it's set once here and never touched again.
     dot.style.cssText =
       `position:absolute; width:${DOT_SIZE_PX}px; height:${DOT_SIZE_PX}px; border-radius:50%;` +
       ' background:#e0483c; box-shadow:0 0 4px 1px rgba(224,72,60,0.8);' +
-      ` left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
+      ` left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);` +
+      ' animation:pulseGlow 1.6s ease-in-out infinite;';
     this.root.appendChild(dot);
     this.dots.set(slot, dot);
   }

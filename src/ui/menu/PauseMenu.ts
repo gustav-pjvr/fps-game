@@ -13,7 +13,11 @@ export interface PauseMenuCallbacks {
 export class PauseMenu {
   private readonly overlay: HTMLDivElement;
 
-  constructor(root: HTMLElement, callbacks: PauseMenuCallbacks) {
+  /** `isMultiplayer` hides the "Reset Play" button entirely - it's single-player's own
+   * practice-reset feature (fresh targets/enemies/ammo/score); Game.resetPlay() is a no-op in
+   * multiplayer unless the player happens to already be dead, so showing it there is a button
+   * that does nothing for anyone not currently waiting to respawn. */
+  constructor(root: HTMLElement, callbacks: PauseMenuCallbacks, isMultiplayer: boolean) {
     this.overlay = createOverlay();
     this.overlay.dataset.testid = 'pause-menu';
 
@@ -31,13 +35,16 @@ export class PauseMenu {
     const settingsButton = createButton('Settings');
     settingsButton.addEventListener('click', callbacks.onSettings);
 
-    const resetButton = createButton('Reset Play');
-    resetButton.addEventListener('click', callbacks.onResetPlay);
-
     const lobbyButton = createButton('Return to Lobby');
     lobbyButton.addEventListener('click', callbacks.onReturnToLobby);
 
-    buttonColumn.append(resumeButton, settingsButton, resetButton, lobbyButton);
+    buttonColumn.append(resumeButton, settingsButton);
+    if (!isMultiplayer) {
+      const resetButton = createButton('Reset Play');
+      resetButton.addEventListener('click', callbacks.onResetPlay);
+      buttonColumn.append(resetButton);
+    }
+    buttonColumn.append(lobbyButton);
     panel.appendChild(buttonColumn);
 
     this.overlay.appendChild(panel);

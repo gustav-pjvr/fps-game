@@ -92,25 +92,14 @@ export class WeaponManager {
     onReloadStart: (weaponId: string) => void,
     onLongShot: (distance: number) => void,
     onMuzzleFlash: (point: THREE.Vector3) => void,
+    /** Per-match damage overrides keyed by weapon id (see core/gameModes.ts) - e.g. Sniper Duel's
+     * sniper or 1 Shot 1 Kill's pistol guaranteeing a 1-hit kill. Absent/undefined for the default
+     * mode, which uses every weapon's own base `definition.damage` unmodified. */
+    damageOverrides?: Readonly<Record<string, number>>,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
-    const slots = await Promise.all(
-      definitionIds.map(async (id) => {
-        const definition = WEAPON_DEFINITIONS[id];
-        if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
-
-        const spec = WEAPON_MODEL_SPECS[id];
-        // No sourced model for melee weapons (Phase D) - a procedural placeholder stands in rather
-        // than blocking on a new asset (see createProceduralMeleeViewModel).
-        const { group, muzzleLocalOffset } = spec
-          ? createWeaponViewModel(definition, await loadGLTF(spec.path))
-          : createProceduralMeleeViewModel(definition);
-        group.visible = false;
-        camera.add(group);
-        return { weapon: new Weapon(definition), viewModel: group, muzzleLocalOffset };
-      }),
-    );
+    const slots = await Promise.all(definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id])));
 
     return new WeaponManager(
       camera,
@@ -124,6 +113,39 @@ export class WeaponManager {
       onLongShot,
       onMuzzleFlash,
     );
+  }
+
+  /** Shared by `create()` (initial loadout) and `replaceActiveWeapon` (Gun Game's kill-upgrade) -
+   * builds one fully-formed slot (weapon + attached view model) for a single weapon id. */
+  private static async buildSlot(camera: THREE.PerspectiveCamera, id: string, damageOverride: number | undefined): Promise<WeaponSlot> {
+    const definition = WEAPON_DEFINITIONS[id];
+    if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
+
+    const spec = WEAPON_MODEL_SPECS[id];
+    // No sourced model for melee weapons (Phase D) - a procedural placeholder stands in rather
+    // than blocking on a new asset (see createProceduralMeleeViewModel).
+    const { group, muzzleLocalOffset } = spec
+      ? createWeaponViewModel(definition, await loadGLTF(spec.path))
+      : createProceduralMeleeViewModel(definition);
+    group.visible = false;
+    camera.add(group);
+    return { weapon: new Weapon(definition, damageOverride), viewModel: group, muzzleLocalOffset };
+  }
+
+  /** Gun Game's kill-upgrade: replaces whatever's in the active slot with a fresh instance of
+   * `definitionId` - full ammo, no override, matching a normal "this is your new gun" moment
+   * rather than reusing the old Weapon's leftover ammo/cooldown state. Only ever meaningful for a
+   * single-slot loadout (Gun Game never has more than one weapon), but doesn't assume that -
+   * it only ever touches whichever slot is currently active. */
+  async replaceActiveWeapon(definitionId: string): Promise<void> {
+    const index = this.activeIndex;
+    const oldSlot = this.slots[index];
+    const newSlot = await WeaponManager.buildSlot(this.camera, definitionId, undefined);
+    if (oldSlot) {
+      this.camera.remove(oldSlot.viewModel);
+    }
+    newSlot.viewModel.visible = true;
+    this.slots[index] = newSlot;
   }
 
   private get active(): WeaponSlot {
@@ -153,6 +175,13 @@ export class WeaponManager {
 
   get weaponName(): string {
     return this.active.weapon.definition.name;
+  }
+
+  /** The active weapon's definition *id* (e.g. `'pistol'`) - distinct from `weaponName`/
+   * `weaponSlotNames`, which return the display name. Gun Game's kill-upgrade needs the id to
+   * pick a different weapon and to call `replaceActiveWeapon`. */
+  get activeWeaponId(): string {
+    return this.active.weapon.definition.id;
   }
 
   get weaponDescription(): string {
@@ -312,7 +341,8 @@ export class WeaponManager {
   }
 
   private firePellet(origin: THREE.Vector3, muzzleWorld: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
-    const { spreadRadians, adsSpreadMultiplier, damage, range } = this.active.weapon.definition;
+    const { spreadRadians, adsSpreadMultiplier, range } = this.active.weapon.definition;
+    const damage = this.active.weapon.effectiveDamage;
     const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
     const effectiveRange = range ?? HITSCAN_RANGE;
 

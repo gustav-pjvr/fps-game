@@ -13,8 +13,9 @@ import {
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
 } from '../../core/config.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../../core/gameModes.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
-import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
+import { ACCENT, TEXT, HAIRLINE, BG_RAISED, MOTION_EASE, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
 /** One row of the host's live player list - `dimmed` marks an empty/placeholder slot not yet
  * taken by a real player. Exported for JoinRoomScreen's own lobby-wait roster, which renders the
@@ -36,10 +37,12 @@ export function createPlayerRow(text: string, dimmed = false): HTMLDivElement {
  * room's whole lifetime. */
 export class CreateRoomScreen {
   private readonly overlay: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
   private readonly usernameInput: HTMLInputElement;
   private readonly codeDisplay: HTMLDivElement;
   private readonly killLimitSelect: HTMLSelectElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
+  private readonly gameModeSelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
@@ -60,6 +63,7 @@ export class CreateRoomScreen {
     this.overlay = createOverlay();
 
     const panel = createPanel();
+    this.panel = panel;
     // Widened (not lengthened) from 400px per user request, so the goose-difficulty selector below
     // can sit side by side with the kill-limit selector instead of stacking and pushing the panel
     // taller (which would force scrolling on this already-tall room screen).
@@ -99,13 +103,19 @@ export class CreateRoomScreen {
     this.codeDisplay.style.cssText =
       `font-size:2.2rem; font-weight:700; letter-spacing:0.3em; text-align:center; color:${ACCENT};` +
       ' padding:18px 0; background:rgba(255,255,255,0.05); border-radius:8px; margin-bottom:14px;' +
-      ' font-variant-numeric:tabular-nums;';
+      ` font-variant-numeric:tabular-nums; box-shadow:0 0 0 rgba(62,207,95,0); transition:box-shadow 0.5s ${MOTION_EASE};`;
     panel.appendChild(this.codeDisplay);
 
     const copyButton = createButton('Copy Code');
     copyButton.style.width = '100%';
     copyButton.addEventListener('click', () => {
       void navigator.clipboard.writeText(this.codeDisplay.textContent ?? '');
+      // A quick glow confirms the copy actually happened - clicking a button that gives no
+      // feedback at all reads as broken, especially for an action with no other visible result.
+      this.codeDisplay.style.boxShadow = `0 0 24px 4px ${ACCENT}66`;
+      setTimeout(() => {
+        this.codeDisplay.style.boxShadow = '0 0 0 rgba(62,207,95,0)';
+      }, 350);
     });
     panel.appendChild(copyButton);
 
@@ -153,6 +163,25 @@ export class CreateRoomScreen {
     settingsRow.append(killLimitColumn, gooseDifficultyColumn);
     panel.appendChild(settingsRow);
 
+    // Full-width row, not a third column - "1 Shot 1 Kill"/"Sniper Duel" labels are long enough
+    // that cramming a third select into the same row as kill-limit/goose-explosions would read
+    // cluttered at this panel width. Multiplayer-only, host-picked pre-match (per user request -
+    // single-player never has a mode).
+    const gameModeLabel = document.createElement('div');
+    gameModeLabel.textContent = 'Game mode:';
+    gameModeLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
+    panel.appendChild(gameModeLabel);
+    this.gameModeSelect = document.createElement('select');
+    this.gameModeSelect.style.cssText = this.killLimitSelect.style.cssText;
+    for (const mode of GAME_MODES) {
+      const optionElement = document.createElement('option');
+      optionElement.value = mode;
+      optionElement.textContent = GAME_MODE_LABELS[mode];
+      if (mode === DEFAULT_GAME_MODE) optionElement.selected = true;
+      this.gameModeSelect.appendChild(optionElement);
+    }
+    panel.appendChild(this.gameModeSelect);
+
     // Live player list (per user request): a real render loop over the current roster now, not
     // two fixed DOM rows - up to MULTIPLAYER_MAX_PLAYERS entries, re-rendered on every join/leave.
     const playerListLabel = document.createElement('div');
@@ -192,6 +221,7 @@ export class CreateRoomScreen {
    * live on the broker that a stale code might still (confusingly) connect to. */
   show(): void {
     this.overlay.style.display = 'flex';
+    attachScanSweep(this.panel);
     this.startButton.style.display = 'none';
     const hostUsername = normalizeUsername(this.usernameInput.value);
     this.usernameInput.value = hostUsername;
@@ -237,6 +267,14 @@ export class CreateRoomScreen {
         return;
       }
       this.connection = connection;
+    }).catch((error: unknown) => {
+      // Without this, any failure in the TURN-credential fetch or Peer construction above left
+      // this screen stuck on "Waiting for other players to join…" forever with no error and no
+      // way to retry short of a reload - a real, user-reported symptom. Surfacing it and
+      // re-arming the flow (a fresh Create Room click just calls show() again) is a strictly
+      // additive safety net regardless of what turns out to actually cause a given failure.
+      if (generation !== this.showGeneration) return;
+      this.setStatus(error instanceof Error ? error.message : 'Failed to create room - try again.');
     });
   }
 
@@ -254,9 +292,10 @@ export class CreateRoomScreen {
     const seed = generateMultiplayerSeed();
     const killLimit = Number(this.killLimitSelect.value);
     const gooseDifficulty = this.gooseDifficultySelect.value as GooseExplosionDifficulty;
+    const gameMode = this.gameModeSelect.value as GameMode;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, spawns, roster });
+    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, spawns, roster });
 
     const connection = this.connection;
     const hostRoster = this.hostRoster;
@@ -270,6 +309,7 @@ export class CreateRoomScreen {
       seed,
       killLimit,
       gooseDifficulty,
+      gameMode,
       ownSlot: HOST_SLOT,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,

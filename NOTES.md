@@ -2467,3 +2467,102 @@ confirmed via screenshot. The multiplayer fixes above are confirmed by the user'
 what broke in a real 3-peer session, not re-verified end-to-end by a fresh multi-browser test on my
 end for this round - worth a follow-up two/three-browser check if anything here still reads wrong
 live.
+
+## Post-launch batch: lobby crash root-caused and fixed, Nuke tier, game modes, audio, footsteps, motion polish
+
+A real WASM crash, four new game modes, an audio fix, networked footsteps, and a first real motion
+pass - all held locally (no push) per explicit user instruction until every item was done and
+signed off.
+
+**Return-to-lobby crash - root-caused via a live 2-browser repro, not guessed.** The user reported
+that after returning to the lobby, a new room/join attempt would silently do nothing until a full
+page reload. Reproducing an abrupt guest disconnect mid-match against a real dev server caught the
+actual failure via `page.on('pageerror')`:
+```
+RuntimeError: unreachable
+    at ...rapier3d-compat.js: rbNumColliders / removeRigidBody
+    at RemotePlayer.dispose (RemotePlayer.ts:166)
+    at Game.removeMultiplayerOpponent (Game.ts:1286)
+    at Object.onPeerDisconnected (Game.ts:605)
+```
+A WASM `unreachable` trap isn't a catch-and-move-on JS error - it can leave Rapier's WASM instance
+unreliable for every subsequent call, including a brand new match's own `PhysicsWorld.create()`,
+which is exactly the "everything just silently hangs, only a reload fixes it" symptom. Couldn't
+fully prove the precise internal Rapier assertion from outside the WASM module itself, but found a
+real, independently-confirmed gap: `Game.dispose()` disposes every `RemotePlayer` directly, *then*
+disposes the `PeerConnection` a few lines later - and `App.ts`'s **rematch** path
+(`restartMultiplayerMatch`) already knew this ordering needed a guard (it silences the connection's
+callbacks before calling `Game.dispose()`), but the plain **return-to-lobby** path never adopted
+the same guard, so a callback firing mid-teardown could re-enter `RemotePlayer.dispose()` on an
+already-torn-down entity. Fixed in two layers: (1) a `disposed` guard added to
+`RemotePlayer`/`Enemy`/`Target`/`Goose` (every physics-backed entity had the same latent gap, not
+just RemotePlayer) so a second `dispose()` call anywhere is a safe no-op instead of re-entering
+Rapier's removal path; (2) `App.returnToLobby()` now silences connection callbacks before
+`Game.dispose()`, mirroring the rematch path exactly. Also added `.catch()` to the
+`hostRoom()`/`joinRoom()` promise chains in both room screens (previously any failure there left
+the screen stuck with no error and no retry - independently matches the reported symptom regardless
+of root cause). Re-ran the same disconnect-then-return-to-lobby-then-create-a-new-room repro after
+the fix: no `pageerror`, second room created successfully, lobby renders normally instead of black.
+
+**Goose "Nuke" difficulty + rebalance.** Added a 4th `GooseExplosionDifficulty` ('nuke': radius 45,
+maxDamage 500 - `computeExplosionDamage`'s existing linear falloff means this reads as "anyone in
+the blast dies" without needing a separate instant-kill code path) and bumped the other three
+tiers' damage ~15-20%. Confirmed via the earlier difficulty-list research that every consumer does
+a generic keyed lookup/loop - no other file needed touching.
+
+**Multiplayer game modes (host-picked pre-match, multiplayer-only per explicit follow-up
+instruction - single-player never has a mode).** New `core/gameModes.ts`: 1 Shot 1 Kill (pistol
+only, damage override to guarantee a 1-hit kill), Sniper Duel (sniper only, same override - base
+sniper damage, 90, isn't quite lethal against 100 HP as-is), Gun Game (one random starting gun,
+never the knife; every kill upgrades to a new random gun; dying does *not* reset the gun - which
+falls out for free since respawn already only ever resets ammo, never weapon identity), Knife
+Only. Needed two new primitives that didn't exist: a `damageOverride` on `Weapon` (per-instance,
+not mutating the shared `readonly`-typed `WEAPON_DEFINITIONS`) and
+`WeaponManager.replaceActiveWeapon()` for Gun Game's runtime swap. `gameMode` threaded through the
+same six shapes `gooseDifficulty` was added to a few commits ago (`MatchStartMessage`,
+`WelcomeMessage.activeMatch`, `MultiplayerSession`, `MultiplayerMatchStartParams`,
+`RematchSettings`, `MultiplayerMatchEndResult`), plus a third selector in `CreateRoomScreen`/
+`matchEndScreen` (as a full-width row, not a third column - the mode labels are too long to cram in
+next to kill-limit/goose-difficulty at this panel width). Live-verified 3 of 4 modes in a real
+2-browser match (Knife Only/Sniper Duel/1 Shot 1 Kill all correctly restricted both host and guest
+loadouts); Gun Game shares the identical `resolveWeaponLoadout` → `WeaponManager.create()` path so
+the initial-loadout mechanism is covered, but its kill-upgrade transition needs real combat to
+verify and wasn't re-tested live this round. Also: hid the Pause Menu's "Reset Play" button in
+multiplayer (it's single-player's own practice-reset feature and does nothing in a multiplayer
+match, per user report).
+
+**Audio.** Opponent gunshots were audibly too soft at real PvP engagement range - confirmed the
+existing `enemyGunshotVolume`'s full-volume inner radius (10 units) is tiny next to
+`MULTIPLAYER_SPAWN_RADIUS` (35), so most real close-quarters fights already sat in the linear
+falloff zone. Rather than widen the shared constants (would also change single-player enemy/goose
+audio, not asked for), added a separate `multiplayerGunshotVolume` with its own, more generous
+`MULTIPLAYER_GUNSHOT_*` constants, sharing the same underlying falloff shape via a new
+`distanceGainFalloff` helper. Also added networked footsteps (`FootstepEventMessage`, relayed like
+every other per-event gameplay message) - `SoundEngine.playFootstep` gained the same
+`volumeScale`/`pan` parameters `playGunshot` already had. Explosion sound (added a commit ago) was
+re-confirmed by code review to already reach guests correctly - `GooseManager`'s `onExplosion`
+callback isn't host-gated, so it fires independently on every client whether the explosion was
+decided locally (host) or arrived via a `gooseExploded` broadcast (guest).
+
+**Motion/UI polish pass** (per user request: "flashy design" while keeping the current look).
+Researched the existing token system first (dark tactical theme, accent green, chamfered panels,
+corner-bracket HUD framing, Chakra Petch/Inter) and confirmed the current motion language was
+essentially nothing - opacity fades, width/color transitions, one button hover nudge, zero
+keyframe animations anywhere. Signature move: a thin accent-green scan-line sweeps down every
+panel the instant it opens (`menuStyles.ts`'s `attachScanSweep`, injected once via a `<style>` tag
+since inline `style.cssText` can't declare `@keyframes` and this codebase has never had a CSS
+file) - applied consistently to every room screen and the match-end screen rather than inventing a
+different entrance per surface, so it reads as one system. Everything else stays quiet by
+comparison except a couple of targeted, single-use moments: corner brackets draw in staggered on
+the main menu (a HUD "calibrating" read), the match-end title gets its own scale/letter-spacing
+reveal (the most emotionally-charged moment in the app, deliberately given extra motion budget),
+podium rows stagger in rank by rank, HUD health rows slide in when an opponent joins and flash red
+on an actual hit (not every update tick - tracked via a `previousHealth` guard), and minimap dots
+get a continuous slow pulse (reads as a live radar blip). Verified via screenshot - no layout
+breakage, resting states match the pre-existing design (the screenshots can't show motion itself,
+just confirm nothing is stuck mid-animation or broken).
+
+**Verification:** `npx tsc --noEmit`, `npm run test:unit` (53/53), `npm run build` all clean after
+every phase. The crash fix has a real live re-repro (not just code review) confirming it. Game
+modes: 3/4 live-verified, Gun Game's kill-upgrade not live-tested (needs real combat). Held
+entirely local per explicit instruction - no push until the user reviews and says so.

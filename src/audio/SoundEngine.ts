@@ -127,8 +127,12 @@ export class SoundEngine {
     this.noiseBurst(0.03, 3000, 'highpass', 0.18);
   }
 
-  playFootstep(): void {
-    this.noiseBurst(0.06, 300, 'lowpass', 0.12);
+  /** `volumeScale`/`pan` follow the same convention as `playGunshot` - used for a multiplayer
+   * opponent's footsteps (per user request: "add footsteps... heard by all players"), which need
+   * distance attenuation/positioning the player's own footsteps never did (always played at
+   * volumeScale=1, pan=0, i.e. these two defaults). */
+  playFootstep(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.06, 300, 'lowpass', 0.12 * volumeScale, pan);
   }
 
   playHitConfirm(): void {

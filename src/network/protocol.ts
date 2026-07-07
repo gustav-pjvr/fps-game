@@ -5,6 +5,7 @@
  * relay logic) transparently, unchanged, tagged with the ORIGINAL sender's own slot. */
 
 import type { GooseExplosionDifficulty } from '../core/config.ts';
+import type { GameMode } from '../core/gameModes.ts';
 
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
  * the host, slots 1-3 are assigned to guests in join order by the host (see HostRoster.ts) and are
@@ -49,6 +50,7 @@ export interface WelcomeMessage {
     seed: number;
     killLimit: number;
     gooseDifficulty: GooseExplosionDifficulty;
+    gameMode: GameMode;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
   };
@@ -83,6 +85,7 @@ export interface MatchStartMessage {
   seed: number;
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  gameMode: GameMode;
   spawns: { slot: PlayerSlot; x: number; z: number }[];
   roster: RosterEntry[];
 }
@@ -152,6 +155,19 @@ export interface PlayerDiedMessage {
  * instant teleport-speed slide across the map. */
 export interface RespawnEventMessage {
   type: 'respawnEvent';
+  senderSlot: PlayerSlot;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Sent by a client each time its own player takes a footstep (per user request: other players
+ * should hear each other's footsteps, not just gunfire) - carries the shooter's position so the
+ * receiving end can position/attenuate it the same way opponent gunshots already are. Discrete
+ * per-step events on the sending side already (not a tick-rate stream), so this adds negligible
+ * bandwidth on top of everything else. */
+export interface FootstepEventMessage {
+  type: 'footstepEvent';
   senderSlot: PlayerSlot;
   x: number;
   y: number;
@@ -259,6 +275,7 @@ export type NetworkMessage =
   | DamageEventMessage
   | PlayerDiedMessage
   | RespawnEventMessage
+  | FootstepEventMessage
   | HostLeftRoomMessage
   | PlayerLeftMessage
   | PlayerJoinedMatchMessage
@@ -279,6 +296,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'damageEvent',
   'playerDied',
   'respawnEvent',
+  'footstepEvent',
   'hostLeftRoom',
   'playerLeft',
   'playerJoinedMatch',

@@ -206,17 +206,19 @@ export class App {
     const seed = settings.newMap ? generateMultiplayerSeed() : previousSeed;
     const killLimit = settings.killLimit;
     const gooseDifficulty = settings.gooseDifficulty;
+    const gameMode = settings.gameMode;
     // The host's *current* roster (whoever's actually still connected, including anyone who
     // rejoined since the last match started) rather than the original match-start roster, which
     // could still list a slot that's since disconnected for good.
     const roster = hostRoster?.currentRoster() ?? this.currentMultiplayerSession.roster;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, spawns, roster });
+    connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, spawns, roster });
     void this.restartMultiplayerMatch(connection, role, {
       seed,
       killLimit,
       gooseDifficulty,
+      gameMode,
       ownSlot,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,
@@ -238,9 +240,17 @@ export class App {
     void this.returnToLobby();
   }
 
-  /** Wired to the death screen's "Return to Lobby" button: tears down the match and rebuilds a
-   * fresh lobby scene so the player can change loadout/settings before starting another. */
+  /** Wired to the death screen's "Return to Lobby" button (and, via handleReturnToLobbyFromMatchEnd,
+   * MatchEndScreen's) - tears down the match and rebuilds a fresh lobby scene so the player can
+   * change loadout/settings before starting another. */
   private async returnToLobby(): Promise<void> {
+    // Same silencing restartMultiplayerMatch already does before its own Game.dispose() call, for
+    // the same reason: closing the connection a few lines inside Game.dispose() can still fire a
+    // callback (onPeerDisconnected in particular) that was left wired to a Game instance about to
+    // be torn down - which then re-disposes an already-disposed RemotePlayer. Confirmed via a live
+    // 2-browser repro that this exact gap (present only on this return-to-lobby path, not the
+    // rematch path) produced a Rapier WASM trap that left the whole page unresponsive until reload.
+    this.currentMultiplayerSession?.connection.setCallbacks({ onConnected: () => {}, onPeerDisconnected: () => {}, onError: () => {}, onMessage: () => {} });
     this.currentGame?.dispose();
     this.currentGame = null;
     this.currentMultiplayerSession = null;

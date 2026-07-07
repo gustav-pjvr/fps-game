@@ -97,6 +97,7 @@ export class Enemy implements Entity, Damageable {
 
   private health: number;
   private dead = false;
+  private disposed = false;
   private attackCooldown = 0;
   private state: EnemyState = 'idle';
   private readonly spawnPosition: THREE.Vector3;
@@ -614,7 +615,12 @@ export class Enemy implements Entity, Damageable {
     this.mesh.position.set(x, y, z);
   }
 
+  /** Guarded against a second call - see RemotePlayer.ts's identical guard for why: re-entering
+   * Rapier's removal path for an already-removed collider/rigid body isn't guaranteed safe (a
+   * live 2-browser repro caught this exact class of bug producing a WASM-level crash). */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.releaseEngagementSlot();
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.unregisterCollider(this.headCollider);

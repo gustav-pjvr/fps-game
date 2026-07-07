@@ -5,7 +5,7 @@ import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/
 import { getOrCreateRejoinToken } from '../../core/multiplayerRejoin.ts';
 import { MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
 import { createPlayerRow } from './CreateRoomScreen.ts';
-import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
+import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
 /** Guest side of the room-code flow: type in a code someone gave you, connect, verify the
  * connection with a `hello`/`welcome` exchange (see HostRoster.ts), then wait on a live roster for
@@ -16,6 +16,7 @@ import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createP
  * lobby-wait view entirely and jumps straight into the running match. */
 export class JoinRoomScreen {
   private readonly overlay: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
   private readonly usernameInput: HTMLInputElement;
   private readonly codeInput: HTMLInputElement;
   private readonly joinButton: HTMLButtonElement;
@@ -43,6 +44,7 @@ export class JoinRoomScreen {
     this.overlay = createOverlay();
 
     const panel = createPanel();
+    this.panel = panel;
     panel.style.width = '400px';
     panel.appendChild(createPanelTitle('JOIN ROOM'));
 
@@ -117,6 +119,7 @@ export class JoinRoomScreen {
 
   show(): void {
     this.overlay.style.display = 'flex';
+    attachScanSweep(this.panel);
     this.codeInput.value = '';
     this.codeInput.style.display = 'block';
     this.joinButton.style.display = 'block';
@@ -177,6 +180,7 @@ export class JoinRoomScreen {
               seed: message.activeMatch.seed,
               killLimit: message.activeMatch.killLimit,
               gooseDifficulty: message.activeMatch.gooseDifficulty,
+              gameMode: message.activeMatch.gameMode,
               ownSlot: message.yourSlot,
               spawns: [{ slot: message.yourSlot, point: message.activeMatch.spawnPoint }],
               roster: message.roster,
@@ -202,6 +206,7 @@ export class JoinRoomScreen {
             seed: message.seed,
             killLimit: message.killLimit,
             gooseDifficulty: message.gooseDifficulty,
+            gameMode: message.gameMode,
             ownSlot: this.ownSlot ?? 0,
             spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
             roster: message.roster,
@@ -219,6 +224,14 @@ export class JoinRoomScreen {
         return;
       }
       this.connection = connection;
+    }).catch((error: unknown) => {
+      // Without this, any failure in the TURN-credential fetch or Peer construction above left
+      // this screen stuck on "Connecting…" forever with no error and no way to retry short of a
+      // reload - a real, user-reported symptom. Surfacing it and re-enabling the Join button is a
+      // strictly additive safety net regardless of what turns out to actually cause a given failure.
+      if (generation !== this.joinGeneration) return;
+      this.setStatus(error instanceof Error ? error.message : 'Failed to join room - try again.');
+      this.joinButton.disabled = false;
     });
   }
 

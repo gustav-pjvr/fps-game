@@ -1,4 +1,4 @@
-import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, HAIRLINE } from './menuStyles.ts';
+import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, HAIRLINE, MOTION_EASE } from './menuStyles.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts';
 
 export interface MainMenuCallbacks {
@@ -22,9 +22,11 @@ export class MainMenu {
     this.element = document.createElement('div');
     this.element.style.cssText = 'position:absolute; inset:0; display:none; pointer-events:none; z-index:15;';
 
-    for (const corner of ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const) {
-      this.element.appendChild(createCornerBracket(corner));
-    }
+    // Staggered, not simultaneous - reads as a HUD calibrating corner by corner rather than all
+    // four popping in at once.
+    ['top-left', 'top-right', 'bottom-left', 'bottom-right'].forEach((corner, i) => {
+      this.element.appendChild(createCornerBracket(corner as 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right', i * 60));
+    });
 
     const titleBlock = document.createElement('div');
     titleBlock.style.cssText = 'position:absolute; top:52px; left:56px; pointer-events:none;';
@@ -36,10 +38,12 @@ export class MainMenu {
     title.textContent = 'GOOSE-BUSTER';
     title.style.cssText =
       `font-family:${DISPLAY_FONT}; font-size:2.4rem; font-weight:700; letter-spacing:0.1em;` +
-      ' color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.7);';
+      ` color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.7); animation:titleReveal 0.5s ${MOTION_EASE} 0.1s both;`;
 
     const rule = document.createElement('div');
-    rule.style.cssText = `width:56px; height:3px; background:${ACCENT}; margin-top:14px;`;
+    rule.style.cssText =
+      `width:56px; height:3px; background:${ACCENT}; margin-top:14px; transform-origin:left;` +
+      ` animation:ruleGrow 0.4s ${MOTION_EASE} 0.4s both;`;
 
     titleBlock.append(eyebrow, title, rule);
     this.element.appendChild(titleBlock);

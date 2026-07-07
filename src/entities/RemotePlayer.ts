@@ -53,6 +53,7 @@ export class RemotePlayer implements Entity, Damageable {
 
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly collider: RAPIER.Collider;
+  private disposed = false;
 
   private readonly mixer: THREE.AnimationMixer;
   private readonly idleAction: THREE.AnimationAction | undefined;
@@ -196,7 +197,18 @@ export class RemotePlayer implements Entity, Damageable {
     return this.mesh.position;
   }
 
+  /** Guarded against a second call - confirmed via a live 2-browser repro to be a real risk, not
+   * theoretical: `Game.dispose()` disposes every RemotePlayer directly, then disposes the
+   * PeerConnection a few lines later, and closing that connection can still fire an
+   * `onPeerDisconnected` callback that was never silenced first (see App.ts's teardown-ordering
+   * fix) - which calls `removeMultiplayerOpponent` -> this same `dispose()` a second time. Rapier
+   * doesn't tolerate re-removing an already-removed rigid body/collider: the second call trapped
+   * inside the WASM module itself (`RuntimeError: unreachable` in `removeRigidBody`), which is
+   * unrecoverable for the rest of that page - explaining the "everything just hangs, only a reload
+   * fixes it" symptom. This guard, plus the callback-silencing fix, close it from both ends. */
   dispose(scene: THREE.Scene): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.physics.unregisterCollider(this.collider);
     this.physics.world.removeCollider(this.collider, true);
     this.physics.world.removeRigidBody(this.rigidBody);

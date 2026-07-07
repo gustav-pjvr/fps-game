@@ -6,8 +6,21 @@ export class Weapon {
   private reloading = false;
   private reloadTimeRemaining = 0;
 
-  constructor(readonly definition: WeaponDefinition) {
+  /** `damageOverride`, if present, wins over `definition.damage` for every shot this weapon fires -
+   * how a per-match game mode (see core/gameModes.ts) guarantees a 1-hit kill for a specific
+   * weapon (e.g. Sniper Duel's sniper, 1 Shot 1 Kill's pistol) without mutating the shared,
+   * `readonly`-typed `WEAPON_DEFINITIONS` object those match modes don't otherwise touch. */
+  constructor(
+    readonly definition: WeaponDefinition,
+    readonly damageOverride?: number,
+  ) {
     this.ammoInMagazine = definition.magazineSize;
+  }
+
+  /** What `WeaponManager.firePellet` should actually apply per hit - the override if this weapon
+   * has one, otherwise the definition's own base damage. */
+  get effectiveDamage(): number {
+    return this.damageOverride ?? this.definition.damage;
   }
 
   get ammo(): number {

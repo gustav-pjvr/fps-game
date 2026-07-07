@@ -10,6 +10,8 @@ import {
 import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../core/gameModes.ts';
+import { MOTION_EASE, attachScanSweep } from './menu/menuStyles.ts';
 
 export type MultiplayerMatchEndReason = 'killLimit' | 'opponentDisconnected';
 
@@ -30,6 +32,7 @@ export interface MultiplayerMatchEndResult {
   placements: MultiplayerPlacement[];
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  gameMode: GameMode;
   role: MultiplayerRole;
   connection: PeerConnection;
 }
@@ -42,6 +45,7 @@ export interface MultiplayerMatchEndResult {
 export interface RematchSettings {
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  gameMode: GameMode;
   /** true generates a fresh world seed (same as the original "always randomize" behavior); false
    * reuses the map both players just fought on, for a direct rematch on the same terrain. */
   newMap: boolean;
@@ -65,6 +69,7 @@ export class MatchEndScreen {
   private readonly hostSettings: HTMLDivElement;
   private readonly killLimitSelect: HTMLSelectElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
+  private readonly gameModeSelect: HTMLSelectElement;
   private readonly newMapCheckbox: HTMLInputElement;
   private readonly rematchButton: HTMLButtonElement;
 
@@ -135,6 +140,21 @@ export class MatchEndScreen {
 
     settingsRow.append(killLimitColumn, gooseDifficultyColumn);
 
+    // Full-width, not a third column in settingsRow - see CreateRoomScreen's identical choice for
+    // why (the mode labels are long enough to read cluttered crammed into a third column here).
+    const gameModeLabel = document.createElement('div');
+    gameModeLabel.textContent = 'Game mode:';
+    gameModeLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    this.gameModeSelect = document.createElement('select');
+    this.gameModeSelect.style.cssText = this.killLimitSelect.style.cssText;
+    for (const mode of GAME_MODES) {
+      const optionElement = document.createElement('option');
+      optionElement.value = mode;
+      optionElement.textContent = GAME_MODE_LABELS[mode];
+      if (mode === DEFAULT_GAME_MODE) optionElement.selected = true;
+      this.gameModeSelect.appendChild(optionElement);
+    }
+
     const newMapLabel = document.createElement('label');
     newMapLabel.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;';
     this.newMapCheckbox = document.createElement('input');
@@ -144,7 +164,7 @@ export class MatchEndScreen {
     newMapText.textContent = 'Generate a new map';
     newMapLabel.append(this.newMapCheckbox, newMapText);
 
-    this.hostSettings.append(settingsRow, newMapLabel);
+    this.hostSettings.append(settingsRow, gameModeLabel, this.gameModeSelect, newMapLabel);
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = 'display:flex; gap:12px; margin-top:4px;';
@@ -154,6 +174,7 @@ export class MatchEndScreen {
       onRematchClick({
         killLimit: Number(this.killLimitSelect.value),
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
+        gameMode: this.gameModeSelect.value as GameMode,
         newMap: this.newMapCheckbox.checked,
       }),
     );
@@ -169,6 +190,14 @@ export class MatchEndScreen {
   show(result: MultiplayerMatchEndResult): void {
     this.titleElement.textContent =
       result.reason === 'opponentDisconnected' ? 'OPPONENT DISCONNECTED' : result.won ? 'VICTORY' : 'DEFEAT';
+    // Re-triggers every show(), not just the first - this is the one moment in the whole app
+    // that most deserves an emphasized entrance (the match's actual outcome), so it gets its own
+    // small extra beat beyond the shared scan-sweep below. Reflow trick (see multiplayerHud's hit
+    // flash) so a second match-end while an earlier animation is still technically "the same"
+    // restarts it instead of no-opping.
+    this.titleElement.style.animation = 'none';
+    void this.titleElement.offsetWidth;
+    this.titleElement.style.animation = `titleReveal 0.6s ${MOTION_EASE} both`;
 
     const ranked = [...result.placements].sort((a, b) => b.score - a.score);
     ranked.forEach((entry, index) => {
@@ -176,6 +205,11 @@ export class MatchEndScreen {
       if (!row) return; // more placements than podium rows shouldn't happen at MULTIPLAYER_MAX_PLAYERS, defensive
       setPodiumRow(row, index + 1, entry);
       row.row.style.display = 'flex';
+      // Staggered, not simultaneous - reads as the podium filling in rank by rank rather than the
+      // whole list appearing at once.
+      row.row.style.animation = 'none';
+      void row.row.offsetWidth;
+      row.row.style.animation = `rowSlideIn 0.3s ${MOTION_EASE} ${150 + index * 90}ms both`;
     });
     for (let i = ranked.length; i < this.podiumRows.length; i++) this.podiumRows[i]!.row.style.display = 'none';
 
@@ -188,9 +222,11 @@ export class MatchEndScreen {
       this.killLimitSelect.value = String(result.killLimit);
       if (!this.killLimitSelect.value) this.killLimitSelect.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
       this.gooseDifficultySelect.value = result.gooseDifficulty;
+      this.gameModeSelect.value = result.gameMode;
     }
 
     this.element.style.display = 'flex';
+    attachScanSweep(this.element);
   }
 
   hide(): void {

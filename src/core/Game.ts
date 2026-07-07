@@ -45,6 +45,9 @@ import {
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
   type GooseExplosionDifficulty,
+  MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE,
+  MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE,
+  MULTIPLAYER_GUNSHOT_MIN_VOLUME,
   MULTIPLAYER_RESPAWN_DELAY,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_X,
@@ -60,6 +63,7 @@ import {
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { pickRandomRespawnPoint } from './multiplayerSpawn.ts';
 import { applyPlayerDied } from './multiplayerScoring.ts';
+import { DEFAULT_GAME_MODE, pickGunGameUpgrade, resolveWeaponLoadout, type GameMode } from './gameModes.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
@@ -115,6 +119,11 @@ interface ActiveMultiplayer {
   /** Goose explosion blast radius/damage tuning - the host's choice, fixed for the match, carried
    * on MatchStartMessage alongside killLimit. */
   readonly gooseDifficulty: GooseExplosionDifficulty;
+  /** Loadout/damage-rules mode - the host's choice, fixed for the match, carried on
+   * MatchStartMessage alongside killLimit/gooseDifficulty. Drives both the initial
+   * WeaponManager.create() call (see create()) and Gun Game's kill-upgrade hook (see the
+   * 'playerDied' case below). */
+  readonly gameMode: GameMode;
   /** Host-only (see MultiplayerSession.hostRoster) - non-null exactly when role==='host', used to
    * resolve a mid-match join/rejoin's hello (see onHostHello below) and to periodically free
    * expired rejoin reservations (see hostSweepAccumulator). */
@@ -141,15 +150,27 @@ function waitForNextFrame(): Promise<void> {
  * Lobby/roster messages (hello/welcome/rosterUpdate/roomFull) and host-authored broadcasts
  * (matchStart/hostLeftRoom/playerLeft/playerJoinedMatch) are deliberately excluded - the host
  * authors those itself, they never arrive from elsewhere to relay. */
-const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set(['playerSnapshot', 'fireEvent', 'damageEvent', 'playerDied', 'respawnEvent']);
+const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set(['playerSnapshot', 'fireEvent', 'damageEvent', 'playerDied', 'respawnEvent', 'footstepEvent']);
 
-/** Linear gain falloff for enemy gunshots: full volume inside FULL_VOLUME_RANGE, fading to
- * MIN_VOLUME (never silent - an inaudible shot that still damages would read as unfair) at
- * AUDIBLE_RANGE. See the ENEMY_GUNSHOT_* constants' comment in config.ts. */
-function enemyGunshotVolume(distance: number): number {
-  const t = (distance - ENEMY_GUNSHOT_FULL_VOLUME_RANGE) / (ENEMY_GUNSHOT_AUDIBLE_RANGE - ENEMY_GUNSHOT_FULL_VOLUME_RANGE);
+/** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`
+ * (never silent - an inaudible shot that still damages would read as unfair) at `audibleRange`. */
+function distanceGainFalloff(distance: number, fullVolumeRange: number, audibleRange: number, minVolume: number): number {
+  const t = (distance - fullVolumeRange) / (audibleRange - fullVolumeRange);
   const clamped = Math.max(0, Math.min(1, t));
-  return 1 - clamped * (1 - ENEMY_GUNSHOT_MIN_VOLUME);
+  return 1 - clamped * (1 - minVolume);
+}
+
+/** Single-player enemy gunshots and goose explosions - see the ENEMY_GUNSHOT_* constants'
+ * comment in config.ts. */
+function enemyGunshotVolume(distance: number): number {
+  return distanceGainFalloff(distance, ENEMY_GUNSHOT_FULL_VOLUME_RANGE, ENEMY_GUNSHOT_AUDIBLE_RANGE, ENEMY_GUNSHOT_MIN_VOLUME);
+}
+
+/** Multiplayer opponent gunshots/footsteps specifically - a deliberately more generous full-volume
+ * range than enemyGunshotVolume (see MULTIPLAYER_GUNSHOT_* constants' comment in config.ts for
+ * why this needed to be a separate function rather than widening the shared one). */
+function multiplayerGunshotVolume(distance: number): number {
+  return distanceGainFalloff(distance, MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE, MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE, MULTIPLAYER_GUNSHOT_MIN_VOLUME);
 }
 
 /** Stereo pan (-1 full left .. 1 full right) for a sound at `sourcePosition`, from the perspective
@@ -493,7 +514,21 @@ export class Game {
         sound.playPlayerHurt();
         damageVignette.trigger();
       },
-      onFootstep: () => sound.playFootstep(),
+      onFootstep: () => {
+        sound.playFootstep();
+        // Per user request: other players should hear each other's footsteps, not just gunfire -
+        // the receiving end positions/attenuates it the same way opponent gunshots already are
+        // (see the 'footstepEvent' case below). `player` isn't assigned in this outer scope until
+        // after this very call resolves, but this callback only fires later, during gameplay - by
+        // then it's safely assigned, same as every other closure captured in this constructor call.
+        multiplayer?.connection.send({
+          type: 'footstepEvent',
+          senderSlot: multiplayer.ownSlot,
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+        });
+      },
     });
 
     const killFeed = new KillFeed(hudRoot);
@@ -507,10 +542,13 @@ export class Game {
     const longShotCallout = new LongShotCallout(hudRoot);
 
     onProgress?.('Loading weapons…', 0.05);
+    // Single-player never has a mode (per user request) - resolveWeaponLoadout('default') is the
+    // same unrestricted 5-weapon loadout this was a literal array for before game modes existed.
+    const loadout = resolveWeaponLoadout(multiplayer?.gameMode ?? DEFAULT_GAME_MODE);
     const weaponManager = await WeaponManager.create(
       renderer.camera,
       physics,
-      ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'],
+      loadout.weaponIds,
       scopeOverlay,
       (point, isEntityHit) => {
         impactMarkers.spawn(point, isEntityHit);
@@ -542,6 +580,7 @@ export class Game {
       (weaponId) => sound.playReloadClick(weaponId),
       (distance) => longShotCallout.show(distance),
       (point) => muzzleFlash.spawn(point),
+      loadout.damageOverrides,
     );
 
     onProgress?.('Loading combatants…', 0.1);
@@ -649,6 +688,7 @@ export class Game {
         multiplayerHud,
         killLimit: multiplayer.killLimit,
         gooseDifficulty: multiplayer.gooseDifficulty,
+        gameMode: multiplayer.gameMode,
         hostRoster: multiplayer.role === 'host' ? multiplayer.hostRoster ?? null : null,
         snapshotAccumulator: 0,
         hostSweepAccumulator: 0,
@@ -679,12 +719,16 @@ export class Game {
     );
     // PauseMenu is created before SettingsPanel so the settings overlay (later DOM sibling)
     // paints above it - opening Settings from the pause menu must show over it, not behind it.
-    const pauseMenu = new PauseMenu(hudRoot, {
-      onResume: () => input.requestPointerLock(),
-      onSettings: () => settingsPanel.show(),
-      onResetPlay: () => gameRef.current?.resetPlay(),
-      onReturnToLobby: () => onReturnToLobby?.(),
-    });
+    const pauseMenu = new PauseMenu(
+      hudRoot,
+      {
+        onResume: () => input.requestPointerLock(),
+        onSettings: () => settingsPanel.show(),
+        onResetPlay: () => gameRef.current?.resetPlay(),
+        onReturnToLobby: () => onReturnToLobby?.(),
+      },
+      multiplayer !== undefined,
+    );
     const settingsPanel = new SettingsPanel(
       hudRoot,
       () => settingsPanel.hide(),
@@ -784,6 +828,7 @@ export class Game {
                 seed: message.seed,
                 killLimit: message.killLimit,
                 gooseDifficulty: message.gooseDifficulty,
+                gameMode: message.gameMode,
                 ownSlot: activeMultiplayer.session.ownSlot,
                 spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
                 roster: message.roster,
@@ -812,7 +857,7 @@ export class Game {
               muzzleFlash.spawn(origin);
               const distance = origin.distanceTo(player.position);
               const pan = computeStereoPan(player.position, player.facingYaw, origin);
-              sound.playGunshot(message.weaponId, enemyGunshotVolume(distance), pan);
+              sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance), pan);
               break;
             }
             case 'damageEvent':
@@ -838,6 +883,14 @@ export class Game {
               // scoped to "only if I'm the one who got this particular kill" now that any of up to
               // 3 other players could have been the actual killer, not always me.
               if (message.killerSlot === activeMultiplayer.session.ownSlot) game.healLocalPlayerToFull();
+              // Gun Game's kill-upgrade: only the killer's own client acts on its own kill (each
+              // client is already authoritative over its own weapon state, same as every other
+              // per-client-authoritative pattern in this protocol) - dying does NOT reset the
+              // weapon (per user request), which already falls out of the fact that respawn only
+              // ever refills ammo, never touches weapon identity (see Weapon reset comments).
+              if (activeMultiplayer.gameMode === 'gunGame' && message.killerSlot === activeMultiplayer.session.ownSlot) {
+                void weaponManager.replaceActiveWeapon(pickGunGameUpgrade(weaponManager.activeWeaponId));
+              }
               // "A goose spawns whenever a player dies" - a dying guest can't spawn its own
               // authoritative goose (see GooseManager's class comment), so the host does it here on
               // that guest's behalf the moment its playerDied arrives. The host's own death instead
@@ -882,6 +935,13 @@ export class Game {
               opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
               break;
             }
+            case 'footstepEvent': {
+              const origin = new THREE.Vector3(message.x, message.y, message.z);
+              const distance = origin.distanceTo(player.position);
+              const pan = computeStereoPan(player.position, player.facingYaw, origin);
+              sound.playFootstep(multiplayerGunshotVolume(distance), pan);
+              break;
+            }
             case 'hostLeftRoom':
               game.onOpponentLeftRoom?.();
               break;
@@ -921,6 +981,7 @@ export class Game {
                 seed: getWorldSeed(),
                 killLimit: activeMultiplayer.killLimit,
                 gooseDifficulty: activeMultiplayer.gooseDifficulty,
+                gameMode: activeMultiplayer.gameMode,
                 scoreboard: Array.from(game.multiplayerScoreboard, ([slot, score]) => ({ slot, score })),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
               },
@@ -1477,6 +1538,7 @@ export class Game {
       placements,
       killLimit: this.multiplayer.killLimit,
       gooseDifficulty: this.multiplayer.gooseDifficulty,
+      gameMode: this.multiplayer.gameMode,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
     });

@@ -1,4 +1,5 @@
 import type { PlayerSlot } from '../network/protocol.ts';
+import { MOTION_EASE, ensureMotionKeyframesInjected } from './menu/menuStyles.ts';
 
 const HEALTH_BAR_WIDTH = 140;
 
@@ -18,11 +19,17 @@ interface HealthRow {
   readonly row: HTMLDivElement;
   readonly fill: HTMLDivElement;
   readonly text: HTMLDivElement;
+  /** Last-seen health value - lets setHealthRow detect an actual decrease (a hit) to flash on,
+   * rather than flashing on every update() tick regardless of whether anything changed. */
+  previousHealth: number;
 }
 
 function createHealthRow(label: string): HealthRow {
+  ensureMotionKeyframesInjected();
   const row = document.createElement('div');
-  row.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:6px;';
+  row.style.cssText =
+    'display:flex; align-items:center; gap:8px; margin-bottom:6px; border-radius:3px;' +
+    ` animation:rowSlideIn 0.3s ${MOTION_EASE} both;`;
 
   const labelElement = document.createElement('div');
   labelElement.textContent = label;
@@ -44,7 +51,9 @@ function createHealthRow(label: string): HealthRow {
   text.style.cssText = 'width:34px; font-size:0.75rem; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
   row.appendChild(text);
 
-  return { row, fill, text };
+  // -1 is a sentinel "no baseline yet" - health can't actually be negative, so the very first
+  // setHealthRow call never misreads "went from nothing to something" as a hit.
+  return { row, fill, text, previousHealth: -1 };
 }
 
 /** Multiplayer-only HUD replacement for the single-player Hud's score text and health bar (see
@@ -140,6 +149,17 @@ export class MultiplayerHud {
     row.fill.style.width = `${ratio * 100}%`;
     row.fill.style.background = healthColor(ratio);
     row.text.textContent = `${Math.ceil(Math.max(0, current))}`;
+
+    // A brief red flash on a real health drop - a "hit landed" cue on the HUD itself, distinct
+    // from the screen-edge DamageVignette (own player only) and legible for opponent rows too.
+    if (row.previousHealth >= 0 && current < row.previousHealth) {
+      row.row.style.animation = 'none';
+      // Reflow before re-adding the animation, or a second hit within the first one's duration
+      // wouldn't restart it (the browser sees "same animation, already running" and no-ops).
+      void row.row.offsetWidth;
+      row.row.style.animation = `hitFlash 0.35s ${MOTION_EASE}`;
+    }
+    row.previousHealth = current;
   }
 
   dispose(): void {

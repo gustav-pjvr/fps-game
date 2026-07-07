@@ -24,6 +24,52 @@ const CHAMFER = 14;
 /** The one signature shape of this design: a single cut corner rather than a rounded or square
  * one, echoing the angular viewfinder/HUD panels of tactical-shooter lobbies. `corner` picks which
  * corner is cut so panels can alternate rather than all leaning the same direction. */
+/**
+ * Motion language (UI polish pass, per user request: "flashy design" while keeping the tactical
+ * identity). Signature move: a thin accent-green scan-line sweeps down every panel the instant
+ * it opens, like a HUD authenticating before it lets you in - reused consistently everywhere a
+ * panel appears (see `attachScanSweep`) rather than inventing a different entrance per screen, so
+ * it reads as one deliberate system. Everything else stays quiet by comparison (per "spend your
+ * boldness in one place") - a couple of targeted moments (match-end title reveal, podium stagger,
+ * minimap pulse, hit-flash) get their own small keyframes below, each used exactly once, nowhere
+ * else. Inline `style.cssText` can't declare `@keyframes` itself, hence the one-time `<style>`
+ * injection here rather than adding a build-time CSS file to a codebase that's never had one.
+ */
+let motionKeyframesInjected = false;
+export function ensureMotionKeyframesInjected(): void {
+  if (motionKeyframesInjected) return;
+  motionKeyframesInjected = true;
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes scanSweep { from { top: -4%; opacity: 1; } 70% { opacity: 0.85; } to { top: 104%; opacity: 0; } }
+    @keyframes bracketDraw { from { opacity: 0; transform: scale(0.55); } to { opacity: 1; transform: scale(1); } }
+    @keyframes ruleGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes titleReveal { from { opacity: 0; transform: scale(0.92); letter-spacing: 0.3em; } to { opacity: 1; transform: scale(1); letter-spacing: 0.12em; } }
+    @keyframes rowSlideIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+    @keyframes pulseGlow { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+    @keyframes hitFlash { 0% { background: rgba(224, 72, 60, 0.35); } 100% { background: transparent; } }
+  `;
+  document.head.appendChild(style);
+}
+
+export const MOTION_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+/** The signature entrance move (see the class comment above) - call once per `show()`, not just
+ * at construction, so it replays every time a panel opens. `container` needs `position:relative`
+ * (already true of every panel `createPanel()` returns) for this absolutely-positioned sweep line
+ * to anchor correctly. Self-removes once the animation finishes rather than lingering as a dead
+ * DOM node. */
+export function attachScanSweep(container: HTMLElement): void {
+  ensureMotionKeyframesInjected();
+  const sweep = document.createElement('div');
+  sweep.style.cssText =
+    `position:absolute; left:0; width:100%; height:2px; background:${ACCENT};` +
+    ` box-shadow:0 0 14px 2px ${ACCENT}; pointer-events:none; z-index:5;` +
+    ` animation:scanSweep 0.5s ${MOTION_EASE} both;`;
+  container.appendChild(sweep);
+  sweep.addEventListener('animationend', () => sweep.remove());
+}
+
 export function chamferClipPath(corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' = 'top-right', size = CHAMFER): string {
   const c = `${size}px`;
   switch (corner) {
@@ -74,7 +120,7 @@ export function createPanel(): HTMLDivElement {
   const panel = document.createElement('div');
   panel.style.cssText =
     `background:${BG_PANEL}; border:1px solid ${HAIRLINE}; clip-path:${chamferClipPath('top-left', 22)};` +
-    ` padding:30px 34px; box-shadow:0 24px 70px rgba(0,0,0,0.55); color:${TEXT};` +
+    ` padding:30px 34px; box-shadow:0 24px 70px rgba(0,0,0,0.55); color:${TEXT}; position:relative;` +
     ` font-family:${BODY_FONT}; max-height:80vh; overflow-y:auto; box-sizing:border-box;`;
   return panel;
 }
@@ -88,6 +134,7 @@ export function createOverlay(): HTMLDivElement {
 }
 
 export function createPanelTitle(text: string): HTMLDivElement {
+  ensureMotionKeyframesInjected();
   const wrap = document.createElement('div');
   wrap.style.cssText = 'margin-bottom:22px;';
 
@@ -96,7 +143,11 @@ export function createPanelTitle(text: string): HTMLDivElement {
   title.style.cssText = `font-family:${DISPLAY_FONT}; font-size:1.4rem; font-weight:700; letter-spacing:0.12em; color:${TEXT};`;
 
   const rule = document.createElement('div');
-  rule.style.cssText = `width:44px; height:3px; background:${ACCENT}; margin-top:10px;`;
+  // Grows in rather than appearing at full width instantly - a small, quiet echo of the
+  // scan-sweep entrance rather than a second competing move.
+  rule.style.cssText =
+    `width:44px; height:3px; background:${ACCENT}; margin-top:10px; transform-origin:left;` +
+    ` animation:ruleGrow 0.4s ${MOTION_EASE} 0.15s both;`;
 
   wrap.append(title, rule);
   return wrap;
@@ -115,7 +166,10 @@ export function createEyebrow(text: string): HTMLDivElement {
 
 /** A thin L-shaped bracket mark, used in the screen corners to frame the lobby like a viewfinder -
  * cheap, purely decorative, but the kind of small tactical-HUD touch that reads as intentional. */
-export function createCornerBracket(corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'): HTMLDivElement {
+/** `delayMs` staggers a set of brackets so they read as a HUD calibrating corner by corner rather
+ * than all four popping in at once - see MainMenu's own call sites. */
+export function createCornerBracket(corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right', delayMs = 0): HTMLDivElement {
+  ensureMotionKeyframesInjected();
   const size = 32;
   const thickness = 2;
   const bracketColor = 'rgba(255, 255, 255, 0.22)';
@@ -126,7 +180,7 @@ export function createCornerBracket(corner: 'top-left' | 'top-right' | 'bottom-l
   const borderHorizontal = `border-${horizontal}: ${thickness}px solid ${bracketColor};`;
   bracket.style.cssText =
     `position:absolute; ${vertical}:28px; ${horizontal}:28px; width:${size}px; height:${size}px;` +
-    ` ${borderVertical} ${borderHorizontal}`;
+    ` ${borderVertical} ${borderHorizontal} animation:bracketDraw 0.35s ${MOTION_EASE} ${delayMs}ms both;`;
   return bracket;
 }
 

@@ -51,6 +51,7 @@ export class Goose implements Entity, Damageable {
 
   private hitsTaken = 0;
   private dead = false;
+  private disposed = false;
   private readonly rigidBody: RAPIER.RigidBody;
   private readonly bodyCollider: RAPIER.Collider;
 
@@ -190,7 +191,12 @@ export class Goose implements Entity, Damageable {
     this.mesh.rotation.z = Math.sin(this.waddlePhase) * WADDLE_ROCK_ANGLE;
   }
 
+  /** Guarded against a second call - see RemotePlayer.ts's identical guard for why: re-entering
+   * Rapier's removal path for an already-removed collider/rigid body isn't guaranteed safe (a
+   * live 2-browser repro caught this exact class of bug producing a WASM-level crash). */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.world.removeCollider(this.bodyCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);

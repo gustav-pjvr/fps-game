@@ -3,6 +3,7 @@ import type { HostRoster } from './HostRoster.ts';
 import type { SpawnPoint } from '../core/multiplayerSpawn.ts';
 import type { PlayerSlot, RosterEntry } from './protocol.ts';
 import type { GooseExplosionDifficulty } from '../core/config.ts';
+import type { GameMode } from '../core/gameModes.ts';
 
 export type { MultiplayerRole };
 
@@ -20,6 +21,9 @@ export interface MultiplayerSession {
   /** Goose explosion blast radius/damage tuning - the host's choice, carried alongside killLimit
    * on the same MatchStartMessage/WelcomeMessage.activeMatch. */
   gooseDifficulty: GooseExplosionDifficulty;
+  /** Loadout/damage-rules mode - the host's choice, multiplayer-only (single-player has no
+   * concept of a mode), carried alongside killLimit/gooseDifficulty on the same messages. */
+  gameMode: GameMode;
   /** This match's spawn points, one per roster slot - looked up by `slot`, not array position
    * (see MatchStartMessage's own comment on why). Picked fresh each match/rematch/late-join (see
    * multiplayerSpawn.ts), not a fixed layout. */
@@ -52,6 +56,7 @@ export interface MultiplayerMatchStartParams {
   seed: number;
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  gameMode: GameMode;
   ownSlot: PlayerSlot;
   spawns: { slot: PlayerSlot; point: SpawnPoint }[];
   roster: RosterEntry[];
