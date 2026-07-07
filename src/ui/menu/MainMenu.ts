@@ -33,7 +33,7 @@ export class MainMenu {
     eyebrow.style.marginBottom = '10px';
 
     const title = document.createElement('div');
-    title.textContent = 'FPS GAME';
+    title.textContent = 'GOOSE-BUSTER';
     title.style.cssText =
       `font-family:${DISPLAY_FONT}; font-size:2.4rem; font-weight:700; letter-spacing:0.1em;` +
       ' color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.7);';

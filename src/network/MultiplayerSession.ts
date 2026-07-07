@@ -2,6 +2,7 @@ import type { PeerConnection, MultiplayerRole } from './PeerConnection.ts';
 import type { HostRoster } from './HostRoster.ts';
 import type { SpawnPoint } from '../core/multiplayerSpawn.ts';
 import type { PlayerSlot, RosterEntry } from './protocol.ts';
+import type { GooseExplosionDifficulty } from '../core/config.ts';
 
 export type { MultiplayerRole };
 
@@ -16,6 +17,9 @@ export interface MultiplayerSession {
   seed: number;
   /** Win condition - the host's choice, carried on the same MatchStartMessage as `seed`. */
   killLimit: number;
+  /** Goose explosion blast radius/damage tuning - the host's choice, carried alongside killLimit
+   * on the same MatchStartMessage/WelcomeMessage.activeMatch. */
+  gooseDifficulty: GooseExplosionDifficulty;
   /** This match's spawn points, one per roster slot - looked up by `slot`, not array position
    * (see MatchStartMessage's own comment on why). Picked fresh each match/rematch/late-join (see
    * multiplayerSpawn.ts), not a fixed layout. */
@@ -47,6 +51,7 @@ export interface MultiplayerSession {
 export interface MultiplayerMatchStartParams {
   seed: number;
   killLimit: number;
+  gooseDifficulty: GooseExplosionDifficulty;
   ownSlot: PlayerSlot;
   spawns: { slot: PlayerSlot; point: SpawnPoint }[];
   roster: RosterEntry[];

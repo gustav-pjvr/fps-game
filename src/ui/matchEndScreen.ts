@@ -1,5 +1,12 @@
 import { createButton, ACCENT, TEXT, HAIRLINE, BG_RAISED, DISPLAY_FONT } from './menu/menuStyles.ts';
-import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS, MULTIPLAYER_MAX_PLAYERS } from '../core/config.ts';
+import {
+  DEFAULT_MULTIPLAYER_KILL_LIMIT,
+  GOOSE_EXPLOSION_DIFFICULTIES,
+  GOOSE_EXPLOSION_DIFFICULTY_LABELS,
+  MULTIPLAYER_KILL_LIMIT_OPTIONS,
+  MULTIPLAYER_MAX_PLAYERS,
+  type GooseExplosionDifficulty,
+} from '../core/config.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
@@ -22,15 +29,19 @@ export interface MultiplayerMatchEndResult {
   won: boolean;
   placements: MultiplayerPlacement[];
   killLimit: number;
+  gooseDifficulty: GooseExplosionDifficulty;
   role: MultiplayerRole;
   connection: PeerConnection;
 }
 
 /** What the host actually chose before clicking Rematch - App.handleRematchClick uses this instead
  * of blindly reusing the just-finished match's own settings, per user request ("host rematch/
- * settings options: kill target, new map toggle"). */
+ * settings options: kill target, new map toggle"). Per a later request, the goose explosion
+ * difficulty (see CreateRoomScreen's own selector) is editable here too, not just at initial room
+ * creation. */
 export interface RematchSettings {
   killLimit: number;
+  gooseDifficulty: GooseExplosionDifficulty;
   /** true generates a fresh world seed (same as the original "always randomize" behavior); false
    * reuses the map both players just fought on, for a direct rematch on the same terrain. */
   newMap: boolean;
@@ -53,6 +64,7 @@ export class MatchEndScreen {
   private readonly podiumRows: PodiumRow[];
   private readonly hostSettings: HTMLDivElement;
   private readonly killLimitSelect: HTMLSelectElement;
+  private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly newMapCheckbox: HTMLInputElement;
   private readonly rematchButton: HTMLButtonElement;
 
@@ -73,20 +85,27 @@ export class MatchEndScreen {
     // per match end - matches the "toggle display on fixed DOM" pattern already used elsewhere in
     // this file (see the host settings panel below).
     this.podium = document.createElement('div');
-    this.podium.style.cssText = 'display:flex; flex-direction:column; gap:10px; width:360px;';
+    this.podium.style.cssText = 'display:flex; flex-direction:column; gap:10px; width:420px;';
     this.podiumRows = Array.from({ length: MULTIPLAYER_MAX_PLAYERS }, () => createPodiumRow());
     this.podium.append(...this.podiumRows.map((row) => row.row));
 
-    // Host-only rematch settings (per user request: "kill target, new map toggle") - never shown
-    // to a guest, mirroring how only the host ever picks the kill limit in CreateRoomScreen.
+    // Host-only rematch settings (per user request: "kill target, new map toggle", later extended
+    // to also cover goose explosion difficulty) - never shown to a guest, mirroring how only the
+    // host ever picks these in CreateRoomScreen. Kill limit and goose difficulty sit side by side
+    // (per user request: widen this panel to fit new settings rather than making it taller).
     this.hostSettings = document.createElement('div');
     this.hostSettings.style.cssText =
-      `display:flex; flex-direction:column; gap:10px; width:360px; padding:16px 18px;` +
+      `display:flex; flex-direction:column; gap:10px; width:420px; padding:16px 18px;` +
       ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px;`;
 
+    const settingsRow = document.createElement('div');
+    settingsRow.style.cssText = 'display:flex; gap:14px;';
+
+    const killLimitColumn = document.createElement('div');
+    killLimitColumn.style.cssText = 'flex:1;';
     const killLimitLabel = document.createElement('div');
-    killLimitLabel.textContent = 'First to how many kills wins the rematch?';
-    killLimitLabel.style.cssText = 'font-size:0.8rem; opacity:0.8;';
+    killLimitLabel.textContent = 'First to how many kills wins?';
+    killLimitLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
@@ -97,6 +116,24 @@ export class MatchEndScreen {
       optionElement.textContent = `${option} kills`;
       this.killLimitSelect.appendChild(optionElement);
     }
+    killLimitColumn.append(killLimitLabel, this.killLimitSelect);
+
+    const gooseDifficultyColumn = document.createElement('div');
+    gooseDifficultyColumn.style.cssText = 'flex:1;';
+    const gooseDifficultyLabel = document.createElement('div');
+    gooseDifficultyLabel.textContent = 'Goose explosions:';
+    gooseDifficultyLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    this.gooseDifficultySelect = document.createElement('select');
+    this.gooseDifficultySelect.style.cssText = this.killLimitSelect.style.cssText;
+    for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
+      const optionElement = document.createElement('option');
+      optionElement.value = difficulty;
+      optionElement.textContent = GOOSE_EXPLOSION_DIFFICULTY_LABELS[difficulty];
+      this.gooseDifficultySelect.appendChild(optionElement);
+    }
+    gooseDifficultyColumn.append(gooseDifficultyLabel, this.gooseDifficultySelect);
+
+    settingsRow.append(killLimitColumn, gooseDifficultyColumn);
 
     const newMapLabel = document.createElement('label');
     newMapLabel.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;';
@@ -107,14 +144,18 @@ export class MatchEndScreen {
     newMapText.textContent = 'Generate a new map';
     newMapLabel.append(this.newMapCheckbox, newMapText);
 
-    this.hostSettings.append(killLimitLabel, this.killLimitSelect, newMapLabel);
+    this.hostSettings.append(settingsRow, newMapLabel);
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = 'display:flex; gap:12px; margin-top:4px;';
 
     this.rematchButton = createButton('Rematch', 'primary');
     this.rematchButton.addEventListener('click', () =>
-      onRematchClick({ killLimit: Number(this.killLimitSelect.value), newMap: this.newMapCheckbox.checked }),
+      onRematchClick({
+        killLimit: Number(this.killLimitSelect.value),
+        gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
+        newMap: this.newMapCheckbox.checked,
+      }),
     );
 
     const lobbyButton = createButton('Return to Lobby');
@@ -146,6 +187,7 @@ export class MatchEndScreen {
     if (canRematch) {
       this.killLimitSelect.value = String(result.killLimit);
       if (!this.killLimitSelect.value) this.killLimitSelect.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
+      this.gooseDifficultySelect.value = result.gooseDifficulty;
     }
 
     this.element.style.display = 'flex';

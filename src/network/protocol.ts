@@ -4,6 +4,8 @@
  * the host; the host relays gameplay messages between guests (see PeerConnection.ts/Game.ts's
  * relay logic) transparently, unchanged, tagged with the ORIGINAL sender's own slot. */
 
+import type { GooseExplosionDifficulty } from '../core/config.ts';
+
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
  * the host, slots 1-3 are assigned to guests in join order by the host (see HostRoster.ts) and are
  * the one identity primitive threaded through every message and every per-opponent data structure
@@ -46,6 +48,7 @@ export interface WelcomeMessage {
   activeMatch?: {
     seed: number;
     killLimit: number;
+    gooseDifficulty: GooseExplosionDifficulty;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
   };
@@ -79,6 +82,7 @@ export interface MatchStartMessage {
   type: 'matchStart';
   seed: number;
   killLimit: number;
+  gooseDifficulty: GooseExplosionDifficulty;
   spawns: { slot: PlayerSlot; x: number; z: number }[];
   roster: RosterEntry[];
 }
@@ -184,6 +188,53 @@ export interface PlayerJoinedMatchMessage {
   isRejoin: boolean;
 }
 
+/** Host -> everyone (broadcast, never relayed - it's host-authored, not forwarded from a guest):
+ * a new goose exists. Every guest builds a local "follower" mirror at this exact position (see
+ * GooseManager.applyRemoteSpawn/Goose.ts's class comment) - the host is the sole simulation
+ * authority for every goose, matching how it already owns the match seed/spawn points. */
+export interface GooseSpawnedMessage {
+  type: 'gooseSpawned';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Host -> everyone (broadcast), sent on a coarse interval (GOOSE_SNAPSHOT_SEND_INTERVAL) per live
+ * goose so a guest's follower copy tracks the host's own wander AI - a goose's position is
+ * cosmetic, so this deliberately doesn't need PlayerSnapshotMessage's freshness. */
+export interface GooseSnapshotMessage {
+  type: 'gooseSnapshot';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Guest -> host only (a guest's one connection already only ever reaches the host - never
+ * relayed, never broadcast). A guest's own local hitscan can still land a hit on its follower
+ * goose (it has a real collider), but only the host's authoritative copy decides whether that hit
+ * kills it - this is how that hit gets reported upward for adjudication (see
+ * GooseManager.registerRemoteHit). */
+export interface GooseHitEventMessage {
+  type: 'gooseHitEvent';
+  senderSlot: PlayerSlot;
+  id: string;
+}
+
+/** Host -> everyone (broadcast): this goose just died (its GOOSE_HITS_TO_KILL'th hit landed,
+ * whether that hit was the host's own or reported via GooseHitEventMessage). Every client removes
+ * its own copy and independently computes/applies explosion damage to its OWN player only, using
+ * the match's shared gooseDifficulty - each client stays authoritative over its own health, same
+ * as every other damage path in this protocol. */
+export interface GooseExplodedMessage {
+  type: 'gooseExploded';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export type NetworkMessage =
   | HelloMessage
   | WelcomeMessage
@@ -197,7 +248,11 @@ export type NetworkMessage =
   | RespawnEventMessage
   | HostLeftRoomMessage
   | PlayerLeftMessage
-  | PlayerJoinedMatchMessage;
+  | PlayerJoinedMatchMessage
+  | GooseSpawnedMessage
+  | GooseSnapshotMessage
+  | GooseHitEventMessage
+  | GooseExplodedMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -213,6 +268,10 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hostLeftRoom',
   'playerLeft',
   'playerJoinedMatch',
+  'gooseSpawned',
+  'gooseSnapshot',
+  'gooseHitEvent',
+  'gooseExploded',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

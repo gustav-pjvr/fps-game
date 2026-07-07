@@ -176,6 +176,7 @@ export class JoinRoomScreen {
             this.startMatch({
               seed: message.activeMatch.seed,
               killLimit: message.activeMatch.killLimit,
+              gooseDifficulty: message.activeMatch.gooseDifficulty,
               ownSlot: message.yourSlot,
               spawns: [{ slot: message.yourSlot, point: message.activeMatch.spawnPoint }],
               roster: message.roster,
@@ -200,6 +201,7 @@ export class JoinRoomScreen {
           this.startMatch({
             seed: message.seed,
             killLimit: message.killLimit,
+            gooseDifficulty: message.gooseDifficulty,
             ownSlot: this.ownSlot ?? 0,
             spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
             roster: message.roster,

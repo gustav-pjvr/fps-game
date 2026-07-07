@@ -286,6 +286,58 @@ export const ENEMY_AVOID_ANGLE_DEG = 40;
 export const ENEMY_STUCK_WINDOW = 2;
 export const ENEMY_STUCK_EPSILON = 0.5;
 
+/**
+ * Goose Dash Buster: a comedic wandering NPC built entirely from THREE primitives (no asset file -
+ * matches this project's own precedent for crates/ladders/rocks/the knife weapon). Takes exactly
+ * GOOSE_HITS_TO_KILL bullet hits regardless of weapon damage (see entities/Goose.ts's takeDamage,
+ * a deliberate divergence from the amount-based Damageable contract Enemy/Target use), then
+ * explodes with a distance-based damage falloff (see combat/explosion.ts). Not chunk-tied - like
+ * enemies/targets, a goose persists for the whole match once placed via EntityManager's sibling,
+ * GooseManager.
+ */
+export const GOOSE_HITS_TO_KILL = 2;
+export const GOOSE_RADIUS = 0.35;
+export const GOOSE_HEIGHT = 0.55;
+/** Slower than ENEMY_PATROL_SPEED - a goose ambling around should read as harmless until it isn't. */
+export const GOOSE_WANDER_SPEED = 1;
+export const GOOSE_ROAM_RADIUS = 30;
+export const GOOSE_PATROL_STOP_DISTANCE = 1;
+export const GOOSE_PATROL_REPATH_MIN = 5;
+export const GOOSE_PATROL_REPATH_MAX = 12;
+/** How many geese are scattered around the map the instant a match starts. */
+export const GOOSE_SPAWN_COUNT_INITIAL = 3;
+/** A new goose spawns every time a player dies (any player in multiplayer, the local player in
+ * single-player - see Game.ts's wasDead/playerDied hooks), capped here so a long match doesn't
+ * accumulate an unbounded flock. */
+export const GOOSE_MAX_CONCURRENT = 8;
+/** A freshly spawned goose must land at least this far from the player who triggered the spawn. */
+export const GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER = 10;
+
+export type GooseExplosionDifficulty = 'easy' | 'normal' | 'extreme';
+/** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'normal' in single-player (no host
+ * to choose it there) - see combat/explosion.ts's computeExplosionDamage. maxDamage is what a
+ * player standing exactly at the goose's position would take; it falls off linearly to 0 at
+ * `radius`. */
+export const GOOSE_EXPLOSION_PRESETS: Record<GooseExplosionDifficulty, { radius: number; maxDamage: number }> = {
+  easy: { radius: 4, maxDamage: 35 },
+  normal: { radius: 7, maxDamage: 70 },
+  // Exceeds PLAYER_HEALTH at point-blank, deliberately - "massive," per the original request.
+  extreme: { radius: 13, maxDamage: 130 },
+};
+export const DEFAULT_GOOSE_EXPLOSION_DIFFICULTY: GooseExplosionDifficulty = 'normal';
+/** Shared ordering/labels for every difficulty selector (single-player Match Setup, multiplayer
+ * Create Room, multiplayer rematch settings) so the three don't each invent their own list. */
+export const GOOSE_EXPLOSION_DIFFICULTIES: readonly GooseExplosionDifficulty[] = ['easy', 'normal', 'extreme'];
+export const GOOSE_EXPLOSION_DIFFICULTY_LABELS: Record<GooseExplosionDifficulty, string> = {
+  easy: 'Easy',
+  normal: 'Normal',
+  extreme: 'Extreme',
+};
+/** Host-only broadcast rate for a live goose's wander position (see GooseManager.ts) - much
+ * coarser than PLAYER_SNAPSHOT_SEND_INTERVAL since a goose's exact position is cosmetic, not
+ * something a shot needs pixel-perfect freshness against the way player hit registration does. */
+export const GOOSE_SNAPSHOT_SEND_INTERVAL = 1 / 6;
+
 export const PLAYER_HEALTH = 100;
 
 export const HIT_MARKER_DURATION = 0.2;

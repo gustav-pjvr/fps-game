@@ -4,7 +4,15 @@ import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import { HOST_SLOT, type RosterEntry } from '../../network/protocol.ts';
-import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS, MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
+import {
+  DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
+  DEFAULT_MULTIPLAYER_KILL_LIMIT,
+  GOOSE_EXPLOSION_DIFFICULTIES,
+  GOOSE_EXPLOSION_DIFFICULTY_LABELS,
+  MULTIPLAYER_KILL_LIMIT_OPTIONS,
+  MULTIPLAYER_MAX_PLAYERS,
+  type GooseExplosionDifficulty,
+} from '../../core/config.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
@@ -31,6 +39,7 @@ export class CreateRoomScreen {
   private readonly usernameInput: HTMLInputElement;
   private readonly codeDisplay: HTMLDivElement;
   private readonly killLimitSelect: HTMLSelectElement;
+  private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
@@ -51,7 +60,10 @@ export class CreateRoomScreen {
     this.overlay = createOverlay();
 
     const panel = createPanel();
-    panel.style.width = '400px';
+    // Widened (not lengthened) from 400px per user request, so the goose-difficulty selector below
+    // can sit side by side with the kill-limit selector instead of stacking and pushing the panel
+    // taller (which would force scrolling on this already-tall room screen).
+    panel.style.width = '480px';
     panel.appendChild(createPanelTitle('CREATE ROOM'));
 
     const usernameLabel = document.createElement('div');
@@ -97,14 +109,18 @@ export class CreateRoomScreen {
     });
     panel.appendChild(copyButton);
 
+    // Host-only settings: the guest never picks these, only receives them as part of
+    // MatchStartMessage. Side by side (per user request: widen the panel to fit new settings
+    // rather than stacking them and making the screen taller) - plain <select>s rather than a
+    // dedicated RoomSettingsPanel file; promote it if match settings grow past these two.
+    const settingsRow = document.createElement('div');
+    settingsRow.style.cssText = 'display:flex; gap:14px; margin-top:16px;';
+
+    const killLimitColumn = document.createElement('div');
+    killLimitColumn.style.cssText = 'flex:1;';
     const killLimitLabel = document.createElement('div');
     killLimitLabel.textContent = 'First to how many kills wins?';
-    killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
-    panel.appendChild(killLimitLabel);
-
-    // Host-only setting: the guest never picks this, only receives it as part of
-    // MatchStartMessage. A plain <select> rather than a dedicated RoomSettingsPanel file - one
-    // control doesn't earn its own component yet; promote it if match settings grow past this.
+    killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
@@ -116,7 +132,26 @@ export class CreateRoomScreen {
       if (option === DEFAULT_MULTIPLAYER_KILL_LIMIT) optionElement.selected = true;
       this.killLimitSelect.appendChild(optionElement);
     }
-    panel.appendChild(this.killLimitSelect);
+    killLimitColumn.append(killLimitLabel, this.killLimitSelect);
+
+    const gooseDifficultyColumn = document.createElement('div');
+    gooseDifficultyColumn.style.cssText = 'flex:1;';
+    const gooseDifficultyLabel = document.createElement('div');
+    gooseDifficultyLabel.textContent = 'Goose explosions:';
+    gooseDifficultyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    this.gooseDifficultySelect = document.createElement('select');
+    this.gooseDifficultySelect.style.cssText = this.killLimitSelect.style.cssText;
+    for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
+      const optionElement = document.createElement('option');
+      optionElement.value = difficulty;
+      optionElement.textContent = GOOSE_EXPLOSION_DIFFICULTY_LABELS[difficulty];
+      if (difficulty === DEFAULT_GOOSE_EXPLOSION_DIFFICULTY) optionElement.selected = true;
+      this.gooseDifficultySelect.appendChild(optionElement);
+    }
+    gooseDifficultyColumn.append(gooseDifficultyLabel, this.gooseDifficultySelect);
+
+    settingsRow.append(killLimitColumn, gooseDifficultyColumn);
+    panel.appendChild(settingsRow);
 
     // Live player list (per user request): a real render loop over the current roster now, not
     // two fixed DOM rows - up to MULTIPLAYER_MAX_PLAYERS entries, re-rendered on every join/leave.
@@ -218,9 +253,10 @@ export class CreateRoomScreen {
     const roster = this.hostRoster.currentRoster();
     const seed = generateMultiplayerSeed();
     const killLimit = Number(this.killLimitSelect.value);
+    const gooseDifficulty = this.gooseDifficultySelect.value as GooseExplosionDifficulty;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    this.connection.send({ type: 'matchStart', seed, killLimit, spawns, roster });
+    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, spawns, roster });
 
     const connection = this.connection;
     const hostRoster = this.hostRoster;
@@ -233,6 +269,7 @@ export class CreateRoomScreen {
     this.onStartMatch(connection, {
       seed,
       killLimit,
+      gooseDifficulty,
       ownSlot: HOST_SLOT,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,

@@ -6,6 +6,7 @@ import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Player } from '../entities/Player.ts';
 import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
+import { GooseManager } from '../entities/GooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { WatchTowerManager } from '../world/WatchTowerManager.ts';
@@ -16,6 +17,7 @@ import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
 import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
 import { Tracers } from '../combat/Tracers.ts';
+import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
@@ -26,6 +28,7 @@ import type { MultiplayerMatchEndResult } from '../ui/matchEndScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
+import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import { Minimap } from '../ui/minimap.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
@@ -41,6 +44,7 @@ import {
   ENEMY_GUNSHOT_MIN_VOLUME,
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
+  type GooseExplosionDifficulty,
   MULTIPLAYER_RESPAWN_DELAY,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_X,
@@ -75,6 +79,7 @@ const AMBIENT_FILL_INTENSITY = 0.6;
 export interface MatchConfig {
   enemyCount: number;
   targetCount: number;
+  gooseDifficulty: GooseExplosionDifficulty;
 }
 
 /** One other player currently in the match - keyed by slot in ActiveMultiplayer.opponents below,
@@ -107,6 +112,9 @@ interface ActiveMultiplayer {
   /** Win condition: first to this many kills wins. Fixed for the match - the host's choice at
    * room-creation time, carried on MatchStartMessage. */
   readonly killLimit: number;
+  /** Goose explosion blast radius/damage tuning - the host's choice, fixed for the match, carried
+   * on MatchStartMessage alongside killLimit. */
+  readonly gooseDifficulty: GooseExplosionDifficulty;
   /** Host-only (see MultiplayerSession.hostRoster) - non-null exactly when role==='host', used to
    * resolve a mid-match join/rejoin's hello (see onHostHello below) and to periodically free
    * expired rejoin reservations (see hostSweepAccumulator). */
@@ -274,6 +282,9 @@ export class Game {
     private readonly impactMarkers: ImpactMarkers,
     private readonly tracers: Tracers,
     private readonly muzzleFlash: MuzzleFlash,
+    private readonly gooseManager: GooseManager,
+    private readonly gooseAnnouncement: GooseAnnouncement,
+    private readonly explosionEffect: ExplosionEffect,
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
@@ -556,6 +567,30 @@ export class Game {
       });
     }
 
+    const gooseAnnouncement = new GooseAnnouncement(hudRoot);
+    const explosionEffect = new ExplosionEffect(renderer.scene);
+    // Single-player and the multiplayer host run every goose authoritative (see GooseManager's
+    // class comment); a guest only ever mirrors what the host broadcasts, never spawns/adjudicates
+    // on its own - onNetworkSpawn/onNetworkSnapshot/onNetworkExplosion are host-only (undefined,
+    // and therefore never invoked, for single-player and guests), onLocalHitReported is guest-only.
+    const gooseManager = new GooseManager(renderer.scene, physics, {
+      onGooseSpawned: () => gooseAnnouncement.show('A goose has appeared!'),
+      onExplosion: (position, radius) => explosionEffect.spawn(position, radius),
+      onNetworkSpawn:
+        multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseSpawned', id, x, y, z }) : undefined,
+      onNetworkSnapshot:
+        multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseSnapshot', id, x, y, z }) : undefined,
+      onNetworkExplosion:
+        multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseExploded', id, x, y, z }) : undefined,
+      onLocalHitReported:
+        multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
+    });
+    // Guests don't spawn anything themselves - they wait for the host's own initial-batch
+    // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
+    if (!multiplayer || multiplayer.role === 'host') {
+      gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
+    }
+
     // Every OTHER roster slot gets a RemotePlayer, positioned at its own match-start spawn point
     // (or the local player's own spawn as a harmless placeholder for a late-join/rejoin, where
     // other players' *current* positions aren't known yet - their next playerSnapshot corrects it
@@ -594,6 +629,7 @@ export class Game {
         minimap,
         multiplayerHud,
         killLimit: multiplayer.killLimit,
+        gooseDifficulty: multiplayer.gooseDifficulty,
         hostRoster: multiplayer.role === 'host' ? multiplayer.hostRoster ?? null : null,
         snapshotAccumulator: 0,
         hostSweepAccumulator: 0,
@@ -651,6 +687,9 @@ export class Game {
       impactMarkers,
       tracers,
       muzzleFlash,
+      gooseManager,
+      gooseAnnouncement,
+      explosionEffect,
       hud,
       hotbar,
       hitMarker,
@@ -725,6 +764,7 @@ export class Game {
               game.onMultiplayerRematchReceived?.({
                 seed: message.seed,
                 killLimit: message.killLimit,
+                gooseDifficulty: message.gooseDifficulty,
                 ownSlot: activeMultiplayer.session.ownSlot,
                 spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
                 roster: message.roster,
@@ -779,8 +819,35 @@ export class Game {
               // scoped to "only if I'm the one who got this particular kill" now that any of up to
               // 3 other players could have been the actual killer, not always me.
               if (message.killerSlot === activeMultiplayer.session.ownSlot) game.healLocalPlayerToFull();
+              // "A goose spawns whenever a player dies" - a dying guest can't spawn its own
+              // authoritative goose (see GooseManager's class comment), so the host does it here on
+              // that guest's behalf the moment its playerDied arrives. The host's own death instead
+              // takes the direct path in update()'s wasDead block (this message never loops back to
+              // its own sender, so the host would otherwise never react to its own death here).
+              if (activeMultiplayer.session.role === 'host') {
+                const victimPosition = activeMultiplayer.opponents.get(message.victimSlot)?.remotePlayer.position;
+                if (victimPosition) gooseManager.spawnNear(victimPosition.x, victimPosition.z);
+              }
               break;
             }
+            case 'gooseSpawned':
+              gooseManager.applyRemoteSpawn(message.id, message.x, message.y, message.z);
+              break;
+            case 'gooseSnapshot':
+              gooseManager.applyRemoteSnapshot(message.id, message.x, message.z);
+              break;
+            case 'gooseHitEvent':
+              // Guest -> host only (see protocol.ts) - a guest's own connection never receives this.
+              if (activeMultiplayer.session.role === 'host') gooseManager.registerRemoteHit(message.id);
+              break;
+            case 'gooseExploded':
+              gooseManager.applyExplosion(
+                message.id,
+                new THREE.Vector3(message.x, message.y, message.z),
+                activeMultiplayer.gooseDifficulty,
+                player,
+              );
+              break;
             case 'respawnEvent': {
               const opponent = activeMultiplayer.opponents.get(senderSlot);
               opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
@@ -824,6 +891,7 @@ export class Game {
               activeMatch: {
                 seed: getWorldSeed(),
                 killLimit: activeMultiplayer.killLimit,
+                gooseDifficulty: activeMultiplayer.gooseDifficulty,
                 scoreboard: Array.from(game.multiplayerScoreboard, ([slot, score]) => ({ slot, score })),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
               },
@@ -868,6 +936,9 @@ export class Game {
     this.weaponCaption.dispose();
     this.longShotCallout.dispose();
     this.killFeed.dispose();
+    this.gooseAnnouncement.dispose();
+    this.explosionEffect.dispose();
+    this.gooseManager.dispose();
     this.scopeOverlay.dispose();
     this.pauseMenu.dispose();
     this.settingsPanel.dispose();
@@ -911,6 +982,8 @@ export class Game {
     this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
+    this.gooseManager.clearAll();
+    this.gooseManager.spawnInitialBatch(SPAWN_X, SPAWN_Z);
     const generation = ++this.spawnGeneration;
     void Game.spawnEncountersAsync(
       this.entityManager,
@@ -1094,6 +1167,7 @@ export class Game {
       this.chunkManager.update(this.player.position.x, this.player.position.z);
       this.weaponManager.update(dt, this.input, this.player);
       this.entityManager.update(dt, this.player);
+      this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
     }
 
     if (this.weaponManager.activeWeaponIndex !== this.lastActiveWeaponIndex) {
@@ -1109,11 +1183,20 @@ export class Game {
     this.weaponCaption.update(dt);
     this.longShotCallout.update(dt);
     this.killFeed.update(dt);
+    this.gooseAnnouncement.update(dt);
+    this.explosionEffect.update(dt);
     this.updateMultiplayer(dt);
 
     if (this.player.isDead && !wasDead) {
       this.deathScreen.show(this.scoreState.value);
       this.input.releasePointerLock();
+      // "A goose spawns whenever a player dies" - single-player has no host, it's just always
+      // authoritative for itself. In multiplayer only the host may create an authoritative goose
+      // (see GooseManager's class comment); a dying guest's own death is instead handled when the
+      // host receives that guest's playerDied message below (see the 'playerDied' case).
+      if (!this.multiplayer || this.multiplayer.session.role === 'host') {
+        this.gooseManager.spawnNear(this.player.position.x, this.player.position.z);
+      }
       if (this.multiplayer) {
         // No other player has visibility into this client's health - this is the only way they
         // learn a kill actually landed. `lastDamageSourceSlot` is this client's own best-effort
@@ -1309,6 +1392,7 @@ export class Game {
       won,
       placements,
       killLimit: this.multiplayer.killLimit,
+      gooseDifficulty: this.multiplayer.gooseDifficulty,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
     });
