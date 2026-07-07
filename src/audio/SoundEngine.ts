@@ -140,6 +140,15 @@ export class SoundEngine {
     this.tone(140, 0.15, 0.3, 'sawtooth');
   }
 
+  /** Goose explosion - fully procedural like every other non-weapon sound here (footstep/
+   * hit-confirm/player-hurt), no recorded asset. A longer, lower-pitched noise burst than any
+   * gunshot (reads as a real detonation, not another shot) plus a low sawtooth thump for body.
+   * `volumeScale`/`pan` follow the same convention as playGunshot. */
+  playExplosion(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.5, 350, 'lowpass', 0.9 * volumeScale, pan);
+    this.tone(70, 0.4, 0.6 * volumeScale, 'sawtooth', pan);
+  }
+
   /** Returns `this.master` unchanged when centered (pan===0) - the common case (player's own
    * shots, every non-positional sound) skips creating a StereoPannerNode it doesn't need. */
   private outputNode(pan: number): AudioNode {

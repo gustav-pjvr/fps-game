@@ -256,6 +256,19 @@ export class Game {
    * transition unobservable (isDead would already be true before wasDead is captured), and
    * neither the death screen nor the `playerDied` reply would ever fire. */
   private pendingNetworkDamage = 0;
+  /** Set when death is detected while the pause menu is open (multiplayer only - single-player
+   * can never die while paused, see the early-return above isPaused's own comment) - per user
+   * request, the death/respawn screen must never visually overlay the pause menu. The death ITSELF
+   * (network broadcast, scoreboard credit, goose spawn) still happens immediately regardless of
+   * pause; only this UI reveal + pointer-lock release wait for the player to resume/close the
+   * pause menu, checked at the top of update() every tick until it does. */
+  private pendingDeathScreenReveal = false;
+  /** True exactly while DeathScreen is actually shown - distinct from `player.isDead` now that a
+   * dead player can exist for a while with the death screen deliberately not yet revealed (see
+   * pendingDeathScreenReveal above). Drives `isPaused` below instead of `isDead` directly, so the
+   * pause menu correctly stays visible through that deferral window instead of auto-hiding the
+   * instant the player dies. */
+  private deathScreenVisible = false;
   /** Every player's running kill count in the current multiplayer match, own slot included -
    * replaces the old single scoreState.value (mine)/multiplayerDeathCount (a 1v1-only proxy for
    * the one opponent's score) now that there can be up to 3 opponents. Updated symmetrically by
@@ -575,7 +588,13 @@ export class Game {
     // and therefore never invoked, for single-player and guests), onLocalHitReported is guest-only.
     const gooseManager = new GooseManager(renderer.scene, physics, {
       onGooseSpawned: () => gooseAnnouncement.show('A goose has appeared!'),
-      onExplosion: (position, radius) => explosionEffect.spawn(position, radius),
+      onExplosion: (position, radius) => {
+        explosionEffect.spawn(position, radius);
+        // Same distance-attenuation/stereo-pan convention as enemy/opponent gunshots (see
+        // enemyGunshotVolume/computeStereoPan below) - a goose exploding across the map shouldn't
+        // sound identical to one at point-blank.
+        sound.playExplosion(enemyGunshotVolume(position.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, position));
+      },
       onNetworkSpawn:
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseSpawned', id, x, y, z }) : undefined,
       onNetworkSnapshot:
@@ -848,6 +867,16 @@ export class Game {
                 player,
               );
               break;
+            case 'gooseSyncRequest':
+              // Guest -> host only (see protocol.ts) - replies with every currently-live goose as
+              // an individual gooseSpawned targeted only at the requester (sendTo, not a
+              // broadcast), so the other already-synced guests don't get redundant spawns.
+              if (activeMultiplayer.session.role === 'host') {
+                for (const goose of gooseManager.listForSync()) {
+                  activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'gooseSpawned', ...goose });
+                }
+              }
+              break;
             case 'respawnEvent': {
               const opponent = activeMultiplayer.opponents.get(senderSlot);
               opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
@@ -907,6 +936,16 @@ export class Game {
           };
         },
       });
+
+      // A guest's own callbacks (above) are only ready to receive gooseSpawned/etc. from this
+      // exact point on - the host's initial-batch broadcasts (sent much earlier in this same
+      // create() call, while this client was still loading assets) may well have already been
+      // sent and lost. Rather than guess at timing, just ask: covers both a guest that missed the
+      // initial batch and a late-joiner/rejoiner that missed everything before it connected (see
+      // GooseSyncRequestMessage's own comment).
+      if (activeMultiplayer.session.role === 'guest') {
+        activeMultiplayer.session.connection.send({ type: 'gooseSyncRequest', senderSlot: activeMultiplayer.session.ownSlot });
+      }
     }
 
     return game;
@@ -996,6 +1035,8 @@ export class Game {
     this.tracers.clear();
     this.scoreState.value = 0;
     this.deathScreen.hide();
+    this.deathScreenVisible = false;
+    this.pendingDeathScreenReveal = false;
     this.input.requestPointerLock();
   }
 
@@ -1115,9 +1156,20 @@ export class Game {
 
     // Pointer lock is the single source of truth for "paused": pressing Escape forces the browser
     // to release it (can't be prevented), and a freshly loaded match starts unlocked too - both
-    // cases should show the pause menu and freeze simulation. Death has its own overlay instead.
-    const isPaused = !this.input.isLocked && !this.player.isDead;
+    // cases should show the pause menu and freeze simulation. Death has its own overlay instead -
+    // gated on `deathScreenVisible`, not `player.isDead` directly, so a death detected while
+    // already paused (multiplayer only) doesn't auto-hide the pause menu before the player has
+    // actually chosen to resume (see pendingDeathScreenReveal's own comment).
+    const isPaused = !this.input.isLocked && !this.deathScreenVisible;
     this.pauseMenu.setVisible(isPaused);
+
+    // The deferred reveal from below - fires the first tick the pause menu is no longer open.
+    if (this.pendingDeathScreenReveal && !isPaused) {
+      this.pendingDeathScreenReveal = false;
+      this.deathScreen.show(this.scoreState.value);
+      this.deathScreenVisible = true;
+      this.input.releasePointerLock();
+    }
 
     // Single-player can freeze everything unconditionally while paused - nothing else is "live"
     // to notice. Multiplayer can't: the opponent's client keeps running and keeps sending
@@ -1156,16 +1208,27 @@ export class Game {
       for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.update(dt);
     }
 
-    if (this.player.isDead || isPaused) {
+    const freezeLocalPlayer = this.player.isDead || isPaused;
+    if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
-      // respawn/unpause. Also covers the multiplayer-paused case above: local simulation (movement,
-      // shooting, AI) stays frozen while paused - only network damage/death/respawn keeps flowing.
+      // respawn/unpause.
       this.input.consumeLookDelta();
     } else {
       this.player.update(dt, this.input);
+      this.weaponManager.update(dt, this.input, this.player);
+    }
+
+    // The shared world - physics (including every RemotePlayer/goose collider), and the
+    // host-authoritative goose simulation - must keep advancing regardless of THIS client's own
+    // pause/death state in multiplayer (per user request: pausing/dying must never freeze anything
+    // for anyone else, whether it's the host or a guest paused - a paused host that stops
+    // broadcasting goose snapshots/adjudicating hits would otherwise silently stall every other
+    // player's geese too, only "catching up" - explosions and all - the instant the host unpauses).
+    // Single-player keeps the old full-freeze pause behavior (nothing else is "live" to notice in
+    // solo play, and freezing on death already matches the existing death-screen/reset flow).
+    if (this.multiplayer || !freezeLocalPlayer) {
       this.physics.step(dt);
       this.chunkManager.update(this.player.position.x, this.player.position.z);
-      this.weaponManager.update(dt, this.input, this.player);
       this.entityManager.update(dt, this.player);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
     }
@@ -1188,8 +1251,19 @@ export class Game {
     this.updateMultiplayer(dt);
 
     if (this.player.isDead && !wasDead) {
-      this.deathScreen.show(this.scoreState.value);
-      this.input.releasePointerLock();
+      // Per user request: the death/respawn screen must never overlay the pause menu - if the
+      // pause menu is currently open (multiplayer only; single-player can't reach this block while
+      // paused, see the early return above), defer the actual reveal until the player resumes
+      // (see the top-of-tick check above). The death ITSELF - goose spawn, network broadcast,
+      // scoreboard credit below - still happens immediately regardless, since other players are
+      // watching this in real time and must not be held up by this client's own menu.
+      if (isPaused) {
+        this.pendingDeathScreenReveal = true;
+      } else {
+        this.deathScreen.show(this.scoreState.value);
+        this.deathScreenVisible = true;
+        this.input.releasePointerLock();
+      }
       // "A goose spawns whenever a player dies" - single-player has no host, it's just always
       // authoritative for itself. In multiplayer only the host may create an authoritative goose
       // (see GooseManager's class comment); a dying guest's own death is instead handled when the
@@ -1312,8 +1386,18 @@ export class Game {
     this.weaponManager.resetAllAmmo();
     this.multiplayer.deathTimer = 0;
     this.multiplayer.lastDamageSourceSlot = null;
+    // This runs on a fixed timer (updateMultiplayer) regardless of pause state - per user request,
+    // dying/respawning must never stall just because this client is paused. But the reverse must
+    // also hold: an auto-respawn firing while the pause menu is legitimately open must not yank
+    // pointer lock away from the player mid-menu-browsing. `pauseMenuCurrentlyOpen` is captured
+    // before clearing deathScreenVisible/pendingDeathScreenReveal below, since those flags are
+    // exactly what distinguishes "pause menu open" from "death screen was showing" while input is
+    // unlocked either way (see the main isPaused formula in update()).
+    const pauseMenuCurrentlyOpen = !this.input.isLocked && !this.deathScreenVisible;
     this.deathScreen.hide();
-    this.input.requestPointerLock();
+    this.deathScreenVisible = false;
+    this.pendingDeathScreenReveal = false;
+    if (!pauseMenuCurrentlyOpen) this.input.requestPointerLock();
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
   }
 

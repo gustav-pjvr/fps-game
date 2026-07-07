@@ -2389,3 +2389,81 @@ Multiplayer-specific behavior (username exchange, podium/rematch settings, host-
 positional audio panning) verified by code review and the existing `multiplayer-matchend.spec.ts`
 e2e coverage rather than fresh manual multiplayer playtesting - flag for a manual two-browser
 check if anything here reads wrong once live.
+
+## Goose-Buster: exploding goose mini-game, host-authoritative multiplayer sync, and a real playtest round of bugs
+
+Per user request: rename the in-game title to "Goose-Buster" and add a wandering goose NPC that
+takes exactly 2 bullet hits to kill, then explodes with a distance-based damage falloff. Explosion
+difficulty (Easy/Normal/Extreme, controlling blast radius and max damage) is editable in
+single-player Match Setup, multiplayer Create Room, and multiplayer rematch settings - all three
+share the same options list/labels (`GOOSE_EXPLOSION_DIFFICULTIES`/`_LABELS` in `config.ts`).
+
+**Asset decision.** No existing model fits and this project's own precedent for non-hero geometry
+(crates, ladders, rocks, targets, the knife weapon) is to build procedurally rather than source a
+new asset - the goose (`entities/Goose.ts`) is entirely THREE primitives (spheres/cylinders/cones/
+boxes), with a code-driven waddle (sine bob + rock, no rig) standing in for a walk cycle.
+
+**Multiplayer is genuinely new plumbing, not a copy of anything else.** Before this, multiplayer
+had zero PvE/AI-entity sync of any kind (`enemyCount`/`targetCount` are hard-set to 0 there). The
+host runs every goose "authoritative" (spawn, wander AI, hit counting, explosion decision) and
+broadcasts `gooseSpawned`/periodic `gooseSnapshot`/`gooseExploded`; a guest mirrors each as a
+"follower" `Goose` (real collider, so the guest's own local hitscan still registers a hit, but a
+hit just reports itself via `gooseHitEvent` rather than self-adjudicating - only the host's copy
+decides death). Difficulty rides on `MatchStartMessage`/`WelcomeMessage.activeMatch` exactly like
+`killLimit` already does (same trust model: host decides once, sends it, nobody validates it).
+
+**Real bugs found by the user's own live 2+ guest playtest, not by automated testing** (this
+project's established pattern: build carefully, verify what's cheaply verifiable, then trust the
+user's hands-on report over guessing at what a live multi-peer WebRTC session actually does):
+
+1. **Guests never saw the initial batch of geese.** The host was spawning them (and sending
+   `gooseSpawned`) during its own `Game.create()`, well before that guest's *own* `Game.create()`
+   had finished loading and attached its message handling - the messages were sent into a void.
+   Rather than try to guess/fix the exact timing, added a `gooseSyncRequest` message: every guest
+   sends it once, right after its own connection callbacks are wired up, and the host replies with
+   its *current* goose list via targeted `sendTo`. This is strictly additive (`applyRemoteSpawn` is
+   already idempotent on a known id) and, as a bonus, is also the fix for late-join/rejoin backfill
+   (a gap flagged but deliberately deferred in the original pass) - a late joiner is just another
+   guest whose own `Game.create()` finishes and asks the same question.
+2. **A paused host silently stalled every player's geese** until unpausing, at which point
+   everything that "should" have happened caught up and fired all at once (explosions included).
+   Root cause: `physics.step`/`entityManager.update`/`gooseManager.update` were all gated behind
+   the same "frozen while paused" branch as the player's own movement/weapon input. Per user
+   request ("no matter whatever guest or host is in pause menu they must still be able to have
+   anything happen"), split that gate: the player's own control input still freezes while paused,
+   but the shared simulation (physics world, host-authoritative goose sim) now runs unconditionally
+   in multiplayer regardless of local pause/death state. Single-player keeps the old full-freeze
+   behavior (nothing else is "live" to notice there).
+3. **The death/respawn screen could visually overlay the pause menu** (multiplayer only - a death
+   mid-match, e.g. from network damage, can land while the local player has the pause menu open;
+   single-player can never reach this since pressing pause already short-circuits its own update
+   loop before death detection). Fixed by deferring the *reveal* (not the death itself - scoreboard
+   credit, goose-spawn trigger, and the network broadcast all still happen immediately) until the
+   player actually resumes: `pendingDeathScreenReveal` + a new `deathScreenVisible` field, which
+   also had to replace `player.isDead` in the `isPaused` formula itself (the old formula treated
+   "dead" and "paused" as mutually exclusive, auto-hiding the pause menu the instant death was
+   detected - exactly the opposite of "stay open until the player deliberately resumes"). The
+   auto-respawn timer (`updateMultiplayer`) still fires on schedule regardless of pause (other
+   players are watching it happen), but no longer forces pointer lock back if the pause menu is
+   still legitimately open when it does.
+4. **No explosion sound** (there was no AOE/explosive sound of any kind in this codebase before the
+   goose). Added `SoundEngine.playExplosion` - fully procedural like every other non-weapon sound
+   here (footstep/hit-confirm/player-hurt), a longer/lower noise burst plus a sawtooth thump so it
+   reads as a detonation rather than another gunshot. Distance-attenuated and stereo-panned the
+   same way opponent gunshots already are (`enemyGunshotVolume`/`computeStereoPan`).
+5. **Extreme lag once two guests connected.** Root cause, confirmed by re-reading Enemy.ts's own
+   comment on why it caches terrain height ("4-octave fBm + a 9-cell Worley scan per call"): Goose
+   movement called `sampleHeight` raw, every frame, for every live goose, with no caching at all -
+   unlike Enemy.ts, which resamples only after `HEIGHT_RESAMPLE_DISTANCE_SQ` of movement. Up to
+   `GOOSE_MAX_CONCURRENT` (8) geese doing that uncached at 60fps, layered on top of the connection
+   count going from 1 to 2 guests (more relay traffic, more RemotePlayer/physics load overall), is
+   the likely explanation. Fixed by copying Enemy.ts's exact caching pattern into `Goose.ts`. Goose
+   snapshot broadcast rate (`GOOSE_SNAPSHOT_SEND_INTERVAL`, 1/6s) and the whisker-avoidance raycasts
+   inside wander AI were reviewed too and look reasonable at this scale (≤8 geese) - not touched.
+
+**Verification:** `npx tsc --noEmit` clean, `npm run test:unit` full suite green, `npm run build`
+succeeds. UI changes (difficulty selectors in all three locations, panel widened not lengthened)
+confirmed via screenshot. The multiplayer fixes above are confirmed by the user's own report of
+what broke in a real 3-peer session, not re-verified end-to-end by a fresh multi-browser test on my
+end for this round - worth a follow-up two/three-browser check if anything here still reads wrong
+live.

@@ -23,6 +23,11 @@ const WADDLE_BOB_HEIGHT = 0.05;
 const WADDLE_BOB_SPEED = 9;
 const WADDLE_ROCK_ANGLE = 0.18;
 
+/** How far a goose must move horizontally before its ground height is resampled - same value and
+ * reasoning as Enemy.ts's identical constant (a goose is even slower than an enemy, so this caches
+ * more frames' worth of samples per resample, not fewer). */
+const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
+
 /**
  * Wandering NPC built entirely from THREE primitives (no asset - see GOOSE_* config comment).
  * Takes exactly GOOSE_HITS_TO_KILL hits regardless of weapon damage (deliberately ignores the
@@ -154,8 +159,32 @@ export class Goose implements Entity, Damageable {
     this.applyPosition(x, z);
   }
 
+  /** Initialized to NaN so the first groundHeightAt call always resamples (NaN distance compares
+   * false against the threshold) - mirrors Enemy.ts's identical caching pattern exactly. */
+  private heightSampleX = Number.NaN;
+  private heightSampleZ = Number.NaN;
+  private cachedGroundHeight = 0;
+
+  /** Cached terrain height, resampled only after HEIGHT_RESAMPLE_DISTANCE_SQ of horizontal
+   * movement rather than every frame - `sampleHeight` is expensive (4-octave fBm + a 9-cell Worley
+   * scan per call, see Enemy.ts's own comment on this exact cost) and this was called uncached on
+   * every single frame for every live goose before this fix, which is the real explanation for the
+   * multiplayer lag reported once several geese/players were active at once: up to
+   * GOOSE_MAX_CONCURRENT geese x 60fps x that noise cost, on top of everything else already
+   * competing for the same frame budget, especially on the host (also serving as the relay). */
+  private groundHeightAt(x: number, z: number): number {
+    const dx = x - this.heightSampleX;
+    const dz = z - this.heightSampleZ;
+    if (!(dx * dx + dz * dz < HEIGHT_RESAMPLE_DISTANCE_SQ)) {
+      this.cachedGroundHeight = sampleHeight(x, z);
+      this.heightSampleX = x;
+      this.heightSampleZ = z;
+    }
+    return this.cachedGroundHeight;
+  }
+
   private applyPosition(x: number, z: number): void {
-    const groundY = sampleHeight(x, z) + GOOSE_HEIGHT / 2;
+    const groundY = this.groundHeightAt(x, z) + GOOSE_HEIGHT / 2;
     this.rigidBody.setNextKinematicTranslation({ x, y: groundY, z });
     this.mesh.position.set(x, groundY + Math.sin(this.waddlePhase) * WADDLE_BOB_HEIGHT, z);
     this.mesh.rotation.z = Math.sin(this.waddlePhase) * WADDLE_ROCK_ANGLE;

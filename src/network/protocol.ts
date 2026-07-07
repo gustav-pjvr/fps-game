@@ -222,6 +222,19 @@ export interface GooseHitEventMessage {
   id: string;
 }
 
+/** Guest -> host only, sent once by a guest right after its own connection callbacks are wired up
+ * (see Game.ts's create()) - covers two distinct timing gaps with one mechanism: (1) a guest whose
+ * own Game.create() is still loading assets when the host's initial-batch gooseSpawned broadcasts
+ * go out would otherwise simply miss them (nothing was listening yet); (2) a guest that joins or
+ * rejoins mid-match has never seen any goose that spawned before it connected at all. Either way,
+ * "ask the host for the current list" is a strictly additive resync - GooseManager.applyRemoteSpawn
+ * is idempotent (a goose id it already knows about is a no-op), so a spawn this guest already
+ * received (via the normal broadcast) arriving again here causes no harm. */
+export interface GooseSyncRequestMessage {
+  type: 'gooseSyncRequest';
+  senderSlot: PlayerSlot;
+}
+
 /** Host -> everyone (broadcast): this goose just died (its GOOSE_HITS_TO_KILL'th hit landed,
  * whether that hit was the host's own or reported via GooseHitEventMessage). Every client removes
  * its own copy and independently computes/applies explosion damage to its OWN player only, using
@@ -252,7 +265,8 @@ export type NetworkMessage =
   | GooseSpawnedMessage
   | GooseSnapshotMessage
   | GooseHitEventMessage
-  | GooseExplodedMessage;
+  | GooseExplodedMessage
+  | GooseSyncRequestMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -272,6 +286,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'gooseSnapshot',
   'gooseHitEvent',
   'gooseExploded',
+  'gooseSyncRequest',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

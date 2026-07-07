@@ -96,6 +96,15 @@ export class GooseManager {
     this.geese.get(id)?.takeDamage(0, -1);
   }
 
+  /** Host-only: every currently-live authoritative goose, for replying to a gooseSyncRequest (see
+   * protocol.ts) - covers both "a guest's own Game.create() wasn't ready yet for the initial
+   * gooseSpawned broadcasts" and "a late-joining/rejoining guest missed everything that spawned
+   * before it connected," since both are really the same problem (a guest that doesn't yet know
+   * about a goose the host already owns) with the same fix (ask the host for the current list). */
+  listForSync(): { id: string; x: number; y: number; z: number }[] {
+    return Array.from(this.geese.values(), (goose) => ({ id: goose.networkId, x: goose.position.x, y: goose.position.y, z: goose.position.z }));
+  }
+
   // ---- Follower side (multiplayer guest) ------------------------------------------------------
 
   /** The host just told us a new goose exists - build a local mirror with a real collider (so this
