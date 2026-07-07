@@ -181,7 +181,7 @@ export class App {
     // Silences the old Game's message handling before tearing it down - Game.create() re-attaches
     // its own callbacks once the new match is ready, but there's a gap in between where a stray
     // message must not reach a Game instance that's about to be disposed.
-    connection.setCallbacks({ onConnected: () => {}, onDisconnected: () => {}, onError: () => {}, onMessage: () => {} });
+    connection.setCallbacks({ onConnected: () => {}, onPeerDisconnected: () => {}, onError: () => {}, onMessage: () => {} });
     this.currentGame?.dispose({ keepConnectionAlive: true });
     this.currentGame = null;
     await this.createMultiplayerGame(connection, role, params);
@@ -199,23 +199,26 @@ export class App {
    * that message arrives (Game.ts's onMultiplayerRematchReceived). */
   private handleRematchClick(settings: RematchSettings): void {
     if (!this.currentMultiplayerSession) return;
-    const { connection, role, seed: previousSeed, ownUsername, opponentUsername } = this.currentMultiplayerSession;
+    const { connection, role, seed: previousSeed, ownSlot, roomCode, hostRoster } = this.currentMultiplayerSession;
     const seed = settings.newMap ? generateMultiplayerSeed() : previousSeed;
     const killLimit = settings.killLimit;
-    const [spawnA, spawnB] = pickMultiplayerSpawnPoints();
-    connection.send({
-      type: 'matchStart',
+    // The host's *current* roster (whoever's actually still connected, including anyone who
+    // rejoined since the last match started) rather than the original match-start roster, which
+    // could still list a slot that's since disconnected for good.
+    const roster = hostRoster?.currentRoster() ?? this.currentMultiplayerSession.roster;
+    const points = pickMultiplayerSpawnPoints(roster.length);
+    const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
+    connection.send({ type: 'matchStart', seed, killLimit, spawns, roster });
+    void this.restartMultiplayerMatch(connection, role, {
       seed,
       killLimit,
-      spawnAX: spawnA.x,
-      spawnAZ: spawnA.z,
-      spawnBX: spawnB.x,
-      spawnBZ: spawnB.z,
+      ownSlot,
+      spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
+      roster,
+      roomCode,
+      initialScoreboard: [],
+      hostRoster,
     });
-    // Usernames were already exchanged once via `hello` at room-connect time and don't change
-    // mid-connection, so a rematch just carries the same session's names forward rather than
-    // re-exchanging them.
-    void this.restartMultiplayerMatch(connection, role, { seed, killLimit, spawnA, spawnB, ownUsername, opponentUsername });
   }
 
   /** Wired to MatchEndScreen's "Return to Lobby" button, shown to both host and guest (per user

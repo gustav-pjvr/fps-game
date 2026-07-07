@@ -1,22 +1,29 @@
 import { createButton, ACCENT, TEXT, HAIRLINE, BG_RAISED, DISPLAY_FONT } from './menu/menuStyles.ts';
-import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS } from '../core/config.ts';
+import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS, MULTIPLAYER_MAX_PLAYERS } from '../core/config.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
+import type { PlayerSlot } from '../network/protocol.ts';
 
 export type MultiplayerMatchEndReason = 'killLimit' | 'opponentDisconnected';
 
+export interface MultiplayerPlacement {
+  slot: PlayerSlot;
+  username: string;
+  score: number;
+  isYou: boolean;
+}
+
 /** Everything App needs to show the right screen and, if the host chooses to, start a rematch on
- * the same still-open connection (MULTIPLAYER_PLAN.md §7 phase 4). */
+ * the same still-open connections. `placements` is the full ranked scoreboard (up to
+ * MULTIPLAYER_MAX_PLAYERS entries, sorted descending by score) rather than a fixed my/opponent
+ * pair, since a 3-4 player FFA has no single "opponent." */
 export interface MultiplayerMatchEndResult {
   reason: MultiplayerMatchEndReason;
   won: boolean;
-  myScore: number;
-  opponentScore: number;
+  placements: MultiplayerPlacement[];
   killLimit: number;
   role: MultiplayerRole;
   connection: PeerConnection;
-  ownUsername: string;
-  opponentUsername: string;
 }
 
 /** What the host actually chose before clicking Rematch - App.handleRematchClick uses this instead
@@ -33,17 +40,17 @@ export interface RematchSettings {
  * recreate cycle a rematch needs (see App.restartMultiplayerMatch) - unlike DeathScreen, which is
  * per-match HUD chrome that's fine to dispose along with the rest of Game.
  *
- * Only the host ever sees the Rematch button (and the settings next to it) - the guest has no say
- * in whether the match keeps going with the same room, mirroring how only the host clicks "Start
- * Match" in the first place. The guest is instead swept along automatically: the host's Rematch
- * click sends a fresh MatchStartMessage over the same connection, and Game.ts's onMessage handler
- * treats that as the signal to restart on the guest's side too (see onMultiplayerRematchReceived). */
+ * Only the host ever sees the Rematch button (and the settings next to it) - every guest waits on
+ * this same screen for the host to either rematch, change settings, or leave (per user request),
+ * mirroring how only the host clicks "Start Match" in the first place. Guests are instead swept
+ * along automatically: the host's Rematch click sends a fresh MatchStartMessage over the same
+ * connections, and Game.ts's onMessage handler treats that as the signal to restart on the
+ * guest's side too (see onMultiplayerRematchReceived). */
 export class MatchEndScreen {
   private readonly element: HTMLDivElement;
   private readonly titleElement: HTMLDivElement;
   private readonly podium: HTMLDivElement;
-  private readonly firstPlaceRow: PodiumRow;
-  private readonly secondPlaceRow: PodiumRow;
+  private readonly podiumRows: PodiumRow[];
   private readonly hostSettings: HTMLDivElement;
   private readonly killLimitSelect: HTMLSelectElement;
   private readonly newMapCheckbox: HTMLInputElement;
@@ -60,16 +67,18 @@ export class MatchEndScreen {
     this.titleElement = document.createElement('div');
     this.titleElement.style.cssText = 'font-size:2.5rem; font-weight:700; letter-spacing:0.12em; text-shadow:0 4px 20px rgba(0,0,0,0.6);';
 
-    // Two-row podium (1st/2nd) rather than a plain "You N - M Opponent" line, per user request -
-    // real usernames plus a clear rank/medal read faster than parsing a score string.
+    // Ranked podium (up to MULTIPLAYER_MAX_PLAYERS rows) rather than a plain "You N - M Opponent"
+    // line, per user request - real usernames plus a clear rank/medal read faster than parsing a
+    // score string. Pre-created and shown/hidden by row count each time, rather than built fresh
+    // per match end - matches the "toggle display on fixed DOM" pattern already used elsewhere in
+    // this file (see the host settings panel below).
     this.podium = document.createElement('div');
     this.podium.style.cssText = 'display:flex; flex-direction:column; gap:10px; width:360px;';
-    this.firstPlaceRow = createPodiumRow();
-    this.secondPlaceRow = createPodiumRow();
-    this.podium.append(this.firstPlaceRow.row, this.secondPlaceRow.row);
+    this.podiumRows = Array.from({ length: MULTIPLAYER_MAX_PLAYERS }, () => createPodiumRow());
+    this.podium.append(...this.podiumRows.map((row) => row.row));
 
     // Host-only rematch settings (per user request: "kill target, new map toggle") - never shown
-    // to the guest, mirroring how only the host ever picks the kill limit in CreateRoomScreen.
+    // to a guest, mirroring how only the host ever picks the kill limit in CreateRoomScreen.
     this.hostSettings = document.createElement('div');
     this.hostSettings.style.cssText =
       `display:flex; flex-direction:column; gap:10px; width:360px; padding:16px 18px;` +
@@ -120,14 +129,17 @@ export class MatchEndScreen {
     this.titleElement.textContent =
       result.reason === 'opponentDisconnected' ? 'OPPONENT DISCONNECTED' : result.won ? 'VICTORY' : 'DEFEAT';
 
-    const own = { name: result.ownUsername, score: result.myScore, isYou: true };
-    const opponent = { name: result.opponentUsername, score: result.opponentScore, isYou: false };
-    const [first, second] = own.score >= opponent.score ? [own, opponent] : [opponent, own];
-    setPodiumRow(this.firstPlaceRow, 1, first);
-    setPodiumRow(this.secondPlaceRow, 2, second);
+    const ranked = [...result.placements].sort((a, b) => b.score - a.score);
+    ranked.forEach((entry, index) => {
+      const row = this.podiumRows[index];
+      if (!row) return; // more placements than podium rows shouldn't happen at MULTIPLAYER_MAX_PLAYERS, defensive
+      setPodiumRow(row, index + 1, entry);
+      row.row.style.display = 'flex';
+    });
+    for (let i = ranked.length; i < this.podiumRows.length; i++) this.podiumRows[i]!.row.style.display = 'none';
 
     // A disconnect means the connection this rematch would need is already gone; only the host
-    // ever gets to choose, so the guest never sees these regardless of reason.
+    // ever gets to choose, so a guest never sees these regardless of reason.
     const canRematch = result.reason === 'killLimit' && result.role === 'host';
     this.rematchButton.style.display = canRematch ? 'inline-block' : 'none';
     this.hostSettings.style.display = canRematch ? 'flex' : 'none';
@@ -174,9 +186,11 @@ function createPodiumRow(): PodiumRow {
   return { row, rankElement, nameElement, scoreElement };
 }
 
-function setPodiumRow(row: PodiumRow, rank: 1 | 2, entry: { name: string; score: number; isYou: boolean }): void {
-  row.rankElement.textContent = rank === 1 ? '🥇' : '🥈';
-  row.nameElement.textContent = entry.isYou ? `${entry.name} (you)` : entry.name;
+const RANK_MEDALS: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
+
+function setPodiumRow(row: PodiumRow, rank: number, entry: { username: string; score: number; isYou: boolean }): void {
+  row.rankElement.textContent = RANK_MEDALS[rank] ?? `${rank}th`;
+  row.nameElement.textContent = entry.isYou ? `${entry.username} (you)` : entry.username;
   row.scoreElement.textContent = String(entry.score);
   row.row.style.borderColor = rank === 1 ? ACCENT : 'rgba(255,255,255,0.1)';
   row.row.style.background = rank === 1 ? 'rgba(62,207,95,0.12)' : 'rgba(255,255,255,0.05)';

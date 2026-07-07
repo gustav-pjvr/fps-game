@@ -11,41 +11,44 @@ export const SPAWN_X = 0;
 export const SPAWN_Z = 8;
 export const ENEMY_RING_BASE_RADIUS = 25;
 
-/** Multiplayer (MULTIPLAYER_PLAN.md §4a, later revised per user request for random spawns): a
- * pool of candidate spawn points around the map, all at the same safe distance (35, replacing the
- * old fixed +/-35 two-point layout - see the prior history of that number in git blame) but spread
- * across 6 angles so which two get used, and where, actually varies match to match and death to
- * death, rather than the same two fixed points every time. `pickMultiplayerSpawnPoints`
- * (multiplayerSpawn.ts) draws two of these far enough apart (MULTIPLAYER_SPAWN_MIN_SEPARATION) for
- * the host's initial pick at match start; individual respawns during the match pick fresh points
- * independently (see Game.ts's multiplayerRespawn) using the *receiving* client's own
- * Math.random() - no cross-client agreement needed there, since the chosen position already rides
- * on the existing respawnEvent network message.
+/** Up to 4 players in one lobby (1 host + up to 3 guests), host-relay star topology - see
+ * PeerConnection.ts/HostRoster.ts. Every room-capacity/roster-loop/spawn-count computation in the
+ * multiplayer code reads this one constant rather than a scattered magic 3/4. */
+export const MULTIPLAYER_MAX_PLAYERS = 4;
+/** How long the host holds a mid-match-disconnected guest's slot/score reserved before it's freed
+ * for a genuinely new player - see HostRoster.ts's grace-period reservation and
+ * core/multiplayerRejoin.ts's rejoin token. Long enough to survive a real dropped-wifi/tab-reload
+ * blip, short enough that an abandoned slot doesn't block a 4th player from joining for the rest
+ * of the match. */
+export const MULTIPLAYER_REJOIN_GRACE_PERIOD_MS = 90_000;
+
+/** The radius every multiplayer spawn ring (initial match-start spawns, mid-match respawns) is
+ * placed on - see multiplayerSpawn.ts's pickMultiplayerSpawnPoints/pickRandomRespawnPoint. */
+export const MULTIPLAYER_SPAWN_RADIUS = 35;
+/** Fixed reference points at 6 canonical angles around MULTIPLAYER_SPAWN_RADIUS - kept purely as a
+ * clearance-check reference for VegetationManager.ts (so trees don't spawn overlapping a spot a
+ * match could plausibly place a player), decoupled from actual spawn *selection*: since
+ * pickMultiplayerSpawnPoints now computes points analytically at a random rotation rather than
+ * drawing from a fixed pool (there is no fixed pool to draw from anymore - see multiplayerSpawn.ts
+ * for why), this array no longer represents "the possible spawn points," just 6 representative
+ * samples around the same ring, evenly spaced, dense enough that a tree cleared of all 6 is
+ * effectively cleared of the whole ring regardless of the actual per-match rotation offset.
  *
  * Known gap, not solved yet: unlike SPAWN_X/SPAWN_Z, these points are not currently excluded from
  * flat/forest zone placement (ZoneMap.ts's isSiteClear only measures clearance from the
- * single-player spawn) - a town or forest could rarely generate overlapping one of them. Vegetation
- * *is* covered (see VEGETATION_SPAWN_CLEARANCE below, checked against every point in this pool),
- * since that was a small, low-risk addition; doing the same for zone placement would mean touching
- * the guaranteed-zone system ZoneMap.test.ts locks in across 1000 seeds, which isn't something to
- * do incidentally alongside this. */
+ * single-player spawn) - a town or forest could rarely generate overlapping one of them. Doing the
+ * same for zone placement would mean touching the guaranteed-zone system ZoneMap.test.ts locks in
+ * across 1000 seeds, which isn't something to do incidentally alongside this. */
 export const MULTIPLAYER_SPAWN_POINTS: ReadonlyArray<{ x: number; z: number }> = [0, 60, 120, 180, 240, 300].map(
   (angleDeg) => {
     const angle = (angleDeg * Math.PI) / 180;
-    const distance = 35;
-    return { x: Math.cos(angle) * distance, z: Math.sin(angle) * distance };
+    return { x: Math.cos(angle) * MULTIPLAYER_SPAWN_RADIUS, z: Math.sin(angle) * MULTIPLAYER_SPAWN_RADIUS };
   },
 );
-/** Minimum distance apart the host's two initial spawn picks must be (see
- * pickMultiplayerSpawnPoints) - players should have to advance toward each other, not spawn in
- * sight of one another. Below the pool's own point-to-point spacing (60 units, adjacent points on
- * a 35-radius hexagon) so a pick isn't forced into always choosing near-opposite points, which
- * would make "random" spawns look barely different from the old fixed two-point layout in practice. */
-export const MULTIPLAYER_SPAWN_MIN_SEPARATION = 40;
-/** Per user request: a mid-match respawn must land at least "half a map size" from the opponent's
- * current position - "map size" here is this pool's own diameter (2x the 35-unit spawn radius, the
- * one concrete spatial scale this spawn system actually has), so half of that is 35. See
- * pickRandomRespawnPoint (multiplayerSpawn.ts). */
+/** Per user request: a mid-match respawn must land at least "half a map size" from every other
+ * currently-alive player's position - "map size" here is the spawn ring's own diameter (2x
+ * MULTIPLAYER_SPAWN_RADIUS), so half of that is 35. See pickRandomRespawnPoint
+ * (multiplayerSpawn.ts). */
 export const MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT = 35;
 
 /** How often this client broadcasts its own player's transform to the opponent (MULTIPLAYER_PLAN.md

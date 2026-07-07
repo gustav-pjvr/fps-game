@@ -55,9 +55,12 @@ import {
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { pickRandomRespawnPoint } from './multiplayerSpawn.ts';
+import { applyPlayerDied } from './multiplayerScoring.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
+import { HOST_SLOT, type PlayerSlot } from '../network/protocol.ts';
+import type { HostRoster } from '../network/HostRoster.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 const TARGET_RING_BASE_RADIUS = 15;
@@ -74,42 +77,63 @@ export interface MatchConfig {
   targetCount: number;
 }
 
+/** One other player currently in the match - keyed by slot in ActiveMultiplayer.opponents below,
+ * replacing the old single `remotePlayer`/`opponentHealth` fields now that there can be up to 3. */
+interface RemoteOpponent {
+  readonly slot: PlayerSlot;
+  readonly remotePlayer: RemotePlayer;
+  username: string;
+  /** Piggybacked on their own playerSnapshot messages - this client has no other way to know it,
+   * since it's never authoritative over another player's health. Starts at full health, matching
+   * what a freshly spawned/joined opponent actually has before their first snapshot arrives. */
+  health: number;
+}
+
 /** Everything Game tracks about an in-progress multiplayer match beyond the MultiplayerSession it
  * was handed (see network/MultiplayerSession.ts) - the parts that only exist once the match is
  * actually running, not at hand-off time. `snapshotAccumulator` is mutated every tick (see
  * update()); the object itself is still only ever assigned once, at construction. */
 interface ActiveMultiplayer {
   readonly session: MultiplayerSession;
-  readonly remotePlayer: RemotePlayer;
+  /** Every OTHER player currently connected to the match, keyed by slot. Entries are removed on a
+   * mid-match disconnect (playerLeft) and re-added on a rejoin/late-join (playerJoinedMatch) - see
+   * the onMessage handling in create(). */
+  readonly opponents: Map<PlayerSlot, RemoteOpponent>;
+  /** Every slot ever seen in this match, own included, NEVER removed (unlike `opponents` above) -
+   * a disconnected player's name/score still needs to show correctly on the final podium. */
+  readonly usernames: Map<PlayerSlot, string>;
   readonly minimap: Minimap;
   readonly multiplayerHud: MultiplayerHud;
-  /** Win condition (MULTIPLAYER_PLAN.md §4): first to this many kills wins. Fixed for the match -
-   * the host's choice at room-creation time, carried on MatchStartMessage. */
+  /** Win condition: first to this many kills wins. Fixed for the match - the host's choice at
+   * room-creation time, carried on MatchStartMessage. */
   readonly killLimit: number;
+  /** Host-only (see MultiplayerSession.hostRoster) - non-null exactly when role==='host', used to
+   * resolve a mid-match join/rejoin's hello (see onHostHello below) and to periodically free
+   * expired rejoin reservations (see hostSweepAccumulator). */
+  readonly hostRoster: HostRoster | null;
   snapshotAccumulator: number;
+  /** Host-only throttle for HostRoster.sweepExpiredReservations - there's no separate server tick
+   * to hang this off of (the host IS just another player's own tab), so it's polled from this
+   * client's own update loop instead, at a coarse interval rather than every frame. */
+  hostSweepAccumulator: number;
   /** Counts up while this client's own player is dead; 0 whenever alive. Compared against
    * MULTIPLAYER_RESPAWN_DELAY in updateMultiplayer() to trigger the automatic respawn. */
   deathTimer: number;
-  /** The opponent's last-reported health (piggybacked on their own playerSnapshot messages - see
-   * protocol.ts) - this client has no other way to know it, since it's never authoritative over
-   * the opponent's health (MULTIPLAYER_PLAN.md §3/§6). Starts at full health, matching what a
-   * freshly spawned opponent actually has before their first snapshot ever arrives. */
-  opponentHealth: number;
+  /** This client's own best-effort "who last damaged me" tracking for kill-credit (see
+   * protocol.ts's PlayerDiedMessage doc) - reset to null on respawn/match start. */
+  lastDamageSourceSlot: PlayerSlot | null;
 }
 
 function waitForNextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-/** Host always spawns at spawnA, guest always at spawnB - fixed for the whole match
- * (MULTIPLAYER_PLAN.md §4a), never randomized or swapped *within* a match, though the points
- * themselves are picked fresh by the host each match (see multiplayerSpawn.ts and the
- * MultiplayerSession comment). Returns [ownSpawn, opponentSpawn]. */
-function multiplayerSpawnPoints(session: MultiplayerSession): [THREE.Vector2, THREE.Vector2] {
-  const spawnA = new THREE.Vector2(session.spawnA.x, session.spawnA.z);
-  const spawnB = new THREE.Vector2(session.spawnB.x, session.spawnB.z);
-  return session.role === 'host' ? [spawnA, spawnB] : [spawnB, spawnA];
-}
+/** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
+ * tagged with the original sender's own slot - see the class comment on Game's onMessage handler.
+ * Lobby/roster messages (hello/welcome/rosterUpdate/roomFull) and host-authored broadcasts
+ * (matchStart/hostLeftRoom/playerLeft/playerJoinedMatch) are deliberately excluded - the host
+ * authors those itself, they never arrive from elsewhere to relay. */
+const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set(['playerSnapshot', 'fireEvent', 'damageEvent', 'playerDied', 'respawnEvent']);
 
 /** Linear gain falloff for enemy gunshots: full volume inside FULL_VOLUME_RANGE, fading to
  * MIN_VOLUME (never silent - an inaudible shot that still damages would read as unfair) at
@@ -220,9 +244,14 @@ export class Game {
    * transition unobservable (isDead would already be true before wasDead is captured), and
    * neither the death screen nor the `playerDied` reply would ever fire. */
   private pendingNetworkDamage = 0;
-  /** Counts this client's own deaths in multiplayer - equivalently, the opponent's kill count,
-   * since every death here is a kill for them (see the death-transition block in update()). */
-  private multiplayerDeathCount = 0;
+  /** Every player's running kill count in the current multiplayer match, own slot included -
+   * replaces the old single scoreState.value (mine)/multiplayerDeathCount (a 1v1-only proxy for
+   * the one opponent's score) now that there can be up to 3 opponents. Updated symmetrically by
+   * applyPlayerDied for every playerDied this client sends or receives (see multiplayerScoring.ts). */
+  private readonly multiplayerScoreboard = new Map<PlayerSlot, number>();
+  /** Every player's running death count - kept alongside the scoreboard for parity, though only
+   * the scoreboard actually drives the win condition/podium. */
+  private readonly multiplayerDeathCounts = new Map<PlayerSlot, number>();
   /** True once the win condition (or a disconnect) has ended a multiplayer match - freezes
    * simulation the same way `player.isDead` does, but permanently for the rest of this Game
    * instance's life rather than until a respawn (see the top of update()). */
@@ -345,12 +374,18 @@ export class Game {
       getActiveCrateStackPositions: () => this.buildings.getActiveCrateStackPositions(),
       getActiveTowerPositions: () => this.watchTowers.getActiveTowerPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
+      // e2e coverage predates 4-player support and only ever exercises 2-player matches - "the
+      // opponent" there unambiguously means the one other player, i.e. the first (only) entry.
       getOpponentPosition: () => {
-        if (!this.multiplayer) return null;
-        const p = this.multiplayer.remotePlayer.position;
+        const opponent = this.multiplayer?.opponents.values().next().value;
+        if (!opponent) return null;
+        const p = opponent.remotePlayer.position;
         return { x: p.x, y: p.y, z: p.z };
       },
-      getOpponentScore: () => this.multiplayerDeathCount,
+      getOpponentScore: () => {
+        const opponent = this.multiplayer?.opponents.keys().next().value;
+        return opponent !== undefined ? this.multiplayerScoreboard.get(opponent) ?? 0 : 0;
+      },
       isMultiplayerMatchEnded: () => this.matchEnded,
       debugDisconnect: () => this.multiplayer?.session.connection.dispose(),
     };
@@ -408,11 +443,11 @@ export class Game {
       },
     });
 
-    // Multiplayer: each client spawns at its own designated point (MULTIPLAYER_PLAN.md §4a), not
-    // the shared single-player one - host always A, guest always B.
-    const [ownSpawn, opponentSpawn] = multiplayer
-      ? multiplayerSpawnPoints(multiplayer)
-      : [new THREE.Vector2(SPAWN_X, SPAWN_Z), null];
+    // Multiplayer: each client spawns at its own designated point (one per roster slot, looked up
+    // by slot rather than a fixed host/guest pair now that there can be up to 4), not the shared
+    // single-player one.
+    const ownSpawnPoint = multiplayer?.spawns.find((s) => s.slot === multiplayer.ownSlot)?.point;
+    const ownSpawn = ownSpawnPoint ? new THREE.Vector2(ownSpawnPoint.x, ownSpawnPoint.z) : new THREE.Vector2(SPAWN_X, SPAWN_Z);
 
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
     for (let i = 0; i < 30; i++) {
@@ -461,6 +496,7 @@ export class Game {
         // resolved locally (damage, if any, is reported separately via the hit pipeline below).
         multiplayer?.connection.send({
           type: 'fireEvent',
+          senderSlot: multiplayer.ownSlot,
           originX: start.x,
           originY: start.y,
           originZ: start.z,
@@ -515,28 +551,49 @@ export class Game {
       });
     }
 
-    // opponentSpawn is non-null exactly when multiplayer is present (see the destructure above) -
-    // the RemotePlayer's initial position doesn't need to wait for a first network snapshot,
-    // since both sides already know where the opponent starts.
+    // Every OTHER roster slot gets a RemotePlayer, positioned at its own match-start spawn point
+    // (or the local player's own spawn as a harmless placeholder for a late-join/rejoin, where
+    // other players' *current* positions aren't known yet - their next playerSnapshot corrects it
+    // within one send interval, imperceptibly). Both sides already know where every player starts,
+    // so no RemotePlayer needs to wait for a first network snapshot to appear in the right place.
     let activeMultiplayer: ActiveMultiplayer | null = null;
-    if (multiplayer && opponentSpawn) {
-      const remotePlayer = await RemotePlayer.create(
-        physics,
-        renderer.scene,
-        new THREE.Vector3(opponentSpawn.x, sampleHeight(opponentSpawn.x, opponentSpawn.y) + SPAWN_HEIGHT_OFFSET, opponentSpawn.y),
-        // The opponent's own client is what actually applies this to its health - see the class
-        // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
-        (amount) => multiplayer.connection.send({ type: 'damageEvent', amount }),
-      );
+    if (multiplayer) {
+      const ownUsername = multiplayer.roster.find((r) => r.slot === multiplayer.ownSlot)?.username ?? 'You';
+      const roomCode = multiplayer.roomCode;
+      const opponents = new Map<PlayerSlot, RemoteOpponent>();
+      const usernames = new Map<PlayerSlot, string>([[multiplayer.ownSlot, ownUsername]]);
+      const minimap = new Minimap(hudRoot);
+      const multiplayerHud = new MultiplayerHud(hudRoot, multiplayer.ownSlot, ownUsername, roomCode);
+
+      for (const entry of multiplayer.roster) {
+        if (entry.slot === multiplayer.ownSlot) continue;
+        const spawnPoint = multiplayer.spawns.find((s) => s.slot === entry.slot)?.point ?? { x: ownSpawn.x, z: ownSpawn.y };
+        const remotePlayer = await RemotePlayer.create(
+          physics,
+          renderer.scene,
+          new THREE.Vector3(spawnPoint.x, sampleHeight(spawnPoint.x, spawnPoint.z) + SPAWN_HEIGHT_OFFSET, spawnPoint.z),
+          // The target's own client is what actually applies this to its health - see the class
+          // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
+          (amount) => multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount }),
+        );
+        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth });
+        usernames.set(entry.slot, entry.username);
+        minimap.addDot(entry.slot);
+        multiplayerHud.addOpponentRow(entry.slot, entry.username);
+      }
+
       activeMultiplayer = {
         session: multiplayer,
-        remotePlayer,
-        minimap: new Minimap(hudRoot),
-        multiplayerHud: new MultiplayerHud(hudRoot, multiplayer.ownUsername, multiplayer.opponentUsername),
+        opponents,
+        usernames,
+        minimap,
+        multiplayerHud,
         killLimit: multiplayer.killLimit,
+        hostRoster: multiplayer.role === 'host' ? multiplayer.hostRoster ?? null : null,
         snapshotAccumulator: 0,
+        hostSweepAccumulator: 0,
         deathTimer: 0,
-        opponentHealth: player.currentHealth,
+        lastDamageSourceSlot: null,
       };
     }
 
@@ -613,19 +670,49 @@ export class Game {
     );
     gameRef.current = game;
 
+    // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
+    // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
+    if (multiplayer) {
+      for (const entry of multiplayer.initialScoreboard) game.multiplayerScoreboard.set(entry.slot, entry.score);
+    }
+
     // Takes over from the room screen's own connection callbacks (which only knew how to update
-    // now-hidden UI) - see PeerConnection.setCallbacks. `onDisconnected` ends the match rather than
-    // leaving the RemotePlayer frozen in place (MULTIPLAYER_PLAN.md §7 phase 4) - there's no
-    // Rematch option once the connection itself is gone, only Return to Lobby.
+    // now-hidden UI) - see PeerConnection.setCallbacks. Relay (host-only, transparent pass-through
+    // of gameplay messages to every other connected guest) happens once here, before the
+    // slot-aware local-application switch below - see the class comment on why this is safe to do
+    // unconditionally rather than per message type.
     if (activeMultiplayer) {
       activeMultiplayer.session.connection.setCallbacks({
-        onConnected: () => {},
-        onDisconnected: () => game.endMultiplayerMatch(false, 'opponentDisconnected'),
+        onConnected: () => {}, // side effects for a mid-match join/rejoin live in onHostHello below, not here
+        // Guest: its one connection (to the host) closing always ends the match - star topology
+        // gives it no path to any other guest without the host relaying, so losing the host is
+        // unrecoverable for it (it can still rejoin the same room code later, per the
+        // WelcomeMessage.activeMatch path in JoinRoomScreen - just not by staying on this screen).
+        // Host: one guest's connection closing does NOT end the match - the remaining players keep
+        // playing (per user decision), and everyone else just needs that slot's RemotePlayer/HUD/
+        // minimap removed.
+        onPeerDisconnected: (slot) => {
+          if (activeMultiplayer.session.role === 'guest') {
+            game.endMultiplayerMatch(false, 'opponentDisconnected');
+            return;
+          }
+          activeMultiplayer.hostRoster?.handleDisconnect(slot, performance.now());
+          game.removeMultiplayerOpponent(slot);
+          activeMultiplayer.session.connection.send({ type: 'playerLeft', slot });
+        },
         // A dropped connection can surface as a WebRTC/PeerJS error rather than a clean 'close'
-        // event (e.g. an abrupt network loss instead of a graceful page unload) - either way, from
-        // the remaining player's perspective the match is over the same way.
-        onError: () => game.endMultiplayerMatch(false, 'opponentDisconnected'),
-        onMessage: (message) => {
+        // event (e.g. an abrupt network loss instead of a graceful page unload) - from a guest's
+        // perspective that's the same "match is over" outcome; from the host's perspective there's
+        // no specific slot to react to here (a genuinely per-guest error still fires that guest's
+        // own connection 'close' separately, handled by onPeerDisconnected above).
+        onError: () => {
+          if (activeMultiplayer.session.role === 'guest') game.endMultiplayerMatch(false, 'opponentDisconnected');
+        },
+        onMessage: (message, senderSlot) => {
+          if (activeMultiplayer.session.role === 'host' && RELAYABLE_MESSAGE_TYPES.has(message.type)) {
+            activeMultiplayer.session.connection.sendExcept(message, senderSlot);
+          }
+
           switch (message.type) {
             case 'matchStart':
               // The initial matchStart is always consumed by the room screen before this handler
@@ -633,23 +720,28 @@ export class Game {
               game.onMultiplayerRematchReceived?.({
                 seed: message.seed,
                 killLimit: message.killLimit,
-                spawnA: { x: message.spawnAX, z: message.spawnAZ },
-                spawnB: { x: message.spawnBX, z: message.spawnBZ },
-                // Names don't change mid-connection - carry this match's own session forward
-                // rather than re-exchanging them (the host does the same, see App.ts's
-                // handleRematchClick).
-                ownUsername: activeMultiplayer.session.ownUsername,
-                opponentUsername: activeMultiplayer.session.opponentUsername,
+                ownSlot: activeMultiplayer.session.ownSlot,
+                spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
+                roster: message.roster,
+                // Room code/HostRoster don't change mid-connection - carry this match's own
+                // session forward rather than re-deriving them (the host does the same, see
+                // App.ts's handleRematchClick).
+                roomCode: activeMultiplayer.session.roomCode,
+                initialScoreboard: [],
+                hostRoster: activeMultiplayer.hostRoster ?? undefined,
               });
               break;
-            case 'playerSnapshot':
-              activeMultiplayer.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
-              activeMultiplayer.opponentHealth = message.health;
+            case 'playerSnapshot': {
+              const opponent = activeMultiplayer.opponents.get(senderSlot);
+              if (!opponent) break; // disconnected/unknown slot - a relay-hop race, not an error
+              opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
+              opponent.health = message.health;
               break;
+            }
             case 'fireEvent': {
-              // Purely cosmetic (MULTIPLAYER_PLAN.md §3) - the opponent's own client already
-              // resolved whether this shot actually hit anything; this just makes it visible (and,
-              // per user request, audible with real positioning) here too.
+              // Purely cosmetic - the shooter's own client already resolved whether this shot
+              // actually hit anything; this just makes it visible (and, per user request, audible
+              // with real positioning) here too.
               const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
               const end = new THREE.Vector3(message.endX, message.endY, message.endZ);
               tracers.spawn(origin, end);
@@ -660,27 +752,86 @@ export class Game {
               break;
             }
             case 'damageEvent':
-              // This client is authoritative over its own player's health (MULTIPLAYER_PLAN.md
-              // §3/§6) - the opponent only ever reports "you took N," never "you're dead."
-              // Queued rather than applied here directly - see pendingNetworkDamage.
+              // This client is authoritative over its own player's health - the attacker only ever
+              // reports "you took N," never "you're dead," and only the actual intended target
+              // applies it (everyone else still relays it - see RELAYABLE_MESSAGE_TYPES - but
+              // ignores it for health purposes). Queued rather than applied here directly - see
+              // pendingNetworkDamage.
+              if (message.targetSlot !== activeMultiplayer.session.ownSlot) break;
               game.pendingNetworkDamage += message.amount;
+              activeMultiplayer.lastDamageSourceSlot = message.senderSlot;
               break;
-            case 'playerDied':
-              // The opponent has no visibility into this client's actual health, only whatever
-              // damage it's dealt - this is how it learns a kill actually landed.
-              scoreState.value += 1;
-              killFeed.show('Opponent eliminated');
-              // Per user request: the survivor's health resets too, not just the dying player's -
-              // both sides start the next exchange at full health, same as a round reset.
-              game.healLocalPlayerToFull();
+            case 'playerDied': {
+              applyPlayerDied(game.multiplayerScoreboard, game.multiplayerDeathCounts, message);
+              if (message.victimSlot !== activeMultiplayer.session.ownSlot) {
+                const victimName = activeMultiplayer.usernames.get(message.victimSlot) ?? 'A player';
+                const killerName = message.killerSlot !== null ? activeMultiplayer.usernames.get(message.killerSlot) : null;
+                killFeed.show(killerName ? `${victimName} eliminated by ${killerName}` : `${victimName} eliminated`);
+              }
+              // Per user request: a kill resets the killer's health too, not just the one who
+              // died - the dying player's own health already resets via player.respawn() (delayed
+              // by MULTIPLAYER_RESPAWN_DELAY); this is the *other* side of that same round-reset,
+              // scoped to "only if I'm the one who got this particular kill" now that any of up to
+              // 3 other players could have been the actual killer, not always me.
+              if (message.killerSlot === activeMultiplayer.session.ownSlot) game.healLocalPlayerToFull();
               break;
-            case 'respawnEvent':
-              activeMultiplayer.remotePlayer.teleportTo(message.x, message.y, message.z);
+            }
+            case 'respawnEvent': {
+              const opponent = activeMultiplayer.opponents.get(senderSlot);
+              opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
               break;
+            }
             case 'hostLeftRoom':
               game.onOpponentLeftRoom?.();
               break;
+            case 'playerLeft':
+              game.removeMultiplayerOpponent(message.slot);
+              break;
+            case 'playerJoinedMatch':
+              if (message.slot !== activeMultiplayer.session.ownSlot) void game.addMultiplayerOpponent(message.slot, message.username);
+              break;
           }
+        },
+        // Host-only - resolves a mid-match join/rejoin's hello into the exact reply to send back,
+        // and (for anything past a normal pre-match lobby join, i.e. isMatchInProgress) performs
+        // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
+        // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
+        // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
+        onHostHello: async (username, rejoinToken) => {
+          const hostRoster = activeMultiplayer.hostRoster;
+          if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
+          const outcome = hostRoster.handleHello(username, rejoinToken, performance.now());
+          if (outcome.outcome === 'full') return 'full';
+
+          const roster = hostRoster.currentRoster();
+          if (hostRoster.isMatchInProgress()) {
+            const otherPositions = Array.from(activeMultiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
+            otherPositions.push({ x: player.position.x, z: player.position.z });
+            const spawnPoint = pickRandomRespawnPoint(otherPositions);
+            await game.addMultiplayerOpponent(outcome.slot, username);
+            activeMultiplayer.session.connection.send({ type: 'playerJoinedMatch', slot: outcome.slot, username, isRejoin: outcome.outcome === 'rejoined' });
+            return {
+              type: 'welcome',
+              yourSlot: outcome.slot,
+              isRejoin: outcome.outcome === 'rejoined',
+              hostUsername: activeMultiplayer.usernames.get(HOST_SLOT) ?? 'Host',
+              roster,
+              activeMatch: {
+                seed: getWorldSeed(),
+                killLimit: activeMultiplayer.killLimit,
+                scoreboard: Array.from(game.multiplayerScoreboard, ([slot, score]) => ({ slot, score })),
+                spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
+              },
+            };
+          }
+
+          return {
+            type: 'welcome',
+            yourSlot: outcome.slot,
+            isRejoin: outcome.outcome === 'rejoined',
+            hostUsername: activeMultiplayer.usernames.get(HOST_SLOT) ?? 'Host',
+            roster,
+          };
         },
       });
     }
@@ -717,7 +868,9 @@ export class Game {
     this.settingsPanel.dispose();
     this.perfOverlay.dispose();
     this.sound.dispose();
-    this.multiplayer?.remotePlayer.dispose(this.renderer.scene);
+    if (this.multiplayer) {
+      for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.dispose(this.renderer.scene);
+    }
     this.multiplayer?.minimap.dispose();
     this.multiplayer?.multiplayerHud.dispose();
     if (!options?.keepConnectionAlive) {
@@ -915,13 +1068,15 @@ export class Game {
       this.pendingDebugDamage = 0;
     }
 
-    // Advances the RemotePlayer's damped position/collider *before* this tick's own hitscan can
+    // Advances every RemotePlayer's damped position/collider *before* this tick's own hitscan can
     // fire, not after - moved here from the end of update() (see the old updateMultiplayer, which
     // ran after weaponManager.update()) because that ordering meant every shot raycast against a
     // collider position that was one whole extra frame stale on top of the network sync lag
     // already inherent to the snapshot-sync model, silently shrinking the real hit window on top
     // of that inherent lag for no reason - fixable, unlike the network lag itself.
-    this.multiplayer?.remotePlayer.update(dt);
+    if (this.multiplayer) {
+      for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.update(dt);
+    }
 
     if (this.player.isDead || isPaused) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
@@ -955,11 +1110,17 @@ export class Game {
       this.deathScreen.show(this.scoreState.value);
       this.input.releasePointerLock();
       if (this.multiplayer) {
-        // The opponent has no visibility into this client's health - this is the only way they
-        // learn a kill actually landed (MULTIPLAYER_PLAN.md §3). Every death here is a kill for
-        // them, so this also doubles as their score from this client's point of view.
-        this.multiplayer.session.connection.send({ type: 'playerDied' });
-        this.multiplayerDeathCount += 1;
+        // No other player has visibility into this client's health - this is the only way they
+        // learn a kill actually landed. `lastDamageSourceSlot` is this client's own best-effort
+        // record of who dealt it (see the damageEvent handler in create()) - self-reported, not
+        // adjudicated by anyone else, same trust model this protocol already uses for health.
+        const killerSlot = this.multiplayer.lastDamageSourceSlot;
+        const ownSlot = this.multiplayer.session.ownSlot;
+        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot });
+        // The sender applies its own scoreboard update locally rather than waiting to receive its
+        // own broadcast back - a host never receives its own sent messages, and a guest's message
+        // never loops back to it either.
+        applyPlayerDied(this.multiplayerScoreboard, this.multiplayerDeathCounts, { victimSlot: ownSlot, killerSlot });
       }
     }
 
@@ -972,35 +1133,45 @@ export class Game {
 
   /** RemotePlayer always smooths toward its last snapshot every tick, independent of send timing -
    * `snapshotAccumulator` only gates how often *this* client broadcasts its own state
-   * (PLAYER_SNAPSHOT_SEND_INTERVAL, ~18Hz - see MULTIPLAYER_PLAN.md §3), not how often the
-   * opponent's visual position gets smoothed. */
+   * (PLAYER_SNAPSHOT_SEND_INTERVAL, ~18Hz), not how often an opponent's visual position gets
+   * smoothed. */
   private updateMultiplayer(dt: number): void {
     if (!this.multiplayer) return;
 
-    // RemotePlayer's own position/collider is advanced earlier in update(), before this tick's
-    // hitscan can fire (see that call site's comment) - this just reads the already-updated
-    // position for the minimap.
-    this.multiplayer.minimap.update(this.player.position, this.multiplayer.remotePlayer.position, this.player.facingYaw);
-    this.multiplayer.multiplayerHud.update(
-      this.player.currentHealth,
-      this.player.maxHealth,
-      this.multiplayer.opponentHealth,
-      this.scoreState.value,
-      this.multiplayerDeathCount,
-    );
+    // Every RemotePlayer's own position/collider is advanced earlier in update(), before this
+    // tick's hitscan can fire (see that call site's comment) - this just reads the already-updated
+    // positions for the minimap.
+    const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
+    this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw);
+    const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
+    this.multiplayer.multiplayerHud.update(this.player.currentHealth, this.player.maxHealth, opponentHealths, this.multiplayerScoreboard);
 
-    // Win condition (MULTIPLAYER_PLAN.md §4): first to killLimit ends the match. Checked here
-    // rather than where each score actually changes (the `playerDied` handler for my own kills,
-    // the death-transition block for the opponent's) so there's exactly one place that decides
-    // "the match is over," regardless of which side's counter just crossed the line.
+    // Win condition: first to killLimit ends the match. Checked here rather than where each score
+    // actually changes (the playerDied handling scattered across create()'s onMessage and update()'s
+    // own death-transition block) so there's exactly one place that decides "the match is over,"
+    // regardless of which slot's score just crossed the line - every client runs this same check
+    // against its own copy of the scoreboard (kept in sync purely by relaying playerDied messages),
+    // so no host adjudication is needed for everyone to converge on the same outcome.
     if (!this.matchEnded) {
-      if (this.scoreState.value >= this.multiplayer.killLimit) {
-        this.endMultiplayerMatch(true, 'killLimit');
-      } else if (this.multiplayerDeathCount >= this.multiplayer.killLimit) {
-        this.endMultiplayerMatch(false, 'killLimit');
+      for (const [slot, score] of this.multiplayerScoreboard) {
+        if (score >= this.multiplayer.killLimit) {
+          this.endMultiplayerMatch(slot === this.multiplayer.session.ownSlot, 'killLimit');
+          break;
+        }
       }
     }
     if (this.matchEnded) return;
+
+    // Host-only housekeeping: no separate server tick exists (the host IS just another player's
+    // own tab), so expired rejoin reservations are polled from this client's own update loop
+    // instead, at a coarse interval rather than every frame.
+    if (this.multiplayer.hostRoster) {
+      this.multiplayer.hostSweepAccumulator += dt;
+      if (this.multiplayer.hostSweepAccumulator >= 1) {
+        this.multiplayer.hostSweepAccumulator = 0;
+        this.multiplayer.hostRoster.sweepExpiredReservations(performance.now());
+      }
+    }
 
     if (this.player.isDead) {
       this.multiplayer.deathTimer += dt;
@@ -1016,6 +1187,7 @@ export class Game {
       const p = this.player.position;
       this.multiplayer.session.connection.send({
         type: 'playerSnapshot',
+        senderSlot: this.multiplayer.session.ownSlot,
         x: p.x,
         y: p.y,
         z: p.z,
@@ -1027,59 +1199,109 @@ export class Game {
   }
 
   /** Respawns this client's own player at a fresh random spawn point (per user request - every
-   * death picks a new spot from MULTIPLAYER_SPAWN_POINTS, not always the same one used at match
-   * start) - triggered automatically MULTIPLAYER_RESPAWN_DELAY seconds after death (see
-   * updateMultiplayer), or immediately via the death screen's Respawn button/T key (see
-   * resetPlay). Deliberately does not touch scoreState - a kill/death in multiplayer shouldn't
-   * reset the running score the way single-player's practice-reset does.
+   * death picks a new spot, not always the same one used at match start) - triggered automatically
+   * MULTIPLAYER_RESPAWN_DELAY seconds after death (see updateMultiplayer), or immediately via the
+   * death screen's Respawn button/T key (see resetPlay). Deliberately does not touch scoreState -
+   * a kill/death in multiplayer shouldn't reset the running score the way single-player's
+   * practice-reset does.
    *
    * Picked independently by this client alone, using plain Math.random() (no cross-client
    * agreement needed) - the chosen position rides on the respawnEvent message already sent below,
-   * which is how the opponent's RemotePlayer learns where to snap to either way. */
+   * which is how every other player's RemotePlayer for this slot learns where to snap to either
+   * way. Must clear MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT from *every* other currently
+   * connected player, not just one. */
   private multiplayerRespawn(): void {
     if (!this.multiplayer) return;
 
-    const opponentPosition = this.multiplayer.remotePlayer.position;
-    const { x, z } = pickRandomRespawnPoint({ x: opponentPosition.x, z: opponentPosition.z });
+    const ownSlot = this.multiplayer.session.ownSlot;
+    const otherPositions = Array.from(this.multiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
+    const { x, z } = pickRandomRespawnPoint(otherPositions);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.deathTimer = 0;
+    this.multiplayer.lastDamageSourceSlot = null;
     this.deathScreen.hide();
     this.input.requestPointerLock();
-    this.multiplayer.session.connection.send({ type: 'respawnEvent', x, y: spawnY, z });
+    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
   }
 
-  /** Per user request: a kill resets both players' health, not just the one who died - the dying
-   * player's own health already resets via player.respawn() above (delayed by
+  /** Per user request: a kill resets the killer's health too, not just the one who died - the
+   * dying player's own health already resets via player.respawn() above (delayed by
    * MULTIPLAYER_RESPAWN_DELAY); this is the *other* side of that same round-reset, called the
-   * instant this client learns its shot was the kill (see the `playerDied` message handler in
-   * create()). Reuses Player.respawn() at the player's own current position - a no-op positionally,
-   * but it resets health/velocity/recoil/bob the same way a real respawn does, which is the actual
-   * point here, not a bespoke narrower "heal" method for a one-line difference. */
+   * instant this client learns it was the one who got a particular kill (see the `playerDied`
+   * message handler in create()). Reuses Player.respawn() at the player's own current position -
+   * a no-op positionally, but it resets health/velocity/recoil/bob the same way a real respawn
+   * does, which is the actual point here, not a bespoke narrower "heal" method for a one-line
+   * difference. */
   healLocalPlayerToFull(): void {
     this.player.respawn(this.player.position);
   }
 
+  /** Constructs a fresh RemotePlayer for a slot joining or rejoining an already-running match (see
+   * protocol.ts's PlayerJoinedMatchMessage) - mirrors the initial-roster construction in create(),
+   * just for one slot arriving later instead of everyone arriving at once. Placed at this client's
+   * own current position as a harmless placeholder (their real position isn't known yet - their
+   * first playerSnapshot corrects it within one send interval, imperceptibly). No-ops if the slot
+   * is already tracked (a relay-hop race, or this client is the host that already added it inside
+   * onHostHello before broadcasting - see create()'s own comment on that ordering). */
+  private async addMultiplayerOpponent(slot: PlayerSlot, username: string): Promise<void> {
+    if (!this.multiplayer || this.multiplayer.opponents.has(slot)) return;
+    const remotePlayer = await RemotePlayer.create(
+      this.physics,
+      this.renderer.scene,
+      this.player.position,
+      (amount) => this.multiplayer!.session.connection.send({ type: 'damageEvent', senderSlot: this.multiplayer!.session.ownSlot, targetSlot: slot, amount }),
+    );
+    if (!this.multiplayer || this.multiplayer.opponents.has(slot)) {
+      // Torn down or raced while the GLTF load above was in flight - don't leak the collider/mesh.
+      remotePlayer.dispose(this.renderer.scene);
+      return;
+    }
+    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth });
+    this.multiplayer.usernames.set(slot, username);
+    this.multiplayer.minimap.addDot(slot);
+    this.multiplayer.multiplayerHud.addOpponentRow(slot, username);
+  }
+
+  /** Removes a slot that disconnected mid-match (see protocol.ts's PlayerLeftMessage) - the match
+   * continues for everyone else (per user decision), this just tears down that one slot's visuals.
+   * Deliberately leaves multiplayerScoreboard/multiplayerDeathCounts untouched - a disconnected
+   * player's final score still needs to show correctly on the podium. */
+  private removeMultiplayerOpponent(slot: PlayerSlot): void {
+    if (!this.multiplayer) return;
+    const opponent = this.multiplayer.opponents.get(slot);
+    if (!opponent) return;
+    opponent.remotePlayer.dispose(this.renderer.scene);
+    this.multiplayer.opponents.delete(slot);
+    this.multiplayer.minimap.removeDot(slot);
+    this.multiplayer.multiplayerHud.removeOpponentRow(slot);
+  }
+
   /** Ends a multiplayer match, either because the win condition was reached (checked in
-   * updateMultiplayer, both sides call this independently off their own local counters - see
-   * MULTIPLAYER_PLAN.md §6 on why exact simultaneity isn't worth solving here) or because the
-   * opponent disconnected (wired to PeerConnection's onDisconnected in create()). Freezes
-   * simulation via `matchEnded` (see the top of update()) and hands off to App, which owns
+   * updateMultiplayer - every client decides independently off its own local scoreboard, kept in
+   * sync purely by relaying playerDied messages, so no host adjudication is needed) or because the
+   * host disconnected (wired to PeerConnection's onPeerDisconnected in create() - a guest has no
+   * path to any other guest without the host relaying, so losing the host is unrecoverable for it).
+   * Freezes simulation via `matchEnded` (see the top of update()) and hands off to App, which owns
    * MatchEndScreen and any rematch - Game itself never recreates or disposes itself. */
   private endMultiplayerMatch(won: boolean, reason: MultiplayerMatchEndResult['reason']): void {
     if (this.matchEnded || !this.multiplayer) return;
     this.matchEnded = true;
     this.input.releasePointerLock();
+    const ownSlot = this.multiplayer.session.ownSlot;
+    const placements = Array.from(this.multiplayer.usernames, ([slot, username]) => ({
+      slot,
+      username,
+      score: this.multiplayerScoreboard.get(slot) ?? 0,
+      isYou: slot === ownSlot,
+    })).sort((a, b) => b.score - a.score);
     this.onMultiplayerMatchEnd?.({
       reason,
       won,
-      myScore: this.scoreState.value,
-      opponentScore: this.multiplayerDeathCount,
+      placements,
       killLimit: this.multiplayer.killLimit,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
-      ownUsername: this.multiplayer.session.ownUsername,
-      opponentUsername: this.multiplayer.session.opponentUsername,
     });
   }
 

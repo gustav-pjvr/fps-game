@@ -20,7 +20,7 @@ export class MultiplayerMenu {
     panel.appendChild(createPanelTitle('MULTIPLAYER'));
 
     const description = document.createElement('div');
-    description.textContent = 'Play a 1v1 match against another player over the internet.';
+    description.textContent = 'Play a free-for-all match with up to 4 players over the internet.';
     description.style.cssText = 'font-size:0.9rem; opacity:0.75; margin-bottom:22px; line-height:1.5;';
     panel.appendChild(description);
 

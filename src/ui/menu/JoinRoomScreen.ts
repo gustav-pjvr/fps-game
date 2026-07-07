@@ -1,27 +1,34 @@
 import { PeerConnection } from '../../network/PeerConnection.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
+import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
-import { ACCENT, TEXT, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
+import { getOrCreateRejoinToken } from '../../core/multiplayerRejoin.ts';
+import { MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
+import { createPlayerRow } from './CreateRoomScreen.ts';
+import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
-/** Guest side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): type in a code someone gave
- * you, connect, verify the connection with a `hello` exchange, then wait for the host to start the
- * match - the guest never picks the seed itself, only receives the one the host generated (see
- * MatchStartMessage in protocol.ts), so there's nothing for the guest to click here. Mirrors
- * CreateRoomScreen. */
+/** Guest side of the room-code flow: type in a code someone gave you, connect, verify the
+ * connection with a `hello`/`welcome` exchange (see HostRoster.ts), then wait on a live roster for
+ * the host to start the match - the guest never picks the seed/kill limit itself, only receives
+ * what the host generated (see MatchStartMessage in protocol.ts). A `hello` carrying this guest's
+ * own rejoin token (see core/multiplayerRejoin.ts) also doubles as how a dropped player gets back
+ * into a match already in progress - see the `welcome.activeMatch` branch below, which skips this
+ * lobby-wait view entirely and jumps straight into the running match. */
 export class JoinRoomScreen {
   private readonly overlay: HTMLDivElement;
   private readonly usernameInput: HTMLInputElement;
   private readonly codeInput: HTMLInputElement;
   private readonly joinButton: HTMLButtonElement;
   private readonly statusText: HTMLDivElement;
+  private readonly lobbyView: HTMLDivElement;
+  private readonly playerList: HTMLDivElement;
   private connection: PeerConnection | null = null;
+  private ownSlot: PlayerSlot | null = null;
   /** Bumped by attemptJoin()/close() - PeerConnection.joinRoom is async now (the TURN credential
    * fetch), so a repeat Join click or a Cancel can land while an earlier joinRoom() call is still
    * in flight. Without this, that in-flight call would resolve *after* this screen moved on and
    * incorrectly resurrect `this.connection`, leaking a PeerJS peer this screen no longer owns. */
   private joinGeneration = 0;
-  /** The host's own chosen name, learned from their `hello` - null until it arrives. */
-  private hostUsername: string | null = null;
 
   constructor(
     root: HTMLElement,
@@ -73,6 +80,21 @@ export class JoinRoomScreen {
     this.joinButton.addEventListener('click', () => this.attemptJoin());
     panel.appendChild(this.joinButton);
 
+    // Shown once connected, in place of the code-entry step above, until the host starts the
+    // match - didn't exist for 1v1 (a guest back then already knew there was exactly one other
+    // player, the host, the moment the code worked), but with up to 3 other players a guest needs
+    // to actually see who else has joined.
+    this.lobbyView = document.createElement('div');
+    this.lobbyView.style.cssText = 'display:none; margin-top:14px;';
+    const lobbyLabel = document.createElement('div');
+    lobbyLabel.textContent = 'Players in this room:';
+    lobbyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    this.playerList = document.createElement('div');
+    this.playerList.style.cssText =
+      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px;`;
+    this.lobbyView.append(lobbyLabel, this.playerList);
+    panel.appendChild(this.lobbyView);
+
     this.statusText = document.createElement('div');
     this.statusText.style.cssText = `font-size:0.9rem; color:${TEXT}; opacity:0.85; margin-top:18px; text-align:center; min-height:1.4em;`;
     panel.appendChild(this.statusText);
@@ -91,8 +113,18 @@ export class JoinRoomScreen {
   show(): void {
     this.overlay.style.display = 'flex';
     this.codeInput.value = '';
+    this.codeInput.style.display = 'block';
+    this.joinButton.style.display = 'block';
+    this.lobbyView.style.display = 'none';
     this.setStatus('');
     this.codeInput.focus();
+  }
+
+  private renderPlayerRows(roster: RosterEntry[]): void {
+    this.playerList.replaceChildren(
+      ...roster.map((entry) => (entry.slot === this.ownSlot ? createPlayerRow(`${entry.username} (you)`) : createPlayerRow(entry.username))),
+      ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for a player to join…', true)),
+    );
   }
 
   private attemptJoin(): void {
@@ -107,41 +139,64 @@ export class JoinRoomScreen {
     this.connection?.dispose();
     this.joinButton.disabled = true;
     this.setStatus('Connecting…');
-    this.hostUsername = null;
+    this.ownSlot = null;
+
+    const username = normalizeUsername(this.usernameInput.value);
+    this.usernameInput.value = username;
+    saveUsername(username);
+    const rejoinToken = getOrCreateRejoinToken(code);
 
     const generation = ++this.joinGeneration;
-    void PeerConnection.joinRoom(code, {
-      onConnected: () => {
-        this.setStatus('Connected! Verifying the connection…');
-        const username = normalizeUsername(this.usernameInput.value);
-        this.usernameInput.value = username;
-        saveUsername(username);
-        this.connection?.send({ type: 'hello', username });
-      },
-      onDisconnected: () => {
-        this.setStatus('The other player disconnected.');
+    void PeerConnection.joinRoom(code, username, rejoinToken, {
+      onConnected: () => {}, // the welcome message itself (below) carries everything worth reacting to
+      onPeerDisconnected: () => {
+        this.setStatus('The host disconnected.');
         this.joinButton.disabled = false;
+        this.codeInput.style.display = 'block';
+        this.joinButton.style.display = 'block';
+        this.lobbyView.style.display = 'none';
       },
       onError: (message) => {
         this.setStatus(message);
         this.joinButton.disabled = false;
       },
       onMessage: (message) => {
-        if (message.type === 'hello') {
-          this.hostUsername = message.username;
-          this.setStatus('Connection verified both ways. Waiting for the host to start the match…');
+        if (message.type === 'welcome') {
+          this.ownSlot = message.yourSlot;
+          if (message.activeMatch) {
+            // A rejoin, or a brand new player joining after Start Match was already clicked -
+            // either way there's no lobby to wait in, the match is already running.
+            this.startMatch({
+              seed: message.activeMatch.seed,
+              killLimit: message.activeMatch.killLimit,
+              ownSlot: message.yourSlot,
+              spawns: [{ slot: message.yourSlot, point: message.activeMatch.spawnPoint }],
+              roster: message.roster,
+              roomCode: code,
+              initialScoreboard: message.activeMatch.scoreboard,
+            });
+            return;
+          }
+          this.codeInput.style.display = 'none';
+          this.joinButton.style.display = 'none';
+          this.lobbyView.style.display = 'block';
+          this.renderPlayerRows(message.roster);
+          this.setStatus(message.isRejoin ? 'Reconnected. Waiting for the host to start the match…' : 'Connected. Waiting for the host to start the match…');
+        }
+        if (message.type === 'rosterUpdate') this.renderPlayerRows(message.roster);
+        if (message.type === 'roomFull') {
+          this.setStatus('That room is full (4 players max).');
+          this.joinButton.disabled = false;
         }
         if (message.type === 'matchStart') {
           this.startMatch({
             seed: message.seed,
             killLimit: message.killLimit,
-            spawnA: { x: message.spawnAX, z: message.spawnAZ },
-            spawnB: { x: message.spawnBX, z: message.spawnBZ },
-            ownUsername: normalizeUsername(this.usernameInput.value),
-            // matchStart can only arrive after the host has already seen this guest's own hello
-            // and this guest has, symmetrically, already received the host's - see the comment on
-            // CreateRoomScreen's equivalent fallback for why this is never actually reached null.
-            opponentUsername: this.hostUsername ?? 'Host',
+            ownSlot: this.ownSlot ?? 0,
+            spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
+            roster: message.roster,
+            roomCode: code,
+            initialScoreboard: [],
           });
         }
       },

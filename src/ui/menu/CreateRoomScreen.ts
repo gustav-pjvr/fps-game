@@ -1,25 +1,31 @@
 import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
+import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
-import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS } from '../../core/config.ts';
+import { HOST_SLOT, type RosterEntry } from '../../network/protocol.ts';
+import { DEFAULT_MULTIPLAYER_KILL_LIMIT, MULTIPLAYER_KILL_LIMIT_OPTIONS, MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
-/** One row of the host's live player list - `dimmed` marks the placeholder "waiting for a player"
- * state before the guest's own row has a real name to show. */
-function createPlayerRow(text: string, dimmed = false): HTMLDivElement {
+/** One row of the host's live player list - `dimmed` marks an empty/placeholder slot not yet
+ * taken by a real player. Exported for JoinRoomScreen's own lobby-wait roster, which renders the
+ * exact same shape. */
+export function createPlayerRow(text: string, dimmed = false): HTMLDivElement {
   const row = document.createElement('div');
   row.textContent = text;
   row.style.cssText = `font-size:0.95rem; padding:4px 0; ${dimmed ? 'opacity:0.55; font-style:italic;' : ''}`;
   return row;
 }
 
-/** Host side of the room-code flow (see MULTIPLAYER_PLAN.md §2/§7): generates a code, shows it,
- * waits for a guest to connect, verifies the connection with a `hello` exchange, then offers
- * "Start Match" - clicking it picks the one seed both players will use, this match's two random
- * spawn points, and the host's chosen win condition (§4), sends all of it across, and hands the
- * now-established connection off to whoever's starting the actual match (see onStartMatch). */
+/** Host side of the room-code flow: generates a code, shows it, waits for up to
+ * MULTIPLAYER_MAX_PLAYERS - 1 guests to connect (each verified with a `hello`/`welcome`
+ * exchange - see HostRoster.ts), then offers "Start Match" - clicking it picks the seed/kill
+ * limit/one spawn point per connected player and hands the now-established connections off to
+ * whoever's starting the actual match (see onStartMatch). The same HostRoster instance carries
+ * forward into the match itself (see MultiplayerMatchStartParams.hostRoster) so mid-match
+ * join/rejoin hello resolution keeps using the one roster/rejoin-token state machine for this
+ * room's whole lifetime. */
 export class CreateRoomScreen {
   private readonly overlay: HTMLDivElement;
   private readonly usernameInput: HTMLInputElement;
@@ -27,14 +33,10 @@ export class CreateRoomScreen {
   private readonly killLimitSelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
-  private readonly hostPlayerRow: HTMLDivElement;
-  private readonly guestPlayerRow: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
   private connection: PeerConnection | null = null;
-  /** The guest's own chosen name, learned from their `hello` - null until it arrives. Carried into
-   * onStartMatch's params so the HUD/player list can label the guest correctly once the match
-   * starts, not just while still on this screen. */
-  private guestUsername: string | null = null;
+  private hostRoster: HostRoster | null = null;
+  private roomCode = '';
   /** Bumped by show()/close() - PeerConnection.hostRoom is async now (the TURN credential fetch),
    * so a Cancel click can land while a hostRoom() call is still in flight. Without this, that
    * in-flight call would resolve *after* close() and incorrectly resurrect `this.connection`,
@@ -63,7 +65,7 @@ export class CreateRoomScreen {
     panel.appendChild(this.usernameInput);
 
     const label = document.createElement('div');
-    label.textContent = 'Share this code with the other player:';
+    label.textContent = 'Share this code - up to 3 other players can join:';
     label.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:10px;';
     panel.appendChild(label);
 
@@ -86,9 +88,9 @@ export class CreateRoomScreen {
     killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
     panel.appendChild(killLimitLabel);
 
-    // Host-only setting (MULTIPLAYER_PLAN.md §4): the guest never picks this, only receives it as
-    // part of MatchStartMessage. A plain <select> rather than a dedicated RoomSettingsPanel file -
-    // one control doesn't earn its own component yet; promote it if match settings grow past this.
+    // Host-only setting: the guest never picks this, only receives it as part of
+    // MatchStartMessage. A plain <select> rather than a dedicated RoomSettingsPanel file - one
+    // control doesn't earn its own component yet; promote it if match settings grow past this.
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
@@ -102,10 +104,8 @@ export class CreateRoomScreen {
     }
     panel.appendChild(this.killLimitSelect);
 
-    // Live player list (per user request): the host is the only side that ever waits on a screen
-    // for someone else to show up, so this is the one place a "who's actually connected" readout
-    // earns its keep - the guest already knows there's exactly one other player (the host) the
-    // moment the room code worked.
+    // Live player list (per user request): a real render loop over the current roster now, not
+    // two fixed DOM rows - up to MULTIPLAYER_MAX_PLAYERS entries, re-rendered on every join/leave.
     const playerListLabel = document.createElement('div');
     playerListLabel.textContent = 'Players in this room:';
     playerListLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
@@ -114,9 +114,6 @@ export class CreateRoomScreen {
     this.playerList = document.createElement('div');
     this.playerList.style.cssText =
       `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px;`;
-    this.hostPlayerRow = createPlayerRow('');
-    this.guestPlayerRow = createPlayerRow('Waiting for a player to join…', true);
-    this.playerList.append(this.hostPlayerRow, this.guestPlayerRow);
     panel.appendChild(this.playerList);
 
     this.statusText = document.createElement('div');
@@ -147,36 +144,40 @@ export class CreateRoomScreen {
   show(): void {
     this.overlay.style.display = 'flex';
     this.startButton.style.display = 'none';
-    this.guestUsername = null;
-    this.hostPlayerRow.textContent = `${normalizeUsername(this.usernameInput.value)} (you, host)`;
-    this.guestPlayerRow.textContent = 'Waiting for a player to join…';
-    this.guestPlayerRow.style.opacity = '0.55';
-    this.guestPlayerRow.style.fontStyle = 'italic';
-    const code = generateRoomCode();
-    this.codeDisplay.textContent = code;
-    this.setStatus('Waiting for the other player to join…');
+    const hostUsername = normalizeUsername(this.usernameInput.value);
+    this.usernameInput.value = hostUsername;
+    saveUsername(hostUsername);
+    this.hostRoster = new HostRoster(hostUsername);
+    this.renderPlayerRows(this.hostRoster.currentRoster());
+
+    this.roomCode = generateRoomCode();
+    this.codeDisplay.textContent = this.roomCode;
+    this.setStatus('Waiting for other players to join…');
 
     const generation = ++this.showGeneration;
-    void PeerConnection.hostRoom(code, {
+    void PeerConnection.hostRoom(this.roomCode, {
       onConnected: () => {
-        this.setStatus('Connected! Verifying the connection…');
-        const username = normalizeUsername(this.usernameInput.value);
-        this.usernameInput.value = username;
-        saveUsername(username);
-        this.hostPlayerRow.textContent = `${username} (you, host)`;
-        this.connection?.send({ type: 'hello', username });
+        this.setStatus('Connection verified. Ready when you are.');
+        this.startButton.style.display = 'block';
       },
-      onDisconnected: () => this.setStatus('The other player disconnected.'),
+      onPeerDisconnected: () => {
+        if (!this.hostRoster) return;
+        this.renderPlayerRows(this.hostRoster.currentRoster());
+        this.connection?.send({ type: 'rosterUpdate', roster: this.hostRoster.currentRoster() });
+      },
       onError: (message) => this.setStatus(message),
-      onMessage: (message) => {
-        if (message.type === 'hello') {
-          this.guestUsername = message.username;
-          this.guestPlayerRow.textContent = message.username;
-          this.guestPlayerRow.style.opacity = '1';
-          this.guestPlayerRow.style.fontStyle = 'normal';
-          this.setStatus('Connection verified both ways. Ready when you are.');
-          this.startButton.style.display = 'block';
-        }
+      onMessage: () => {}, // nothing else to react to before a match starts
+      onHostHello: (username, rejoinToken) => {
+        if (!this.hostRoster) return 'full';
+        const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
+        if (outcome.outcome === 'full') return 'full';
+
+        const roster = this.hostRoster.currentRoster();
+        this.renderPlayerRows(roster);
+        // Broadcasts to whoever's already connected - this new guest isn't in the connection map
+        // yet (added right after this callback returns), so it never receives its own join here.
+        this.connection?.send({ type: 'rosterUpdate', roster });
+        return { type: 'welcome', yourSlot: outcome.slot, isRejoin: outcome.outcome === 'rejoined', hostUsername, roster };
       },
     }).then((connection) => {
       // This screen moved on (closed, or reopened as a fresh attempt) while the TURN credential
@@ -190,34 +191,40 @@ export class CreateRoomScreen {
     });
   }
 
+  private renderPlayerRows(roster: RosterEntry[]): void {
+    this.playerList.replaceChildren(
+      ...roster.map((entry) => createPlayerRow(entry.slot === HOST_SLOT ? `${entry.username} (you, host)` : entry.username)),
+      ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for a player to join…', true)),
+    );
+  }
+
   private startMatch(): void {
-    if (!this.connection) return;
+    if (!this.connection || !this.hostRoster) return;
+    this.hostRoster.startMatch();
+    const roster = this.hostRoster.currentRoster();
     const seed = generateMultiplayerSeed();
     const killLimit = Number(this.killLimitSelect.value);
-    const [spawnA, spawnB] = pickMultiplayerSpawnPoints();
-    this.connection.send({
-      type: 'matchStart',
-      seed,
-      killLimit,
-      spawnAX: spawnA.x,
-      spawnAZ: spawnA.z,
-      spawnBX: spawnB.x,
-      spawnBZ: spawnB.z,
-    });
+    const points = pickMultiplayerSpawnPoints(roster.length);
+    const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
+    this.connection.send({ type: 'matchStart', seed, killLimit, spawns, roster });
+
     const connection = this.connection;
-    // Ownership of the connection moves to the match now - `close()` must not dispose it, and this
-    // screen shouldn't react to anything on it anymore (Game.create() takes over via setCallbacks).
+    const hostRoster = this.hostRoster;
+    // Ownership of the connection (and the HostRoster driving its hello resolution) moves to the
+    // match now - `close()` must not dispose the connection, and this screen shouldn't react to
+    // anything on it anymore (Game.create() takes over via setCallbacks).
     this.connection = null;
+    this.hostRoster = null;
     this.overlay.style.display = 'none';
     this.onStartMatch(connection, {
       seed,
       killLimit,
-      spawnA,
-      spawnB,
-      ownUsername: normalizeUsername(this.usernameInput.value),
-      // The startButton only ever shows once a hello with a username has arrived (see show()'s
-      // onMessage handler), so this is never null by the time a click can actually reach here.
-      opponentUsername: this.guestUsername ?? 'Opponent',
+      ownSlot: HOST_SLOT,
+      spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
+      roster,
+      roomCode: this.roomCode,
+      initialScoreboard: [],
+      hostRoster,
     });
   }
 
@@ -229,6 +236,7 @@ export class CreateRoomScreen {
     this.showGeneration++;
     this.connection?.dispose();
     this.connection = null;
+    this.hostRoster = null;
     this.overlay.style.display = 'none';
     this.onClose();
   }

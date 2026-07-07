@@ -26,11 +26,11 @@ test('creating and joining a room establishes a working connection', async ({ br
   await guestPage.getByPlaceholder('ABCDEF').fill(code);
   await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
 
-  // Both sides send `hello` once connected and only report "verified" once they've received the
-  // other side's - proves the DataChannel actually works in both directions, not just that a
-  // connection object exists.
-  await expect(hostPage.getByText('Connection verified both ways')).toBeVisible({ timeout: 20000 });
-  await expect(guestPage.getByText('Connection verified both ways')).toBeVisible({ timeout: 20000 });
+  // The guest sends `hello` once connected, and only reports back once the host's `welcome` reply
+  // (assigning it a slot and the current roster) actually arrives - proves the DataChannel works
+  // in both directions, not just that a connection object exists.
+  await expect(hostPage.getByText('Connection verified. Ready when you are.')).toBeVisible({ timeout: 20000 });
+  await expect(guestPage.getByText('Connected. Waiting for the host to start the match…')).toBeVisible({ timeout: 20000 });
 
   await hostContext.close();
   await guestContext.close();
