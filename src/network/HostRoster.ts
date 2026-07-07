@@ -77,6 +77,16 @@ export class HostRoster {
     return expired;
   }
 
+  /** Lets the host correct their own displayed name after the room already exists (e.g. they
+   * edited the "Your name" field after clicking Create Room, which is the only time that field is
+   * ever visible to type into - the room's own creation can't wait for that, so this exists to fix
+   * up the name afterward instead of silently ignoring the edit). No-op if the host's own slot
+   * somehow isn't tracked (shouldn't happen - constructor always seeds it). */
+  updateHostUsername(username: string): void {
+    const hostSlot = this.slots.get(HOST_SLOT);
+    if (hostSlot) hostSlot.username = username;
+  }
+
   currentRoster(): RosterEntry[] {
     return Array.from(this.slots.values(), (s) => ({ slot: s.slot, username: s.username }));
   }

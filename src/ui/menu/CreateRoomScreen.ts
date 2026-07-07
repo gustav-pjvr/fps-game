@@ -62,6 +62,20 @@ export class CreateRoomScreen {
     this.usernameInput = createTextInput('Player name', 16);
     this.usernameInput.style.marginBottom = '16px';
     this.usernameInput.value = loadStoredUsername();
+    // The room's own creation (show(), below) can't wait for the user to finish typing here - this
+    // field is only ever visible for the first time as the room is created, so show() has to seed
+    // HostRoster with whatever's in the box at that instant. Without this listener, typing a
+    // different name right after clicking "Create Room" (the only time there's ever a reason to)
+    // would silently have no effect - a real bug caught by an actual 4-player playtest, not a
+    // hypothetical. Only touches the roster's *display* here; the normalized/saved value used for
+    // future rooms is still resolved properly in show()/startMatch().
+    this.usernameInput.addEventListener('input', () => {
+      if (!this.hostRoster) return;
+      this.hostRoster.updateHostUsername(this.usernameInput.value.trim() || 'Player');
+      const roster = this.hostRoster.currentRoster();
+      this.renderPlayerRows(roster);
+      this.connection?.send({ type: 'rosterUpdate', roster });
+    });
     panel.appendChild(this.usernameInput);
 
     const label = document.createElement('div');
