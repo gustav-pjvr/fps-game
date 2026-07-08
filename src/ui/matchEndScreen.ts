@@ -3,7 +3,8 @@ import {
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
   GOOSE_EXPLOSION_DIFFICULTIES,
   GOOSE_EXPLOSION_DIFFICULTY_LABELS,
-  MULTIPLAYER_KILL_LIMIT_OPTIONS,
+  MULTIPLAYER_KILL_LIMIT_MAX,
+  MULTIPLAYER_KILL_LIMIT_MIN,
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
 } from '../core/config.ts';
@@ -67,7 +68,7 @@ export class MatchEndScreen {
   private readonly podium: HTMLDivElement;
   private readonly podiumRows: PodiumRow[];
   private readonly hostSettings: HTMLDivElement;
-  private readonly killLimitSelect: HTMLSelectElement;
+  private readonly killLimitInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly gameModeSelect: HTMLSelectElement;
   private readonly newMapCheckbox: HTMLInputElement;
@@ -114,20 +115,18 @@ export class MatchEndScreen {
     // fix for why (this label wraps to 2 lines while gooseDifficultyLabel stays on 1, misaligning
     // the two selects without it).
     killLimitLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px; min-height:2.1em;';
-    this.killLimitSelect = document.createElement('select');
-    this.killLimitSelect.style.cssText =
+    // A free-typed number instead of a fixed preset list (per user request) - host isn't limited
+    // to 10/15/25 kills anymore, same change as CreateRoomScreen.ts's kill-limit field.
+    this.killLimitInput = document.createElement('input');
+    this.killLimitInput.type = 'number';
+    this.killLimitInput.min = String(MULTIPLAYER_KILL_LIMIT_MIN);
+    this.killLimitInput.max = String(MULTIPLAYER_KILL_LIMIT_MAX);
+    this.killLimitInput.step = '1';
+    this.killLimitInput.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
+    this.killLimitInput.style.cssText =
       `width:100%; box-sizing:border-box; padding:10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
-      ` background:rgba(255,255,255,0.08); border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;` +
-      // See CreateRoomScreen.ts's identical select styling for why this is needed - without it the
-      // native dropdown popup ignores the dark theme above and renders illegible light-on-light text.
-      ' color-scheme:dark;';
-    for (const option of MULTIPLAYER_KILL_LIMIT_OPTIONS) {
-      const optionElement = document.createElement('option');
-      optionElement.value = String(option);
-      optionElement.textContent = `${option} kills`;
-      this.killLimitSelect.appendChild(optionElement);
-    }
-    killLimitColumn.append(killLimitLabel, this.killLimitSelect);
+      ` background:rgba(255,255,255,0.08); border:1px solid ${HAIRLINE}; border-radius:6px; color-scheme:dark;`;
+    killLimitColumn.append(killLimitLabel, this.killLimitInput);
 
     const gooseDifficultyColumn = document.createElement('div');
     gooseDifficultyColumn.style.cssText = 'flex:1;';
@@ -135,7 +134,7 @@ export class MatchEndScreen {
     gooseDifficultyLabel.textContent = 'Goose explosions:';
     gooseDifficultyLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px; min-height:2.1em;';
     this.gooseDifficultySelect = document.createElement('select');
-    this.gooseDifficultySelect.style.cssText = this.killLimitSelect.style.cssText;
+    this.gooseDifficultySelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
       const optionElement = document.createElement('option');
       optionElement.value = difficulty;
@@ -152,7 +151,7 @@ export class MatchEndScreen {
     gameModeLabel.textContent = 'Game mode:';
     gameModeLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
     this.gameModeSelect = document.createElement('select');
-    this.gameModeSelect.style.cssText = this.killLimitSelect.style.cssText;
+    this.gameModeSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const mode of GAME_MODES) {
       const optionElement = document.createElement('option');
       optionElement.value = mode;
@@ -176,14 +175,20 @@ export class MatchEndScreen {
     buttonRow.style.cssText = 'display:flex; gap:12px; margin-top:4px;';
 
     this.rematchButton = createButton('Rematch', 'primary');
-    this.rematchButton.addEventListener('click', () =>
+    this.rematchButton.addEventListener('click', () => {
+      // Same clamping as CreateRoomScreen.ts's kill-limit field - min/max on the <input> only
+      // enforces on form submission, not on reading .value directly.
+      const parsedKillLimit = Math.round(Number(this.killLimitInput.value));
+      const killLimit = Number.isFinite(parsedKillLimit)
+        ? Math.min(MULTIPLAYER_KILL_LIMIT_MAX, Math.max(MULTIPLAYER_KILL_LIMIT_MIN, parsedKillLimit))
+        : DEFAULT_MULTIPLAYER_KILL_LIMIT;
       onRematchClick({
-        killLimit: Number(this.killLimitSelect.value),
+        killLimit,
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         gameMode: this.gameModeSelect.value as GameMode,
         newMap: this.newMapCheckbox.checked,
-      }),
-    );
+      });
+    });
 
     const lobbyButton = createButton('Return to Lobby');
     lobbyButton.addEventListener('click', onReturnToLobbyClick);
@@ -225,8 +230,8 @@ export class MatchEndScreen {
     this.rematchButton.style.display = canRematch ? 'inline-block' : 'none';
     this.hostSettings.style.display = canRematch ? 'flex' : 'none';
     if (canRematch) {
-      this.killLimitSelect.value = String(result.killLimit);
-      if (!this.killLimitSelect.value) this.killLimitSelect.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
+      this.killLimitInput.value = String(result.killLimit);
+      if (!this.killLimitInput.value) this.killLimitInput.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
       this.gooseDifficultySelect.value = result.gooseDifficulty;
       this.gameModeSelect.value = result.gameMode;
     }

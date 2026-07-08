@@ -9,7 +9,8 @@ import {
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
   GOOSE_EXPLOSION_DIFFICULTIES,
   GOOSE_EXPLOSION_DIFFICULTY_LABELS,
-  MULTIPLAYER_KILL_LIMIT_OPTIONS,
+  MULTIPLAYER_KILL_LIMIT_MAX,
+  MULTIPLAYER_KILL_LIMIT_MIN,
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
 } from '../../core/config.ts';
@@ -40,7 +41,7 @@ export class CreateRoomScreen {
   private readonly panel: HTMLDivElement;
   private readonly usernameInput: HTMLInputElement;
   private readonly codeDisplay: HTMLDivElement;
-  private readonly killLimitSelect: HTMLSelectElement;
+  private readonly killLimitInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly gameModeSelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
@@ -145,22 +146,18 @@ export class CreateRoomScreen {
     // it, this longer label wraps to 2 lines while the goose one stays on 1, leaving the two selects
     // misaligned.
     killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px; min-height:2.2em;';
-    this.killLimitSelect = document.createElement('select');
-    this.killLimitSelect.style.cssText =
+    // A free-typed number instead of a fixed preset list (per user request) - host isn't limited
+    // to 10/15/25 kills anymore.
+    this.killLimitInput = document.createElement('input');
+    this.killLimitInput.type = 'number';
+    this.killLimitInput.min = String(MULTIPLAYER_KILL_LIMIT_MIN);
+    this.killLimitInput.max = String(MULTIPLAYER_KILL_LIMIT_MAX);
+    this.killLimitInput.step = '1';
+    this.killLimitInput.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
+    this.killLimitInput.style.cssText =
       `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; cursor:pointer;` +
-      // Without this, the select's own dark styling above only covers the closed box - the native
-      // dropdown popup (and its <option> rows) falls back to the OS/browser light theme, rendering
-      // near-white text on a near-white background and making every option illegible.
-      ' color-scheme:dark;';
-    for (const option of MULTIPLAYER_KILL_LIMIT_OPTIONS) {
-      const optionElement = document.createElement('option');
-      optionElement.value = String(option);
-      optionElement.textContent = `${option} kills`;
-      if (option === DEFAULT_MULTIPLAYER_KILL_LIMIT) optionElement.selected = true;
-      this.killLimitSelect.appendChild(optionElement);
-    }
-    killLimitColumn.append(killLimitLabel, this.killLimitSelect);
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; color-scheme:dark;`;
+    killLimitColumn.append(killLimitLabel, this.killLimitInput);
 
     const gooseDifficultyColumn = document.createElement('div');
     gooseDifficultyColumn.style.cssText = 'flex:1;';
@@ -168,7 +165,7 @@ export class CreateRoomScreen {
     gooseDifficultyLabel.textContent = 'Goose explosions:';
     gooseDifficultyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px; min-height:2.2em;';
     this.gooseDifficultySelect = document.createElement('select');
-    this.gooseDifficultySelect.style.cssText = this.killLimitSelect.style.cssText;
+    this.gooseDifficultySelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
       const optionElement = document.createElement('option');
       optionElement.value = difficulty;
@@ -190,7 +187,7 @@ export class CreateRoomScreen {
     gameModeLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
     leftColumn.appendChild(gameModeLabel);
     this.gameModeSelect = document.createElement('select');
-    this.gameModeSelect.style.cssText = this.killLimitSelect.style.cssText;
+    this.gameModeSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const mode of GAME_MODES) {
       const optionElement = document.createElement('option');
       optionElement.value = mode;
@@ -314,7 +311,12 @@ export class CreateRoomScreen {
     this.hostRoster.startMatch();
     const roster = this.hostRoster.currentRoster();
     const seed = generateMultiplayerSeed();
-    const killLimit = Number(this.killLimitSelect.value);
+    // min/max on the <input> only enforces on form submission, not on reading .value directly - a
+    // cleared field, pasted text, or an out-of-range number all need clamping here too.
+    const parsedKillLimit = Math.round(Number(this.killLimitInput.value));
+    const killLimit = Number.isFinite(parsedKillLimit)
+      ? Math.min(MULTIPLAYER_KILL_LIMIT_MAX, Math.max(MULTIPLAYER_KILL_LIMIT_MIN, parsedKillLimit))
+      : DEFAULT_MULTIPLAYER_KILL_LIMIT;
     const gooseDifficulty = this.gooseDifficultySelect.value as GooseExplosionDifficulty;
     const gameMode = this.gameModeSelect.value as GameMode;
     const points = pickMultiplayerSpawnPoints(roster.length);
