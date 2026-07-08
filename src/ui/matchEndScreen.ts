@@ -114,7 +114,10 @@ export class MatchEndScreen {
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
-      ` background:rgba(255,255,255,0.08); border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;`;
+      ` background:rgba(255,255,255,0.08); border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;` +
+      // See CreateRoomScreen.ts's identical select styling for why this is needed - without it the
+      // native dropdown popup ignores the dark theme above and renders illegible light-on-light text.
+      ' color-scheme:dark;';
     for (const option of MULTIPLAYER_KILL_LIMIT_OPTIONS) {
       const optionElement = document.createElement('option');
       optionElement.value = String(option);

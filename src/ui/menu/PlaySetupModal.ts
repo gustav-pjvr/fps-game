@@ -66,7 +66,10 @@ export class PlaySetupModal {
     const select = document.createElement('select');
     select.style.cssText =
       `width:100%; box-sizing:border-box; padding:8px 10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;`;
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;` +
+      // See CreateRoomScreen.ts's identical select styling for why this is needed - without it the
+      // native dropdown popup ignores the dark theme above and renders illegible light-on-light text.
+      ' color-scheme:dark;';
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
       const option = document.createElement('option');
       option.value = difficulty;

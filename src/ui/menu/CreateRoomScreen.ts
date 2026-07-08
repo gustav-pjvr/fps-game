@@ -134,7 +134,11 @@ export class CreateRoomScreen {
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; cursor:pointer;`;
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; cursor:pointer;` +
+      // Without this, the select's own dark styling above only covers the closed box - the native
+      // dropdown popup (and its <option> rows) falls back to the OS/browser light theme, rendering
+      // near-white text on a near-white background and making every option illegible.
+      ' color-scheme:dark;';
     for (const option of MULTIPLAYER_KILL_LIMIT_OPTIONS) {
       const optionElement = document.createElement('option');
       optionElement.value = String(option);
