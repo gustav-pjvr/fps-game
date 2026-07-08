@@ -148,9 +148,12 @@ export class Player implements Entity {
     this.snapCameraPositionTo(target);
   }
 
-  /** Debug/test helper - instantly repositions the player (e.g. for e2e tests to reach a known
-   * world feature without needing to navigate blindly). Resets vertical velocity like respawn()
-   * does, but deliberately leaves health untouched. */
+  /** Instantly repositions the player. Resets vertical velocity like respawn() does, but
+   * deliberately leaves health/ammo untouched - used both as a debug/test helper (e.g. for e2e
+   * tests to reach a known world feature without needing to navigate blindly) and by the
+   * multiplayer pause menu's "Respawn" button (Game.ts's manualRespawn()), which is an unstuck
+   * button for a player glitched into geometry, not a full respawn - it must not give a free
+   * health/ammo reset. */
   debugTeleport(position: THREE.Vector3): void {
     this.verticalVelocity = 0;
     const target = { x: position.x, y: position.y, z: position.z };

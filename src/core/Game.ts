@@ -573,7 +573,12 @@ export class Game {
           // weaponManager isn't assigned in this outer scope until after this very call resolves,
           // but this callback only ever fires later, during gameplay - by then it's safely
           // assigned, same as every other closure captured in this constructor call.
-          weaponId: weaponManager.weaponSlotNames[weaponManager.activeWeaponIndex] ?? 'pistol',
+          //
+          // activeWeaponId, not weaponSlotNames[activeWeaponIndex] - the latter returns the
+          // display name (e.g. "Kestrel P9"), which playGunshot's `${weaponId}_shot` buffer
+          // lookup never matches, silently falling through to its generic fallback sound. This is
+          // why every multiplayer opponent's gunshot sounded the same regardless of weapon.
+          weaponId: weaponManager.activeWeaponId,
         });
       },
       (weaponId) => sound.playGunshot(weaponId),
@@ -726,6 +731,7 @@ export class Game {
         onSettings: () => settingsPanel.show(),
         onResetPlay: () => gameRef.current?.resetPlay(),
         onReturnToLobby: () => onReturnToLobby?.(),
+        onRespawn: () => gameRef.current?.manualRespawn(),
       },
       multiplayer !== undefined,
     );
@@ -1233,6 +1239,7 @@ export class Game {
     // actually chosen to resume (see pendingDeathScreenReveal's own comment).
     const isPaused = !this.input.isLocked && !this.deathScreenVisible;
     this.pauseMenu.setVisible(isPaused);
+    this.pauseMenu.update();
 
     // The deferred reveal from below - fires the first tick the pause menu is no longer open.
     if (this.pendingDeathScreenReveal && !isPaused) {
@@ -1469,6 +1476,25 @@ export class Game {
     this.deathScreenVisible = false;
     this.pendingDeathScreenReveal = false;
     if (!pauseMenuCurrentlyOpen) this.input.requestPointerLock();
+    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
+  }
+
+  /** The pause menu's "Respawn" button (multiplayer only, gated behind PauseMenu's own 5-second
+   * continuous-open unlock delay - see PauseMenu.ts). An unstuck button for a player who spawned
+   * or got knocked inside geometry (e.g. inside a house), not a real respawn - deliberately does
+   * NOT touch health/ammo/score the way multiplayerRespawn() (post-death) does, since a player
+   * who is alive and just stuck has no business getting a free heal/reload out of this. Reuses
+   * the same random-point-clear-of-every-opponent placement and respawnEvent broadcast so
+   * everyone else's view of this player updates immediately, same as a real respawn. Player.
+   * debugTeleport is the one existing method that repositions without touching health/ammo. */
+  private manualRespawn(): void {
+    if (!this.multiplayer || this.player.isDead) return;
+
+    const ownSlot = this.multiplayer.session.ownSlot;
+    const otherPositions = Array.from(this.multiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
+    const { x, z } = pickRandomRespawnPoint(otherPositions);
+    const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
+    this.player.debugTeleport(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
   }
 
