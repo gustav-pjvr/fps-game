@@ -1,5 +1,6 @@
 import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, MOTION_EASE } from './menuStyles.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts';
+import { GAME_VERSION } from '../../core/version.ts';
 
 export interface MainMenuCallbacks {
   onPlay: () => void;
@@ -91,6 +92,15 @@ export class MainMenu {
 
     buttonRow.append(playButton, multiplayerButton, settingsButton, inventoryButton);
     this.element.appendChild(buttonRow);
+
+    // Small, unobtrusive - a version tag belongs in a corner, not competing with the actual UI.
+    // See docs/CHANGELOG.md for what changed at each version.
+    const versionTag = document.createElement('div');
+    versionTag.textContent = `v${GAME_VERSION}`;
+    versionTag.style.cssText =
+      `position:absolute; bottom:14px; right:20px; pointer-events:none; font-family:${BODY_FONT};` +
+      ' font-size:0.7rem; color:rgba(255,255,255,0.35); letter-spacing:0.05em;';
+    this.element.appendChild(versionTag);
 
     root.appendChild(this.element);
   }

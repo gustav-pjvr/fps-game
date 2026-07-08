@@ -24,3 +24,7 @@ chronological order.
   filesystem treats the two as the same file.)
 - [Changelog & Foundations](changelog-foundations.md) — early v1 foundational notes (Fable pass,
   real assets pass, content pass, playtest triage) and the whole-codebase review follow-through.
+
+For the versioned release history shown in the main menu (v1.0.0 onward, what changed at each
+version and why), see [CHANGELOG.md](CHANGELOG.md) instead - that's a different document from the
+files above, which are development-process notes rather than a version history.
