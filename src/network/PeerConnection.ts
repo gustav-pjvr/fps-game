@@ -26,21 +26,21 @@ const PEERJS_DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
 ];
 
-/** Fetches *additional* TURN relay credentials from this app's own Netlify function
- * (netlify/functions/turn-credentials.mts), which proxies Metered.ca's free tier server-side so
- * the API key never reaches the client - combined with PEERJS_DEFAULT_ICE_SERVERS (never in place
- * of them) into the full list passed to `new Peer(...)`. Falls back to just the defaults on any
- * failure: no function deployed (e.g. local `vite dev`, which doesn't run Netlify functions at
- * all), no credentials configured yet, a timeout, or Metered's API being down - this is a fallback
- * path for network pairings PeerJS's own defaults can't traverse, never a hard dependency for
- * connecting at all. Called once per `Peer` constructed - still exactly one `Peer` per browser tab
- * regardless of player count (the host relays to guests, guests never connect to each other), so
- * this doesn't multiply with lobby size. */
+/** Fetches *additional* TURN relay credentials from this app's own Cloudflare Pages Function
+ * (functions/api/turn-credentials.ts), which proxies Metered.ca's free tier server-side so the API
+ * key never reaches the client - combined with PEERJS_DEFAULT_ICE_SERVERS (never in place of them)
+ * into the full list passed to `new Peer(...)`. Falls back to just the defaults on any failure: no
+ * function deployed (e.g. local `vite dev`, which doesn't run Pages functions at all), no
+ * credentials configured yet, a timeout, or Metered's API being down - this is a fallback path for
+ * network pairings PeerJS's own defaults can't traverse, never a hard dependency for connecting at
+ * all. Called once per `Peer` constructed - still exactly one `Peer` per browser tab regardless of
+ * player count (the host relays to guests, guests never connect to each other), so this doesn't
+ * multiply with lobby size. */
 async function buildIceServers(): Promise<RTCIceServer[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TURN_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch('/.netlify/functions/turn-credentials', { signal: controller.signal });
+    const response = await fetch('/api/turn-credentials', { signal: controller.signal });
     if (!response.ok) return PEERJS_DEFAULT_ICE_SERVERS;
     const data = (await response.json()) as { iceServers?: RTCIceServer[] };
     return [...PEERJS_DEFAULT_ICE_SERVERS, ...(data.iceServers ?? [])];
