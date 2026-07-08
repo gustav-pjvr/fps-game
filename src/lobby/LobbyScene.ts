@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { ENEMY_MODEL_PATH } from '../entities/enemies/Enemy.ts';
+import { buildGooseMesh } from '../entities/Goose.ts';
+import { GOOSE_HEIGHT } from '../core/config.ts';
 
 const BOB_SPEED = 1.6;
 const BOB_AMPLITUDE = 0.045;
@@ -15,6 +17,25 @@ const CHARACTER_OFFSET_X = -1.1;
 const MODEL_BIND_HEIGHT = 0.671;
 const MODEL_SCALE = CHARACTER_HEIGHT / MODEL_BIND_HEIGHT;
 
+/** Decorative goose wandering the lobby floor alongside the bobbing character - purely cosmetic, no
+ * physics/collision needed. Walks a continuous elliptical loop spanning the whole floor (not just
+ * one side), passing behind the character on one leg and in front of it on the other, rather than
+ * roaming a small patch next to it. `GOOSE_LOOP_CENTER_X/Z` and the two radii size the ellipse to
+ * clear CHARACTER_OFFSET_X on the left and stay within the floor/camera frustum on the right and
+ * front/back. */
+const GOOSE_LOOP_CENTER_X = 0;
+const GOOSE_LOOP_CENTER_Z = -0.3;
+const GOOSE_LOOP_RADIUS_X = 2.8;
+const GOOSE_LOOP_RADIUS_Z = 2.3;
+/** Seconds for one full lap - a leisurely walking pace, not a sprint. */
+const GOOSE_LOOP_PERIOD_SECONDS = 22;
+/** Increasing angle traces the ellipse counter-clockwise (standard math convention: from the +X
+ * axis toward +Z, viewed from above) - per user request ("anti-clockwise rotation"). */
+const GOOSE_LOOP_ANGULAR_SPEED = (2 * Math.PI) / GOOSE_LOOP_PERIOD_SECONDS;
+const GOOSE_WADDLE_BOB_HEIGHT = 0.035;
+const GOOSE_WADDLE_BOB_SPEED = 8;
+const GOOSE_WADDLE_ROCK_ANGLE = 0.15;
+
 /** Standalone render loop shown before a match starts: the player's character idling center-screen
  * with a gentle bob/sway, in front of the main menu. Owns its own WebGL context, disposed once the
  * player starts a match so the gameplay Renderer can take over the canvas container cleanly. */
@@ -27,6 +48,10 @@ export class LobbyScene {
   private mixer: THREE.AnimationMixer | null = null;
   private elapsed = 0;
   private frameHandle = 0;
+
+  private readonly goose: THREE.Group;
+  private gooseLoopAngle = 0;
+  private gooseWaddlePhase = Math.random() * Math.PI * 2;
 
   private constructor(container: HTMLElement) {
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
@@ -84,6 +109,14 @@ export class LobbyScene {
     glow.position.set(CHARACTER_OFFSET_X, 0.01, 0);
     this.scene.add(glow);
 
+    this.goose = buildGooseMesh();
+    this.goose.position.set(
+      GOOSE_LOOP_CENTER_X + GOOSE_LOOP_RADIUS_X,
+      GOOSE_HEIGHT / 2,
+      GOOSE_LOOP_CENTER_Z,
+    );
+    this.scene.add(this.goose);
+
     window.addEventListener('resize', this.onResize);
   }
 
@@ -109,6 +142,28 @@ export class LobbyScene {
     if (idleClip) this.mixer.clipAction(idleClip).play();
   }
 
+  /** Advances the goose continuously around GOOSE_LOOP_CENTER_X/Z's ellipse - no destination-
+   * picking/arrival logic needed since it's a closed loop, always walking, never idle. */
+  private updateGoose(dt: number): void {
+    this.gooseLoopAngle += dt * GOOSE_LOOP_ANGULAR_SPEED;
+
+    this.goose.position.x = GOOSE_LOOP_CENTER_X + Math.cos(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_X;
+    this.goose.position.z = GOOSE_LOOP_CENTER_Z + Math.sin(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_Z;
+
+    // Tangent of the ellipse at the current angle (derivative of the position formula above) -
+    // faces the goose the direction it's actually walking, not just toward the loop's center.
+    const tangentX = -Math.sin(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_X;
+    const tangentZ = Math.cos(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_Z;
+    this.goose.rotation.y = Math.atan2(tangentX, tangentZ);
+
+    this.gooseWaddlePhase += dt * GOOSE_WADDLE_BOB_SPEED;
+    // The mesh's local origin is the goose's vertical *center*, not its feet (see Goose.ts's own
+    // applyPosition, which lifts by this exact same GOOSE_HEIGHT/2 above ground) - without this, the
+    // goose's center sits at floor level and it visibly sinks in by about half its height.
+    this.goose.position.y = GOOSE_HEIGHT / 2 + Math.sin(this.gooseWaddlePhase) * GOOSE_WADDLE_BOB_HEIGHT;
+    this.goose.rotation.z = Math.sin(this.gooseWaddlePhase) * GOOSE_WADDLE_ROCK_ANGLE;
+  }
+
   start(): void {
     this.clock.start();
     const tick = (): void => {
@@ -119,6 +174,7 @@ export class LobbyScene {
         this.character.position.y = Math.sin(this.elapsed * BOB_SPEED) * BOB_AMPLITUDE;
         this.character.rotation.y = Math.sin(this.elapsed * SWAY_SPEED) * SWAY_AMPLITUDE;
       }
+      this.updateGoose(dt);
       this.webgl.render(this.scene, this.camera);
       this.frameHandle = requestAnimationFrame(tick);
     };

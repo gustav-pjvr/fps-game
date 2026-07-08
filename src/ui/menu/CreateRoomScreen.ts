@@ -64,16 +64,26 @@ export class CreateRoomScreen {
 
     const panel = createPanel();
     this.panel = panel;
-    // Widened (not lengthened) from 400px per user request, so the goose-difficulty selector below
-    // can sit side by side with the kill-limit selector instead of stacking and pushing the panel
-    // taller (which would force scrolling on this already-tall room screen).
-    panel.style.width = '480px';
+    // Widened further (760px, was 480px) and split into two columns below (per user request: the
+    // screen required scrolling to see everything, which they explicitly don't want) - settings on
+    // the left, the live player list on the right, rather than stacking the player list underneath
+    // everything else and pushing the panel past createPanel's 80vh scroll threshold.
+    panel.style.width = '760px';
     panel.appendChild(createPanelTitle('CREATE ROOM'));
+
+    const mainRow = document.createElement('div');
+    mainRow.style.cssText = 'display:flex; gap:24px;';
+    const leftColumn = document.createElement('div');
+    leftColumn.style.cssText = 'flex:1.15; min-width:0;';
+    const rightColumn = document.createElement('div');
+    // A flex column so the player list below can flex:1 and stretch to match the left column's
+    // height (the row's default align-items:stretch already makes both columns equally tall).
+    rightColumn.style.cssText = 'flex:1; min-width:0; display:flex; flex-direction:column;';
 
     const usernameLabel = document.createElement('div');
     usernameLabel.textContent = 'Your name:';
     usernameLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
-    panel.appendChild(usernameLabel);
+    leftColumn.appendChild(usernameLabel);
 
     this.usernameInput = createTextInput('Player name', 16);
     this.usernameInput.style.marginBottom = '16px';
@@ -92,19 +102,19 @@ export class CreateRoomScreen {
       this.renderPlayerRows(roster);
       this.connection?.send({ type: 'rosterUpdate', roster });
     });
-    panel.appendChild(this.usernameInput);
+    leftColumn.appendChild(this.usernameInput);
 
     const label = document.createElement('div');
     label.textContent = 'Share this code - up to 3 other players can join:';
     label.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:10px;';
-    panel.appendChild(label);
+    leftColumn.appendChild(label);
 
     this.codeDisplay = document.createElement('div');
     this.codeDisplay.style.cssText =
       `font-size:2.2rem; font-weight:700; letter-spacing:0.3em; text-align:center; color:${ACCENT};` +
       ' padding:18px 0; background:rgba(255,255,255,0.05); border-radius:8px; margin-bottom:14px;' +
       ` font-variant-numeric:tabular-nums; box-shadow:0 0 0 rgba(62,207,95,0); transition:box-shadow 0.5s ${MOTION_EASE};`;
-    panel.appendChild(this.codeDisplay);
+    leftColumn.appendChild(this.codeDisplay);
 
     const copyButton = createButton('Copy Code');
     copyButton.style.width = '100%';
@@ -117,7 +127,7 @@ export class CreateRoomScreen {
         this.codeDisplay.style.boxShadow = '0 0 0 rgba(62,207,95,0)';
       }, 350);
     });
-    panel.appendChild(copyButton);
+    leftColumn.appendChild(copyButton);
 
     // Host-only settings: the guest never picks these, only receives them as part of
     // MatchStartMessage. Side by side (per user request: widen the panel to fit new settings
@@ -130,7 +140,11 @@ export class CreateRoomScreen {
     killLimitColumn.style.cssText = 'flex:1;';
     const killLimitLabel = document.createElement('div');
     killLimitLabel.textContent = 'First to how many kills wins?';
-    killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    // min-height reserves 2 lines' worth of space regardless of actual wrap, so this label and
+    // gooseDifficultyLabel below (1 line) both push their selects down by the same amount - without
+    // it, this longer label wraps to 2 lines while the goose one stays on 1, leaving the two selects
+    // misaligned.
+    killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px; min-height:2.2em;';
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
@@ -152,7 +166,7 @@ export class CreateRoomScreen {
     gooseDifficultyColumn.style.cssText = 'flex:1;';
     const gooseDifficultyLabel = document.createElement('div');
     gooseDifficultyLabel.textContent = 'Goose explosions:';
-    gooseDifficultyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    gooseDifficultyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px; min-height:2.2em;';
     this.gooseDifficultySelect = document.createElement('select');
     this.gooseDifficultySelect.style.cssText = this.killLimitSelect.style.cssText;
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
@@ -165,16 +179,16 @@ export class CreateRoomScreen {
     gooseDifficultyColumn.append(gooseDifficultyLabel, this.gooseDifficultySelect);
 
     settingsRow.append(killLimitColumn, gooseDifficultyColumn);
-    panel.appendChild(settingsRow);
+    leftColumn.appendChild(settingsRow);
 
-    // Full-width row, not a third column - "1 Shot 1 Kill"/"Sniper Duel" labels are long enough
-    // that cramming a third select into the same row as kill-limit/goose-explosions would read
-    // cluttered at this panel width. Multiplayer-only, host-picked pre-match (per user request -
-    // single-player never has a mode).
+    // Full-width (within leftColumn), not a third column - "1 Shot 1 Kill"/"Sniper Duel" labels
+    // are long enough that cramming a third select into the same row as kill-limit/goose-explosions
+    // would read cluttered. Multiplayer-only, host-picked pre-match (per user request - single-
+    // player never has a mode).
     const gameModeLabel = document.createElement('div');
     gameModeLabel.textContent = 'Game mode:';
     gameModeLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
-    panel.appendChild(gameModeLabel);
+    leftColumn.appendChild(gameModeLabel);
     this.gameModeSelect = document.createElement('select');
     this.gameModeSelect.style.cssText = this.killLimitSelect.style.cssText;
     for (const mode of GAME_MODES) {
@@ -184,19 +198,25 @@ export class CreateRoomScreen {
       if (mode === DEFAULT_GAME_MODE) optionElement.selected = true;
       this.gameModeSelect.appendChild(optionElement);
     }
-    panel.appendChild(this.gameModeSelect);
+    leftColumn.appendChild(this.gameModeSelect);
 
     // Live player list (per user request): a real render loop over the current roster now, not
     // two fixed DOM rows - up to MULTIPLAYER_MAX_PLAYERS entries, re-rendered on every join/leave.
+    // Lives in rightColumn, beside the settings rather than stacked beneath them (per user request:
+    // the panel required scrolling to see everything - widening it and placing the player list to
+    // the side keeps the whole screen visible without scrolling).
     const playerListLabel = document.createElement('div');
     playerListLabel.textContent = 'Players in this room:';
-    playerListLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
-    panel.appendChild(playerListLabel);
+    playerListLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    rightColumn.appendChild(playerListLabel);
 
     this.playerList = document.createElement('div');
     this.playerList.style.cssText =
-      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px;`;
-    panel.appendChild(this.playerList);
+      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px; flex:1;`;
+    rightColumn.appendChild(this.playerList);
+
+    mainRow.append(leftColumn, rightColumn);
+    panel.appendChild(mainRow);
 
     this.statusText = document.createElement('div');
     this.statusText.style.cssText = `font-size:0.9rem; color:${TEXT}; opacity:0.85; margin-top:18px; text-align:center; min-height:1.4em;`;

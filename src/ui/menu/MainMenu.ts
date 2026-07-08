@@ -1,4 +1,4 @@
-import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, HAIRLINE, MOTION_EASE } from './menuStyles.ts';
+import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, MOTION_EASE } from './menuStyles.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts';
 
 export interface MainMenuCallbacks {
@@ -35,7 +35,7 @@ export class MainMenu {
     eyebrow.style.marginBottom = '10px';
 
     const title = document.createElement('div');
-    title.textContent = 'GOOSE-BUSTER';
+    title.textContent = "HUNTER 'N GOOSE";
     title.style.cssText =
       `font-family:${DISPLAY_FONT}; font-size:2.4rem; font-weight:700; letter-spacing:0.1em;` +
       ` color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.7); animation:titleReveal 0.5s ${MOTION_EASE} 0.1s both;`;
@@ -91,13 +91,6 @@ export class MainMenu {
 
     buttonRow.append(playButton, multiplayerButton, settingsButton, inventoryButton);
     this.element.appendChild(buttonRow);
-
-    // Faint divider echoing a HUD scope line, purely atmospheric - ties the left (identity) and
-    // right (action) halves together without competing with either.
-    const divider = document.createElement('div');
-    divider.style.cssText =
-      `position:absolute; top:20%; bottom:20%; left:50%; width:1px; background:${HAIRLINE}; pointer-events:none;`;
-    this.element.appendChild(divider);
 
     root.appendChild(this.element);
   }

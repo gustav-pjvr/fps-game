@@ -1,4 +1,4 @@
-# Goose-Buster
+# Hunter 'n Goose
 
 A browser-based first-person shooter built from scratch with Three.js and Rapier physics — procedurally generated open world, AI enemies, a full weapon set, and up to 4-player peer-to-peer multiplayer with host-picked game modes. No game engine, no backend server: the world generates from a shared seed, and multiplayer runs entirely over WebRTC with one player's browser acting as host.
 

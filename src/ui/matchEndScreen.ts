@@ -110,7 +110,10 @@ export class MatchEndScreen {
     killLimitColumn.style.cssText = 'flex:1;';
     const killLimitLabel = document.createElement('div');
     killLimitLabel.textContent = 'First to how many kills wins?';
-    killLimitLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    // min-height reserves 2 lines regardless of actual wrap - see CreateRoomScreen.ts's identical
+    // fix for why (this label wraps to 2 lines while gooseDifficultyLabel stays on 1, misaligning
+    // the two selects without it).
+    killLimitLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px; min-height:2.1em;';
     this.killLimitSelect = document.createElement('select');
     this.killLimitSelect.style.cssText =
       `width:100%; box-sizing:border-box; padding:10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
@@ -130,7 +133,7 @@ export class MatchEndScreen {
     gooseDifficultyColumn.style.cssText = 'flex:1;';
     const gooseDifficultyLabel = document.createElement('div');
     gooseDifficultyLabel.textContent = 'Goose explosions:';
-    gooseDifficultyLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    gooseDifficultyLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px; min-height:2.1em;';
     this.gooseDifficultySelect = document.createElement('select');
     this.gooseDifficultySelect.style.cssText = this.killLimitSelect.style.cssText;
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {

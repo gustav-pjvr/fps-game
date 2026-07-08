@@ -91,3 +91,41 @@ get a continuous slow pulse (reads as a live radar blip). Verified via screensho
 breakage, resting states match the pre-existing design (the screenshots can't show motion itself,
 just confirm nothing is stuck mid-animation or broken).
 
+## Post-launch playtest fixes: instant play on load, Create Room layout, dropdown legibility (2026-07-08)
+
+A short round of live-playtest feedback, fixed and pushed the same day.
+
+- **Match starts already playable, not paused.** `isPaused`'s formula (`!input.isLocked &&
+  !deathScreenVisible`) meant a freshly loaded match always opened on the pause menu, since pointer
+  lock was never requested until the player clicked "Resume" - a confusing extra step the user
+  explicitly didn't want. `Game.start()` now calls `input.requestPointerLock()` right after starting
+  the loop, piggybacking on whatever click (Play/Start Match) triggered match creation, since pointer
+  lock still requires a real browser user gesture. This works whenever `start()` runs soon enough
+  after that click to still carry its activation through `Game.create()`'s async loading; if it
+  doesn't (a slow load, or a guest whose match starts from a network message with no local click at
+  all), it fails silently and falls back to exactly today's click-to-resume pause menu - never worse
+  than before.
+- **`CreateRoomScreen` required scrolling.** Widened from 480px to 760px and restructured into two
+  columns - name/code/settings on the left, the live player list on the right (previously stacked
+  below everything else, pushing the panel past `createPanel`'s 80vh scroll threshold). No content
+  or behavior changed, just the layout.
+- **Illegible white-on-white dropdown options.** All `<select>` elements (kill limit, goose
+  explosion difficulty, game mode - both `CreateRoomScreen.ts` and `matchEndScreen.ts`'s rematch
+  settings, plus `PlaySetupModal.ts`'s single-player goose-difficulty select) had their closed box
+  themed dark, but nothing told the browser to render the *native dropdown popup* in dark mode, so
+  Chromium fell back to its light-theme default - near-white text on a near-white background.
+  `color-scheme:dark` on each select's `style.cssText` fixes this correctly and consistently,
+  without needing per-`<option>` styling hacks.
+- **Dropdown label height mismatch.** "First to how many kills wins?" wraps to 2 lines while "Goose
+  explosions:" stays on 1, so the two selects sat at different heights side by side. Both labels now
+  reserve `min-height:2.2em` (2.1em in `matchEndScreen.ts`'s more compact panel) regardless of actual
+  wrap, in both `CreateRoomScreen.ts` and `matchEndScreen.ts`.
+
+**Rename:** the game's in-game title, browser tab title (`index.html`), and README are now
+**"Hunter 'n Goose"** (previously "Goose-Buster"/"FPS Game"). `package.json`'s internal `name` field
+(`fps-game`) was left untouched - it's not user-facing.
+
+**Verification:** `npx tsc --noEmit` clean after each change. Not live-tested in a browser this
+round - the pointer-lock fix in particular depends on real user-gesture timing that a headless
+check can't meaningfully exercise; worth an eyeball in normal play.
+

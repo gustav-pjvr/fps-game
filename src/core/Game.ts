@@ -1012,8 +1012,18 @@ export class Game {
     return game;
   }
 
+  /** Requesting pointer lock here (rather than leaving the player to click "Resume" on the pause
+   * menu that isPaused's own formula shows whenever input isn't locked) lets a match start already
+   * playable instead of paused-by-default. Still gated on the browser's pointer-lock user-gesture
+   * requirement like every other call site (resetPlay, multiplayerRespawn) - this only succeeds
+   * when start() runs close enough behind the click that triggered match creation (Play/Start
+   * Match for whoever clicked it) to still carry that gesture's activation forward through
+   * Game.create()'s async loading. If it doesn't (a slow load, or a guest whose match start arrived
+   * over the network with no local click at all), it fails silently and the existing pause menu
+   * click-to-resume gate is exactly today's fallback - never worse than before. */
   start(): void {
     this.loop.start();
+    this.input.requestPointerLock();
   }
 
   /** Tears down everything this Game instance owns - WebGL context, DOM-appended HUD/menu

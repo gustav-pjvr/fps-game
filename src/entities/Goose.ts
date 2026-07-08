@@ -210,8 +210,10 @@ function horizontalDistance(a: { x: number; z: number }, b: { x: number; z: numb
 }
 
 /** Built from plain THREE primitives - no GLTF, per the "build it procedurally" decision (see
- * GOOSE_* config comment). White body/neck/head, orange beak/legs, grey wingtips. */
-function buildGooseMesh(): THREE.Group {
+ * GOOSE_* config comment). White body/neck/head, orange beak/legs, grey wingtips. Exported so
+ * LobbyScene can reuse the exact same mesh for the decorative lobby goose, rather than duplicating
+ * this geometry-building code for a purely cosmetic, physics-free copy. */
+export function buildGooseMesh(): THREE.Group {
   const group = new THREE.Group();
   const white = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.7 });
   const orange = new THREE.MeshStandardMaterial({ color: 0xe08424, roughness: 0.6 });
@@ -230,6 +232,14 @@ function buildGooseMesh(): THREE.Group {
   const head = new THREE.Mesh(new THREE.SphereGeometry(GOOSE_RADIUS * 0.42, 10, 8), white);
   head.position.set(0, GOOSE_HEIGHT * 0.5, GOOSE_RADIUS * 1.5);
   group.add(head);
+
+  const black = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.4 });
+  const eyeGeometry = new THREE.SphereGeometry(GOOSE_RADIUS * 0.08, 8, 6);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, black);
+    eye.position.set(side * GOOSE_RADIUS * 0.3, GOOSE_HEIGHT * 0.54, GOOSE_RADIUS * 1.85);
+    group.add(eye);
+  }
 
   const beak = new THREE.Mesh(new THREE.ConeGeometry(GOOSE_RADIUS * 0.16, GOOSE_RADIUS * 0.4, 6), orange);
   beak.rotation.x = Math.PI / 2;
