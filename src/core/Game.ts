@@ -1761,8 +1761,20 @@ export class Game {
    * message handler in create()). Reuses Player.respawn() at the player's own current position -
    * a no-op positionally, but it resets health/velocity/recoil/bob the same way a real respawn
    * does, which is the actual point here, not a bespoke narrower "heal" method for a one-line
-   * difference. */
+   * difference.
+   *
+   * Guarded on !isDead - a mutual kill (each player's shot lands within the same exchange) means
+   * this client can receive "you got a kill" credit for the opponent's death *after* its own death
+   * has already been detected locally. Without this guard, respawn() would silently reset health
+   * to full and flip isDead back to false outside the normal multiplayerRespawn() flow - the death
+   * screen stays visible (deathScreenVisible is untouched) but updateMultiplayer()'s
+   * `if (this.player.isDead)` auto-respawn branch would never run again, softlocking this client
+   * on the death screen forever. Confirmed via a real 2-player playtest report ("we killed each
+   * other at the same time and then neither of us could respawn"). Letting the normal death/
+   * respawn sequence run its course uninterrupted is correct here regardless - a player who also
+   * died in the same exchange has no health to usefully refill anyway. */
   healLocalPlayerToFull(): void {
+    if (this.player.isDead) return;
     this.player.respawn(this.player.position);
   }
 
