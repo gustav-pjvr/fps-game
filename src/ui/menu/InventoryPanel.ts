@@ -1,6 +1,6 @@
 import { loadGLTF } from '../../core/AssetLoader.ts';
 import { WEAPON_DEFINITIONS, type WeaponDefinition } from '../../weapons/definitions.ts';
-import { WEAPON_MODEL_SPECS } from '../../weapons/viewModel.ts';
+import { WEAPON_MODEL_SPECS, createProceduralMeleeViewModel } from '../../weapons/viewModel.ts';
 import { createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 import { createStatBadge } from './statIcons.ts';
 import { renderWeaponThumbnail } from './weaponThumbnail.ts';
@@ -84,14 +84,20 @@ export class InventoryPanel {
       Object.values(WEAPON_DEFINITIONS).map(async (weapon) => {
         const spec = WEAPON_MODEL_SPECS[weapon.id];
         let thumbnailDataUrl: string | null = null;
-        if (spec) {
-          try {
+        try {
+          if (spec) {
             const gltf = await loadGLTF(spec.path);
-            thumbnailDataUrl = renderWeaponThumbnail(gltf);
-          } catch (error) {
-            // A missing/corrupt model shouldn't block the whole inventory - falls back to no preview.
-            console.warn(`Failed to render inventory thumbnail for "${weapon.id}"`, error);
+            thumbnailDataUrl = renderWeaponThumbnail(gltf.scene);
+          } else {
+            // No sourced .glb for this weapon (the knife - see viewModel.ts's
+            // createProceduralMeleeViewModel) - render its actual procedural mesh instead of
+            // leaving the card's thumbnail slot blank.
+            const { group } = createProceduralMeleeViewModel(weapon);
+            thumbnailDataUrl = renderWeaponThumbnail(group);
           }
+        } catch (error) {
+          // A missing/corrupt model shouldn't block the whole inventory - falls back to no preview.
+          console.warn(`Failed to render inventory thumbnail for "${weapon.id}"`, error);
         }
         return createWeaponCard(weapon, thumbnailDataUrl);
       }),

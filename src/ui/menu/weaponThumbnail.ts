@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // Rendered larger than the 72px slot the old inventory card used, since the card was enlarged to
 // 112px so players can actually make out each weapon's shape/details, not just its silhouette.
@@ -11,9 +10,13 @@ const THUMBNAIL_SIZE = 192;
  * viewport): the inventory is a rarely-shown menu, so there's no reason to hold a second WebGL
  * context (and its GPU memory) open for the whole session alongside the main game renderer -
  * render once, extract the bitmap, then dispose the renderer immediately.
+ *
+ * Takes any THREE.Object3D, not just a loaded GLTF's scene - the knife has no sourced .glb (see
+ * viewModel.ts's createProceduralMeleeViewModel) and needs the exact same thumbnail treatment for
+ * its procedurally-built mesh.
  */
-export function renderWeaponThumbnail(gltf: GLTF): string {
-  const model = gltf.scene.clone(true);
+export function renderWeaponThumbnail(source: THREE.Object3D): string {
+  const model = source.clone(true);
 
   // Center the model at the origin and scale it to fill the frame, regardless of each weapon
   // model's own arbitrary export scale/pivot (already known to vary - see viewModel.ts).
