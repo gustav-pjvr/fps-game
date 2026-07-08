@@ -36,6 +36,13 @@ export function weaponModelPaths(): string[] {
  * blocking on a new asset. A simple blade + handle silhouette built from boxes, tinted by the
  * weapon's own `viewModelColor`. */
 export function createProceduralMeleeViewModel(definition: WeaponDefinition): WeaponViewModel {
+  // Goose Toss's "unarmed" placeholder (see definitions.ts) has nothing to hold - an empty group,
+  // not a floating knife, since the player's hands are meant to read as genuinely empty (or later
+  // holding a goose - see Game.ts's heldGooseViewModel, attached/detached independently of this).
+  if (definition.id === 'unarmed') {
+    return { group: new THREE.Group(), muzzleLocalOffset: new THREE.Vector3() };
+  }
+
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ color: definition.viewModelColor, metalness: 0.6, roughness: 0.35 });
 

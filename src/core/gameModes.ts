@@ -4,9 +4,9 @@ import { PLAYER_HEALTH } from './config.ts';
  * mode, always the unrestricted default loadout). Threaded alongside `gooseDifficulty`/`killLimit`
  * through the same match-start plumbing (see MatchStartMessage/WelcomeMessage.activeMatch/
  * MultiplayerSession). */
-export type GameMode = 'default' | 'oneShotOneKill' | 'sniperDuel' | 'gunGame' | 'knifeOnly';
+export type GameMode = 'default' | 'oneShotOneKill' | 'sniperDuel' | 'gunGame' | 'knifeOnly' | 'gooseToss';
 
-export const GAME_MODES: readonly GameMode[] = ['default', 'oneShotOneKill', 'sniperDuel', 'gunGame', 'knifeOnly'];
+export const GAME_MODES: readonly GameMode[] = ['default', 'oneShotOneKill', 'sniperDuel', 'gunGame', 'knifeOnly', 'gooseToss'];
 export const DEFAULT_GAME_MODE: GameMode = 'default';
 export const GAME_MODE_LABELS: Record<GameMode, string> = {
   default: 'Default',
@@ -14,6 +14,7 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
   sniperDuel: 'Sniper Duel',
   gunGame: 'Gun Game',
   knifeOnly: 'Knife Only',
+  gooseToss: 'Goose Toss',
 };
 
 /** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user
@@ -36,6 +37,9 @@ const FIXED_LOADOUTS: Partial<Record<GameMode, WeaponLoadout>> = {
   oneShotOneKill: { weaponIds: ['pistol'], damageOverrides: { pistol: PLAYER_HEALTH } },
   sniperDuel: { weaponIds: ['sniper'], damageOverrides: { sniper: PLAYER_HEALTH } },
   knifeOnly: { weaponIds: ['knife'] },
+  // Not "no weapons" (WeaponManager requires at least one) - a harmless zero-damage placeholder
+  // that Game.ts's Goose Toss handling never actually lets fire, see definitions.ts's 'unarmed'.
+  gooseToss: { weaponIds: ['unarmed'] },
 };
 
 /** The starting loadout for a given mode - random for Gun Game (a fresh pick per call, so two

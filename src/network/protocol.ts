@@ -264,6 +264,50 @@ export interface GooseExplodedMessage {
   z: number;
 }
 
+/** Goose Toss mode only (senderSlot's own client just picked up a wandering goose with the
+ * interact key). Added to the transparent-relay set (see Game.ts's RELAYABLE_MESSAGE_TYPES) rather
+ * than host-arbitrated - the sender already removed the goose from its own local view before
+ * sending this, and every receiving client (including the host, whose GooseManager IS the
+ * authoritative flock) removes it from theirs too on receipt. A genuine simultaneous double-pickup
+ * race is possible but tolerated (GooseManager.removeById silently no-ops if already gone), same
+ * spirit as this project's other self-reported multiplayer interactions. */
+export interface GoosePickedUpMessage {
+  type: 'goosePickedUp';
+  senderSlot: PlayerSlot;
+  id: string;
+}
+
+/** Goose Toss mode only: `senderSlot` just threw the goose they were holding. Every client
+ * (including the thrower) spawns an identical local ThrownGoose from `originX/Y/Z` +
+ * `velX/Y/Z` - GRAVITY is a fixed world constant, so every client's flight simulation matches
+ * without needing further position sync. Only the thrower's own client is authoritative for
+ * deciding when/where it lands (see Game.ts's updateGooseToss) - everyone else's copy is purely
+ * cosmetic until a matching GooseThrowExplodedMessage arrives. */
+export interface GooseThrownMessage {
+  type: 'gooseThrown';
+  senderSlot: PlayerSlot;
+  id: string;
+  originX: number;
+  originY: number;
+  originZ: number;
+  velX: number;
+  velY: number;
+  velZ: number;
+}
+
+/** Goose Toss mode only: the thrower's own client decided this thrown goose just made contact
+ * (ground or a player) at (x, y, z) - every client explodes its own local copy there (VFX
+ * everywhere; damage is handled separately via ordinary DamageEventMessages the thrower sends to
+ * whoever it determined was in range, exactly like a normal weapon hit, so kill credit flows
+ * through the existing playerDied pipeline unchanged). */
+export interface GooseThrowExplodedMessage {
+  type: 'gooseThrowExploded';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export type NetworkMessage =
   | HelloMessage
   | WelcomeMessage
@@ -283,7 +327,10 @@ export type NetworkMessage =
   | GooseSnapshotMessage
   | GooseHitEventMessage
   | GooseExplodedMessage
-  | GooseSyncRequestMessage;
+  | GooseSyncRequestMessage
+  | GoosePickedUpMessage
+  | GooseThrownMessage
+  | GooseThrowExplodedMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -305,6 +352,9 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'gooseHitEvent',
   'gooseExploded',
   'gooseSyncRequest',
+  'goosePickedUp',
+  'gooseThrown',
+  'gooseThrowExploded',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

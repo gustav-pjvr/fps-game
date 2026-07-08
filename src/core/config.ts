@@ -22,6 +22,16 @@ export const MULTIPLAYER_MAX_PLAYERS = 4;
  * of the match. */
 export const MULTIPLAYER_REJOIN_GRACE_PERIOD_MS = 90_000;
 
+/** Host-only: how long an opponent slot can go without sending *any* message before the host
+ * proactively treats it as disconnected, independent of PeerJS/WebRTC's own connection-close
+ * detection. That native detection isn't reliable enough to depend on alone - an abrupt tab close
+ * (as opposed to a graceful page unload) doesn't always fire a prompt 'close'/'disconnected' event,
+ * sometimes leaving a stale RemotePlayer standing indefinitely until the browser's own ICE timeout
+ * eventually fires, if it ever does. Each client sends a playerSnapshot roughly every
+ * PLAYER_SNAPSHOT_SEND_INTERVAL (~18Hz), so several seconds of total silence is already a strong
+ * signal something is wrong, not a false positive from one dropped packet. */
+export const MULTIPLAYER_CONNECTION_TIMEOUT_MS = 8_000;
+
 /** The radius every multiplayer spawn ring (initial match-start spawns, mid-match respawns) is
  * placed on - see multiplayerSpawn.ts's pickMultiplayerSpawnPoints/pickRandomRespawnPoint. */
 export const MULTIPLAYER_SPAWN_RADIUS = 35;
@@ -359,6 +369,37 @@ export const GOOSE_EXPLOSION_DIFFICULTY_LABELS: Record<GooseExplosionDifficulty,
  * coarser than PLAYER_SNAPSHOT_SEND_INTERVAL since a goose's exact position is cosmetic, not
  * something a shot needs pixel-perfect freshness against the way player hit registration does. */
 export const GOOSE_SNAPSHOT_SEND_INTERVAL = 1 / 6;
+
+/** Goose Toss mode (multiplayer only, see core/gameModes.ts) - players carry no weapons, only
+ * geese. A much bigger, constantly-replenished flock than the normal spawn-on-death trigger
+ * (GOOSE_MAX_CONCURRENT/GOOSE_SPAWN_COUNT_INITIAL), since throwing geese at each other IS the
+ * entire game here. */
+export const GOOSE_TOSS_MAX_CONCURRENT = 25;
+/** Host-only: one new goose lands somewhere on the map at this interval while under the cap above,
+ * independent of player deaths - see GooseManager.spawnRandomOnMap. */
+export const GOOSE_TOSS_SPAWN_INTERVAL_SECONDS = 2;
+/** How close a player must be to a live wandering goose to pick it up with the interact key. */
+export const GOOSE_PICKUP_RADIUS = 2.5;
+/** A thrown goose's initial speed (m/s) along the thrower's exact aim direction - see
+ * ThrownGoose.ts. Deliberately a slow, real ballistic arc (falls under GRAVITY like anything else
+ * in this world) rather than a fast, flat, hitscan-like throw: a slower projectile is easier to
+ * read and lead than an instant-hit shot, and since it explodes on ANY contact - the ground, not
+ * just a direct player hit - a thrown goose that lands a few meters short or long of its target
+ * still deals real splash damage via computeExplosionDamage's falloff. That forgiveness (a close
+ * miss still hurts) is what actually keeps this mode approachable, more than the exact speed
+ * number - per user request, this "mustn't be super difficult." */
+export const GOOSE_THROW_SPEED = 20;
+/** Goose Toss's own explosion size, deliberately NOT the host-configurable GOOSE_EXPLOSION_PRESETS
+ * (per explicit user request - the goose-explosion-difficulty selector still shows in the host
+ * settings for other modes, but this mode ignores it entirely) - roughly matches the 'extreme'
+ * preset, a serious but not always-instant blast. */
+export const GOOSE_TOSS_EXPLOSION_RADIUS = 9;
+export const GOOSE_TOSS_EXPLOSION_MAX_DAMAGE = 140;
+/** Safety net for a client that never receives the thrower's gooseThrowExploded broadcast (a
+ * dropped message, a relay-hop race) - removes an orphaned cosmetic ThrownGoose after this many
+ * seconds regardless, rather than leaving it flying forever. Comfortably longer than any real
+ * flight time at GOOSE_THROW_SPEED. */
+export const GOOSE_THROW_MAX_LIFETIME_SECONDS = 5;
 
 export const PLAYER_HEALTH = 100;
 

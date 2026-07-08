@@ -53,6 +53,9 @@ export class GooseManager {
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly callbacks: GooseManagerCallbacks,
+    /** Overrides GOOSE_MAX_CONCURRENT - Goose Toss mode passes GOOSE_TOSS_MAX_CONCURRENT (25)
+     * instead, since throwing geese at each other is the entire game there. */
+    private readonly maxConcurrent: number = GOOSE_MAX_CONCURRENT,
   ) {}
 
   // ---- Authoritative side (single-player, multiplayer host) ----------------------------------
@@ -72,15 +75,59 @@ export class GooseManager {
    * distance from (x, z) and announces it. No-op past GOOSE_MAX_CONCURRENT so a long match doesn't
    * accumulate an unbounded flock (my own addition, not explicitly requested but necessary). */
   spawnNear(x: number, z: number): void {
-    if (this.geese.size >= GOOSE_MAX_CONCURRENT) return;
+    if (this.geese.size >= this.maxConcurrent) return;
     const angle = Math.random() * Math.PI * 2;
     const distance = GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER + Math.random() * GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER;
     this.spawnAuthoritative(x + Math.cos(angle) * distance, z + Math.sin(angle) * distance);
     this.callbacks.onGooseSpawned();
   }
 
+  /** Goose Toss mode only: lands one goose at a random point within GOOSE_ROAM_RADIUS of the map
+   * center, independent of player deaths - the mode's constant ambient supply instead of the
+   * normal spawn-only-on-death trigger above. Host/single-player only, same authority rule as
+   * every other spawn path here. */
+  spawnRandomOnMap(centerX: number, centerZ: number): void {
+    if (this.geese.size >= this.maxConcurrent) return;
+    const angle = Math.random() * Math.PI * 2;
+    const radius = Math.random() * GOOSE_ROAM_RADIUS;
+    this.spawnAuthoritative(centerX + Math.cos(angle) * radius, centerZ + Math.sin(angle) * radius);
+    this.callbacks.onGooseSpawned();
+  }
+
+  /** Goose Toss mode only: the nearest live goose within `radius` of `position`, or null if none -
+   * used to resolve an interact-key pickup attempt. Works identically for an authoritative goose
+   * (single-player/host) or a follower's own local mirror (a guest can pick from what it can see;
+   * see the class comment on the follower/authoritative split for why that's fine here). */
+  findNearestWithinRadius(position: THREE.Vector3, radius: number): string | null {
+    let nearestId: string | null = null;
+    let nearestDistSq = radius * radius;
+    for (const goose of this.geese.values()) {
+      const distSq = goose.position.distanceToSquared(position);
+      if (distSq < nearestDistSq) {
+        nearestDistSq = distSq;
+        nearestId = goose.networkId;
+      }
+    }
+    return nearestId;
+  }
+
+  /** Goose Toss mode only: removes a goose by id regardless of authoritative/follower role - used
+   * both when this client picks one up itself and when applying another player's relayed
+   * goosePickedUp message (see Game.ts's updateGooseToss). Returns whether it was actually present
+   * (a pickup race - two players grabbing the same goose in the same instant - is possible and
+   * tolerated, same as this project's other self-reported multiplayer interactions; the loser of
+   * the race just silently no-ops here). */
+  removeById(id: string): boolean {
+    const goose = this.geese.get(id);
+    if (!goose) return false;
+    this.scene.remove(goose.mesh);
+    goose.dispose();
+    this.geese.delete(id);
+    return true;
+  }
+
   private spawnAuthoritative(x: number, z: number): void {
-    if (this.geese.size >= GOOSE_MAX_CONCURRENT) return;
+    if (this.geese.size >= this.maxConcurrent) return;
     const y = sampleHeight(x, z) + GOOSE_HEIGHT / 2;
     const id = crypto.randomUUID();
     const patrolRng = mulberry32(getWorldSeed() + PATROL_SEED_OFFSET + this.patrolSeedCounter++);

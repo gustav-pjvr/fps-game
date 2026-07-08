@@ -7,6 +7,8 @@ import { Player } from '../entities/Player.ts';
 import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { GooseManager } from '../entities/GooseManager.ts';
+import { ThrownGoose } from '../entities/ThrownGoose.ts';
+import { buildGooseMesh } from '../entities/Goose.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { WatchTowerManager } from '../world/WatchTowerManager.ts';
@@ -14,6 +16,7 @@ import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
+import { WEAPON_HIP_POSITION } from '../weapons/viewModel.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
 import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
 import { Tracers } from '../combat/Tracers.ts';
@@ -35,6 +38,7 @@ import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
+import { computeExplosionDamage } from '../combat/explosion.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
 import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
@@ -45,10 +49,21 @@ import {
   ENEMY_RANGED_TRACER_COLOR,
   ENEMY_RING_BASE_RADIUS,
   type GooseExplosionDifficulty,
+  GOOSE_MAX_CONCURRENT,
+  GOOSE_PICKUP_RADIUS,
+  GOOSE_RADIUS,
+  GOOSE_THROW_MAX_LIFETIME_SECONDS,
+  GOOSE_THROW_SPEED,
+  GOOSE_TOSS_EXPLOSION_MAX_DAMAGE,
+  GOOSE_TOSS_EXPLOSION_RADIUS,
+  GOOSE_TOSS_MAX_CONCURRENT,
+  GOOSE_TOSS_SPAWN_INTERVAL_SECONDS,
+  MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE,
   MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE,
   MULTIPLAYER_GUNSHOT_MIN_VOLUME,
   MULTIPLAYER_RESPAWN_DELAY,
+  PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_X,
   SPAWN_Z,
@@ -96,6 +111,10 @@ interface RemoteOpponent {
    * since it's never authoritative over another player's health. Starts at full health, matching
    * what a freshly spawned/joined opponent actually has before their first snapshot arrives. */
   health: number;
+  /** Host-only liveness tracking (see MULTIPLAYER_CONNECTION_TIMEOUT_MS's own comment) - updated on
+   * every message received from this slot, not just playerSnapshot. Unused on a guest's own client
+   * (guests never run the staleness sweep - see updateMultiplayer). */
+  lastMessageAt: number;
 }
 
 /** Everything Game tracks about an in-progress multiplayer match beyond the MultiplayerSession it
@@ -150,7 +169,17 @@ function waitForNextFrame(): Promise<void> {
  * Lobby/roster messages (hello/welcome/rosterUpdate/roomFull) and host-authored broadcasts
  * (matchStart/hostLeftRoom/playerLeft/playerJoinedMatch) are deliberately excluded - the host
  * authors those itself, they never arrive from elsewhere to relay. */
-const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set(['playerSnapshot', 'fireEvent', 'damageEvent', 'playerDied', 'respawnEvent', 'footstepEvent']);
+const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'playerSnapshot',
+  'fireEvent',
+  'damageEvent',
+  'playerDied',
+  'respawnEvent',
+  'footstepEvent',
+  'goosePickedUp',
+  'gooseThrown',
+  'gooseThrowExploded',
+]);
 
 /** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`
  * (never silent - an inaudible shot that still damages would read as unfair) at `audibleRange`. */
@@ -290,6 +319,20 @@ export class Game {
    * pause menu correctly stays visible through that deferral window instead of auto-hiding the
    * instant the player dies. */
   private deathScreenVisible = false;
+  /** Goose Toss mode only (see updateGooseToss) - the id of the wandering goose currently held in
+   * this player's own hands, or null if empty-handed. Distinct from WeaponManager's "unarmed"
+   * placeholder slot, which never actually changes regardless of this. */
+  private heldGooseId: string | null = null;
+  /** The held-goose view model attached to the camera, shown/hidden alongside heldGooseId - built
+   * once at Goose Toss match start (see create()), not per-pickup, so there's no per-pickup asset
+   * work. */
+  private heldGooseViewModel: THREE.Group | null = null;
+  /** Goose Toss mode only - every ThrownGoose currently in flight, own throws and every other
+   * player's alike (see ThrownGoose.ts's class comment on thrower-only authority). */
+  private readonly thrownGeese = new Map<string, ThrownGoose>();
+  /** Host-only (see updateGooseToss): throttles GooseManager.spawnRandomOnMap to
+   * GOOSE_TOSS_SPAWN_INTERVAL_SECONDS instead of every frame. */
+  private gooseTossSpawnAccumulator = 0;
   /** Every player's running kill count in the current multiplayer match, own slot included -
    * replaces the old single scoreState.value (mine)/multiplayerDeathCount (a 1v1-only proxy for
    * the one opponent's score) now that there can be up to 3 opponents. Updated symmetrically by
@@ -647,7 +690,7 @@ export class Game {
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseExploded', id, x, y, z }) : undefined,
       onLocalHitReported:
         multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
-    });
+    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     if (!multiplayer || multiplayer.role === 'host') {
@@ -679,7 +722,7 @@ export class Game {
           // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
           (amount) => multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount }),
         );
-        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth });
+        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now() });
         usernames.set(entry.slot, entry.username);
         minimap.addDot(entry.slot);
         multiplayerHud.addOpponentRow(entry.slot, entry.username);
@@ -783,6 +826,18 @@ export class Game {
     );
     gameRef.current = game;
 
+    // Goose Toss mode only (see updateGooseToss) - built once here, shown/hidden per pickup/throw
+    // rather than rebuilt each time, same reasoning as every weapon view model already attached to
+    // this camera.
+    if (multiplayer?.gameMode === 'gooseToss') {
+      const heldGoose = buildGooseMesh();
+      heldGoose.scale.setScalar(0.55);
+      heldGoose.position.copy(WEAPON_HIP_POSITION);
+      heldGoose.visible = false;
+      renderer.camera.add(heldGoose);
+      game.heldGooseViewModel = heldGoose;
+    }
+
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
     if (multiplayer) {
@@ -825,6 +880,12 @@ export class Game {
           if (activeMultiplayer.session.role === 'host' && RELAYABLE_MESSAGE_TYPES.has(message.type)) {
             activeMultiplayer.session.connection.sendExcept(message, senderSlot);
           }
+
+          // Host-only liveness signal (see MULTIPLAYER_CONNECTION_TIMEOUT_MS's own comment) - any
+          // message at all counts, not just playerSnapshot, so this stays fresh even during a brief
+          // gap in position updates.
+          const liveOpponent = activeMultiplayer.opponents.get(senderSlot);
+          if (liveOpponent) liveOpponent.lastMessageAt = performance.now();
 
           switch (message.type) {
             case 'matchStart':
@@ -948,6 +1009,37 @@ export class Game {
               sound.playFootstep(multiplayerGunshotVolume(distance), pan);
               break;
             }
+            case 'goosePickedUp':
+              // Removes it from this client's own view of the flock regardless of role - for the
+              // host that's the actual authoritative entry (so it stops being offered to anyone
+              // else via findNearestWithinRadius/broadcast further snapshots for it); for a guest
+              // it's just their own follower mirror. See protocol.ts's own comment on why this is
+              // relay-based rather than host-arbitrated.
+              gooseManager.removeById(message.id);
+              break;
+            case 'gooseThrown': {
+              // Only ever received for another player's throw - the thrower's own client already
+              // spawned its local copy before sending this (see updateGooseToss).
+              const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
+              const velocity = new THREE.Vector3(message.velX, message.velY, message.velZ);
+              const thrown = new ThrownGoose(message.id, senderSlot, origin, velocity);
+              renderer.scene.add(thrown.mesh);
+              game.thrownGeese.set(message.id, thrown);
+              break;
+            }
+            case 'gooseThrowExploded': {
+              // VFX/sound only - damage was already applied by the thrower via ordinary
+              // damageEvent messages (see resolveGooseTossExplosion), so this must NOT re-apply it.
+              const position = new THREE.Vector3(message.x, message.y, message.z);
+              explosionEffect.spawn(position, GOOSE_TOSS_EXPLOSION_RADIUS);
+              sound.playExplosion(enemyGunshotVolume(position.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, position));
+              const thrown = game.thrownGeese.get(message.id);
+              if (thrown) {
+                thrown.dispose(renderer.scene);
+                game.thrownGeese.delete(message.id);
+              }
+              break;
+            }
             case 'hostLeftRoom':
               game.onOpponentLeftRoom?.();
               break;
@@ -1055,6 +1147,9 @@ export class Game {
     this.gooseAnnouncement.dispose();
     this.explosionEffect.dispose();
     this.gooseManager.dispose();
+    for (const thrown of this.thrownGeese.values()) thrown.dispose(this.renderer.scene);
+    this.thrownGeese.clear();
+    if (this.heldGooseViewModel) this.renderer.camera.remove(this.heldGooseViewModel);
     this.scopeOverlay.dispose();
     this.pauseMenu.dispose();
     this.settingsPanel.dispose();
@@ -1292,6 +1387,10 @@ export class Game {
       // respawn/unpause.
       this.input.consumeLookDelta();
     } else {
+      // Runs before weaponManager.update() specifically so a throw's 'fire' press is consumed
+      // here first - WeaponManager never sees it, so the harmless 'unarmed' placeholder weapon
+      // never has anything to (not) do with it either.
+      if (this.multiplayer?.gameMode === 'gooseToss') this.updateGooseToss(dt);
       this.player.update(dt, this.input);
       this.weaponManager.update(dt, this.input, this.player);
     }
@@ -1309,6 +1408,18 @@ export class Game {
       this.chunkManager.update(this.player.position.x, this.player.position.z);
       this.entityManager.update(dt, this.player);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
+      this.updateThrownGeese(dt);
+
+      // Goose Toss's constant ambient supply (per user request - "many, many geese... spawned
+      // across the map constantly"), independent of the normal spawn-on-death trigger above.
+      // Host-only, same authority rule as every other goose spawn path.
+      if (this.multiplayer?.gameMode === 'gooseToss' && this.multiplayer.session.role === 'host') {
+        this.gooseTossSpawnAccumulator += dt;
+        if (this.gooseTossSpawnAccumulator >= GOOSE_TOSS_SPAWN_INTERVAL_SECONDS) {
+          this.gooseTossSpawnAccumulator = 0;
+          this.gooseManager.spawnRandomOnMap(SPAWN_X, SPAWN_Z);
+        }
+      }
     }
 
     if (this.weaponManager.activeWeaponIndex !== this.lastActiveWeaponIndex) {
@@ -1365,7 +1476,11 @@ export class Game {
     }
 
     this.hud.setAmmo(this.weaponManager.ammo, this.weaponManager.magazineSize, this.weaponManager.isReloading);
-    this.hud.setWeaponName(this.weaponManager.weaponName);
+    // Goose Toss has no real weapon to name (see gameModes.ts's 'unarmed' placeholder) - shows
+    // what actually matters here instead: whether this player is currently holding a goose.
+    this.hud.setWeaponName(
+      this.multiplayer?.gameMode === 'gooseToss' ? (this.heldGooseId ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
+    );
     this.hud.setScore(this.scoreState.value);
     this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
@@ -1409,7 +1524,26 @@ export class Game {
       this.multiplayer.hostSweepAccumulator += dt;
       if (this.multiplayer.hostSweepAccumulator >= 1) {
         this.multiplayer.hostSweepAccumulator = 0;
-        this.multiplayer.hostRoster.sweepExpiredReservations(performance.now());
+        const now = performance.now();
+
+        // Reservations whose MULTIPLAYER_REJOIN_GRACE_PERIOD_MS fully expired with no rejoin -
+        // the return value was previously discarded, meaning nobody ever learned this slot's
+        // roster/token entry was gone for good (distinct from the RemotePlayer visual, which
+        // onPeerDisconnected/the staleness sweep below already removes immediately).
+        for (const expiredSlot of this.multiplayer.hostRoster.sweepExpiredReservations(now)) {
+          this.multiplayer.session.connection.send({ type: 'playerLeft', slot: expiredSlot });
+        }
+
+        // Proactively treat a silent opponent as disconnected rather than waiting on PeerJS/WebRTC's
+        // own (not always reliable - see MULTIPLAYER_CONNECTION_TIMEOUT_MS's own comment) close
+        // detection - this is what actually fixes a RemotePlayer standing stuck forever after an
+        // abrupt tab close that never fired a clean disconnect event.
+        for (const opponent of this.multiplayer.opponents.values()) {
+          if (now - opponent.lastMessageAt < MULTIPLAYER_CONNECTION_TIMEOUT_MS) continue;
+          this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
+          this.removeMultiplayerOpponent(opponent.slot);
+          this.multiplayer.session.connection.send({ type: 'playerLeft', slot: opponent.slot });
+        }
       }
     }
 
@@ -1498,6 +1632,128 @@ export class Game {
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
   }
 
+  /** Goose Toss mode's own input handling (pickup via 'interact', throw via 'fire') - runs once
+   * per tick before weaponManager.update() so a throw's fire press never reaches the harmless
+   * 'unarmed' placeholder weapon (see updateGooseToss's call site). Multiplayer only (see
+   * gameModes.ts) - never called otherwise. */
+  private updateGooseToss(dt: number): void {
+    void dt; // no per-frame state of its own beyond consuming this tick's input - kept for a
+    // consistent method signature alongside every other per-tick updateX(dt) in this class.
+    if (!this.multiplayer) return;
+    const ownSlot = this.multiplayer.session.ownSlot;
+
+    if (this.heldGooseId === null) {
+      if (!this.input.consumeJustPressed('interact')) return;
+      const nearestId = this.gooseManager.findNearestWithinRadius(this.player.position, GOOSE_PICKUP_RADIUS);
+      if (nearestId === null || !this.gooseManager.removeById(nearestId)) return;
+      this.heldGooseId = nearestId;
+      if (this.heldGooseViewModel) this.heldGooseViewModel.visible = true;
+      this.multiplayer.session.connection.send({ type: 'goosePickedUp', senderSlot: ownSlot, id: nearestId });
+      return;
+    }
+
+    if (!this.input.consumeJustPressed('fire')) return;
+    const id = this.heldGooseId;
+    this.heldGooseId = null;
+    if (this.heldGooseViewModel) this.heldGooseViewModel.visible = false;
+
+    const camera = this.renderer.camera;
+    const origin = camera.position.clone();
+    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    // A small forward offset so the goose doesn't immediately register as hitting the thrower's
+    // own position on its very first physics tick.
+    origin.addScaledVector(direction, 0.6);
+    const velocity = direction.clone().multiplyScalar(GOOSE_THROW_SPEED);
+
+    const thrown = new ThrownGoose(id, ownSlot, origin, velocity);
+    this.renderer.scene.add(thrown.mesh);
+    this.thrownGeese.set(id, thrown);
+
+    this.multiplayer.session.connection.send({
+      type: 'gooseThrown',
+      senderSlot: ownSlot,
+      id,
+      originX: origin.x,
+      originY: origin.y,
+      originZ: origin.z,
+      velX: velocity.x,
+      velY: velocity.y,
+      velZ: velocity.z,
+    });
+  }
+
+  /** Advances every in-flight ThrownGoose (own throws and every other player's mirrored copy -
+   * see ThrownGoose.ts's class comment on thrower-only authority). Only the thrower's own copy
+   * decides when/where it explodes and applies damage; every other client's copy is purely
+   * cosmetic until a matching gooseThrowExploded message arrives (see the 'gooseThrowExploded'
+   * case below) or its own GOOSE_THROW_MAX_LIFETIME_SECONDS safety timeout elapses (a dropped
+   * message/relay-hop race shouldn't leave an orphaned goose flying forever). */
+  private updateThrownGeese(dt: number): void {
+    if (this.thrownGeese.size === 0) return;
+    const ownSlot = this.multiplayer?.session.ownSlot;
+
+    for (const thrown of Array.from(this.thrownGeese.values())) {
+      thrown.update(dt);
+
+      if (thrown.throwerSlot !== ownSlot) {
+        if (thrown.age >= GOOSE_THROW_MAX_LIFETIME_SECONDS) {
+          thrown.dispose(this.renderer.scene);
+          this.thrownGeese.delete(thrown.id);
+        }
+        continue;
+      }
+
+      const groundY = sampleHeight(thrown.position.x, thrown.position.z);
+      let hitPosition: THREE.Vector3 | null = null;
+      if (thrown.position.y <= groundY + GOOSE_RADIUS) {
+        hitPosition = new THREE.Vector3(thrown.position.x, groundY, thrown.position.z);
+      } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
+        hitPosition = thrown.position.clone();
+      } else if (this.multiplayer) {
+        for (const opponent of this.multiplayer.opponents.values()) {
+          if (thrown.position.distanceTo(opponent.remotePlayer.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
+            hitPosition = thrown.position.clone();
+            break;
+          }
+        }
+      }
+
+      if (hitPosition) {
+        this.resolveGooseTossExplosion(hitPosition, thrown.throwerSlot);
+        thrown.dispose(this.renderer.scene);
+        this.thrownGeese.delete(thrown.id);
+        this.multiplayer?.session.connection.send({ type: 'gooseThrowExploded', id: thrown.id, x: hitPosition.x, y: hitPosition.y, z: hitPosition.z });
+      }
+    }
+  }
+
+  /** Fixed blast size (per explicit user request - Goose Toss deliberately ignores the host's
+   * chosen goose-explosion-difficulty setting, unlike every other mode/trigger). Applies splash
+   * damage to whichever players are actually within range: self-applied directly if this client's
+   * own player is in range (every client stays authoritative over its own health, same as
+   * everywhere else in this protocol), and via an ordinary DamageEventMessage to any opponent in
+   * range - reusing the exact same message the shooter of a normal weapon hit already sends, so
+   * kill credit flows through the existing playerDied/scoreboard pipeline unchanged (per explicit
+   * user request: unlike a wandering goose's own death, dying to a Goose Toss throw DOES count). */
+  private resolveGooseTossExplosion(position: THREE.Vector3, throwerSlot: PlayerSlot): void {
+    this.explosionEffect.spawn(position, GOOSE_TOSS_EXPLOSION_RADIUS);
+    this.sound.playExplosion(
+      enemyGunshotVolume(position.distanceTo(this.player.position)),
+      computeStereoPan(this.player.position, this.player.facingYaw, position),
+    );
+
+    const selfDamage = computeExplosionDamage(position.distanceTo(this.player.position), GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_MAX_DAMAGE);
+    if (selfDamage > 0) this.player.takeDamage(selfDamage);
+
+    if (!this.multiplayer) return;
+    for (const opponent of this.multiplayer.opponents.values()) {
+      const amount = computeExplosionDamage(position.distanceTo(opponent.remotePlayer.position), GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_MAX_DAMAGE);
+      if (amount > 0) {
+        this.multiplayer.session.connection.send({ type: 'damageEvent', senderSlot: throwerSlot, targetSlot: opponent.slot, amount });
+      }
+    }
+  }
+
   /** Per user request: a kill resets the killer's health too, not just the one who died - the
    * dying player's own health already resets via player.respawn() above (delayed by
    * MULTIPLAYER_RESPAWN_DELAY); this is the *other* side of that same round-reset, called the
@@ -1530,7 +1786,7 @@ export class Game {
       remotePlayer.dispose(this.renderer.scene);
       return;
     }
-    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth });
+    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now() });
     this.multiplayer.usernames.set(slot, username);
     this.multiplayer.minimap.addDot(slot);
     this.multiplayer.multiplayerHud.addOpponentRow(slot, username);

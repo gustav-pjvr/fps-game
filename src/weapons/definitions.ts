@@ -132,4 +132,30 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     kind: 'melee',
     range: 2.2,
   },
+  /** Goose Toss mode's loadout (see core/gameModes.ts) - players fight purely by throwing geese,
+   * so this exists only to satisfy WeaponManager's "at least one weapon" requirement without
+   * actually being usable: damage 0, negligible range, harmless if 'fire' ever reaches it (in
+   * practice it never does - Game.ts's Goose Toss handling consumes 'fire' itself before
+   * WeaponManager sees it, see updateGooseToss). No view model - see viewModel.ts's
+   * createProceduralMeleeViewModel special-casing this id to an empty group. */
+  unarmed: {
+    id: 'unarmed',
+    name: 'Empty-Handed',
+    description: 'No weapons here - just you, your arm, and a lot of geese.',
+    damage: 0,
+    fireRate: 1,
+    magazineSize: Infinity,
+    reloadTime: 0,
+    spreadRadians: 0,
+    recoilKick: 0,
+    adsFov: CAMERA_FOV,
+    adsSpreadMultiplier: 1,
+    hasScope: false,
+    automatic: false,
+    pelletCount: 1,
+    viewModelColor: 0x000000,
+    barrelLength: 0,
+    kind: 'melee',
+    range: 0.01,
+  },
 };

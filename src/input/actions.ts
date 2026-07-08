@@ -15,7 +15,8 @@ export type Action =
   | 'weaponSlot5'
   | 'weaponNext'
   | 'weaponPrev'
-  | 'resetPlay';
+  | 'resetPlay'
+  | 'interact';
 
 export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   KeyW: 'moveForward',
@@ -31,6 +32,7 @@ export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   Digit4: 'weaponSlot4',
   Digit5: 'weaponSlot5',
   KeyT: 'resetPlay',
+  KeyE: 'interact',
 };
 
 /** Actions a player can rebind in the settings panel - excludes number keys/mouse, which stay fixed. */
@@ -63,6 +65,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   weaponNext: 'Next Weapon',
   weaponPrev: 'Previous Weapon',
   resetPlay: 'Reset Match',
+  interact: 'Interact',
 };
 
 /** Human-readable key names for the few codes that don't read well as-is (KeyW -> W is fine; Space -> "Space" needed). */
