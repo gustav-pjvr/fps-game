@@ -10,7 +10,18 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.4.0 (current)
+## v3.4.1 (current)
+
+- The Goose Launcher wasn't visually distinguished from a normal loadout weapon in the lobby
+  Inventory screen. Added a gold rim/glow and a "★ REWARD WEAPON" badge to its card so it reads as
+  something earned, not picked. Also removed Goose Toss's zero-damage/no-model 'unarmed'
+  placeholder from the Inventory list entirely (it was rendering as an empty card with nothing to
+  show - it was never meant to be a real showcased weapon).
+- The bonus golden goose's gold tint was applying to every material on its mesh, including its
+  black eyes, so at a glance it could read as a featureless gold blob rather than a recognizable
+  bird. Eyes now stay dark; everything else (body, wings, beak, legs) is gold.
+
+## v3.4.0
 
 - Added the bonus "golden goose" - single-player and multiplayer alike, every mode except Goose
   Toss (whose unarmed loadout has no way to shoot it). Exactly one lives on the map at a time,

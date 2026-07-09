@@ -36,9 +36,14 @@ function randomRespawnDelay(): number {
   return BONUS_GOOSE_MIN_RESPAWN_DELAY_SECONDS + Math.random() * (BONUS_GOOSE_MAX_RESPAWN_DELAY_SECONDS - BONUS_GOOSE_MIN_RESPAWN_DELAY_SECONDS);
 }
 
+/** The eye material's own fixed color in Goose.ts's buildGooseMesh - deliberately left untinted
+ * below so the goose reads as a live creature with a gold body rather than a solid gold blob with
+ * no visible eyes. */
+const EYE_COLOR_HEX = 0x181818;
+
 function tintGold(mesh: THREE.Group): void {
   mesh.traverse((child) => {
-    if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+    if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial && child.material.color.getHex() !== EYE_COLOR_HEX) {
       child.material.color.setHex(BONUS_GOOSE_TINT);
       child.material.emissive.setHex(BONUS_GOOSE_TINT);
       child.material.emissiveIntensity = 0.35;

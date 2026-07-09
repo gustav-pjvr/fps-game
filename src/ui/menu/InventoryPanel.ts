@@ -5,11 +5,27 @@ import { createButton, createOverlay, createPanel, createPanelTitle } from './me
 import { createStatBadge } from './statIcons.ts';
 import { renderWeaponThumbnail } from './weaponThumbnail.ts';
 
-function createWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | null): HTMLDivElement {
+/** Gold rim/glow + a small "REWARD WEAPON" heading for anything granted mid-match rather than
+ * pickable/starting loadout (currently just the Goose Launcher) - so it doesn't read as just
+ * another normal gun choice sitting in the same list. */
+const REWARD_GOLD = '#ffd54a';
+
+function createWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | null, isReward: boolean): HTMLDivElement {
   const card = document.createElement('div');
   card.style.cssText =
-    'display:flex; gap:14px; padding:14px 16px; border-radius:8px; background:rgba(255,255,255,0.05);' +
-    ' border:1px solid rgba(255,255,255,0.08);';
+    'display:flex; flex-direction:column; gap:10px; padding:14px 16px; border-radius:8px;' +
+    ` background:rgba(255,255,255,0.05); border:1px solid ${isReward ? REWARD_GOLD : 'rgba(255,255,255,0.08)'};` +
+    (isReward ? ` box-shadow:0 0 14px rgba(255,213,74,0.25);` : '');
+
+  if (isReward) {
+    const badge = document.createElement('div');
+    badge.textContent = '★ REWARD WEAPON — earned by finishing off the golden goose';
+    badge.style.cssText = `font-size:0.7rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:${REWARD_GOLD};`;
+    card.appendChild(badge);
+  }
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex; gap:14px;';
 
   const thumbnail = document.createElement('div');
   thumbnail.style.cssText =
@@ -28,7 +44,7 @@ function createWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | n
 
   const name = document.createElement('div');
   name.textContent = weapon.name;
-  name.style.cssText = 'font-size:1rem; font-weight:700; margin-bottom:4px;';
+  name.style.cssText = `font-size:1rem; font-weight:700; margin-bottom:4px; ${isReward ? `color:${REWARD_GOLD};` : ''}`;
 
   const desc = document.createElement('div');
   desc.textContent = weapon.description;
@@ -47,12 +63,14 @@ function createWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | n
   if (weapon.hasScope) stats.appendChild(createStatBadge('scope', 'Scope'));
 
   info.append(name, desc, stats);
-  card.append(thumbnail, info);
+  row.append(thumbnail, info);
+  card.appendChild(row);
   return card;
 }
 
-/** Lobby overlay: read-only showcase of all four currently available weapons, each with a static
- * 3D preview render and icon-labeled stats. */
+/** Lobby overlay: read-only showcase of every carryable weapon, each with a static 3D preview
+ * render and icon-labeled stats - the normal loadout plus the Goose Launcher reward weapon (shown
+ * with a gold rim/badge so it doesn't read as a normal pickable choice - see createWeaponCard). */
 export class InventoryPanel {
   private readonly overlay: HTMLDivElement;
 
@@ -80,8 +98,11 @@ export class InventoryPanel {
   }
 
   static async create(root: HTMLElement, onClose: () => void): Promise<InventoryPanel> {
+    // 'unarmed' is Goose Toss's zero-damage/no-view-model placeholder (see definitions.ts), never
+    // a real carryable weapon in any other sense - showing it here would just be an empty card.
+    const displayedWeapons = Object.values(WEAPON_DEFINITIONS).filter((weapon) => weapon.id !== 'unarmed');
     const cards = await Promise.all(
-      Object.values(WEAPON_DEFINITIONS).map(async (weapon) => {
+      displayedWeapons.map(async (weapon) => {
         const spec = WEAPON_MODEL_SPECS[weapon.id];
         let thumbnailDataUrl: string | null = null;
         try {
@@ -99,7 +120,7 @@ export class InventoryPanel {
           // A missing/corrupt model shouldn't block the whole inventory - falls back to no preview.
           console.warn(`Failed to render inventory thumbnail for "${weapon.id}"`, error);
         }
-        return createWeaponCard(weapon, thumbnailDataUrl);
+        return createWeaponCard(weapon, thumbnailDataUrl, weapon.id === 'gooseLauncher');
       }),
     );
 
