@@ -71,6 +71,8 @@ import {
   HORDE_GOOSE_EXPLOSION_MAX_DAMAGE,
   HORDE_GOOSE_EXPLOSION_RADIUS,
   HORDE_GOOSE_KNOCKBACK_STRENGTH,
+  HORDE_PLAYER_SPAWN_MAX_RADIUS,
+  HORDE_PLAYER_SPAWN_MIN_RADIUS,
   KOTH_POINT_INTERVAL_SECONDS,
   KOTH_POINTS_TO_WIN,
   type MatchWeather,
@@ -188,6 +190,15 @@ interface ActiveMultiplayer {
 
 function waitForNextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/** Single-player Goose Horde's own spawn point - a random location on the map rather than the
+ * fixed single-player spawn, per explicit user request ("not the middle"). Plain Math.random(),
+ * not a seeded RNG - single-player has no other client that needs to agree on this. */
+function pickRandomHordeSpawnPoint(): THREE.Vector2 {
+  const angle = Math.random() * Math.PI * 2;
+  const radius = HORDE_PLAYER_SPAWN_MIN_RADIUS + Math.random() * (HORDE_PLAYER_SPAWN_MAX_RADIUS - HORDE_PLAYER_SPAWN_MIN_RADIUS);
+  return new THREE.Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius);
 }
 
 /** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
@@ -538,6 +549,12 @@ export class Game {
     onOpponentLeftRoom?: () => void,
   ): Promise<Game> {
     onProgress?.('Initializing world…', 0);
+    // Goose Horde: single-player's own toggle (matchConfig.hordeMode) or multiplayer's co-op mode
+    // (gameMode==='gooseHorde') - computed once, up front, since it now also gates the player's own
+    // spawn point (random, not the fixed single-player spawn) and every other goose spawn trigger
+    // (ambient wandering flock, bonus golden goose) below, not just HordeGooseManager's own
+    // construction further down.
+    const isHordeMode = matchConfig.hordeMode || multiplayer?.gameMode === 'gooseHorde';
     // Single-player: a new seed per match (not per practice-reset) so each new game generates a
     // different world. Multiplayer: both sides use the exact same externally-generated seed (see
     // MULTIPLAYER_PLAN.md §1) - never randomizeWorldSeed() here, or the two players' worlds would
@@ -593,7 +610,15 @@ export class Game {
     // by slot rather than a fixed host/guest pair now that there can be up to 4), not the shared
     // single-player one.
     const ownSpawnPoint = multiplayer?.spawns.find((s) => s.slot === multiplayer.ownSlot)?.point;
-    const ownSpawn = ownSpawnPoint ? new THREE.Vector2(ownSpawnPoint.x, ownSpawnPoint.z) : new THREE.Vector2(SPAWN_X, SPAWN_Z);
+    // Single-player Goose Horde spawns somewhere random on the map instead of the fixed
+    // single-player spawn ("the middle") - per explicit user request. Multiplayer already spawns
+    // every player at their own per-slot point regardless of mode, so this only ever applies to
+    // the single-player (!multiplayer) branch.
+    const ownSpawn = ownSpawnPoint
+      ? new THREE.Vector2(ownSpawnPoint.x, ownSpawnPoint.z)
+      : isHordeMode && !multiplayer
+        ? pickRandomHordeSpawnPoint()
+        : new THREE.Vector2(SPAWN_X, SPAWN_Z);
 
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
     for (let i = 0; i < 30; i++) {
@@ -778,7 +803,9 @@ export class Game {
     }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
-    if (!multiplayer || multiplayer.role === 'host') {
+    // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
+    // part of the wave") - the ambient wandering flock is a different mode's feature entirely.
+    if (!isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
@@ -792,10 +819,8 @@ export class Game {
         ? new GoldenGooseManager(renderer.scene, new THREE.Vector3(0, sampleHeight(0, 0), 0))
         : null;
 
-    // Goose Horde: single-player's own toggle (matchConfig.hordeMode) or multiplayer's co-op mode.
     // Host-authoritative in multiplayer (same split as GooseManager); single-player is always
     // "authoritative" since there's no one else to defer to.
-    const isHordeMode = matchConfig.hordeMode || multiplayer?.gameMode === 'gooseHorde';
     const hordeGooseManager = isHordeMode
       ? new HordeGooseManager(
           renderer.scene,
@@ -831,18 +856,26 @@ export class Game {
             onLocalHitReported:
               multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'hordeGooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
           },
-          0,
-          0,
+          // Centered on this client's own spawn point (random in single-player, this client's own
+          // slot point in multiplayer) rather than a fixed world origin - now that single-player
+          // horde spawns the player somewhere random on the map (not the middle), geese should
+          // still emerge near wherever the player actually starts, not a fixed point that could be
+          // far away. Only the host's own value matters in multiplayer (guests never spawn geese
+          // themselves - see isAuthoritative below).
+          ownSpawn.x,
+          ownSpawn.y,
           !multiplayer || multiplayer.role === 'host',
         )
       : null;
 
     // Bonus golden goose - every mode except Goose Toss (per explicit user request "add golden
     // goose to multiplayer and solo play"; Goose Toss's unarmed loadout has no way to shoot
-    // anything at all, so it's excluded rather than spawning something unreachable). Single-player
-    // and the multiplayer host run the spawn-timer/hit-attribution state machine themselves; a
-    // guest is a pure follower (see BonusGooseManager's own isAuthoritative comment).
-    const isBonusGooseEnabled = multiplayer?.gameMode !== 'gooseToss';
+    // anything at all, so it's excluded rather than spawning something unreachable) and Goose
+    // Horde (per a later explicit request - "no other goose must spawn that are not part of the
+    // wave", solo and multiplayer alike). Single-player and the multiplayer host run the
+    // spawn-timer/hit-attribution state machine themselves; a guest is a pure follower (see
+    // BonusGooseManager's own isAuthoritative comment).
+    const isBonusGooseEnabled = multiplayer?.gameMode !== 'gooseToss' && !isHordeMode;
     const bonusGooseManager = isBonusGooseEnabled
       ? new BonusGooseManager(
           renderer.scene,
@@ -1143,7 +1176,7 @@ export class Game {
               // that guest's behalf the moment its playerDied arrives. The host's own death instead
               // takes the direct path in update()'s wasDead block (this message never loops back to
               // its own sender, so the host would otherwise never react to its own death here).
-              if (activeMultiplayer.session.role === 'host') {
+              if (!isHordeMode && activeMultiplayer.session.role === 'host') {
                 const victimPosition = activeMultiplayer.opponents.get(message.victimSlot)?.remotePlayer.position;
                 if (victimPosition) gooseManager.spawnNear(victimPosition.x, victimPosition.z);
               }
@@ -1422,20 +1455,28 @@ export class Game {
       return;
     }
 
-    const spawnY = sampleHeight(SPAWN_X, SPAWN_Z) + SPAWN_HEIGHT_OFFSET;
-    this.player.respawn(new THREE.Vector3(SPAWN_X, spawnY, SPAWN_Z));
+    // Goose Horde: dying restarts the whole challenge from wave 1 (per explicit user request) at a
+    // fresh random point on the map, not the fixed single-player spawn, and skips respawning
+    // enemies/targets/the ambient goose flock entirely - none of those are part of this mode.
+    const spawnPoint = this.hordeGooseManager ? pickRandomHordeSpawnPoint() : new THREE.Vector2(SPAWN_X, SPAWN_Z);
+    const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
+    this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
-    this.gooseManager.clearAll();
-    this.gooseManager.spawnInitialBatch(SPAWN_X, SPAWN_Z);
-    const generation = ++this.spawnGeneration;
-    void Game.spawnEncountersAsync(
-      this.entityManager,
-      this.matchConfig.targetCount,
-      this.matchConfig.enemyCount,
-      undefined,
-      () => this.spawnGeneration !== generation,
-    );
+    if (this.hordeGooseManager) {
+      this.hordeGooseManager.resetToWaveOne();
+    } else {
+      this.gooseManager.clearAll();
+      this.gooseManager.spawnInitialBatch(SPAWN_X, SPAWN_Z);
+      const generation = ++this.spawnGeneration;
+      void Game.spawnEncountersAsync(
+        this.entityManager,
+        this.matchConfig.targetCount,
+        this.matchConfig.enemyCount,
+        undefined,
+        () => this.spawnGeneration !== generation,
+      );
+    }
     this.impactMarkers.clear();
     this.tracers.clear();
     this.scoreState.value = 0;
@@ -1720,7 +1761,7 @@ export class Game {
       // authoritative for itself. In multiplayer only the host may create an authoritative goose
       // (see GooseManager's class comment); a dying guest's own death is instead handled when the
       // host receives that guest's playerDied message below (see the 'playerDied' case).
-      if (!this.multiplayer || this.multiplayer.session.role === 'host') {
+      if (!this.hordeGooseManager && (!this.multiplayer || this.multiplayer.session.role === 'host')) {
         this.gooseManager.spawnNear(this.player.position.x, this.player.position.z);
       }
       if (this.multiplayer) {

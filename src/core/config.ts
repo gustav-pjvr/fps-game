@@ -661,6 +661,13 @@ export const WORLD_SOFT_PUSH_START_RADIUS = WORLD_BOUNDARY_RADIUS - 100;
 export const WORLD_HARD_CLAMP_RADIUS = WORLD_BOUNDARY_RADIUS - 5;
 export const WORLD_EDGE_PUSH_SPEED = 6;
 
+/** Single-player Goose Horde's own player spawn point - a random point on the map rather than the
+ * fixed single-player spawn (SPAWN_X/SPAWN_Z, "the middle"), per explicit user request. Min radius
+ * keeps it clearly off the exact world center; max stays a comfortable margin inside
+ * WORLD_SOFT_PUSH_START_RADIUS so it can never roll into the world-edge push zone. */
+export const HORDE_PLAYER_SPAWN_MIN_RADIUS = 15;
+export const HORDE_PLAYER_SPAWN_MAX_RADIUS = WORLD_SOFT_PUSH_START_RADIUS - 60;
+
 /**
  * Vegetation scatter (WORLD_PLAN.md §4): per-chunk deterministic placement, density-thresholded
  * against a secondary low-frequency noise field so trees/bushes/rocks cluster into forest patches

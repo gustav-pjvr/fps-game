@@ -10,7 +10,21 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.4.2 (current)
+## v3.4.3 (current)
+
+Goose Horde cleanup pass, per user request:
+
+- Single-player Horde no longer spawns the regular enemy/target roster (was already correct, but
+  re-verified alongside this batch since it's the same "only the wave attacks you" premise).
+- Single-player Horde now spawns the player at a random point on the map instead of the fixed
+  single-player spawn ("not the middle") - both at match start and every time `resetPlay()` runs
+  (the death screen's Respawn button/pause menu's Reset Play).
+- Neither the ambient wandering goose flock nor the bonus golden goose spawn during Goose Horde
+  anymore, single-player or multiplayer - "only the waves" now holds in both.
+- Dying in single-player Horde now restarts the whole challenge from wave 1 (clearing any
+  in-progress wave immediately) instead of continuing wherever the run left off.
+
+## v3.4.2
 
 - Widened the lobby Inventory panel into two side-by-side columns (4 weapons on the left, the rest
   on the right) instead of one long vertical list requiring scrolling - same widen-not-lengthen

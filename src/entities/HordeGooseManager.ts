@@ -150,6 +150,25 @@ export class HordeGooseManager {
     this.geese.get(id)?.takeDamage(0, -1);
   }
 
+  /** Single-player only (see Game.ts's resetPlay): dying to the horde restarts the whole challenge
+   * from wave 1, per explicit user request - clears every currently-live goose immediately (no
+   * carrying a partial wave into the restart) and begins wave 1 right away, no intermission. A
+   * no-op if this manager isn't authoritative (shouldn't be reachable - single-player is always
+   * authoritative - but defensive all the same). */
+  resetToWaveOne(): void {
+    if (!this.isAuthoritative) return;
+    for (const goose of this.geese.values()) {
+      this.scene.remove(goose.mesh);
+      goose.dispose();
+    }
+    this.geese.clear();
+    this.waveIndex = 0;
+    this.phase = 'active';
+    this.spawnQueueRemaining = 0;
+    this.intermissionTimer = 0;
+    this.beginWave();
+  }
+
   private beginWave(): void {
     const spec = HORDE_WAVE_TABLE[this.waveIndex]!;
     this.spawnQueueRemaining = spec.count;

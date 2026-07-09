@@ -207,3 +207,27 @@ succeeds. Not yet live-playtested (single-player golden-goose-kill-to-launcher f
 hits) - same "trust the user's live test over assuming from a clean build" pattern as every other
 gameplay-feel feature in this project.
 
+## Goose Horde isolation cleanup (v3.4.3)
+
+Per user request, Goose Horde needed to be a genuinely isolated mode - only the wave flock exists,
+nothing else. `isHordeMode` (`matchConfig.hordeMode || multiplayer?.gameMode === 'gooseHorde'`) is
+now computed once at the very top of `Game.create()` instead of only where `HordeGooseManager`
+itself was built, so it can gate everything else that needed to know: the ambient `GooseManager`'s
+`spawnInitialBatch`/`spawnNear` calls (both the single-player and multiplayer-host death-trigger
+sites, plus `resetPlay()`'s own respawn path) and `BonusGooseManager`'s construction (alongside the
+existing Goose Toss exclusion) are all skipped for the duration of a horde match, solo or co-op.
+
+Single-player's own spawn point (`ownSpawn`) is now randomized for Horde specifically
+(`pickRandomHordeSpawnPoint` in `Game.ts`, `HORDE_PLAYER_SPAWN_MIN/MAX_RADIUS` in `config.ts`) -
+uniform angle/radius within a band that's clearly off the exact center but stays safely inside
+`WORLD_SOFT_PUSH_START_RADIUS`. `HordeGooseManager`'s own spawn ring is now centered on that same
+point (passed in at construction) rather than a hardcoded world origin, so the horde still emerges
+near wherever the player actually starts instead of potentially far away.
+
+`HordeGooseManager.resetToWaveOne()` (new) clears every live goose and restarts at wave 1
+immediately, no intermission - wired into `resetPlay()` (the actual mechanism behind the
+single-player death screen's Respawn button and the pause menu's Reset Play, confirmed by tracing
+both callbacks to the same method), gated to `this.hordeGooseManager` being set. Multiplayer death
+in Horde deliberately keeps its existing behavior (co-op respawn, no match/wave reset) - only
+explicitly requested for single-player.
+
