@@ -247,3 +247,43 @@ nothing to remove them until they happened to get shot or reach a player. `Horde
 applyReset()` (follower side) clears a guest's local flock immediately on receipt, right before the
 same reset's own fresh `hordeGooseSpawned`/`hordeWaveStarted` broadcasts repopulate wave 1.
 
+## Multiplayer Horde overhaul: harder waves, lives, ammo economy (v3.5.0)
+
+**Wave table split.** `HordeGooseManager` no longer imports `HORDE_WAVE_TABLE` directly - the table
+(and therefore wave count) is now a constructor param, so `Game.ts` can hand it a different table
+per mode: single-player keeps the original `HORDE_WAVE_TABLE` (10 waves), multiplayer gets a new
+`HORDE_WAVE_TABLE_MULTIPLAYER` (15 waves, steeper at every comparable wave). `totalWaves` is simply
+`waveTable.length`, not a separately-tracked number that could drift out of sync with the table
+actually in use.
+
+**Limited lives.** New `ActiveMultiplayer` fields `hordeRespawnsUsed` (this client's own count,
+self-authoritative) and `hordeEliminatedSlots` (every slot known to be permanently out, populated by
+a new self-reported/relayed `hordePlayerEliminated` broadcast). On the `HORDE_MAX_RESPAWNS`+1th
+death, a player stops auto-respawning and broadcasts its own elimination instead; `Game.
+checkHordeAllEliminated()` runs after every elimination (this client's own or one learned via the
+broadcast) and ends the match in a loss once the eliminated set covers every currently-connected
+roster slot - every client converges on the same outcome independently, same "relayed events, no
+host adjudication" pattern as every other win/loss condition in this protocol.
+
+**No co-op scoring.** `applyPlayerDied` and the kill-heal perk are both skipped entirely for
+`gameMode === 'gooseHorde'`, at both the local-death broadcast site and the receiving message
+handler - not just "don't count it," the free full-heal-on-kill perk was an actively bad incentive
+for downing a teammate by accident.
+
+**Ammo economy.** `weapons/Weapon.ts` gained an optional `reserveAmmo` (null = unlimited, the
+existing behavior for every mode) - a reload now draws from it instead of refilling for free, and
+`WeaponManager.create()`/`buildSlot` thread an optional `initialReserveAmmo` map through so only
+Goose Horde multiplayer ever sets it (`HORDE_STARTING_RESERVE_MAGAZINES` x each weapon's own
+magazine size). `WeaponManager.addReserveAmmoToActive()` only tops up whichever weapon is currently
+held, per explicit user request ("the gun a player is holding," not the whole loadout).
+
+**Ammo drops.** New `entities/AmmoDrop.ts` (a small procedural green crate, no sourced asset - same
+precedent as every other prop in this project) and `AmmoDropManager` - host-authoritative spawn
+timing/position (near a randomly chosen connected player, `HORDE_AMMO_DROP_SPAWN_RADIUS`, capped at
+`HORDE_AMMO_DROP_MAX_CONCURRENT`), but pickup is self-reported/relayed with no host arbitration
+(`findNearestWithinRadius`/`removeById`, the exact same shape GooseManager's Goose Toss pickup
+already uses) since drops are static once placed - no snapshot broadcast needed at all, simpler than
+every other host-authoritative flock in this project. `Minimap` gained a parallel `itemDots`
+map (green, string-keyed by crate id rather than `PlayerSlot`) and a shared `placeDot` helper so the
+same rotate-with-player-facing projection math isn't duplicated between opponent and item dots.
+

@@ -53,11 +53,15 @@ export class Hud {
     this.container.appendChild(this.ammoElement);
   }
 
-  setAmmo(current: number, max: number, reloading: boolean): void {
+  /** `reserve` is Goose Horde multiplayer only (null/omitted everywhere else, the existing
+   * unlimited-reload behavior) - shown as a small "+N" suffix so the limited ammo economy is
+   * actually visible, not just felt the moment a reload comes up empty. */
+  setAmmo(current: number, max: number, reloading: boolean, reserve?: number | null): void {
     // Melee weapons (Phase D) use an infinite magazineSize so Weapon.tryFire's plain
     // ammoInMagazine > 0 check never needs special-casing - shown as "MELEE" instead of "Infinity /
     // Infinity" here, the one place that distinction actually needs to be visible.
-    this.ammoElement.textContent = reloading ? 'RELOADING…' : Number.isFinite(max) ? `${current} / ${max}` : 'MELEE';
+    const base = reloading ? 'RELOADING…' : Number.isFinite(max) ? `${current} / ${max}` : 'MELEE';
+    this.ammoElement.textContent = reserve !== undefined && reserve !== null && Number.isFinite(reserve) ? `${base}  (+${reserve})` : base;
   }
 
   setWeaponName(name: string): void {

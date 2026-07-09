@@ -416,6 +416,36 @@ export interface HordeResetMessage {
   type: 'hordeReset';
 }
 
+/** Self-reported, relayed (see Game.ts's RELAYABLE_MESSAGE_TYPES) - `senderSlot` has just used its
+ * final HORDE_MAX_RESPAWNS respawn and is permanently out for the rest of this co-op run. Every
+ * client tracks the same set of eliminated slots this way and independently ends the match in a
+ * loss once it covers every currently-connected player - see Game.ts's checkHordeAllEliminated. */
+export interface HordePlayerEliminatedMessage {
+  type: 'hordePlayerEliminated';
+  slot: PlayerSlot;
+}
+
+/** Host -> everyone (broadcast, never relayed - host-authored): a new ammo crate exists at a fixed
+ * world position (drops don't move, unlike geese) - mirrors GooseSpawnedMessage's shape. */
+export interface HordeAmmoDropSpawnedMessage {
+  type: 'hordeAmmoDropSpawned';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Self-reported, relayed - `senderSlot` just walked over and collected this crate. Every client
+ * (including the host, whose own local pickup uses this exact same path) removes it from its own
+ * view on receipt; a genuine simultaneous double-pickup race is possible but tolerated, same spirit
+ * as this project's other self-reported pickups (e.g. GoosePickedUpMessage). Only the picker's own
+ * client applies the actual ammo refill - see Game.ts's updateHordeAmmoDrops. */
+export interface HordeAmmoDropPickedUpMessage {
+  type: 'hordeAmmoDropPickedUp';
+  senderSlot: PlayerSlot;
+  id: string;
+}
+
 /** Bonus goose (single-player and multiplayer, every mode except Goose Toss - see config.ts's
  * BONUS_GOOSE_* comment). Host -> everyone (broadcast, never relayed - host-authored): a new bonus
  * goose exists. Mirrors GooseSpawnedMessage exactly. */
@@ -487,6 +517,9 @@ export type NetworkMessage =
   | HordeWaveStartedMessage
   | HordeClearedMessage
   | HordeResetMessage
+  | HordePlayerEliminatedMessage
+  | HordeAmmoDropSpawnedMessage
+  | HordeAmmoDropPickedUpMessage
   | BonusGooseSpawnedMessage
   | BonusGooseSnapshotMessage
   | BonusGooseHitEventMessage
@@ -526,6 +559,9 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hordeWaveStarted',
   'hordeCleared',
   'hordeReset',
+  'hordePlayerEliminated',
+  'hordeAmmoDropSpawned',
+  'hordeAmmoDropPickedUp',
   'bonusGooseSpawned',
   'bonusGooseSnapshot',
   'bonusGooseHitEvent',

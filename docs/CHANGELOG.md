@@ -10,7 +10,29 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.4.4 (current)
+## v3.5.0 (current)
+
+Multiplayer Goose Horde overhaul, per explicit user request:
+
+- **Harder, longer**: multiplayer now runs its own 15-wave table, noticeably steeper than
+  single-player's 10-wave one at every comparable wave (higher starting counts, faster speed ramp,
+  jumpers/flyers introduced earlier) - a co-op squad can bring more firepower to bear than a single
+  player, so it needed to actually feel that way.
+- **Always-visible wave counter**: a persistent "Wave X / Y" indicator, single-player and
+  multiplayer alike, instead of only the fading spawn toast.
+- **Limited lives**: each player gets 2 respawns (3 lives total) before being permanently
+  eliminated for the rest of the run; once every currently-connected player is eliminated, the
+  whole co-op run ends in a loss.
+- **No accidental co-op scoring**: friendly fire (or any player-vs-player death) no longer awards
+  points or a free heal in this mode - there's no kill-limit win condition here anyway, and
+  rewarding a teammate's death was never the intent.
+- **Limited ammo + ammo drops**: multiplayer Horde weapons now carry a finite reserve beyond their
+  first magazine (reloads draw from it instead of refilling for free) instead of the unlimited
+  reloads every other mode keeps. Green ammo crates spawn near players (never more than 3 at once,
+  slow-ish cadence), auto-collected by walking over one, refilling whatever weapon is currently
+  held - shown on both players' minimaps as green dots.
+
+## v3.4.4
 
 - Multiplayer Goose Horde co-op now matches single-player: any player's death immediately restarts
   the whole run from wave 1 for everyone (host-authoritative, broadcast so every client clears its

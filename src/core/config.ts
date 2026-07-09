@@ -482,6 +482,29 @@ export const HORDE_WAVE_TABLE: readonly HordeWaveSpec[] = [
   { count: 25, speedMultiplier: 1.85, jumperChance: 0.55, flyerChance: 0.35 },
   { count: 30, speedMultiplier: 2.0, jumperChance: 0.6, flyerChance: 0.4 },
 ];
+/** Multiplayer's own, harder, 15-wave table (per explicit user request: "much more difficult...
+ * and up to 15 waves") - a real co-op squad can bring more sustained firepower to bear than a
+ * single player, so this isn't just the single-player table extended, it's steeper at every
+ * comparable wave (higher starting count, faster ramp, jumpers/flyers introduced a wave or two
+ * earlier) and keeps climbing for 5 more waves past where single-player's finale sits. */
+export const HORDE_WAVE_COUNT_MULTIPLAYER = 15;
+export const HORDE_WAVE_TABLE_MULTIPLAYER: readonly HordeWaveSpec[] = [
+  { count: 8, speedMultiplier: 1.1, jumperChance: 0, flyerChance: 0 },
+  { count: 11, speedMultiplier: 1.2, jumperChance: 0.1, flyerChance: 0 },
+  { count: 14, speedMultiplier: 1.3, jumperChance: 0.25, flyerChance: 0 },
+  { count: 17, speedMultiplier: 1.4, jumperChance: 0.35, flyerChance: 0.1 },
+  { count: 20, speedMultiplier: 1.5, jumperChance: 0.4, flyerChance: 0.15 },
+  { count: 24, speedMultiplier: 1.6, jumperChance: 0.45, flyerChance: 0.2 },
+  { count: 28, speedMultiplier: 1.7, jumperChance: 0.5, flyerChance: 0.25 },
+  { count: 32, speedMultiplier: 1.8, jumperChance: 0.5, flyerChance: 0.3 },
+  { count: 36, speedMultiplier: 1.9, jumperChance: 0.55, flyerChance: 0.35 },
+  { count: 40, speedMultiplier: 2.0, jumperChance: 0.6, flyerChance: 0.4 },
+  { count: 45, speedMultiplier: 2.1, jumperChance: 0.6, flyerChance: 0.45 },
+  { count: 50, speedMultiplier: 2.2, jumperChance: 0.65, flyerChance: 0.5 },
+  { count: 55, speedMultiplier: 2.3, jumperChance: 0.65, flyerChance: 0.55 },
+  { count: 60, speedMultiplier: 2.4, jumperChance: 0.7, flyerChance: 0.55 },
+  { count: 70, speedMultiplier: 2.5, jumperChance: 0.75, flyerChance: 0.6 },
+];
 /** Caps how many horde geese exist on the map at once regardless of a wave's total `count` - my
  * own addition (not explicitly requested), necessary so wave 10's "A LOT" doesn't tank frame rate.
  * Remaining spawns for a wave queue up and trickle in as earlier ones die/explode, so pressure
@@ -546,6 +569,37 @@ export const GOOSE_LAUNCHER_PROJECTILE_SPEED = 24;
 export const GOOSE_LAUNCHER_EXPLOSION_RADIUS = 6;
 export const GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE = 110;
 export const GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH = 18;
+
+/** Multiplayer Goose Horde's limited-lives rule (per explicit user request): each player gets this
+ * many respawns beyond their initial life (so 2 respawns = 3 lives total) before they're
+ * permanently eliminated for the rest of the run. Once every currently-connected player has been
+ * eliminated, the whole co-op run ends in a loss - see Game.ts's hordeRespawnsRemaining/
+ * hordeEliminatedSlots and the 'hordePlayerEliminated' message in protocol.ts. */
+export const HORDE_MAX_RESPAWNS = 2;
+
+/** Multiplayer Goose Horde's ammo economy (per explicit user request: "set limited mags and ammo
+ * to guns for this mode"). Unlike every other mode (unlimited reloads), each weapon starts with a
+ * finite reserve beyond its first magazine - reload draws from this reserve instead of refilling
+ * for free (see weapons/Weapon.ts's optional reserveAmmo). Once both the magazine and reserve are
+ * empty, the only way to keep fighting with that weapon is an ammo drop. */
+export const HORDE_STARTING_RESERVE_MAGAZINES = 3;
+/** How much reserve ammo one ammo-drop pickup grants the weapon the player is currently holding
+ * (per explicit user request: "refills your ammo for the gun a player is holding," not every
+ * weapon they're carrying) - expressed as a multiple of that weapon's own magazine size, so a
+ * pickup feels proportionally as generous for a 30-round rifle as a 5-round sniper. */
+export const HORDE_AMMO_DROP_REFILL_MAGAZINES = 2;
+/** Never more than this many ammo crates live on the map at once. */
+export const HORDE_AMMO_DROP_MAX_CONCURRENT = 3;
+/** Slow-ish spawn cadence (per explicit user request) - a fresh roll for the next drop's delay
+ * happens only once the concurrent count is back under the cap. */
+export const HORDE_AMMO_DROP_MIN_SPAWN_DELAY_SECONDS = 30;
+export const HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS = 60;
+/** "Not far from players" (per explicit user request) - a drop spawns within this radius of a
+ * randomly chosen currently-connected player's current position, not anywhere on the map. */
+export const HORDE_AMMO_DROP_SPAWN_RADIUS = 18;
+/** How close a player must walk to auto-collect a drop - no interact key needed, just proximity,
+ * matching a typical FPS ammo crate rather than requiring a deliberate pickup action. */
+export const HORDE_AMMO_DROP_PICKUP_RADIUS = 1.8;
 
 export const PLAYER_HEALTH = 100;
 

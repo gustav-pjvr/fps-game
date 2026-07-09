@@ -8,9 +8,8 @@ import {
   HORDE_GOOSE_BASE_SPEED,
   HORDE_GOOSE_SPAWN_RADIUS,
   HORDE_MAX_CONCURRENT,
-  HORDE_WAVE_COUNT,
   HORDE_WAVE_INTERMISSION_SECONDS,
-  HORDE_WAVE_TABLE,
+  type HordeWaveSpec,
 } from '../core/config.ts';
 
 export interface HordeGooseManagerCallbacks {
@@ -61,6 +60,11 @@ export class HordeGooseManager {
     private readonly callbacks: HordeGooseManagerCallbacks,
     private readonly centerX: number,
     private readonly centerZ: number,
+    /** Single-player uses the 10-wave HORDE_WAVE_TABLE; multiplayer uses its own harder, longer
+     * HORDE_WAVE_TABLE_MULTIPLAYER (see config.ts) - passed in rather than imported directly so
+     * this class doesn't need to know which mode it's running in. Wave count is simply the table's
+     * own length, not a separately-passed number that could drift out of sync with it. */
+    private readonly waveTable: readonly HordeWaveSpec[],
     /** Single-player and the multiplayer host run the wave/spawn state machine themselves; a
      * guest is a pure follower of it (spawns/snapshots/explosions/wave events all arrive as
      * messages, applied via the "Follower side" methods below, never advancing its own copy of
@@ -75,6 +79,10 @@ export class HordeGooseManager {
 
   get currentWave(): number {
     return this.waveIndex + 1;
+  }
+
+  get totalWaves(): number {
+    return this.waveTable.length;
   }
 
   get isCleared(): boolean {
@@ -125,7 +133,7 @@ export class HordeGooseManager {
     }
 
     if (this.phase === 'active' && this.spawnQueueRemaining === 0 && this.geese.size === 0) {
-      if (this.waveIndex + 1 >= HORDE_WAVE_COUNT) {
+      if (this.waveIndex + 1 >= this.waveTable.length) {
         this.phase = 'cleared';
         this.callbacks.onCleared();
         this.callbacks.onNetworkCleared?.();
@@ -187,7 +195,7 @@ export class HordeGooseManager {
   }
 
   private beginWave(): void {
-    const spec = HORDE_WAVE_TABLE[this.waveIndex]!;
+    const spec = this.waveTable[this.waveIndex]!;
     this.spawnQueueRemaining = spec.count;
     this.phase = 'active';
     this.callbacks.onWaveStart(this.currentWave);
@@ -195,7 +203,7 @@ export class HordeGooseManager {
   }
 
   private spawnOne(): void {
-    const spec = HORDE_WAVE_TABLE[this.waveIndex]!;
+    const spec = this.waveTable[this.waveIndex]!;
     const angle = Math.random() * Math.PI * 2;
     const x = this.centerX + Math.cos(angle) * HORDE_GOOSE_SPAWN_RADIUS;
     const z = this.centerZ + Math.sin(angle) * HORDE_GOOSE_SPAWN_RADIUS;

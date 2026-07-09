@@ -114,10 +114,16 @@ export class WeaponManager {
      * sniper or 1 Shot 1 Kill's pistol guaranteeing a 1-hit kill. Absent/undefined for the default
      * mode, which uses every weapon's own base `definition.damage` unmodified. */
     damageOverrides?: Readonly<Record<string, number>>,
+    /** Goose Horde multiplayer only (see weapons/Weapon.ts's reserveAmmo) - starting reserve ammo
+     * keyed by weapon id. Absent/undefined for every other mode, matching the existing unlimited-
+     * reload behavior exactly. */
+    initialReserveAmmo?: Readonly<Record<string, number>>,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
-    const slots = await Promise.all(definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id])));
+    const slots = await Promise.all(
+      definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id], initialReserveAmmo?.[id])),
+    );
 
     return new WeaponManager(
       camera,
@@ -136,7 +142,12 @@ export class WeaponManager {
 
   /** Shared by `create()` (initial loadout) and `replaceActiveWeapon` (Gun Game's kill-upgrade) -
    * builds one fully-formed slot (weapon + attached view model) for a single weapon id. */
-  private static async buildSlot(camera: THREE.PerspectiveCamera, id: string, damageOverride: number | undefined): Promise<WeaponSlot> {
+  private static async buildSlot(
+    camera: THREE.PerspectiveCamera,
+    id: string,
+    damageOverride: number | undefined,
+    initialReserveAmmo?: number,
+  ): Promise<WeaponSlot> {
     const definition = WEAPON_DEFINITIONS[id];
     if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
@@ -148,7 +159,7 @@ export class WeaponManager {
       : createProceduralMeleeViewModel(definition);
     group.visible = false;
     camera.add(group);
-    return { weapon: new Weapon(definition, damageOverride), viewModel: group, muzzleLocalOffset };
+    return { weapon: new Weapon(definition, damageOverride, initialReserveAmmo), viewModel: group, muzzleLocalOffset };
   }
 
   /** Gun Game's kill-upgrade: replaces whatever's in the active slot with a fresh instance of
@@ -188,8 +199,20 @@ export class WeaponManager {
     return this.active.weapon.ammo;
   }
 
+  /** Goose Horde multiplayer only - null (unlimited) everywhere else. See weapons/Weapon.ts's
+   * reserveAmmo comment. */
+  get activeReserve(): number | null {
+    return this.active.weapon.reserve;
+  }
+
   get magazineSize(): number {
     return this.active.weapon.definition.magazineSize;
+  }
+
+  /** An ammo-drop pickup (Goose Horde multiplayer only) refills reserve for whatever weapon is
+   * currently active/held, per explicit user request - not every weapon the player is carrying. */
+  addReserveAmmoToActive(amount: number): void {
+    this.active.weapon.addReserveAmmo(amount);
   }
 
   get isReloading(): boolean {
