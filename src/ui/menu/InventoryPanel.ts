@@ -78,13 +78,27 @@ export class InventoryPanel {
     this.overlay = createOverlay();
 
     const panel = createPanel();
-    panel.style.width = '580px';
+    // Widened so both columns fit side by side with nothing to scroll (per user request, same
+    // reasoning as CreateRoomScreen's own widen-not-lengthen fix) - up to 4 cards in the left
+    // column, everything past that in the right one, rather than one long vertical list.
+    panel.style.width = '1000px';
     panel.appendChild(createPanelTitle('INVENTORY'));
 
-    const list = document.createElement('div');
-    list.style.cssText = 'display:flex; flex-direction:column; gap:12px;';
-    for (const card of cards) list.appendChild(card);
-    panel.appendChild(list);
+    const columns = document.createElement('div');
+    columns.style.cssText = 'display:flex; gap:20px;';
+
+    const leftColumn = document.createElement('div');
+    leftColumn.style.cssText = 'flex:1; min-width:0; display:flex; flex-direction:column; gap:12px;';
+    const rightColumn = document.createElement('div');
+    rightColumn.style.cssText = 'flex:1; min-width:0; display:flex; flex-direction:column; gap:12px;';
+
+    const LEFT_COLUMN_COUNT = 4;
+    cards.forEach((card, index) => {
+      (index < LEFT_COLUMN_COUNT ? leftColumn : rightColumn).appendChild(card);
+    });
+
+    columns.append(leftColumn, rightColumn);
+    panel.appendChild(columns);
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; margin-top:20px;';

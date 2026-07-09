@@ -10,7 +10,13 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.4.1 (current)
+## v3.4.2 (current)
+
+- Widened the lobby Inventory panel into two side-by-side columns (4 weapons on the left, the rest
+  on the right) instead of one long vertical list requiring scrolling - same widen-not-lengthen
+  fix already applied to CreateRoomScreen earlier, per user request.
+
+## v3.4.1
 
 - The Goose Launcher wasn't visually distinguished from a normal loadout weapon in the lobby
   Inventory screen. Added a gold rim/glow and a "★ REWARD WEAPON" badge to its card so it reads as
