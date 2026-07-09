@@ -845,6 +845,14 @@ export const TOWN_BUILDING_SPACING_MARGIN = 1;
 /** Raised from 800 alongside the tighter spacing/higher max above - a tighter packing needs more
  * rejection-sampling attempts to actually find the additional valid spots it now has room for. */
 export const TOWN_MAX_PLACEMENT_ATTEMPTS = 1500;
+/** A house's collider footprint is sized from its GLTF's raw bounding box (see
+ * BuildingManager.measurePreset), which includes roof eaves/overhangs and other decorative
+ * geometry that extends past the walls a player actually perceives as "the house" - reported as an
+ * invisible barrier a bit past the visible structure (blocking both movement and bullets). Shrunk
+ * by this fraction on both footprint axes so the collider sits inside the walls instead of at the
+ * outermost roof/eave edge. Modest (15%) so it still fully covers the walkable wall silhouette for
+ * any reasonably-proportioned house model, not just a token nudge. */
+export const BUILDING_COLLIDER_FOOTPRINT_SHRINK = 0.85;
 
 /**
  * Roads (WORLD_PLAN.md §9 follow-up, per the Opus design already logged there): a minimum spanning

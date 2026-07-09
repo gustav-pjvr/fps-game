@@ -8,6 +8,7 @@ import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { getFlatZoneSite, radiusOfFlatZoneAtAngle, type FlatZoneSite } from './ZoneMap.ts';
 import {
+  BUILDING_COLLIDER_FOOTPRINT_SHRINK,
   FLAT_ZONE_CELL_SIZE,
   FLAT_ZONE_RADIUS_MAX,
   TOWN_BUILD_FRACTION,
@@ -256,8 +257,11 @@ export class BuildingManager {
     // Footprint stays axis-aligned regardless of the visual's Y rotation, since only 0/90/180/270
     // are used - a 90/270 rotation just swaps which measured dimension maps to world X vs. Z.
     const isRotated90 = Math.abs(Math.sin(rotationY)) > 0.5;
-    const colliderHalfWidth = (isRotated90 ? preset.footprintDepth : preset.footprintWidth) / 2;
-    const colliderHalfDepth = (isRotated90 ? preset.footprintWidth : preset.footprintDepth) / 2;
+    // Shrunk from the raw measured footprint (see BUILDING_COLLIDER_FOOTPRINT_SHRINK's own
+    // comment) - the visual footprint used for town placement spacing above stays at full size,
+    // only the collider itself is pulled in from the roof/eave edge toward the walls.
+    const colliderHalfWidth = ((isRotated90 ? preset.footprintDepth : preset.footprintWidth) / 2) * BUILDING_COLLIDER_FOOTPRINT_SHRINK;
+    const colliderHalfDepth = ((isRotated90 ? preset.footprintWidth : preset.footprintDepth) / 2) * BUILDING_COLLIDER_FOOTPRINT_SHRINK;
     const centerY = groundY + preset.height / 2;
 
     // Some prefabs' footprint center isn't at their local origin (see measurePreset) - rotate that

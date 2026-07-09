@@ -78,10 +78,19 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     id: 'shotgun',
     name: 'Hedgerow 12',
     description: 'Eight opinions, delivered all at once, at conversational range.',
-    damage: 10,
+    // Per user request ("shotgun is not great") - bumped from 10/pellet (80 max/shot, never a
+    // guaranteed kill even at point-blank with all 8 pellets landing) to 13 (104 max/shot, now
+    // capable of a 1-shot kill at true point-blank range only, where the tight spreadRadians
+    // still lands most/all pellets - anything beyond conversational range still only lands a
+    // fraction of them, keeping it situational rather than a universally better rifle).
+    damage: 13,
     fireRate: 1.2,
     magazineSize: 6,
-    reloadTime: 2.6,
+    // Cut from 2.6 (previously the slowest reload in the whole roster, slower than even the
+    // sniper's 2.4) to 1.8 - the low magazine size (6) and short effective range already keep this
+    // weapon situational, so the old reload time was compounding two downsides at once rather than
+    // meaningfully balancing anything.
+    reloadTime: 1.8,
     spreadRadians: 0.08,
     recoilKick: 0.04,
     adsFov: 60,

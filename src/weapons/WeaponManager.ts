@@ -52,6 +52,15 @@ export class WeaponManager {
   private switchProgress = 0;
   private switching = false;
   private pendingIndex: number | null = null;
+  /** Guards against a real bug: `switching` flips false on the exact same tick a switch's
+   * holster/draw animation finishes, and `update()` immediately checks fire afterward that same
+   * tick. If the player was still holding the fire button from before the switch (e.g. scrolling
+   * to a new weapon while the mouse button is still down from the last one), `isActionActive
+   * ('fire')` reads true for an automatic weapon with no new press at all - a phantom shot that
+   * costs ammo the player never intended to spend. Set the instant a switch begins (whenever fire
+   * is currently held) and only cleared once fire is actually released, so the newly-drawn weapon
+   * always needs a fresh press before it can fire. */
+  private fireLockedUntilRelease = false;
 
   /** Weapon sway (VISUAL_REALISM.md §6) - the view model lags behind the camera's own look
    * rotation instead of being rigidly bolted to it. Tracked as yaw/pitch deltas between ticks
@@ -146,6 +155,9 @@ export class WeaponManager {
     }
     newSlot.viewModel.visible = true;
     this.slots[index] = newSlot;
+    // Same phantom-fire guard as beginSwitch - a kill upgrade can land while the player is still
+    // holding fire from the kill itself, and the fresh weapon shouldn't inherit that as a press.
+    this.fireLockedUntilRelease = true;
   }
 
   private get active(): WeaponSlot {
@@ -204,9 +216,15 @@ export class WeaponManager {
 
     if (this.switching) return;
 
-    const firePressed = this.active.weapon.definition.automatic
-      ? input.isActionActive('fire')
-      : input.consumeJustPressed('fire');
+    if (this.fireLockedUntilRelease) {
+      // Drain any queued click so it doesn't fire the instant the lock lifts.
+      input.consumeJustPressed('fire');
+      if (!input.isActionActive('fire')) this.fireLockedUntilRelease = false;
+    }
+
+    const firePressed =
+      !this.fireLockedUntilRelease &&
+      (this.active.weapon.definition.automatic ? input.isActionActive('fire') : input.consumeJustPressed('fire'));
     if (firePressed) {
       if (this.active.weapon.tryFire()) {
         this.fireShot(player);
@@ -226,23 +244,27 @@ export class WeaponManager {
     for (let i = 0; i < this.slots.length; i++) {
       const action = SLOT_ACTIONS[i];
       if (action && i !== this.activeIndex && input.consumeJustPressed(action)) {
-        this.beginSwitch(i);
+        this.beginSwitch(i, input);
         return;
       }
     }
 
     if (this.slots.length < 2) return;
     if (input.consumeJustPressed('weaponNext')) {
-      this.beginSwitch((this.activeIndex + 1) % this.slots.length);
+      this.beginSwitch((this.activeIndex + 1) % this.slots.length, input);
     } else if (input.consumeJustPressed('weaponPrev')) {
-      this.beginSwitch((this.activeIndex - 1 + this.slots.length) % this.slots.length);
+      this.beginSwitch((this.activeIndex - 1 + this.slots.length) % this.slots.length, input);
     }
   }
 
-  private beginSwitch(targetIndex: number): void {
+  private beginSwitch(targetIndex: number, input: InputManager): void {
     this.switching = true;
     this.pendingIndex = targetIndex;
     this.scopeOverlay.setVisible(false);
+    // See fireLockedUntilRelease's own comment - locks fire on the new weapon until the button is
+    // actually released, regardless of whether it's currently held or was just clicked mid-switch.
+    this.fireLockedUntilRelease = true;
+    input.consumeJustPressed('fire');
   }
 
   private updateSwitching(dt: number): void {

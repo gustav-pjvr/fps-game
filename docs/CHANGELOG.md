@@ -10,7 +10,29 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.3.0 (current)
+## v3.3.1 (current)
+
+- Fixed a real bug: switching weapons (scroll wheel or number key) could fire an unintended,
+  ammo-costing shot on the newly-drawn weapon with no actual button press. Root cause: the
+  switch-in-progress flag flips false the same tick its holster/draw animation finishes, and fire
+  was checked again immediately afterward that same tick - if the player was still holding the
+  fire button from before the switch (e.g. scrolling weapons while the mouse button is still down
+  from the previous one), an automatic weapon's "is fire held" check read true with no fresh press
+  at all. Weapon switches (and Gun Game's kill-upgrade) now lock fire on the new weapon until the
+  button is actually released.
+- Fixed invisible, disruptive collision around houses - the collider was sized from the house
+  model's raw bounding box, which includes roof eaves/overhangs extending past the walls a player
+  actually perceives as "the house," so both movement and bullets were blocked by empty-looking air
+  a short distance past the visible structure. Shrunk the collider footprint 15% so it sits inside
+  the walls instead of at the outermost roof edge. (Watch towers were audited too - their colliders
+  already match their visual geometry exactly, no equivalent fix needed there.)
+- Shotgun rebalance per user feedback ("not great"): damage per pellet raised 10 → 13 (max per-shot
+  damage 80 → 104, now capable of a point-blank one-shot kill where most/all 8 pellets land, still
+  situational at range where only a fraction connect) and reload time cut 2.6s → 1.8s (previously
+  the slowest reload of any weapon, compounding on top of the already-low 6-round magazine and
+  short effective range for no real balance reason).
+
+## v3.3.0
 
 Four new features landed together as one batch - minor bump (new modes/mechanics, not a bug fix).
 
