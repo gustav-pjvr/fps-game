@@ -1250,14 +1250,6 @@ export class Game {
                 const victimPosition = activeMultiplayer.opponents.get(message.victimSlot)?.remotePlayer.position;
                 if (victimPosition) gooseManager.spawnNear(victimPosition.x, victimPosition.z);
               }
-              // Goose Horde co-op: any player's death restarts the whole run from wave 1 (per
-              // explicit user request, matching single-player's identical behavior) - a dying
-              // guest's death is handled here (host-only, the same asymmetry as the ambient-goose
-              // spawn above); the host's own death takes the direct path in update()'s wasDead
-              // block instead, for the same "this message never loops back to its own sender" reason.
-              if (isHordeMode && activeMultiplayer.session.role === 'host') {
-                game.hordeGooseManager?.resetToWaveOne();
-              }
               break;
             }
             case 'gooseSpawned':
@@ -1866,12 +1858,6 @@ export class Game {
       // host receives that guest's playerDied message below (see the 'playerDied' case).
       if (!this.hordeGooseManager && (!this.multiplayer || this.multiplayer.session.role === 'host')) {
         this.gooseManager.spawnNear(this.player.position.x, this.player.position.z);
-      }
-      // Goose Horde co-op: the host's own death takes this direct path (a guest's death instead
-      // goes through the 'playerDied' message handler above - this message never loops back to its
-      // own sender) - any player dying restarts the whole run from wave 1, matching single-player.
-      if (this.hordeGooseManager && this.multiplayer && this.multiplayer.session.role === 'host') {
-        this.hordeGooseManager.resetToWaveOne();
       }
       if (this.multiplayer) {
         // No other player has visibility into this client's health - this is the only way they

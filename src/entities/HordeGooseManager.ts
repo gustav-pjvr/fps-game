@@ -161,12 +161,14 @@ export class HordeGooseManager {
     this.geese.get(id)?.takeDamage(0, -1);
   }
 
-  /** Any player's death restarts the whole co-op run from wave 1, per explicit user request
-   * (single-player: see Game.ts's resetPlay; multiplayer: host-only, called for any player's
-   * death - see Game.ts's playerDied handling) - clears every currently-live goose immediately (no
-   * carrying a partial wave into the restart) and begins wave 1 right away, no intermission. A
-   * no-op if this manager isn't authoritative - single-player is always authoritative, and only the
-   * host ever calls this in multiplayer, but defensive all the same. */
+  /** Single-player only (see Game.ts's resetPlay) - dying restarts the whole run from wave 1,
+   * clearing every currently-live goose immediately (no carrying a partial wave into the restart)
+   * and beginning wave 1 right away, no intermission. Multiplayer deliberately does NOT call this
+   * on an ordinary death anymore - that was tried and reverted (per explicit user report: it made
+   * the limited-respawns/lives system pointless, since every single death wiped wave progress
+   * regardless of how many respawns were left) - only single-player, which has no lives system,
+   * still resets on every death. A no-op if this manager isn't authoritative (single-player is
+   * always authoritative), but defensive all the same. */
   resetToWaveOne(): void {
     if (!this.isAuthoritative) return;
     this.callbacks.onNetworkReset?.();

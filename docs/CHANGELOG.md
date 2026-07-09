@@ -10,7 +10,15 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.5.0 (current)
+## v3.5.1 (current)
+
+- Fixed a real regression from v3.5.0: multiplayer Goose Horde was still resetting wave progress
+  to wave 1 on every ordinary death, same as before the limited-respawns/lives system was added -
+  which made that system pointless, since a respawn (even with lives left) wiped the run anyway.
+  An ordinary respawn now just returns the player to the current wave; only single-player, which
+  has no lives system, still resets to wave 1 on death.
+
+## v3.5.0
 
 Multiplayer Goose Horde overhaul, per explicit user request:
 
