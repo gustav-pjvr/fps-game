@@ -5,3 +5,12 @@ export function computeExplosionDamage(distance: number, radius: number, maxDama
   if (distance >= radius) return 0;
   return maxDamage * (1 - distance / radius);
 }
+
+/** Same linear falloff shape as computeExplosionDamage, applied to knockback speed instead of
+ * damage - kept as a separate function (not a reuse of computeExplosionDamage under a different
+ * name) since damage and knockback are conceptually distinct quantities that happen to share a
+ * falloff curve, and callers pass different max values for each. */
+export function computeKnockbackStrength(distance: number, radius: number, maxStrength: number): number {
+  if (distance >= radius) return 0;
+  return maxStrength * (1 - distance / radius);
+}

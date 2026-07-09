@@ -118,15 +118,24 @@ export class MultiplayerHud {
     this.opponentNames.delete(slot);
   }
 
-  update(ownHealth: number, ownMaxHealth: number, opponentHealths: ReadonlyMap<PlayerSlot, number>, scoreboard: ReadonlyMap<PlayerSlot, number>): void {
+  update(
+    ownHealth: number,
+    ownMaxHealth: number,
+    opponentHealths: ReadonlyMap<PlayerSlot, number>,
+    scoreboard: ReadonlyMap<PlayerSlot, number>,
+    /** King of the Hill only - when present, the scoreboard renders as "name score/pointsToWin"
+     * with a crown marker on whoever's currently carrying the golden goose, instead of the plain
+     * kill-count list every other mode uses. */
+    kingOfTheHill?: { pointsToWin: number; carrierSlot: PlayerSlot | null },
+  ): void {
     this.setHealthRow(this.ownHealthRow, ownHealth, ownMaxHealth);
     for (const [slot, row] of this.opponentHealthRows) {
       this.setHealthRow(row, opponentHealths.get(slot) ?? ownMaxHealth, ownMaxHealth);
     }
-    this.renderScoreboard(scoreboard);
+    this.renderScoreboard(scoreboard, kingOfTheHill);
   }
 
-  private renderScoreboard(scoreboard: ReadonlyMap<PlayerSlot, number>): void {
+  private renderScoreboard(scoreboard: ReadonlyMap<PlayerSlot, number>, kingOfTheHill?: { pointsToWin: number; carrierSlot: PlayerSlot | null }): void {
     const entries = Array.from(scoreboard, ([slot, score]) => ({
       slot,
       score,
@@ -136,10 +145,33 @@ export class MultiplayerHud {
 
     this.scoreboard.replaceChildren(
       ...entries.map((entry) => {
-        const element = document.createElement('div');
-        element.textContent = `${truncateForLabel(entry.name)} ${entry.score}`;
-        element.style.color = entry.isYou ? '#3ecf5f' : '#e0625a';
-        return element;
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'display:flex; align-items:center; gap:6px;';
+        wrapper.style.color = entry.isYou ? '#3ecf5f' : '#e0625a';
+
+        if (kingOfTheHill) {
+          const label = document.createElement('div');
+          const crown = entry.slot === kingOfTheHill.carrierSlot ? '👑 ' : '';
+          label.textContent = `${crown}${truncateForLabel(entry.name)}`;
+          wrapper.appendChild(label);
+
+          const track = document.createElement('div');
+          track.style.cssText = 'width:60px; height:8px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;';
+          const fill = document.createElement('div');
+          const ratio = Math.max(0, Math.min(1, entry.score / kingOfTheHill.pointsToWin));
+          fill.style.cssText = `height:100%; width:${ratio * 100}%; background:currentColor; transition:width 0.2s;`;
+          track.appendChild(fill);
+          wrapper.appendChild(track);
+
+          const fraction = document.createElement('div');
+          fraction.textContent = `${entry.score}/${kingOfTheHill.pointsToWin}`;
+          fraction.style.cssText = 'font-size:0.8rem;';
+          wrapper.appendChild(fraction);
+        } else {
+          wrapper.textContent = `${truncateForLabel(entry.name)} ${entry.score}`;
+        }
+
+        return wrapper;
       }),
     );
   }

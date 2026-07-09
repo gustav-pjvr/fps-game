@@ -3,10 +3,11 @@ import { Goose } from './Goose.ts';
 import type { Player } from './Player.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
-import { computeExplosionDamage } from '../combat/explosion.ts';
+import { computeExplosionDamage, computeKnockbackStrength } from '../combat/explosion.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import {
+  GOOSE_EXPLOSION_KNOCKBACK_STRENGTH,
   GOOSE_EXPLOSION_PRESETS,
   GOOSE_HEIGHT,
   GOOSE_MAX_CONCURRENT,
@@ -215,8 +216,11 @@ export class GooseManager {
   private explode(position: THREE.Vector3, difficulty: GooseExplosionDifficulty, player: Player): void {
     const preset = GOOSE_EXPLOSION_PRESETS[difficulty];
     this.callbacks.onExplosion(position, preset.radius);
-    const damage = computeExplosionDamage(position.distanceTo(player.position), preset.radius, preset.maxDamage);
+    const distance = position.distanceTo(player.position);
+    const damage = computeExplosionDamage(distance, preset.radius, preset.maxDamage);
     if (damage > 0) player.takeDamage(damage);
+    const knockback = computeKnockbackStrength(distance, preset.radius, GOOSE_EXPLOSION_KNOCKBACK_STRENGTH[difficulty]);
+    if (knockback > 0) player.applyKnockback(player.position.clone().sub(position), knockback);
   }
 
   get count(): number {

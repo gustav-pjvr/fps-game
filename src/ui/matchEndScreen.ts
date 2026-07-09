@@ -3,10 +3,13 @@ import {
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
   GOOSE_EXPLOSION_DIFFICULTIES,
   GOOSE_EXPLOSION_DIFFICULTY_LABELS,
+  MATCH_WEATHER_LABELS,
+  MATCH_WEATHERS,
   MULTIPLAYER_KILL_LIMIT_MAX,
   MULTIPLAYER_KILL_LIMIT_MIN,
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
+  type MatchWeather,
 } from '../core/config.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
@@ -34,6 +37,7 @@ export interface MultiplayerMatchEndResult {
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
+  weather: MatchWeather;
   role: MultiplayerRole;
   connection: PeerConnection;
 }
@@ -47,6 +51,7 @@ export interface RematchSettings {
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
+  weather: MatchWeather;
   /** true generates a fresh world seed (same as the original "always randomize" behavior); false
    * reuses the map both players just fought on, for a direct rematch on the same terrain. */
   newMap: boolean;
@@ -71,6 +76,7 @@ export class MatchEndScreen {
   private readonly killLimitInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly gameModeSelect: HTMLSelectElement;
+  private readonly weatherSelect: HTMLSelectElement;
   private readonly newMapCheckbox: HTMLInputElement;
   private readonly rematchButton: HTMLButtonElement;
 
@@ -160,6 +166,18 @@ export class MatchEndScreen {
       this.gameModeSelect.appendChild(optionElement);
     }
 
+    const weatherLabel = document.createElement('div');
+    weatherLabel.textContent = 'Match weather:';
+    weatherLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    this.weatherSelect = document.createElement('select');
+    this.weatherSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
+    for (const weather of MATCH_WEATHERS) {
+      const optionElement = document.createElement('option');
+      optionElement.value = weather;
+      optionElement.textContent = MATCH_WEATHER_LABELS[weather];
+      this.weatherSelect.appendChild(optionElement);
+    }
+
     const newMapLabel = document.createElement('label');
     newMapLabel.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;';
     this.newMapCheckbox = document.createElement('input');
@@ -169,7 +187,7 @@ export class MatchEndScreen {
     newMapText.textContent = 'Generate a new map';
     newMapLabel.append(this.newMapCheckbox, newMapText);
 
-    this.hostSettings.append(settingsRow, gameModeLabel, this.gameModeSelect, newMapLabel);
+    this.hostSettings.append(settingsRow, gameModeLabel, this.gameModeSelect, weatherLabel, this.weatherSelect, newMapLabel);
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = 'display:flex; gap:12px; margin-top:4px;';
@@ -186,6 +204,7 @@ export class MatchEndScreen {
         killLimit,
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         gameMode: this.gameModeSelect.value as GameMode,
+        weather: this.weatherSelect.value as MatchWeather,
         newMap: this.newMapCheckbox.checked,
       });
     });
@@ -234,6 +253,7 @@ export class MatchEndScreen {
       if (!this.killLimitInput.value) this.killLimitInput.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
       this.gooseDifficultySelect.value = result.gooseDifficulty;
       this.gameModeSelect.value = result.gameMode;
+      this.weatherSelect.value = result.weather;
     }
 
     this.element.style.display = 'flex';

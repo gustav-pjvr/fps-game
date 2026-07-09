@@ -11,6 +11,7 @@ import {
   FOOTSTEP_DISTANCE,
   GRAVITY,
   JUMP_SPEED,
+  KNOCKBACK_DECAY_PER_SECOND,
   MAX_PITCH,
   MOUSE_SENSITIVITY,
   PLAYER_BOB_FREQUENCY,
@@ -52,6 +53,13 @@ export class Player implements Entity {
    * to drive the weapon's own bob from this exact phase, not a second independent one. */
   private bobPhase = 0;
   private bobStrength = 0;
+
+  /** Horizontal-only knockback velocity (m/s), added on top of normal input-driven movement each
+   * tick and exponentially decayed toward zero - see KNOCKBACK_DECAY_PER_SECOND. The kinematic
+   * character controller has no dynamic-body physics to apply a real Rapier impulse to, so this is
+   * a manual stand-in, same shape as how recoilPitch layers a temporary kick on top of aim without
+   * fighting normal look input. */
+  private readonly knockbackVelocity = new THREE.Vector3();
 
   /** Render interpolation (Loop's fixed-timestep accumulator already computes `alpha`, but it went
    * unused - Game.render(_alpha) ignored it, so camera motion visibly stepped at 60Hz on
@@ -99,6 +107,8 @@ export class Player implements Entity {
     this.applyLook(input);
     this.applyMovement(dt, input);
     this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
+    this.knockbackVelocity.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY_PER_SECOND * dt));
+    if (this.knockbackVelocity.lengthSq() < 0.0001) this.knockbackVelocity.set(0, 0, 0);
   }
 
   /** Blends the camera's on-screen transform between the last two fixed-timestep ticks by `alpha`
@@ -115,6 +125,18 @@ export class Player implements Entity {
   /** Temporary upward camera kick that decays back to the player's held aim over time. */
   addRecoil(kick: number): void {
     this.recoilPitch += kick;
+  }
+
+  /** Pushes the player away from an explosion (or any other knockback source) along `direction`
+   * (need not be normalized - only its direction matters) at `strength` m/s, layered on top of
+   * whatever knockback is already decaying rather than replacing it, so two near-simultaneous
+   * blasts compound instead of one silently overwriting the other. */
+  applyKnockback(direction: THREE.Vector3, strength: number): void {
+    if (strength <= 0) return;
+    const horizontal = new THREE.Vector3(direction.x, 0, direction.z);
+    if (horizontal.lengthSq() < 1e-6) return;
+    horizontal.normalize().multiplyScalar(strength);
+    this.knockbackVelocity.add(horizontal);
   }
 
   get currentHealth(): number {
@@ -141,6 +163,7 @@ export class Player implements Entity {
     this.recoilPitch = 0;
     this.bobPhase = 0;
     this.bobStrength = 0;
+    this.knockbackVelocity.set(0, 0, 0);
     const target = { x: position.x, y: position.y, z: position.z };
     this.clampToWorldBounds(target);
     this.rigidBody.setNextKinematicTranslation(target);
@@ -156,6 +179,7 @@ export class Player implements Entity {
    * health/ammo reset. */
   debugTeleport(position: THREE.Vector3): void {
     this.verticalVelocity = 0;
+    this.knockbackVelocity.set(0, 0, 0);
     const target = { x: position.x, y: position.y, z: position.z };
     this.clampToWorldBounds(target);
     this.rigidBody.setNextKinematicTranslation(target);
@@ -215,6 +239,11 @@ export class Player implements Entity {
     moveDir.multiplyScalar(speed * dt);
 
     this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
+
+    if (this.knockbackVelocity.lengthSq() > 0) {
+      moveDir.x += this.knockbackVelocity.x * dt;
+      moveDir.z += this.knockbackVelocity.z * dt;
+    }
 
     if (this.grounded && input.isActionActive('jump')) {
       this.verticalVelocity = JUMP_SPEED;

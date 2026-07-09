@@ -761,3 +761,27 @@ sank into the ground depending on which way that slope ran. Fixed in two parts:
    (`TOP_FLIGHT_CLEARANCE_BELOW_PLATFORM` tightened from 0.5 to 0.3). Confirmed correct by the
    user directly in the dev server, not by automated e2e (same reasoning as above).
 
+## Match weather (v3.3.0): host-selectable Day/Night/Fog
+
+A new multiplayer-only host setting (single-player always renders 'day', the existing baseline).
+Deliberately cheap to fake, no new assets/shaders: `Renderer.setMatchWeather` toggles the
+procedural `Sky` mesh's visibility and swaps `scene.fog`/`scene.background`, while `Game.ts`
+separately adjusts the sun `DirectionalLight`'s color/intensity and the ambient fill (it already
+owns those objects, Renderer doesn't).
+
+- **Night**: the `Sky` shader has no day/night uniform to swap, so night hides it entirely and
+  paints a flat dark `scene.background` instead - the cheap way to fake a night sky without new
+  shaders. Sun dims/cools (`NIGHT_SUN_COLOR`/`NIGHT_SUN_INTENSITY`), and ambient fill is forced up
+  to `NIGHT_AMBIENT_INTENSITY` regardless of the current Graphics Quality tier's own ambient rule -
+  without that override, switching graphics quality mid-match would silently undo the night
+  brightness floor and leave the match unplayably dark.
+- **Fog**: a second, much denser `THREE.FogExp2` (`MATCH_FOG_DENSITY`/`MATCH_FOG_COLOR`) swapped in
+  only for this choice - deliberately *not* a retune of the existing `FOG_NEAR`/`FOG_FAR`/
+  `FOG_COLOR` linear fog, which is tuned for a different job entirely (concealing the world edge at
+  distance, not atmosphere) and shouldn't be repurposed to do both.
+
+Threaded through the same 4 sites `gooseDifficulty`/`gameMode` already established
+(`MatchStartMessage`, `WelcomeMessage.activeMatch`, `MultiplayerSession`,
+`MultiplayerMatchStartParams`) - a new `weather: MatchWeather` field at each, read from a 4th
+`CreateRoomScreen`/`matchEndScreen` selector cloned from the existing goose-difficulty template.
+

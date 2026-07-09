@@ -7,6 +7,10 @@ import {
   FOG_COLOR,
   FOG_FAR,
   FOG_NEAR,
+  MATCH_FOG_COLOR,
+  MATCH_FOG_DENSITY,
+  type MatchWeather,
+  NIGHT_BACKGROUND_COLOR,
   SUN_DIRECTION_X,
   SUN_DIRECTION_Y,
   SUN_DIRECTION_Z,
@@ -42,6 +46,10 @@ export class Renderer {
    * cheaper and simpler than re-running PMREMGenerator every time the setting changes. */
   private readonly skyEnvironmentTexture: THREE.Texture;
 
+  /** Stored so setMatchWeather can toggle its visibility - the Sky shader has no day/night uniform,
+   * so 'night' fakes it by hiding this sphere entirely and painting scene.background instead. */
+  private readonly sky: Sky;
+
   constructor(container: HTMLElement, quality: GraphicsQualityPreset) {
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
     this.webgl.setSize(window.innerWidth, window.innerHeight);
@@ -56,7 +64,8 @@ export class Renderer {
     container.appendChild(this.webgl.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.add(createSky());
+    this.sky = createSky();
+    this.scene.add(this.sky);
     this.scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
 
     // Image-based lighting from the sky itself (VISUAL_REALISM.md §5) - without this every
@@ -96,6 +105,26 @@ export class Renderer {
     this.webgl.shadowMap.enabled = quality.shadowsEnabled;
     this.scene.environment = quality.environmentLighting ? this.skyEnvironmentTexture : null;
     this.scene.environmentIntensity = quality.environmentIntensity;
+  }
+
+  /** Applies the host-chosen (or single-player default 'day') match weather - see MatchWeather in
+   * config.ts. Called once, right after construction, at match setup; not a live-toggleable
+   * setting like graphics quality. Only touches fog/sky/background - Game.ts separately adjusts
+   * sun/ambient light intensity for 'night' since it already owns those objects. */
+  setMatchWeather(weather: MatchWeather): void {
+    if (weather === 'night') {
+      this.sky.visible = false;
+      this.scene.background = new THREE.Color(NIGHT_BACKGROUND_COLOR);
+      this.scene.fog = new THREE.Fog(NIGHT_BACKGROUND_COLOR, FOG_NEAR, FOG_FAR);
+    } else if (weather === 'fog') {
+      this.sky.visible = true;
+      this.scene.background = null;
+      this.scene.fog = new THREE.FogExp2(MATCH_FOG_COLOR, MATCH_FOG_DENSITY);
+    } else {
+      this.sky.visible = true;
+      this.scene.background = null;
+      this.scene.fog = new THREE.Fog(FOG_COLOR, FOG_NEAR, FOG_FAR);
+    }
   }
 
   get canvas(): HTMLCanvasElement {

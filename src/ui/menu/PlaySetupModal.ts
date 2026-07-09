@@ -5,6 +5,10 @@ export interface MatchSetupConfig {
   enemyCount: number;
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  /** Goose Horde wave-survival mode (see core/config.ts's HORDE_WAVE_TABLE) - when true,
+   * enemyCount/targetCount are ignored (no regular AI encounters spawn) and a HordeGooseManager
+   * runs instead, see Game.ts's create(). */
+  hordeMode: boolean;
 }
 
 /** Shown after clicking Play: lets the player choose how many enemies/targets spawn this match,
@@ -15,6 +19,7 @@ export class PlaySetupModal {
   private readonly enemyInput: HTMLInputElement;
   private readonly targetInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
+  private readonly hordeModeCheckbox: HTMLInputElement;
 
   constructor(
     root: HTMLElement,
@@ -33,6 +38,16 @@ export class PlaySetupModal {
     this.targetInput = this.buildCountRow(panel, 'Targets', defaults.targetCount, maxCount);
     this.gooseDifficultySelect = this.buildDifficultyRow(panel, defaults.gooseDifficulty);
 
+    const hordeRow = document.createElement('label');
+    hordeRow.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer; margin-bottom:8px;';
+    this.hordeModeCheckbox = document.createElement('input');
+    this.hordeModeCheckbox.type = 'checkbox';
+    this.hordeModeCheckbox.checked = defaults.hordeMode;
+    const hordeText = document.createElement('span');
+    hordeText.textContent = 'Goose Horde (10-wave survival, ignores enemy/target counts above)';
+    hordeRow.append(this.hordeModeCheckbox, hordeText);
+    panel.appendChild(hordeRow);
+
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';
 
@@ -45,6 +60,7 @@ export class PlaySetupModal {
         enemyCount: this.clampInput(this.enemyInput, maxCount),
         targetCount: this.clampInput(this.targetInput, maxCount),
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
+        hordeMode: this.hordeModeCheckbox.checked,
       });
     });
 

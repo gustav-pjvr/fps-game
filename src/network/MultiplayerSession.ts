@@ -2,7 +2,7 @@ import type { PeerConnection, MultiplayerRole } from './PeerConnection.ts';
 import type { HostRoster } from './HostRoster.ts';
 import type { SpawnPoint } from '../core/multiplayerSpawn.ts';
 import type { PlayerSlot, RosterEntry } from './protocol.ts';
-import type { GooseExplosionDifficulty } from '../core/config.ts';
+import type { GooseExplosionDifficulty, MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 
 export type { MultiplayerRole };
@@ -24,6 +24,9 @@ export interface MultiplayerSession {
   /** Loadout/damage-rules mode - the host's choice, multiplayer-only (single-player has no
    * concept of a mode), carried alongside killLimit/gooseDifficulty on the same messages. */
   gameMode: GameMode;
+  /** Purely cosmetic/atmospheric lighting+fog choice - the host's choice, carried alongside
+   * killLimit/gooseDifficulty/gameMode on the same messages. */
+  weather: MatchWeather;
   /** This match's spawn points, one per roster slot - looked up by `slot`, not array position
    * (see MatchStartMessage's own comment on why). Picked fresh each match/rematch/late-join (see
    * multiplayerSpawn.ts), not a fixed layout. */
@@ -57,6 +60,7 @@ export interface MultiplayerMatchStartParams {
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
+  weather: MatchWeather;
   ownSlot: PlayerSlot;
   spawns: { slot: PlayerSlot; point: SpawnPoint }[];
   roster: RosterEntry[];

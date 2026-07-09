@@ -4,7 +4,7 @@
  * the host; the host relays gameplay messages between guests (see PeerConnection.ts/Game.ts's
  * relay logic) transparently, unchanged, tagged with the ORIGINAL sender's own slot. */
 
-import type { GooseExplosionDifficulty } from '../core/config.ts';
+import type { GooseExplosionDifficulty, MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
@@ -51,6 +51,7 @@ export interface WelcomeMessage {
     killLimit: number;
     gooseDifficulty: GooseExplosionDifficulty;
     gameMode: GameMode;
+    weather: MatchWeather;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
   };
@@ -86,6 +87,7 @@ export interface MatchStartMessage {
   killLimit: number;
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
+  weather: MatchWeather;
   spawns: { slot: PlayerSlot; x: number; z: number }[];
   roster: RosterEntry[];
 }
@@ -308,6 +310,95 @@ export interface GooseThrowExplodedMessage {
   z: number;
 }
 
+/** King of the Hill mode only: `senderSlot` just claimed the (unheld) golden goose with the
+ * interact key. Same self-reported/relayed pattern as GoosePickedUpMessage - every client
+ * (including the host, whose GoldenGooseManager owns the authoritative "who's carrying it" state)
+ * marks it carried by senderSlot on receipt; a genuine simultaneous double-claim race is tolerated
+ * the same way, same spirit as every other self-reported interaction in this protocol. */
+export interface GoldenGoosePickedUpMessage {
+  type: 'goldenGoosePickedUp';
+  senderSlot: PlayerSlot;
+}
+
+/** King of the Hill mode only: `senderSlot` dropped the golden goose (voluntarily via the fire
+ * button, or automatically on death) at (x, y, z) - every client marks it unheld and relocates it
+ * there, making it claimable again. */
+export interface GoldenGooseDroppedMessage {
+  type: 'goldenGooseDropped';
+  senderSlot: PlayerSlot;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** King of the Hill mode only: `senderSlot`'s own client just crossed another whole second of
+ * continuous carry time and is self-reporting its own new total (same self-authoritative-over-
+ * your-own-state trust model as health/kills elsewhere) - every other client updates that slot's
+ * point bar to match. Sent at most once per second per carrier, negligible bandwidth. */
+export interface KothScoreTickMessage {
+  type: 'kothScoreTick';
+  senderSlot: PlayerSlot;
+  score: number;
+}
+
+/** Goose Horde mode only (multiplayer co-op, see core/gameModes.ts) - host -> everyone, mirrors
+ * GooseSpawnedMessage exactly, plus `flavor` (walker/jumper/flyer, see HordeGoose.ts) since a
+ * follower needs it to render the right descent/lunge behavior locally. */
+export interface HordeGooseSpawnedMessage {
+  type: 'hordeGooseSpawned';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  flavor: 'walker' | 'jumper' | 'flyer';
+}
+
+export interface HordeGooseSnapshotMessage {
+  type: 'hordeGooseSnapshot';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Guest -> host only, mirrors GooseHitEventMessage exactly - a horde goose dies in exactly one
+ * hit, so there's nothing to count, just "this hit landed, host decides." */
+export interface HordeGooseHitEventMessage {
+  type: 'hordeGooseHitEvent';
+  senderSlot: PlayerSlot;
+  id: string;
+}
+
+/** Host -> everyone: this goose reached a player and exploded - every client applies
+ * damage/knockback to its OWN player only if it's the one who got hit (each client stays
+ * authoritative over its own health, same as every other explosion in this protocol). */
+export interface HordeGooseExplodedMessage {
+  type: 'hordeGooseExploded';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Host -> everyone: this goose was shot dead (no explosion) - distinct from
+ * HordeGooseExplodedMessage so followers know not to spawn a blast VFX for it. */
+export interface HordeGooseRemovedMessage {
+  type: 'hordeGooseRemoved';
+  id: string;
+}
+
+/** Host -> everyone: a new wave just started - drives the "Wave N incoming" toast on every
+ * client, mirroring how the authoritative side's own onWaveStart callback drives it locally. */
+export interface HordeWaveStartedMessage {
+  type: 'hordeWaveStarted';
+  wave: number;
+}
+
+/** Host -> everyone: all HORDE_WAVE_COUNT waves survived - the co-op win condition. */
+export interface HordeClearedMessage {
+  type: 'hordeCleared';
+}
+
 export type NetworkMessage =
   | HelloMessage
   | WelcomeMessage
@@ -330,7 +421,17 @@ export type NetworkMessage =
   | GooseSyncRequestMessage
   | GoosePickedUpMessage
   | GooseThrownMessage
-  | GooseThrowExplodedMessage;
+  | GooseThrowExplodedMessage
+  | GoldenGoosePickedUpMessage
+  | GoldenGooseDroppedMessage
+  | KothScoreTickMessage
+  | HordeGooseSpawnedMessage
+  | HordeGooseSnapshotMessage
+  | HordeGooseHitEventMessage
+  | HordeGooseExplodedMessage
+  | HordeGooseRemovedMessage
+  | HordeWaveStartedMessage
+  | HordeClearedMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -355,6 +456,16 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'goosePickedUp',
   'gooseThrown',
   'gooseThrowExploded',
+  'goldenGoosePickedUp',
+  'goldenGooseDropped',
+  'kothScoreTick',
+  'hordeGooseSpawned',
+  'hordeGooseSnapshot',
+  'hordeGooseHitEvent',
+  'hordeGooseExploded',
+  'hordeGooseRemoved',
+  'hordeWaveStarted',
+  'hordeCleared',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

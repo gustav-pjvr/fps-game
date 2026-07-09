@@ -10,7 +10,38 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.2.2 (current)
+## v3.3.0 (current)
+
+Four new features landed together as one batch - minor bump (new modes/mechanics, not a bug fix).
+
+- **Explosion knockback**: every goose explosion (Goose Toss throws, a wandering goose's own
+  death, and Goose Horde's contact explosions below) now physically pushes nearby players back,
+  with strength falling off linearly by distance like damage already does. The player controller
+  is a kinematic capsule with no dynamic-body physics to lean on, so this is a manually-decaying
+  knockback velocity layered on top of normal movement (`Player.applyKnockback`), not a real
+  Rapier impulse - same shape as how recoil already layers a temporary camera kick on top of aim.
+- **Match weather** (multiplayer host setting, Day/Night/Fog): purely cosmetic/atmospheric, picked
+  alongside kill limit/goose difficulty/game mode. Night dims and cools the sun, hides the
+  procedural Sky mesh in favor of a flat dark background (the Sky shader has no day/night uniform
+  to swap), and raises ambient fill so it stays playable. Fog swaps in a second, much denser
+  `FogExp2` - deliberately not a retune of the existing distance-culling fog, which is tuned for a
+  different job (concealing the world edge, not atmosphere).
+- **King of the Hill mode** (multiplayer): players spawn with the full arsenal, equidistant from a
+  golden goose at the map's exact center (the same ring `pickMultiplayerSpawnPoints` already
+  builds around that point). Picking it up (E) locks out firing - not reloading, aiming, or
+  switching - until it's dropped with the fire button or the carrier dies, at which point it's
+  left at that spot for anyone to grab. Holding it scores 1 point/second, shown as a live point bar
+  on the HUD (first to 90 wins).
+- **Goose Horde mode** (single-player toggle + multiplayer co-op): 10 progressively harder waves of
+  aggressive geese that chase the player(s) down and explode on contact instead of wandering
+  passively. Each wave escalates count, chase speed, and the mix of three flavors - plain walkers,
+  "jumpers" that burst into a fast lunge within close range, and "flyers" that dive straight down
+  from the sky - climaxing at wave 10 (30 geese, double base speed, 60%/40% jumper/flyer mix). A
+  horde goose dies in exactly one hit from any weapon, unlike the normal wandering goose's two.
+  Multiplayer reuses the same host-authoritative spawn/snapshot/hit/explode pattern already proven
+  for Goose Toss's ambient flock, so every player sees the same geese in the same place.
+
+## v3.2.2
 
 - Fixed a real multiplayer bug: a guest whose connection dropped could leave a permanently stuck
   RemotePlayer standing in the match, un-killable and un-removable, because the host relied

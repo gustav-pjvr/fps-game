@@ -9,6 +9,8 @@ import { EntityManager } from '../entities/EntityManager.ts';
 import { GooseManager } from '../entities/GooseManager.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import { buildGooseMesh } from '../entities/Goose.ts';
+import { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
+import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { WatchTowerManager } from '../world/WatchTowerManager.ts';
@@ -38,7 +40,7 @@ import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
-import { computeExplosionDamage } from '../combat/explosion.ts';
+import { computeExplosionDamage, computeKnockbackStrength } from '../combat/explosion.ts';
 import { SoundEngine } from '../audio/SoundEngine.ts';
 import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
@@ -54,15 +56,26 @@ import {
   GOOSE_RADIUS,
   GOOSE_THROW_MAX_LIFETIME_SECONDS,
   GOOSE_THROW_SPEED,
+  GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH,
   GOOSE_TOSS_EXPLOSION_MAX_DAMAGE,
   GOOSE_TOSS_EXPLOSION_RADIUS,
   GOOSE_TOSS_MAX_CONCURRENT,
   GOOSE_TOSS_SPAWN_INTERVAL_SECONDS,
+  DEFAULT_MATCH_WEATHER,
+  HORDE_GOOSE_EXPLOSION_MAX_DAMAGE,
+  HORDE_GOOSE_EXPLOSION_RADIUS,
+  HORDE_GOOSE_KNOCKBACK_STRENGTH,
+  KOTH_POINT_INTERVAL_SECONDS,
+  KOTH_POINTS_TO_WIN,
+  type MatchWeather,
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE,
   MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE,
   MULTIPLAYER_GUNSHOT_MIN_VOLUME,
   MULTIPLAYER_RESPAWN_DELAY,
+  NIGHT_AMBIENT_INTENSITY,
+  NIGHT_SUN_COLOR,
+  NIGHT_SUN_INTENSITY,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_X,
@@ -99,6 +112,9 @@ export interface MatchConfig {
   enemyCount: number;
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  /** Single-player only (see PlaySetupModal) - multiplayer's equivalent is gameMode==='gooseHorde'
+   * instead (unused/false here for a multiplayer match, same as enemyCount/targetCount's zeros). */
+  hordeMode: boolean;
 }
 
 /** One other player currently in the match - keyed by slot in ActiveMultiplayer.opponents below,
@@ -143,6 +159,10 @@ interface ActiveMultiplayer {
    * WeaponManager.create() call (see create()) and Gun Game's kill-upgrade hook (see the
    * 'playerDied' case below). */
   readonly gameMode: GameMode;
+  /** Cosmetic lighting/fog choice, fixed for the match - carried here (not just applied once via
+   * the matchWeather field) so a late-joining/rejoining guest's WelcomeMessage.activeMatch can
+   * still report it (see onHostHello below). */
+  readonly weather: MatchWeather;
   /** Host-only (see MultiplayerSession.hostRoster) - non-null exactly when role==='host', used to
    * resolve a mid-match join/rejoin's hello (see onHostHello below) and to periodically free
    * expired rejoin reservations (see hostSweepAccumulator). */
@@ -179,6 +199,9 @@ const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'goosePickedUp',
   'gooseThrown',
   'gooseThrowExploded',
+  'goldenGoosePickedUp',
+  'goldenGooseDropped',
+  'kothScoreTick',
 ]);
 
 /** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`
@@ -333,6 +356,10 @@ export class Game {
   /** Host-only (see updateGooseToss): throttles GooseManager.spawnRandomOnMap to
    * GOOSE_TOSS_SPAWN_INTERVAL_SECONDS instead of every frame. */
   private gooseTossSpawnAccumulator = 0;
+  /** King of the Hill mode only: whole seconds of continuous carry time accumulated toward this
+   * client's own next point tick - reset to 0 on drop (voluntary or death) so a re-pickup starts
+   * counting from zero rather than resuming a stale partial second. */
+  private goldenGooseHoldSeconds = 0;
   /** Every player's running kill count in the current multiplayer match, own slot included -
    * replaces the old single scoreState.value (mine)/multiplayerDeathCount (a 1v1-only proxy for
    * the one opponent's score) now that there can be up to 3 opponents. Updated symmetrically by
@@ -360,6 +387,8 @@ export class Game {
     private readonly tracers: Tracers,
     private readonly muzzleFlash: MuzzleFlash,
     private readonly gooseManager: GooseManager,
+    private readonly goldenGooseManager: GoldenGooseManager | null,
+    private readonly hordeGooseManager: HordeGooseManager | null,
     private readonly gooseAnnouncement: GooseAnnouncement,
     private readonly explosionEffect: ExplosionEffect,
     private readonly hud: Hud,
@@ -379,6 +408,11 @@ export class Game {
     private readonly matchConfig: MatchConfig,
     private readonly sun: THREE.DirectionalLight,
     private readonly ambientLight: THREE.AmbientLight,
+    /** Resolved once at match setup (multiplayer?.weather ?? DEFAULT_MATCH_WEATHER) - never
+     * changes live like graphics quality does. Kept as a field so applyGraphicsQuality's ambient
+     * calculation can still respect a 'night' override if the player changes graphics quality
+     * mid-match (see that method below). */
+    private readonly matchWeather: MatchWeather,
     private readonly multiplayer: ActiveMultiplayer | null,
     private readonly onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
     /** Fired when a matchStart message arrives *after* this Game already exists - the guest's
@@ -513,6 +547,17 @@ export class Game {
     const physics = await PhysicsWorld.create();
 
     const { sun, ambientLight } = Game.addLighting(renderer.scene, quality);
+
+    // Multiplayer-only, host-chosen (see CreateRoomScreen); single-player always 'day'. Applied
+    // once here, not live-toggleable like graphics quality - see Renderer.setMatchWeather and the
+    // matchWeather field's own comment for why 'night' also touches sun/ambient directly.
+    const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
+    renderer.setMatchWeather(matchWeather);
+    if (matchWeather === 'night') {
+      sun.color.setHex(NIGHT_SUN_COLOR);
+      sun.intensity = NIGHT_SUN_INTENSITY;
+      ambientLight.intensity = NIGHT_AMBIENT_INTENSITY;
+    }
 
     onProgress?.('Growing vegetation…', 0.02);
     const vegetation = await VegetationManager.create(renderer.scene, physics);
@@ -661,7 +706,9 @@ export class Game {
 
     // Multiplayer matches are pure PvP (MULTIPLAYER_PLAN.md's premise: the bot/enemy system is
     // single-player "training" only) - never spawn AI encounters here, regardless of matchConfig.
-    if (!multiplayer) {
+    // Goose Horde also skips this (single-player's own hordeMode toggle) - the horde flock below
+    // is the only thing attacking the player in that mode, not the regular enemy roster.
+    if (!multiplayer && !matchConfig.hordeMode) {
       await Game.spawnEncountersAsync(entityManager, matchConfig.targetCount, matchConfig.enemyCount, (status, spawnRatio) => {
         onProgress?.(status, 0.15 + spawnRatio * 0.85);
       });
@@ -696,6 +743,61 @@ export class Game {
     if (!multiplayer || multiplayer.role === 'host') {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
+
+    // King of the Hill: one golden goose at the map's exact center (0, 0) - the same point
+    // pickMultiplayerSpawnPoints already rings every player equally around, so "spawn equidistant
+    // from the goose" needs no new placement math. Every client (host and guests alike) builds it
+    // locally at this same fixed point rather than needing a spawn broadcast - unlike the
+    // exploding geese, there's exactly one of these and its start position is a match constant.
+    const goldenGooseManager =
+      multiplayer?.gameMode === 'kingOfTheHill'
+        ? new GoldenGooseManager(renderer.scene, new THREE.Vector3(0, sampleHeight(0, 0), 0))
+        : null;
+
+    // Goose Horde: single-player's own toggle (matchConfig.hordeMode) or multiplayer's co-op mode.
+    // Host-authoritative in multiplayer (same split as GooseManager); single-player is always
+    // "authoritative" since there's no one else to defer to.
+    const isHordeMode = matchConfig.hordeMode || multiplayer?.gameMode === 'gooseHorde';
+    const hordeGooseManager = isHordeMode
+      ? new HordeGooseManager(
+          renderer.scene,
+          physics,
+          {
+            onWaveStart: (wave) => gooseAnnouncement.show(`Wave ${wave} incoming...`),
+            onCleared: () => gooseAnnouncement.show('The horde has been cleared - you survived!'),
+            onExplosion: (position) => {
+              explosionEffect.spawn(position, HORDE_GOOSE_EXPLOSION_RADIUS);
+              const distance = position.distanceTo(player.position);
+              sound.playExplosion(enemyGunshotVolume(distance), computeStereoPan(player.position, player.facingYaw, position));
+              // Every client independently checks its OWN player against the blast (self-
+              // authoritative over own health, same trust model as every other explosion in this
+              // project) - this callback fires identically whether the local client decided the
+              // explosion (authoritative side) or is just mirroring one via applyExplosion
+              // (follower side), so no separate multiplayer-specific damage path is needed.
+              const damage = computeExplosionDamage(distance, HORDE_GOOSE_EXPLOSION_RADIUS, HORDE_GOOSE_EXPLOSION_MAX_DAMAGE);
+              if (damage > 0) player.takeDamage(damage);
+              const knockback = computeKnockbackStrength(distance, HORDE_GOOSE_EXPLOSION_RADIUS, HORDE_GOOSE_KNOCKBACK_STRENGTH);
+              if (knockback > 0) player.applyKnockback(player.position.clone().sub(position), knockback);
+            },
+            onNetworkSpawn:
+              multiplayer?.role === 'host'
+                ? (id, x, y, z, flavor) => multiplayer.connection.send({ type: 'hordeGooseSpawned', id, x, y, z, flavor })
+                : undefined,
+            onNetworkSnapshot:
+              multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'hordeGooseSnapshot', id, x, y, z }) : undefined,
+            onNetworkExplosion:
+              multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'hordeGooseExploded', id, x, y, z }) : undefined,
+            onNetworkRemove: multiplayer?.role === 'host' ? (id) => multiplayer.connection.send({ type: 'hordeGooseRemoved', id }) : undefined,
+            onNetworkWaveStart: multiplayer?.role === 'host' ? (wave) => multiplayer.connection.send({ type: 'hordeWaveStarted', wave }) : undefined,
+            onNetworkCleared: multiplayer?.role === 'host' ? () => multiplayer.connection.send({ type: 'hordeCleared' }) : undefined,
+            onLocalHitReported:
+              multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'hordeGooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
+          },
+          0,
+          0,
+          !multiplayer || multiplayer.role === 'host',
+        )
+      : null;
 
     // Every OTHER roster slot gets a RemotePlayer, positioned at its own match-start spawn point
     // (or the local player's own spawn as a harmless placeholder for a late-join/rejoin, where
@@ -737,6 +839,7 @@ export class Game {
         killLimit: multiplayer.killLimit,
         gooseDifficulty: multiplayer.gooseDifficulty,
         gameMode: multiplayer.gameMode,
+        weather: multiplayer.weather,
         hostRoster: multiplayer.role === 'host' ? multiplayer.hostRoster ?? null : null,
         snapshotAccumulator: 0,
         hostSweepAccumulator: 0,
@@ -800,6 +903,8 @@ export class Game {
       tracers,
       muzzleFlash,
       gooseManager,
+      goldenGooseManager,
+      hordeGooseManager,
       gooseAnnouncement,
       explosionEffect,
       hud,
@@ -819,6 +924,7 @@ export class Game {
       matchConfig,
       sun,
       ambientLight,
+      matchWeather,
       activeMultiplayer,
       onMultiplayerMatchEnd,
       onMultiplayerRematchReceived,
@@ -896,6 +1002,7 @@ export class Game {
                 killLimit: message.killLimit,
                 gooseDifficulty: message.gooseDifficulty,
                 gameMode: message.gameMode,
+                weather: message.weather,
                 ownSlot: activeMultiplayer.session.ownSlot,
                 spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
                 roster: message.roster,
@@ -1040,6 +1147,40 @@ export class Game {
               }
               break;
             }
+            case 'goldenGoosePickedUp':
+              // Only ever received for another player's claim - this client's own claim is applied
+              // locally at the moment it sends this (see updateGoldenGoose), same self-authoritative
+              // pattern as goosePickedUp above.
+              game.goldenGooseManager?.claim(senderSlot);
+              break;
+            case 'goldenGooseDropped':
+              game.goldenGooseManager?.drop(new THREE.Vector3(message.x, message.y, message.z));
+              break;
+            case 'kothScoreTick':
+              game.multiplayerScoreboard.set(senderSlot, message.score);
+              break;
+            case 'hordeGooseSpawned':
+              game.hordeGooseManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z, message.flavor);
+              break;
+            case 'hordeGooseSnapshot':
+              game.hordeGooseManager?.applyRemoteSnapshot(message.id, message.x, message.y, message.z);
+              break;
+            case 'hordeGooseHitEvent':
+              // Guest -> host only (see protocol.ts) - a guest's own connection never receives this.
+              if (activeMultiplayer.session.role === 'host') game.hordeGooseManager?.registerRemoteHit(message.id);
+              break;
+            case 'hordeGooseExploded':
+              game.hordeGooseManager?.applyExplosion(message.id, new THREE.Vector3(message.x, message.y, message.z));
+              break;
+            case 'hordeGooseRemoved':
+              game.hordeGooseManager?.applyRemove(message.id);
+              break;
+            case 'hordeWaveStarted':
+              gooseAnnouncement.show(`Wave ${message.wave} incoming...`);
+              break;
+            case 'hordeCleared':
+              gooseAnnouncement.show('The horde has been cleared - you survived!');
+              break;
             case 'hostLeftRoom':
               game.onOpponentLeftRoom?.();
               break;
@@ -1080,6 +1221,7 @@ export class Game {
                 killLimit: activeMultiplayer.killLimit,
                 gooseDifficulty: activeMultiplayer.gooseDifficulty,
                 gameMode: activeMultiplayer.gameMode,
+                weather: activeMultiplayer.weather,
                 scoreboard: Array.from(game.multiplayerScoreboard, ([slot, score]) => ({ slot, score })),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
               },
@@ -1147,6 +1289,8 @@ export class Game {
     this.gooseAnnouncement.dispose();
     this.explosionEffect.dispose();
     this.gooseManager.dispose();
+    this.goldenGooseManager?.dispose();
+    this.hordeGooseManager?.dispose();
     for (const thrown of this.thrownGeese.values()) thrown.dispose(this.renderer.scene);
     this.thrownGeese.clear();
     if (this.heldGooseViewModel) this.renderer.camera.remove(this.heldGooseViewModel);
@@ -1252,7 +1396,11 @@ export class Game {
    * a fresh one at the new size the next time the shadow pass runs. */
   private applyGraphicsQuality(quality: GraphicsQualityPreset): void {
     this.renderer.applyQuality(quality);
-    this.ambientLight.intensity = quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY;
+    // 'night' always wins over the quality-tier ambient rule (see the matchWeather field's
+    // comment) - otherwise switching graphics quality mid-match would silently undo the night
+    // brightness floor and leave the match unplayably dark.
+    this.ambientLight.intensity =
+      this.matchWeather === 'night' ? NIGHT_AMBIENT_INTENSITY : quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY;
     this.sun.castShadow = quality.shadowsEnabled;
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
@@ -1391,6 +1539,11 @@ export class Game {
       // here first - WeaponManager never sees it, so the harmless 'unarmed' placeholder weapon
       // never has anything to (not) do with it either.
       if (this.multiplayer?.gameMode === 'gooseToss') this.updateGooseToss(dt);
+      // Same input-consumption trick as updateGooseToss above, narrower in scope: only a fire
+      // press while actually carrying is consumed here (to drop it), so aim/reload/switch and
+      // ordinary firing while NOT carrying all still reach WeaponManager normally - King of the
+      // Hill keeps the full arsenal, unlike Goose Toss's unarmed-only loadout.
+      if (this.multiplayer?.gameMode === 'kingOfTheHill') this.updateGoldenGoose(dt);
       this.player.update(dt, this.input);
       this.weaponManager.update(dt, this.input, this.player);
     }
@@ -1409,6 +1562,17 @@ export class Game {
       this.entityManager.update(dt, this.player);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
+
+      // Goose Horde: no-op for a follower (guest) manager - see HordeGooseManager's isAuthoritative
+      // comment. Every living player (own + every opponent) is a valid target so co-op geese chase
+      // whoever's nearest, not just the local player.
+      if (this.hordeGooseManager) {
+        const targets = [this.player.position];
+        if (this.multiplayer) {
+          for (const opponent of this.multiplayer.opponents.values()) targets.push(opponent.remotePlayer.position);
+        }
+        this.hordeGooseManager.update(dt, targets, this.multiplayer?.session.role === 'host');
+      }
 
       // Goose Toss's constant ambient supply (per user request - "many, many geese... spawned
       // across the map constantly"), independent of the normal spawn-on-death trigger above.
@@ -1440,6 +1604,12 @@ export class Game {
     this.updateMultiplayer(dt);
 
     if (this.player.isDead && !wasDead) {
+      // King of the Hill: dying while carrying the golden goose drops it right where the player
+      // fell, per explicit user request ("if the player is killed then the goose is left at the
+      // location for anyone to pick up") - same drop path a voluntary fire-button drop uses.
+      if (this.multiplayer?.gameMode === 'kingOfTheHill' && this.goldenGooseManager?.carrierSlot === this.multiplayer.session.ownSlot) {
+        this.dropGoldenGoose(this.player.position.clone());
+      }
       // Per user request: the death/respawn screen must never overlay the pause menu - if the
       // pause menu is currently open (multiplayer only; single-player can't reach this block while
       // paused, see the early return above), defer the actual reveal until the player resumes
@@ -1499,7 +1669,15 @@ export class Game {
     const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
-    this.multiplayer.multiplayerHud.update(this.player.currentHealth, this.player.maxHealth, opponentHealths, this.multiplayerScoreboard);
+    this.multiplayer.multiplayerHud.update(
+      this.player.currentHealth,
+      this.player.maxHealth,
+      opponentHealths,
+      this.multiplayerScoreboard,
+      this.multiplayer.gameMode === 'kingOfTheHill'
+        ? { pointsToWin: KOTH_POINTS_TO_WIN, carrierSlot: this.goldenGooseManager?.carrierSlot ?? null }
+        : undefined,
+    );
 
     // Win condition: first to killLimit ends the match. Checked here rather than where each score
     // actually changes (the playerDied handling scattered across create()'s onMessage and update()'s
@@ -1508,10 +1686,20 @@ export class Game {
     // against its own copy of the scoreboard (kept in sync purely by relaying playerDied messages),
     // so no host adjudication is needed for everyone to converge on the same outcome.
     if (!this.matchEnded) {
-      for (const [slot, score] of this.multiplayerScoreboard) {
-        if (score >= this.multiplayer.killLimit) {
-          this.endMultiplayerMatch(slot === this.multiplayer.session.ownSlot, 'killLimit');
-          break;
+      // King of the Hill scores points, not kills - same "first to cross a threshold" scan against
+      // KOTH_POINTS_TO_WIN instead of killLimit, still tagged 'killLimit' as the end reason (the
+      // match-end screen's copy just says "VICTORY"/"DEFEAT" either way, no mode-specific wording
+      // exists to reuse here).
+      // Goose Horde is co-op, not a scoreboard race - it has no kill/point win threshold at all;
+      // survival/victory is driven entirely by HordeGooseManager's onCleared callback instead (see
+      // the 'hordeCleared' toast above), so this scan is skipped for it.
+      if (this.multiplayer.gameMode !== 'gooseHorde') {
+        const threshold = this.multiplayer.gameMode === 'kingOfTheHill' ? KOTH_POINTS_TO_WIN : this.multiplayer.killLimit;
+        for (const [slot, score] of this.multiplayerScoreboard) {
+          if (score >= threshold) {
+            this.endMultiplayerMatch(slot === this.multiplayer.session.ownSlot, 'killLimit');
+            break;
+          }
         }
       }
     }
@@ -1682,6 +1870,51 @@ export class Game {
     });
   }
 
+  /** King of the Hill's own input handling (claim via 'interact', drop via 'fire') - runs before
+   * weaponManager.update() so a drop's fire press is consumed here first, mirroring
+   * updateGooseToss's ordering, but only while actually carrying (see the call site's comment on
+   * why this doesn't block ordinary firing the rest of the time). Also owns the continuous
+   * points-per-second-held scoring while carrying. Multiplayer only (see gameModes.ts) - never
+   * called otherwise. */
+  private updateGoldenGoose(dt: number): void {
+    if (!this.multiplayer || !this.goldenGooseManager) return;
+    const ownSlot = this.multiplayer.session.ownSlot;
+    const goose = this.goldenGooseManager;
+
+    if (goose.carrierSlot === ownSlot) {
+      if (this.input.consumeJustPressed('fire')) {
+        this.dropGoldenGoose(this.player.position.clone());
+        return;
+      }
+      this.goldenGooseHoldSeconds += dt;
+      if (this.goldenGooseHoldSeconds >= KOTH_POINT_INTERVAL_SECONDS) {
+        this.goldenGooseHoldSeconds -= KOTH_POINT_INTERVAL_SECONDS;
+        const score = (this.multiplayerScoreboard.get(ownSlot) ?? 0) + 1;
+        this.multiplayerScoreboard.set(ownSlot, score);
+        this.multiplayer.session.connection.send({ type: 'kothScoreTick', senderSlot: ownSlot, score });
+      }
+      return;
+    }
+
+    if (goose.isHeld) return; // someone else is already carrying it
+    if (!this.input.consumeJustPressed('interact')) return;
+    if (this.player.position.distanceTo(goose.position) > GOOSE_PICKUP_RADIUS) return;
+
+    goose.claim(ownSlot);
+    this.multiplayer.session.connection.send({ type: 'goldenGoosePickedUp', senderSlot: ownSlot });
+  }
+
+  /** Shared by a voluntary drop (fire button) and an automatic drop on the carrier's own death (see
+   * the wasDead transition below) - resets the local hold-time accumulator and broadcasts so every
+   * other client relocates/unhides it at the same spot. */
+  private dropGoldenGoose(position: THREE.Vector3): void {
+    if (!this.multiplayer || !this.goldenGooseManager) return;
+    const ownSlot = this.multiplayer.session.ownSlot;
+    this.goldenGooseManager.drop(position);
+    this.goldenGooseHoldSeconds = 0;
+    this.multiplayer.session.connection.send({ type: 'goldenGooseDropped', senderSlot: ownSlot, x: position.x, y: position.y, z: position.z });
+  }
+
   /** Advances every in-flight ThrownGoose (own throws and every other player's mirrored copy -
    * see ThrownGoose.ts's class comment on thrower-only authority). Only the thrower's own copy
    * decides when/where it explodes and applies damage; every other client's copy is purely
@@ -1742,8 +1975,13 @@ export class Game {
       computeStereoPan(this.player.position, this.player.facingYaw, position),
     );
 
-    const selfDamage = computeExplosionDamage(position.distanceTo(this.player.position), GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_MAX_DAMAGE);
+    const selfDistance = position.distanceTo(this.player.position);
+    const selfDamage = computeExplosionDamage(selfDistance, GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_MAX_DAMAGE);
     if (selfDamage > 0) this.player.takeDamage(selfDamage);
+    const knockback = computeKnockbackStrength(selfDistance, GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH);
+    if (knockback > 0) {
+      this.player.applyKnockback(this.player.position.clone().sub(position), knockback);
+    }
 
     if (!this.multiplayer) return;
     for (const opponent of this.multiplayer.opponents.values()) {
@@ -1843,6 +2081,7 @@ export class Game {
       killLimit: this.multiplayer.killLimit,
       gooseDifficulty: this.multiplayer.gooseDifficulty,
       gameMode: this.multiplayer.gameMode,
+      weather: this.multiplayer.weather,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
     });

@@ -5,7 +5,8 @@ system/process for easier reference. Each file preserves its original entries ve
 chronological order.
 
 - [World Generation](world-generation.md) — terrain bounds, ground texture/sky/fog, vegetation,
-  buildings, zones/towns/forests, roads, ladders/crate staircases, watch towers, world sizing.
+  buildings, zones/towns/forests, roads, ladders/crate staircases, watch towers, world sizing, and
+  the host-selectable match weather (Day/Night/Fog) setting.
 - [Enemy AI](enemy-ai.md) — the enemy AI overhaul (goal-directed patrol, aggro/line-of-sight,
   ranged combat, melee fallback, measurement-driven tuning) and per-archetype enemy loadouts.
 - [Weapons & Combat](weapons-combat.md) — weapon view model fixes, the 5th hotbar/knife slot,
@@ -15,7 +16,8 @@ chronological order.
   sync, match lifecycle, playtest fixes, spawn points, TURN fallback, multiplayer polish, and the
   post-launch lobby-crash/game-modes/audio batch.
 - [Goose-Buster](goose-buster.md) — the exploding-goose mini-game, host-authoritative multiplayer
-  sync, playtest bug fixes, and the Nuke difficulty tier.
+  sync, playtest bug fixes, the Nuke difficulty tier, explosion knockback, King of the Hill, and
+  the Goose Horde wave-survival mode.
 - [UI & Lobby](ui-lobby.md) — the lobby redesign, death screen repositioning, and the motion/UI
   polish pass.
 - [Performance](performance-notes.md) — the frame-rate headroom investigation, in-game performance

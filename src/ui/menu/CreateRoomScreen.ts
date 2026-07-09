@@ -6,13 +6,17 @@ import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSessi
 import { HOST_SLOT, type RosterEntry } from '../../network/protocol.ts';
 import {
   DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
+  DEFAULT_MATCH_WEATHER,
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
   GOOSE_EXPLOSION_DIFFICULTIES,
   GOOSE_EXPLOSION_DIFFICULTY_LABELS,
+  MATCH_WEATHER_LABELS,
+  MATCH_WEATHERS,
   MULTIPLAYER_KILL_LIMIT_MAX,
   MULTIPLAYER_KILL_LIMIT_MIN,
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
+  type MatchWeather,
 } from '../../core/config.ts';
 import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../../core/gameModes.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
@@ -44,6 +48,7 @@ export class CreateRoomScreen {
   private readonly killLimitInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly gameModeSelect: HTMLSelectElement;
+  private readonly weatherSelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
@@ -197,6 +202,22 @@ export class CreateRoomScreen {
     }
     leftColumn.appendChild(this.gameModeSelect);
 
+    // Purely cosmetic/atmospheric - mirrors gameModeSelect's own full-width layout above it.
+    const weatherLabel = document.createElement('div');
+    weatherLabel.textContent = 'Match weather:';
+    weatherLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
+    leftColumn.appendChild(weatherLabel);
+    this.weatherSelect = document.createElement('select');
+    this.weatherSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
+    for (const weather of MATCH_WEATHERS) {
+      const optionElement = document.createElement('option');
+      optionElement.value = weather;
+      optionElement.textContent = MATCH_WEATHER_LABELS[weather];
+      if (weather === DEFAULT_MATCH_WEATHER) optionElement.selected = true;
+      this.weatherSelect.appendChild(optionElement);
+    }
+    leftColumn.appendChild(this.weatherSelect);
+
     // Live player list (per user request): a real render loop over the current roster now, not
     // two fixed DOM rows - up to MULTIPLAYER_MAX_PLAYERS entries, re-rendered on every join/leave.
     // Lives in rightColumn, beside the settings rather than stacked beneath them (per user request:
@@ -319,9 +340,10 @@ export class CreateRoomScreen {
       : DEFAULT_MULTIPLAYER_KILL_LIMIT;
     const gooseDifficulty = this.gooseDifficultySelect.value as GooseExplosionDifficulty;
     const gameMode = this.gameModeSelect.value as GameMode;
+    const weather = this.weatherSelect.value as MatchWeather;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, spawns, roster });
+    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, spawns, roster });
 
     const connection = this.connection;
     const hostRoster = this.hostRoster;
@@ -336,6 +358,7 @@ export class CreateRoomScreen {
       killLimit,
       gooseDifficulty,
       gameMode,
+      weather,
       ownSlot: HOST_SLOT,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,

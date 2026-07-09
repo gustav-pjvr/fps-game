@@ -182,6 +182,35 @@ export const FOG_NEAR = 35;
 export const FOG_FAR = 650;
 export const FOG_COLOR = 0xbfd3e0;
 
+/** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'day' in single-player - purely
+ * cosmetic/atmospheric, mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
+ * sites: MatchStartMessage, WelcomeMessage.activeMatch, MultiplayerSession,
+ * MultiplayerMatchStartParams). 'day' is the game's existing baseline lighting/fog, unchanged. */
+export type MatchWeather = 'day' | 'night' | 'fog';
+export const DEFAULT_MATCH_WEATHER: MatchWeather = 'day';
+export const MATCH_WEATHERS: readonly MatchWeather[] = ['day', 'night', 'fog'];
+export const MATCH_WEATHER_LABELS: Record<MatchWeather, string> = {
+  day: 'Day',
+  night: 'Night',
+  fog: 'Fog',
+};
+/** 'night': dims/cools the sun and hides the procedural Sky mesh in favor of a flat dark
+ * scene.background (the Sky shader has no day/night uniform to swap - hiding it is the cheap way
+ * to fake it without new shaders/assets), while raising ambient fill so play stays readable - a
+ * true pitch-black mode wouldn't be playable, and there's no moon light to add realism without new
+ * assets. Deliberately independent of graphics-quality's own ambient rule (Game.ts's
+ * applyGraphicsQuality) - night's ambient always wins regardless of quality tier. */
+export const NIGHT_SUN_COLOR = 0x6f8fd1;
+export const NIGHT_SUN_INTENSITY = 0.4;
+export const NIGHT_AMBIENT_INTENSITY = 0.5;
+export const NIGHT_BACKGROUND_COLOR = 0x0a1220;
+/** 'fog': a second, much denser FogExp2 swapped in only for this weather choice - deliberately NOT
+ * a retune of FOG_NEAR/FOG_FAR/FOG_COLOR above, which are tuned for distance-culling the world
+ * edge, not atmosphere (see Renderer.ts). Sun/ambient/background stay at their day defaults - this
+ * mode is about visibility, not lighting. */
+export const MATCH_FOG_DENSITY = 0.035;
+export const MATCH_FOG_COLOR = 0x9aa5ab;
+
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MAX_PITCH = Math.PI / 2 - 0.01;
 
@@ -194,6 +223,11 @@ export const SPRINT_MULTIPLIER = 1.6;
 export const JUMP_SPEED = 6.5;
 export const RECOIL_DECAY = 8;
 export const FOOTSTEP_DISTANCE = 2.2;
+/** How fast an explosion knockback velocity bleeds off, same exponential-decay shape as
+ * RECOIL_DECAY above (Player has no dynamic-body physics to lean on for a real impulse response -
+ * the kinematic character controller only ever gets `computeColliderMovement`'d, so knockback is a
+ * manually-decaying velocity added on top of normal input movement, not a Rapier impulse). */
+export const KNOCKBACK_DECAY_PER_SECOND = 6;
 
 export const ADS_LERP_SPEED = 12;
 export const SCOPE_REVEAL_THRESHOLD = 0.92;
@@ -355,6 +389,16 @@ export const GOOSE_EXPLOSION_PRESETS: Record<GooseExplosionDifficulty, { radius:
   // blast dies" without needing a separate non-distance-based instant-kill code path.
   nuke: { radius: 45, maxDamage: 500 },
 };
+/** Peak knockback speed (m/s) a player standing exactly at the goose's position would receive from
+ * an explosion, falling off linearly to 0 at the same `radius` as damage above (see
+ * computeKnockbackStrength in combat/explosion.ts) - paired per-tier so Nuke sends players flying
+ * much further than Easy, same spirit as the damage rebalance already applied per tier. */
+export const GOOSE_EXPLOSION_KNOCKBACK_STRENGTH: Record<GooseExplosionDifficulty, number> = {
+  easy: 4,
+  normal: 8,
+  extreme: 14,
+  nuke: 26,
+};
 export const DEFAULT_GOOSE_EXPLOSION_DIFFICULTY: GooseExplosionDifficulty = 'normal';
 /** Shared ordering/labels for every difficulty selector (single-player Match Setup, multiplayer
  * Create Room, multiplayer rematch settings) so the three don't each invent their own list. */
@@ -395,11 +439,85 @@ export const GOOSE_THROW_SPEED = 20;
  * preset, a serious but not always-instant blast. */
 export const GOOSE_TOSS_EXPLOSION_RADIUS = 9;
 export const GOOSE_TOSS_EXPLOSION_MAX_DAMAGE = 140;
+/** Matches the 'extreme' tier's knockback strength, same reasoning as the radius/damage comment
+ * above (roughly matches 'extreme' but is its own fixed constant, ignoring the host's difficulty
+ * selector entirely). */
+export const GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH = 14;
 /** Safety net for a client that never receives the thrower's gooseThrowExploded broadcast (a
  * dropped message, a relay-hop race) - removes an orphaned cosmetic ThrownGoose after this many
  * seconds regardless, rather than leaving it flying forever. Comfortably longer than any real
  * flight time at GOOSE_THROW_SPEED. */
 export const GOOSE_THROW_MAX_LIFETIME_SECONDS = 5;
+
+/** King of the Hill mode (multiplayer only, see core/gameModes.ts) - a single golden goose spawned
+ * at the map center (the same point pickMultiplayerSpawnPoints already rings every player equally
+ * around, so "spawn equidistant from the goose" needs no new placement math). Reuses
+ * GOOSE_PICKUP_RADIUS for the pickup check. */
+export const KOTH_POINTS_TO_WIN = 90;
+/** Whole seconds of continuous carry time before the carrier's own score increments by 1 (see
+ * Game.ts's updateGoldenGoose) - "1 point per second held," per explicit user request. */
+export const KOTH_POINT_INTERVAL_SECONDS = 1;
+
+/** Goose Horde: wave-survival mode, single-player (PlaySetupModal toggle) and multiplayer
+ * (co-op, see core/gameModes.ts's 'gooseHorde'). 10 waves, each escalating count/speed/aggression -
+ * see docs/CHANGELOG.md for the full per-wave design table and rationale. `jumperChance`/
+ * `flyerChance` are the probability (0-1) each individual spawn in that wave rolls as that
+ * behavior flavor instead of a plain walker - see entities/HordeGoose.ts. */
+export interface HordeWaveSpec {
+  readonly count: number;
+  readonly speedMultiplier: number;
+  readonly jumperChance: number;
+  readonly flyerChance: number;
+}
+export const HORDE_WAVE_COUNT = 10;
+export const HORDE_WAVE_TABLE: readonly HordeWaveSpec[] = [
+  { count: 5, speedMultiplier: 1.0, jumperChance: 0, flyerChance: 0 },
+  { count: 7, speedMultiplier: 1.1, jumperChance: 0, flyerChance: 0 },
+  { count: 9, speedMultiplier: 1.2, jumperChance: 0.2, flyerChance: 0 },
+  { count: 11, speedMultiplier: 1.3, jumperChance: 0.3, flyerChance: 0 },
+  { count: 13, speedMultiplier: 1.4, jumperChance: 0.4, flyerChance: 0.1 },
+  { count: 15, speedMultiplier: 1.5, jumperChance: 0.4, flyerChance: 0.2 },
+  { count: 18, speedMultiplier: 1.6, jumperChance: 0.45, flyerChance: 0.25 },
+  { count: 21, speedMultiplier: 1.7, jumperChance: 0.5, flyerChance: 0.3 },
+  { count: 25, speedMultiplier: 1.85, jumperChance: 0.55, flyerChance: 0.35 },
+  { count: 30, speedMultiplier: 2.0, jumperChance: 0.6, flyerChance: 0.4 },
+];
+/** Caps how many horde geese exist on the map at once regardless of a wave's total `count` - my
+ * own addition (not explicitly requested), necessary so wave 10's "A LOT" doesn't tank frame rate.
+ * Remaining spawns for a wave queue up and trickle in as earlier ones die/explode, so pressure
+ * stays constant rather than dumping the full count on the map at once. Logged via a toast, never
+ * a silent cap. */
+export const HORDE_MAX_CONCURRENT = 18;
+/** Breather between waves, long enough to read the "Wave N incoming" toast and catch a breath. */
+export const HORDE_WAVE_INTERMISSION_SECONDS = 4;
+/** Base chase speed (m/s) before a wave's speedMultiplier - noticeably faster than the passive
+ * GOOSE_WANDER_SPEED (1) since a horde goose is actively hunting, not ambling; at wave 10's 2.0x
+ * multiplier this reaches player sprint speed (PLAYER_MOVE_SPEED * SPRINT_MULTIPLIER = 8),
+ * deliberately climactic for the finale. */
+export const HORDE_GOOSE_BASE_SPEED = 4;
+/** Distance at which a horde goose counts as having "reached" the player and explodes. */
+export const HORDE_GOOSE_CONTACT_RADIUS = 1.2;
+/** Jumper flavor: within this range of the player, a jumper does a brief forward speed burst
+ * (see HORDE_JUMPER_BURST_MULTIPLIER/SECONDS) instead of its normal chase speed - reads as a
+ * "suicide rush" tell the player can watch for. */
+export const HORDE_JUMPER_TRIGGER_RADIUS = 6;
+export const HORDE_JUMPER_BURST_MULTIPLIER = 2.5;
+export const HORDE_JUMPER_BURST_SECONDS = 0.4;
+/** Flyer flavor: spawns airborne at this height above its target point and dives straight down
+ * toward the player over HORDE_FLYER_DESCENT_SECONDS, overriding the normal ground-snap until it
+ * lands/explodes - see HordeGoose.ts. */
+export const HORDE_FLYER_SPAWN_HEIGHT = 25;
+export const HORDE_FLYER_DESCENT_SECONDS = 1.5;
+/** A horde goose dies in exactly one hit from any weapon (unlike the normal wandering goose's
+ * GOOSE_HITS_TO_KILL=2) - "shoot or dodge" needs to feel decisive under wave-10 pressure, not add
+ * a second layer of bullet-sponge on top of rising count/speed. A one-hit-killed goose just falls
+ * over (no explosion) - only a goose that actually reaches the player explodes. */
+export const HORDE_GOOSE_EXPLOSION_RADIUS = 5;
+export const HORDE_GOOSE_EXPLOSION_MAX_DAMAGE = 60;
+export const HORDE_GOOSE_KNOCKBACK_STRENGTH = 10;
+/** New horde spawns land on a ring at this radius around the map center, outside the player's
+ * immediate view but well within chase range. */
+export const HORDE_GOOSE_SPAWN_RADIUS = 30;
 
 export const PLAYER_HEALTH = 100;
 

@@ -100,7 +100,7 @@ export class App {
     this.playSetupModal?.dispose();
     this.playSetupModal = new PlaySetupModal(
       this.overlayRoot,
-      { enemyCount: DEFAULT_ENEMY_COUNT, targetCount: DEFAULT_TARGET_COUNT, gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY },
+      { enemyCount: DEFAULT_ENEMY_COUNT, targetCount: DEFAULT_TARGET_COUNT, gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, hordeMode: false },
       MAX_MATCH_ENTITY_COUNT,
       (config) => void this.startMatch(config),
       () => this.playSetupModal?.hide(),
@@ -157,7 +157,7 @@ export class App {
       // gooseDifficulty here is unused - multiplayer reads it from the session (params.gooseDifficulty)
       // instead, see Game.ts's ActiveMultiplayer.gooseDifficulty. Present only to satisfy MatchConfig's
       // shape, same reasoning as the enemyCount/targetCount zeros above.
-      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty },
+      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, hordeMode: false },
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
       () => void this.returnToLobby(),
       { connection, role, ...params },
@@ -207,18 +207,20 @@ export class App {
     const killLimit = settings.killLimit;
     const gooseDifficulty = settings.gooseDifficulty;
     const gameMode = settings.gameMode;
+    const weather = settings.weather;
     // The host's *current* roster (whoever's actually still connected, including anyone who
     // rejoined since the last match started) rather than the original match-start roster, which
     // could still list a slot that's since disconnected for good.
     const roster = hostRoster?.currentRoster() ?? this.currentMultiplayerSession.roster;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, spawns, roster });
+    connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, spawns, roster });
     void this.restartMultiplayerMatch(connection, role, {
       seed,
       killLimit,
       gooseDifficulty,
       gameMode,
+      weather,
       ownSlot,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,

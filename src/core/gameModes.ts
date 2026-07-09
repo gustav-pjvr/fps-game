@@ -4,9 +4,18 @@ import { PLAYER_HEALTH } from './config.ts';
  * mode, always the unrestricted default loadout). Threaded alongside `gooseDifficulty`/`killLimit`
  * through the same match-start plumbing (see MatchStartMessage/WelcomeMessage.activeMatch/
  * MultiplayerSession). */
-export type GameMode = 'default' | 'oneShotOneKill' | 'sniperDuel' | 'gunGame' | 'knifeOnly' | 'gooseToss';
+export type GameMode = 'default' | 'oneShotOneKill' | 'sniperDuel' | 'gunGame' | 'knifeOnly' | 'gooseToss' | 'kingOfTheHill' | 'gooseHorde';
 
-export const GAME_MODES: readonly GameMode[] = ['default', 'oneShotOneKill', 'sniperDuel', 'gunGame', 'knifeOnly', 'gooseToss'];
+export const GAME_MODES: readonly GameMode[] = [
+  'default',
+  'oneShotOneKill',
+  'sniperDuel',
+  'gunGame',
+  'knifeOnly',
+  'gooseToss',
+  'kingOfTheHill',
+  'gooseHorde',
+];
 export const DEFAULT_GAME_MODE: GameMode = 'default';
 export const GAME_MODE_LABELS: Record<GameMode, string> = {
   default: 'Default',
@@ -15,6 +24,8 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
   gunGame: 'Gun Game',
   knifeOnly: 'Knife Only',
   gooseToss: 'Goose Toss',
+  kingOfTheHill: 'King of the Hill',
+  gooseHorde: 'Goose Horde (Co-op)',
 };
 
 /** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user
@@ -40,6 +51,12 @@ const FIXED_LOADOUTS: Partial<Record<GameMode, WeaponLoadout>> = {
   // Not "no weapons" (WeaponManager requires at least one) - a harmless zero-damage placeholder
   // that Game.ts's Goose Toss handling never actually lets fire, see definitions.ts's 'unarmed'.
   gooseToss: { weaponIds: ['unarmed'] },
+  // Full arsenal, same as 'default' - King of the Hill's twist is the golden goose objective, not
+  // a restricted loadout. Weapons are gated (fire consumed) only while carrying it - see
+  // Game.ts's updateGoldenGoose, not a loadout-level restriction like gooseToss's 'unarmed'.
+  kingOfTheHill: { weaponIds: ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'] },
+  // Full arsenal - this is a PvE co-op survival mode, not a restricted-loadout PvP variant.
+  gooseHorde: { weaponIds: ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'] },
 };
 
 /** The starting loadout for a given mode - random for Gun Game (a fresh pick per call, so two

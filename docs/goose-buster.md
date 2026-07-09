@@ -86,3 +86,76 @@ the blast dies" without needing a separate instant-kill code path) and bumped th
 tiers' damage ~15-20%. Confirmed via the earlier difficulty-list research that every consumer does
 a generic keyed lookup/loop - no other file needed touching.
 
+## Explosion knockback, King of the Hill, and Goose Horde (v3.3.0)
+
+**Knockback.** Every goose explosion (Goose Toss throws, a wandering goose's own death, and Horde's
+contact explosions below) now pushes nearby players back, same linear falloff shape as damage
+(`computeKnockbackStrength` in `combat/explosion.ts`, paired per-tier with
+`GOOSE_EXPLOSION_PRESETS` via a new `GOOSE_EXPLOSION_KNOCKBACK_STRENGTH` record). The player
+controller is a kinematic capsule with no dynamic-body physics to hand a real Rapier impulse to, so
+this is implemented as a manually-decaying knockback velocity (`Player.applyKnockback`,
+`KNOCKBACK_DECAY_PER_SECOND`) added on top of normal movement each tick and exponentially bled off
+- the same shape `recoilPitch` already uses for a temporary camera kick layered on top of aim.
+
+**King of the Hill.** A new multiplayer mode: full arsenal for everyone (unlike Goose Toss's
+unarmed loadout), racing for a single golden goose spawned at the exact map center - which
+`pickMultiplayerSpawnPoints`'s existing spawn ring already surrounds equidistantly for any player
+count, so no new placement math was needed. `GoldenGooseManager` (new, deliberately not a
+`GooseManager` reuse - it has none of the exploding goose's hit-count/explosion behavior, it's a
+carry-only prop) owns position + carrier slot. Picking it up (E) doesn't disable the whole
+`WeaponManager` the way Goose Toss's `unarmed` loadout does - instead `updateGoldenGoose` consumes
+just the `fire` action while carrying (to drop it), mirroring but narrower than Goose Toss's
+input-consumption trick, so aim/reload/switch still work. Dying while carrying auto-drops it at the
+death position. Scoring is new, continuous infrastructure this project didn't have before: 1 point
+per second held, self-reported and broadcast once/second (`kothScoreTick`) rather than piggybacked
+on the existing kill-count `applyPlayerDied` path, synced into the same `multiplayerScoreboard` map
+every other mode already uses. First to 90 wins. The HUD's scoreboard renders as point bars (a new
+`MultiplayerHud.update()` parameter) instead of the plain kill-count list, with a crown marker on
+whoever's currently carrying it.
+
+**Goose Horde.** A wave-survival mode, single-player (a `PlaySetupModal` toggle, ignoring the
+enemy/target counts) and multiplayer (co-op, `gameMode: 'gooseHorde'`) alike - the first mode to
+actually replace the passive wandering-goose AI with something aggressive. `HordeGoose` (new,
+parallel to - not a subclass of - both the passive `Goose` and the GLTF/archetype-coupled `Enemy`)
+reuses `Enemy`'s own chase-steering primitive (`steerWithAvoidance`, the exact function Enemy
+itself calls) plus `Goose`'s procedural mesh, always heading straight for whichever target position
+it's given and exploding on contact - no idle/alert/search states, it aggros immediately. Three
+flavors rolled per spawn from that wave's chances: **walker** (plain chase), **jumper** (a
+close-range speed-burst "suicide rush" tell), and **flyer** (spawns airborne and dives straight
+down - genuinely new movement code, since no airborne-entity pattern existed anywhere in this
+codebase before). A horde goose dies in exactly one hit from any weapon, unlike the normal
+2-hit-to-kill wandering goose - "shoot or dodge" needs to stay decisive under wave-10 pressure, not
+add a second bullet-sponge layer.
+
+10 waves (`HORDE_WAVE_TABLE` in `config.ts`), each escalating count/speed/jumper-flyer mix, capped
+at `HORDE_MAX_CONCURRENT` (18) concurrently alive with the rest of a wave queued to trickle in as
+earlier geese die - not an explicit request, but necessary so wave 10's "a lot" doesn't tank frame
+rate; the queue keeps pressure constant instead of dumping the full count on the map at once. Wave
+10 (30 geese, double base speed, 60%/40% jumper/flyer mix) reaches player sprint speed, deliberately
+climactic. Clearing all 10 waves is the win condition (`HordeGooseManager.onCleared`); a
+single-player death is handled by the existing `DeathScreen` path unchanged, and a multiplayer
+death just respawns normally (co-op doesn't end the match on one player's death, matching typical
+horde-mode conventions where a downed teammate gets back up, not instant game over).
+
+Multiplayer reuses the exact host-authoritative spawn/snapshot/hit/explode pattern already proven
+for Goose Toss's ambient flock (`hordeGooseSpawned`/`hordeGooseSnapshot`/`hordeGooseHitEvent`/
+`hordeGooseExploded`/`hordeGooseRemoved`, plus two new host-broadcast wave-state messages,
+`hordeWaveStarted`/`hordeCleared`) - `HordeGooseManager` takes an explicit `isAuthoritative` flag
+(constructor param) rather than relying solely on the per-goose follower-mode trick GooseManager
+uses, because Horde's wave/spawn-queue state is manager-level, not per-entity - without that flag a
+guest's own copy of the manager would independently roll its own spawns and desync from the host's
+actual flock, which the per-goose trick alone doesn't prevent.
+
+**Known, deliberate simplification:** no late-join sync for Horde (unlike Goose Toss's
+`gooseSyncRequest`) - a player joining a horde match already in progress only sees geese spawned
+from that point on. This mode wasn't asked to support mid-match joining the way the PvP modes are,
+and adding it would mean tracking/replaying wave state for a join path this mode doesn't otherwise
+need.
+
+**Verification:** `npx tsc --noEmit` clean, `npm run test:unit` (new `computeKnockbackStrength`
+tests, full existing suite green), `npm run build` succeeds. Live playtest of all three features
+(2-browser multiplayer for weather/KOTH/Horde co-op, single-player for Horde's full 10-wave run)
+not yet performed by me for this round - worth doing before considering this batch fully signed
+off, per this project's own established preference for live verification over trusting green
+tests/build alone on gameplay-feel features.
+
