@@ -406,6 +406,16 @@ export interface HordeClearedMessage {
   type: 'hordeCleared';
 }
 
+/** Host -> everyone: any player's death restarts the whole co-op run from wave 1 (per explicit
+ * user request, matching single-player's identical "dying resets to wave 1" behavior) - every
+ * client immediately clears its own view of the current horde flock (see
+ * HordeGooseManager.applyReset) rather than waiting for stray geese to be individually cleaned up
+ * one at a time. Always followed by a `hordeWaveStarted{wave:1}` broadcast as the host's own
+ * `resetToWaveOne` begins the fresh wave 1. */
+export interface HordeResetMessage {
+  type: 'hordeReset';
+}
+
 /** Bonus goose (single-player and multiplayer, every mode except Goose Toss - see config.ts's
  * BONUS_GOOSE_* comment). Host -> everyone (broadcast, never relayed - host-authored): a new bonus
  * goose exists. Mirrors GooseSpawnedMessage exactly. */
@@ -476,6 +486,7 @@ export type NetworkMessage =
   | HordeGooseRemovedMessage
   | HordeWaveStartedMessage
   | HordeClearedMessage
+  | HordeResetMessage
   | BonusGooseSpawnedMessage
   | BonusGooseSnapshotMessage
   | BonusGooseHitEventMessage
@@ -514,6 +525,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hordeGooseRemoved',
   'hordeWaveStarted',
   'hordeCleared',
+  'hordeReset',
   'bonusGooseSpawned',
   'bonusGooseSnapshot',
   'bonusGooseHitEvent',

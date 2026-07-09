@@ -10,7 +10,14 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.4.3 (current)
+## v3.4.4 (current)
+
+- Multiplayer Goose Horde co-op now matches single-player: any player's death immediately restarts
+  the whole run from wave 1 for everyone (host-authoritative, broadcast so every client clears its
+  own view of the current flock rather than waiting for stray geese to be cleaned up one at a
+  time). Previously multiplayer just respawned the fallen player and kept the run going.
+
+## v3.4.3
 
 Goose Horde cleanup pass, per user request:
 

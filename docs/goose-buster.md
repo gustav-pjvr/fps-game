@@ -227,7 +227,23 @@ near wherever the player actually starts instead of potentially far away.
 `HordeGooseManager.resetToWaveOne()` (new) clears every live goose and restarts at wave 1
 immediately, no intermission - wired into `resetPlay()` (the actual mechanism behind the
 single-player death screen's Respawn button and the pause menu's Reset Play, confirmed by tracing
-both callbacks to the same method), gated to `this.hordeGooseManager` being set. Multiplayer death
-in Horde deliberately keeps its existing behavior (co-op respawn, no match/wave reset) - only
-explicitly requested for single-player.
+both callbacks to the same method), gated to `this.hordeGooseManager` being set.
+
+## Multiplayer Goose Horde reset-on-death parity (v3.4.4)
+
+Per a follow-up explicit request, multiplayer co-op now matches single-player exactly: any player's
+death restarts the whole run from wave 1 for the whole group, not just single-player. Host-only
+decision (`HordeGooseManager` is host-authoritative for wave state, same as everywhere else) via
+the same `resetToWaveOne()` single-player already used, triggered from two sites depending on who
+died - the host's own death takes the direct path in `update()`'s wasDead block, a guest's death is
+picked up in the `playerDied` message handler (host-only branch), mirroring the exact asymmetry
+already established for the ambient-goose-on-death spawn trigger elsewhere in this file
+("this message never loops back to its own sender").
+
+New `hordeReset` message (host -> everyone broadcast, sent from `resetToWaveOne()` itself via a new
+`onNetworkReset` callback) - without it, a reset would only clear the *host's* authoritative geese;
+each guest's own follower mirrors of whatever was mid-wave would keep existing on their screen with
+nothing to remove them until they happened to get shot or reach a player. `HordeGooseManager.
+applyReset()` (follower side) clears a guest's local flock immediately on receipt, right before the
+same reset's own fresh `hordeGooseSpawned`/`hordeWaveStarted` broadcasts repopulate wave 1.
 

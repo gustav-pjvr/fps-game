@@ -29,6 +29,9 @@ export interface HordeGooseManagerCallbacks {
   onNetworkRemove?: (id: string) => void;
   onNetworkWaveStart?: (wave: number) => void;
   onNetworkCleared?: () => void;
+  /** Any player's death restarted the whole co-op run from wave 1 - host-only broadcast, sent
+   * right before the fresh wave 1's own onWaveStart/onNetworkWaveStart fire (see resetToWaveOne). */
+  onNetworkReset?: () => void;
   /** Follower side only (guest): a local hit landed on a goose this client doesn't have final say
    * over - see GooseManager's identical contract. */
   onLocalHitReported?: (id: string) => void;
@@ -150,13 +153,15 @@ export class HordeGooseManager {
     this.geese.get(id)?.takeDamage(0, -1);
   }
 
-  /** Single-player only (see Game.ts's resetPlay): dying to the horde restarts the whole challenge
-   * from wave 1, per explicit user request - clears every currently-live goose immediately (no
+  /** Any player's death restarts the whole co-op run from wave 1, per explicit user request
+   * (single-player: see Game.ts's resetPlay; multiplayer: host-only, called for any player's
+   * death - see Game.ts's playerDied handling) - clears every currently-live goose immediately (no
    * carrying a partial wave into the restart) and begins wave 1 right away, no intermission. A
-   * no-op if this manager isn't authoritative (shouldn't be reachable - single-player is always
-   * authoritative - but defensive all the same). */
+   * no-op if this manager isn't authoritative - single-player is always authoritative, and only the
+   * host ever calls this in multiplayer, but defensive all the same. */
   resetToWaveOne(): void {
     if (!this.isAuthoritative) return;
+    this.callbacks.onNetworkReset?.();
     for (const goose of this.geese.values()) {
       this.scene.remove(goose.mesh);
       goose.dispose();
@@ -167,6 +172,18 @@ export class HordeGooseManager {
     this.spawnQueueRemaining = 0;
     this.intermissionTimer = 0;
     this.beginWave();
+  }
+
+  /** Follower side only (guest): the host just reset the whole run to wave 1 - clears every local
+   * follower goose immediately so nothing stale lingers on screen; the host's own fresh
+   * hordeGooseSpawned/hordeWaveStarted broadcasts (from its own resetToWaveOne/beginWave) repopulate
+   * it right after. */
+  applyReset(): void {
+    for (const goose of this.geese.values()) {
+      this.scene.remove(goose.mesh);
+      goose.dispose();
+    }
+    this.geese.clear();
   }
 
   private beginWave(): void {
