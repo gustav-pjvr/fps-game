@@ -11,6 +11,7 @@ import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import { buildGooseMesh } from '../entities/Goose.ts';
 import { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
 import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
+import { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { WatchTowerManager } from '../world/WatchTowerManager.ts';
@@ -34,6 +35,7 @@ import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
 import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
+import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { Minimap } from '../ui/minimap.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
@@ -62,6 +64,10 @@ import {
   GOOSE_TOSS_MAX_CONCURRENT,
   GOOSE_TOSS_SPAWN_INTERVAL_SECONDS,
   DEFAULT_MATCH_WEATHER,
+  GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH,
+  GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE,
+  GOOSE_LAUNCHER_EXPLOSION_RADIUS,
+  GOOSE_LAUNCHER_PROJECTILE_SPEED,
   HORDE_GOOSE_EXPLOSION_MAX_DAMAGE,
   HORDE_GOOSE_EXPLOSION_RADIUS,
   HORDE_GOOSE_KNOCKBACK_STRENGTH,
@@ -389,7 +395,9 @@ export class Game {
     private readonly gooseManager: GooseManager,
     private readonly goldenGooseManager: GoldenGooseManager | null,
     private readonly hordeGooseManager: HordeGooseManager | null,
+    private readonly bonusGooseManager: BonusGooseManager | null,
     private readonly gooseAnnouncement: GooseAnnouncement,
+    private readonly bigAnnouncement: BigAnnouncement,
     private readonly explosionEffect: ExplosionEffect,
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
@@ -673,6 +681,35 @@ export class Game {
       (weaponId) => sound.playReloadClick(weaponId),
       (distance) => longShotCallout.show(distance),
       (point) => muzzleFlash.spawn(point),
+      // Goose Launcher's isProjectile firing path (see WeaponManager.fireShot) - spawns a real
+      // ballistic ThrownGoose instead of instant hitscan, reusing the exact same thrownGeese map/
+      // updateThrownGeese loop Goose Toss's pickup-and-throw already uses (see ThrownGoose.ts's
+      // class comment on why the two share one plumbing). `game` isn't assigned in this outer scope
+      // until after this whole call resolves, but this callback only ever fires later during
+      // gameplay - same forward-reference pattern the fireEvent callback above already relies on.
+      (origin, _muzzleWorld, direction) => {
+        const id = crypto.randomUUID();
+        const spawnPoint = origin.clone().addScaledVector(direction, 0.6);
+        const velocity = direction.clone().multiplyScalar(GOOSE_LAUNCHER_PROJECTILE_SPEED);
+        const ownSlot = multiplayer?.ownSlot ?? null;
+        const thrown = new ThrownGoose(id, ownSlot, 'gooseLauncher', spawnPoint, velocity);
+        renderer.scene.add(thrown.mesh);
+        game.thrownGeese.set(id, thrown);
+        if (multiplayer) {
+          multiplayer.connection.send({
+            type: 'gooseThrown',
+            senderSlot: multiplayer.ownSlot,
+            id,
+            originX: spawnPoint.x,
+            originY: spawnPoint.y,
+            originZ: spawnPoint.z,
+            velX: velocity.x,
+            velY: velocity.y,
+            velZ: velocity.z,
+            source: 'gooseLauncher',
+          });
+        }
+      },
       loadout.damageOverrides,
     );
 
@@ -715,6 +752,7 @@ export class Game {
     }
 
     const gooseAnnouncement = new GooseAnnouncement(hudRoot);
+    const bigAnnouncement = new BigAnnouncement(hudRoot);
     const explosionEffect = new ExplosionEffect(renderer.scene);
     // Single-player and the multiplayer host run every goose authoritative (see GooseManager's
     // class comment); a guest only ever mirrors what the host broadcasts, never spawns/adjudicates
@@ -796,6 +834,39 @@ export class Game {
           0,
           0,
           !multiplayer || multiplayer.role === 'host',
+        )
+      : null;
+
+    // Bonus golden goose - every mode except Goose Toss (per explicit user request "add golden
+    // goose to multiplayer and solo play"; Goose Toss's unarmed loadout has no way to shoot
+    // anything at all, so it's excluded rather than spawning something unreachable). Single-player
+    // and the multiplayer host run the spawn-timer/hit-attribution state machine themselves; a
+    // guest is a pure follower (see BonusGooseManager's own isAuthoritative comment).
+    const isBonusGooseEnabled = multiplayer?.gameMode !== 'gooseToss';
+    const bonusGooseManager = isBonusGooseEnabled
+      ? new BonusGooseManager(
+          renderer.scene,
+          physics,
+          {
+            onSpawned: () => bigAnnouncement.show('A GOLDEN GOOSE HAS APPEARED!'),
+            onKilled: (killerSlot) => {
+              // null killerSlot only in single-player (no slot concept) - always this client there.
+              const isMine = !multiplayer || killerSlot === multiplayer.ownSlot;
+              if (!isMine) return;
+              gooseAnnouncement.show('You claimed the Goose Launcher!');
+              void weaponManager.grantBonusWeapon('gooseLauncher', weaponManager.activeWeaponId);
+            },
+            onNetworkSpawn:
+              multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'bonusGooseSpawned', id, x, y, z }) : undefined,
+            onNetworkSnapshot:
+              multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'bonusGooseSnapshot', id, x, y, z }) : undefined,
+            onNetworkKilled:
+              multiplayer?.role === 'host' ? (killerSlot) => multiplayer.connection.send({ type: 'bonusGooseKilled', killerSlot }) : undefined,
+            onLocalHitReported:
+              multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'bonusGooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
+          },
+          !multiplayer || multiplayer.role === 'host',
+          multiplayer?.ownSlot ?? null,
         )
       : null;
 
@@ -905,7 +976,9 @@ export class Game {
       gooseManager,
       goldenGooseManager,
       hordeGooseManager,
+      bonusGooseManager,
       gooseAnnouncement,
+      bigAnnouncement,
       explosionEffect,
       hud,
       hotbar,
@@ -1129,16 +1202,17 @@ export class Game {
               // spawned its local copy before sending this (see updateGooseToss).
               const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
               const velocity = new THREE.Vector3(message.velX, message.velY, message.velZ);
-              const thrown = new ThrownGoose(message.id, senderSlot, origin, velocity);
+              const thrown = new ThrownGoose(message.id, senderSlot, message.source, origin, velocity);
               renderer.scene.add(thrown.mesh);
               game.thrownGeese.set(message.id, thrown);
               break;
             }
             case 'gooseThrowExploded': {
               // VFX/sound only - damage was already applied by the thrower via ordinary
-              // damageEvent messages (see resolveGooseTossExplosion), so this must NOT re-apply it.
+              // damageEvent messages (see resolveThrownGooseExplosion), so this must NOT re-apply it.
               const position = new THREE.Vector3(message.x, message.y, message.z);
-              explosionEffect.spawn(position, GOOSE_TOSS_EXPLOSION_RADIUS);
+              const explosionRadius = message.source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_RADIUS : GOOSE_TOSS_EXPLOSION_RADIUS;
+              explosionEffect.spawn(position, explosionRadius);
               sound.playExplosion(enemyGunshotVolume(position.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, position));
               const thrown = game.thrownGeese.get(message.id);
               if (thrown) {
@@ -1174,6 +1248,19 @@ export class Game {
               break;
             case 'hordeGooseRemoved':
               game.hordeGooseManager?.applyRemove(message.id);
+              break;
+            case 'bonusGooseSpawned':
+              game.bonusGooseManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z);
+              break;
+            case 'bonusGooseSnapshot':
+              game.bonusGooseManager?.applyRemoteSnapshot(message.id, message.x, message.z);
+              break;
+            case 'bonusGooseHitEvent':
+              // Guest -> host only (see protocol.ts) - a guest's own connection never receives this.
+              if (activeMultiplayer.session.role === 'host') game.bonusGooseManager?.registerRemoteHit(senderSlot);
+              break;
+            case 'bonusGooseKilled':
+              game.bonusGooseManager?.applyKilled(message.killerSlot);
               break;
             case 'hordeWaveStarted':
               gooseAnnouncement.show(`Wave ${message.wave} incoming...`);
@@ -1287,10 +1374,12 @@ export class Game {
     this.longShotCallout.dispose();
     this.killFeed.dispose();
     this.gooseAnnouncement.dispose();
+    this.bigAnnouncement.dispose();
     this.explosionEffect.dispose();
     this.gooseManager.dispose();
     this.goldenGooseManager?.dispose();
     this.hordeGooseManager?.dispose();
+    this.bonusGooseManager?.dispose();
     for (const thrown of this.thrownGeese.values()) thrown.dispose(this.renderer.scene);
     this.thrownGeese.clear();
     if (this.heldGooseViewModel) this.renderer.camera.remove(this.heldGooseViewModel);
@@ -1574,6 +1663,9 @@ export class Game {
         this.hordeGooseManager.update(dt, targets, this.multiplayer?.session.role === 'host');
       }
 
+      // Bonus golden goose - no-op for a follower (guest) manager, same reasoning as above.
+      this.bonusGooseManager?.update(dt, this.multiplayer?.session.role === 'host');
+
       // Goose Toss's constant ambient supply (per user request - "many, many geese... spawned
       // across the map constantly"), independent of the normal spawn-on-death trigger above.
       // Host-only, same authority rule as every other goose spawn path.
@@ -1600,6 +1692,7 @@ export class Game {
     this.longShotCallout.update(dt);
     this.killFeed.update(dt);
     this.gooseAnnouncement.update(dt);
+    this.bigAnnouncement.update(dt);
     this.explosionEffect.update(dt);
     this.updateMultiplayer(dt);
 
@@ -1853,7 +1946,7 @@ export class Game {
     origin.addScaledVector(direction, 0.6);
     const velocity = direction.clone().multiplyScalar(GOOSE_THROW_SPEED);
 
-    const thrown = new ThrownGoose(id, ownSlot, origin, velocity);
+    const thrown = new ThrownGoose(id, ownSlot, 'gooseToss', origin, velocity);
     this.renderer.scene.add(thrown.mesh);
     this.thrownGeese.set(id, thrown);
 
@@ -1867,6 +1960,7 @@ export class Game {
       velX: velocity.x,
       velY: velocity.y,
       velZ: velocity.z,
+      source: 'gooseToss',
     });
   }
 
@@ -1923,7 +2017,11 @@ export class Game {
    * message/relay-hop race shouldn't leave an orphaned goose flying forever). */
   private updateThrownGeese(dt: number): void {
     if (this.thrownGeese.size === 0) return;
-    const ownSlot = this.multiplayer?.session.ownSlot;
+    // null (not undefined) for single-player, matching ThrownGoose.throwerSlot's own null sentinel
+    // for a single-player Goose Launcher shot - `undefined !== null` would otherwise misclassify a
+    // single-player's own throw as "someone else's," skipping the authoritative resolution branch
+    // below entirely.
+    const ownSlot = this.multiplayer?.session.ownSlot ?? null;
 
     for (const thrown of Array.from(this.thrownGeese.values())) {
       thrown.update(dt);
@@ -1952,40 +2050,54 @@ export class Game {
       }
 
       if (hitPosition) {
-        this.resolveGooseTossExplosion(hitPosition, thrown.throwerSlot);
+        this.resolveThrownGooseExplosion(hitPosition, thrown.throwerSlot, thrown.source);
         thrown.dispose(this.renderer.scene);
         this.thrownGeese.delete(thrown.id);
-        this.multiplayer?.session.connection.send({ type: 'gooseThrowExploded', id: thrown.id, x: hitPosition.x, y: hitPosition.y, z: hitPosition.z });
+        this.multiplayer?.session.connection.send({
+          type: 'gooseThrowExploded',
+          id: thrown.id,
+          x: hitPosition.x,
+          y: hitPosition.y,
+          z: hitPosition.z,
+          source: thrown.source,
+        });
       }
     }
   }
 
-  /** Fixed blast size (per explicit user request - Goose Toss deliberately ignores the host's
-   * chosen goose-explosion-difficulty setting, unlike every other mode/trigger). Applies splash
-   * damage to whichever players are actually within range: self-applied directly if this client's
-   * own player is in range (every client stays authoritative over its own health, same as
-   * everywhere else in this protocol), and via an ordinary DamageEventMessage to any opponent in
-   * range - reusing the exact same message the shooter of a normal weapon hit already sends, so
-   * kill credit flows through the existing playerDied/scoreboard pipeline unchanged (per explicit
-   * user request: unlike a wandering goose's own death, dying to a Goose Toss throw DOES count). */
-  private resolveGooseTossExplosion(position: THREE.Vector3, throwerSlot: PlayerSlot): void {
-    this.explosionEffect.spawn(position, GOOSE_TOSS_EXPLOSION_RADIUS);
+  /** Shared by Goose Toss's thrown geese and the Goose Launcher weapon's shots (see ThrownGoose.ts's
+   * class comment) - fixed blast size per `source` (per explicit user request, Goose Toss
+   * deliberately ignores the host's chosen goose-explosion-difficulty setting, unlike every other
+   * mode/trigger; the launcher has its own separate, deliberately powerful constants - see
+   * config.ts's GOOSE_LAUNCHER_* comment). Applies splash damage to whichever players are actually
+   * within range: self-applied directly if this client's own player is in range (every client stays
+   * authoritative over its own health, same as everywhere else in this protocol), and via an
+   * ordinary DamageEventMessage to any opponent in range - reusing the exact same message the
+   * shooter of a normal weapon hit already sends, so kill credit flows through the existing
+   * playerDied/scoreboard pipeline unchanged (per explicit user request: unlike a wandering goose's
+   * own death, dying to either of these DOES count). */
+  private resolveThrownGooseExplosion(position: THREE.Vector3, throwerSlot: PlayerSlot | null, source: 'gooseToss' | 'gooseLauncher'): void {
+    const radius = source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_RADIUS : GOOSE_TOSS_EXPLOSION_RADIUS;
+    const maxDamage = source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE : GOOSE_TOSS_EXPLOSION_MAX_DAMAGE;
+    const knockbackStrength = source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH : GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH;
+
+    this.explosionEffect.spawn(position, radius);
     this.sound.playExplosion(
       enemyGunshotVolume(position.distanceTo(this.player.position)),
       computeStereoPan(this.player.position, this.player.facingYaw, position),
     );
 
     const selfDistance = position.distanceTo(this.player.position);
-    const selfDamage = computeExplosionDamage(selfDistance, GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_MAX_DAMAGE);
+    const selfDamage = computeExplosionDamage(selfDistance, radius, maxDamage);
     if (selfDamage > 0) this.player.takeDamage(selfDamage);
-    const knockback = computeKnockbackStrength(selfDistance, GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH);
+    const knockback = computeKnockbackStrength(selfDistance, radius, knockbackStrength);
     if (knockback > 0) {
       this.player.applyKnockback(this.player.position.clone().sub(position), knockback);
     }
 
-    if (!this.multiplayer) return;
+    if (!this.multiplayer || throwerSlot === null) return;
     for (const opponent of this.multiplayer.opponents.values()) {
-      const amount = computeExplosionDamage(position.distanceTo(opponent.remotePlayer.position), GOOSE_TOSS_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_MAX_DAMAGE);
+      const amount = computeExplosionDamage(position.distanceTo(opponent.remotePlayer.position), radius, maxDamage);
       if (amount > 0) {
         this.multiplayer.session.connection.send({ type: 'damageEvent', senderSlot: throwerSlot, targetSlot: opponent.slot, amount });
       }

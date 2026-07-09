@@ -3,12 +3,16 @@ import { buildGooseMesh } from './Goose.ts';
 import { GRAVITY } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 
-/** A goose in ballistic flight after being thrown (Goose Toss mode - see Game.ts's
- * updateGooseToss). Purely a visual/kinematic projectile, no collider/AI, distinct from the
- * wandering Goose entity it was picked up from (which is already removed from GooseManager by the
- * time this exists). Position integrates via plain velocity + GRAVITY each tick; deciding when it
- * has "landed" (ground/player contact) is the caller's job, not this class's - it only knows how
- * to move and render itself. */
+/** A goose in ballistic flight after being thrown (Goose Toss mode's pickup-and-throw, or the
+ * Goose Launcher weapon's shots - see Game.ts's updateGooseToss/updateThrownGeese and
+ * WeaponManager's isProjectile firing path) - one shared class/message pair/update loop for both,
+ * since they're mechanically the same "a goose flies under gravity and explodes on contact,"
+ * distinguished only by `source` (which balance constants and reward path apply on landing).
+ * Purely a visual/kinematic projectile, no collider/AI, distinct from the wandering Goose entity a
+ * Goose Toss throw was picked up from (already removed from GooseManager by the time this exists).
+ * Position integrates via plain velocity + GRAVITY each tick; deciding when it has "landed"
+ * (ground/player contact) is the caller's job, not this class's - it only knows how to move and
+ * render itself. */
 export class ThrownGoose {
   readonly mesh: THREE.Group;
   readonly position = new THREE.Vector3();
@@ -17,10 +21,12 @@ export class ThrownGoose {
 
   constructor(
     readonly id: string,
-    /** Whoever threw this - only meaningful on the thrower's own client, which is the sole
-     * authority for this goose's flight (see updateGooseToss's ownership check). Carried through
+    /** Whoever fired/threw this - null only for a single-player Goose Launcher shot (no slot
+     * concept outside multiplayer). Only meaningful on the thrower's own client, which is the sole
+     * authority for this goose's flight (see updateThrownGeese's ownership check). Carried through
      * to a damageEvent's senderSlot if it hits an opponent. */
-    readonly throwerSlot: PlayerSlot,
+    readonly throwerSlot: PlayerSlot | null,
+    readonly source: 'gooseToss' | 'gooseLauncher',
     origin: THREE.Vector3,
     initialVelocity: THREE.Vector3,
   ) {

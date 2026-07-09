@@ -33,6 +33,14 @@ export interface WeaponDefinition {
   /** Max hitscan distance - only meaningful for melee; ranged weapons share WeaponManager's
    * HITSCAN_RANGE constant instead. */
   readonly range?: number;
+  /** Fires a real ballistic projectile (a ThrownGoose) instead of instant hitscan - see
+   * WeaponManager.fireShot's isProjectile branch. Currently only the Goose Launcher reward weapon. */
+  readonly isProjectile?: boolean;
+  /** `startReload` always fails for this weapon (see Weapon.ts) - once its magazine empties it
+   * cannot be refilled, only replaced. Currently only the Goose Launcher, which WeaponManager
+   * automatically swaps back out for the player's previous weapon the moment it empties (see
+   * grantBonusWeapon). */
+  readonly disableReload?: boolean;
 }
 
 export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
@@ -166,5 +174,33 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     barrelLength: 0,
     kind: 'melee',
     range: 0.01,
+  },
+  /** Reward for landing the killing hit on the bonus golden goose (see entities/BonusGooseManager.ts)
+   * - granted instantly via WeaponManager.grantBonusWeapon, never a starting/pickable loadout entry
+   * in FIXED_LOADOUTS. Fires a real ballistic projectile (isProjectile, see WeaponManager.fireShot)
+   * rather than instant hitscan - `damage` itself is unused (the projectile's explosion damage
+   * comes from GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE in config.ts instead, same split Goose Toss's
+   * thrown geese already use). Exactly 4 shots, disableReload - once empty, WeaponManager reverts
+   * to whatever was equipped before automatically. */
+  gooseLauncher: {
+    id: 'gooseLauncher',
+    name: 'Goose Launcher',
+    description: 'Four honks. Zero mercy.',
+    damage: 0,
+    fireRate: 1.4,
+    magazineSize: 4,
+    reloadTime: 0,
+    disableReload: true,
+    spreadRadians: 0,
+    recoilKick: 0.05,
+    adsFov: CAMERA_FOV,
+    adsSpreadMultiplier: 1,
+    hasScope: false,
+    automatic: false,
+    pelletCount: 1,
+    viewModelColor: 0xd4af37,
+    barrelLength: 0.6,
+    kind: 'ranged',
+    isProjectile: true,
   },
 };

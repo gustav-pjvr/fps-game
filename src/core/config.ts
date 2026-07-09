@@ -519,6 +519,34 @@ export const HORDE_GOOSE_KNOCKBACK_STRENGTH = 10;
  * immediate view but well within chase range. */
 export const HORDE_GOOSE_SPAWN_RADIUS = 30;
 
+/** Bonus "golden goose" - single-player and multiplayer alike (every mode except Goose Toss, whose
+ * unarmed loadout has no way to shoot it at all - see Game.ts's isBonusGooseEnabled check). Exactly
+ * one lives on the map at a time: spawns at a random point after a random delay, and once it's
+ * killed (still GOOSE_HITS_TO_KILL hits, like any wandering goose - no explosion/damage on death,
+ * this is a reward not a hazard), a fresh random delay starts before the next one appears. Whoever
+ * lands the FINAL hit is rewarded with the Goose Launcher weapon (see the GOOSE_LAUNCHER_* block
+ * below and weapons/definitions.ts). */
+export const BONUS_GOOSE_MIN_RESPAWN_DELAY_SECONDS = 45;
+export const BONUS_GOOSE_MAX_RESPAWN_DELAY_SECONDS = 120;
+/** Random spawn point is drawn uniformly within this radius of the map center - deliberately not
+ * tied to any player's current position, so it can turn up anywhere already-explored or not. */
+export const BONUS_GOOSE_SPAWN_RADIUS = 55;
+export const BONUS_GOOSE_TINT = 0xffd54a;
+
+/** Goose Launcher - the reward for landing the killing hit on the bonus goose above. Exactly 4
+ * shots and no reload (`disableReload` on its WeaponDefinition - see weapons/Weapon.ts); once
+ * empty, WeaponManager automatically reverts to whatever weapon was equipped before the goose was
+ * killed (see WeaponManager.grantBonusWeapon). Each shot is a real ballistic projectile (reusing
+ * ThrownGoose, tagged with a 'gooseLauncher' source - see Game.ts's updateThrownGeese), not instant
+ * hitscan like every other gun - WeaponDefinition.isProjectile routes WeaponManager.fireShot() into
+ * a projectile spawn instead of the normal per-pellet hitscan loop. Deliberately powerful (a near-
+ * guaranteed kill within its blast radius) since it's a rare, hard-earned, strictly limited reward,
+ * not a weapon anyone starts a match with. */
+export const GOOSE_LAUNCHER_PROJECTILE_SPEED = 24;
+export const GOOSE_LAUNCHER_EXPLOSION_RADIUS = 6;
+export const GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE = 110;
+export const GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH = 18;
+
 export const PLAYER_HEALTH = 100;
 
 export const HIT_MARKER_DURATION = 0.2;

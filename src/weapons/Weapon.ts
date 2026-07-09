@@ -57,9 +57,10 @@ export class Weapon {
     return true;
   }
 
-  /** Returns whether a reload actually began (false if already reloading or magazine already full). */
+  /** Returns whether a reload actually began (false if already reloading, magazine already full,
+   * or the weapon has disableReload set - see WeaponDefinition.disableReload). */
   startReload(): boolean {
-    if (this.reloading || this.ammoInMagazine === this.definition.magazineSize) return false;
+    if (this.definition.disableReload || this.reloading || this.ammoInMagazine === this.definition.magazineSize) return false;
     this.reloading = true;
     this.reloadTimeRemaining = this.definition.reloadTime;
     return true;

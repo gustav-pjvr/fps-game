@@ -61,6 +61,11 @@ export class WeaponManager {
    * is currently held) and only cleared once fire is actually released, so the newly-drawn weapon
    * always needs a fresh press before it can fire. */
   private fireLockedUntilRelease = false;
+  /** Set by grantBonusWeapon (the Goose Launcher reward) - the weapon id to swap back to once the
+   * active (disableReload) weapon's magazine hits 0, checked at the end of every update() tick.
+   * Cleared the instant the revert is kicked off (before the async rebuild resolves) so a slow
+   * asset load can't re-trigger this on a later frame. */
+  private pendingRestoreId: string | null = null;
 
   /** Weapon sway (VISUAL_REALISM.md §6) - the view model lags behind the camera's own look
    * rotation instead of being rigidly bolted to it. Tracked as yaw/pitch deltas between ticks
@@ -84,6 +89,9 @@ export class WeaponManager {
     private readonly onReloadStart: (weaponId: string) => void,
     private readonly onLongShot: (distance: number) => void,
     private readonly onMuzzleFlash: (point: THREE.Vector3) => void,
+    /** Fires instead of the normal per-pellet hitscan loop for a weapon with isProjectile set (see
+     * definitions.ts's WeaponDefinition.isProjectile) - currently only the Goose Launcher. */
+    private readonly onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -101,6 +109,7 @@ export class WeaponManager {
     onReloadStart: (weaponId: string) => void,
     onLongShot: (distance: number) => void,
     onMuzzleFlash: (point: THREE.Vector3) => void,
+    onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
     /** Per-match damage overrides keyed by weapon id (see core/gameModes.ts) - e.g. Sniper Duel's
      * sniper or 1 Shot 1 Kill's pistol guaranteeing a 1-hit kill. Absent/undefined for the default
      * mode, which uses every weapon's own base `definition.damage` unmodified. */
@@ -121,6 +130,7 @@ export class WeaponManager {
       onReloadStart,
       onLongShot,
       onMuzzleFlash,
+      onProjectileFire,
     );
   }
 
@@ -158,6 +168,14 @@ export class WeaponManager {
     // Same phantom-fire guard as beginSwitch - a kill upgrade can land while the player is still
     // holding fire from the kill itself, and the fresh weapon shouldn't inherit that as a press.
     this.fireLockedUntilRelease = true;
+  }
+
+  /** The bonus golden-goose reward (see entities/BonusGooseManager.ts) - same hard-swap shape as
+   * replaceActiveWeapon, but also remembers `restoreId` so update() can automatically swap back to
+   * it the instant the bonus weapon's magazine empties (see the disableReload check there). */
+  async grantBonusWeapon(bonusId: string, restoreId: string): Promise<void> {
+    await this.replaceActiveWeapon(bonusId);
+    this.pendingRestoreId = restoreId;
   }
 
   private get active(): WeaponSlot {
@@ -235,6 +253,15 @@ export class WeaponManager {
     }
     if (input.consumeJustPressed('reload') && this.active.weapon.startReload()) {
       this.onReloadStart(this.active.weapon.definition.id);
+    }
+
+    // The Goose Launcher (or any future disableReload weapon) disappears the instant its magazine
+    // empties - see grantBonusWeapon. Cleared before the async rebuild starts so a slow asset load
+    // can't re-trigger this next frame.
+    if (this.pendingRestoreId !== null && this.active.weapon.definition.disableReload && this.active.weapon.ammo <= 0) {
+      const restoreId = this.pendingRestoreId;
+      this.pendingRestoreId = null;
+      void this.replaceActiveWeapon(restoreId);
     }
   }
 
@@ -341,7 +368,7 @@ export class WeaponManager {
 
   /** One trigger pull - fires pelletCount independent rays (shotguns; 1 for everything else) but a single recoil kick. */
   private fireShot(player: Player): void {
-    const { pelletCount, recoilKick, kind } = this.active.weapon.definition;
+    const { pelletCount, recoilKick, kind, isProjectile } = this.active.weapon.definition;
 
     // camera has no parent, so .position IS the world position - avoids reading a stale
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
@@ -352,8 +379,13 @@ export class WeaponManager {
       .applyQuaternion(this.camera.quaternion)
       .add(origin);
 
-    for (let i = 0; i < pelletCount; i++) {
-      this.firePellet(origin, muzzleWorld, player.ownCollider);
+    if (isProjectile) {
+      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+      this.onProjectileFire(origin, muzzleWorld, direction);
+    } else {
+      for (let i = 0; i < pelletCount; i++) {
+        this.firePellet(origin, muzzleWorld, player.ownCollider);
+      }
     }
 
     this.onFire(this.active.weapon.definition.id);

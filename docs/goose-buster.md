@@ -159,3 +159,51 @@ not yet performed by me for this round - worth doing before considering this bat
 off, per this project's own established preference for live verification over trusting green
 tests/build alone on gameplay-feel features.
 
+## Bonus golden goose + Goose Launcher (v3.4.0)
+
+Per user request: a single rare "golden goose" - single-player and every multiplayer mode except
+Goose Toss (unarmed, nothing to shoot it with) - that spawns at a random point after a random delay
+(`BONUS_GOOSE_MIN/MAX_RESPAWN_DELAY_SECONDS` in `config.ts`), announced with a big center-screen
+banner (new `ui/bigAnnouncement.ts`, distinct from the small top-center `GooseAnnouncement` toast
+used for routine spawns). Still takes `GOOSE_HITS_TO_KILL` (2) hits like any wandering goose, but
+doesn't explode or deal damage on death - it's a reward mechanic, not a hazard.
+
+**Hit attribution is the actual new problem this needed to solve.** Every existing goose (normal,
+Horde) only ever needed a hit *count* - who fired which hit never mattered. This one needs to
+remember *which slot* landed the *final* hit specifically, so the right player gets the reward when
+two different players land the two hits. `entities/BonusGooseManager.ts` solves this by reusing the
+plain wandering `Goose` class's existing "follower" hit-report callback *unconditionally*, even on
+the authoritative side - normally that callback is guest-only (a follower goose reports a hit for
+the host to adjudicate instead of deciding death itself), but repurposing it universally means
+`Goose.takeDamage` never decides death on its own here; it just reports "a local hit landed," and
+`BonusGooseManager` is the one place that counts hits *and* records `lastHitSlot` before deciding
+death - so attribution is never lost, whether the hit was the local authoritative player's own shot
+or a guest's remotely-reported one. Multiplayer host-authoritative sync mirrors GooseManager's
+proven spawn/snapshot/hit/killed pattern (`bonusGooseSpawned`/`bonusGooseSnapshot`/
+`bonusGooseHitEvent`/`bonusGooseKilled`), with `killerSlot` carried on the kill broadcast so every
+client (including the host's own) can locally decide "is this my reward."
+
+**Goose Launcher** (`weapons/definitions.ts`) is the reward - a real ballistic projectile weapon,
+not instant hitscan like every other gun. Rather than build a second projectile system, it reuses
+`ThrownGoose` (previously Goose Toss-only) directly: `ThrownGoose`/`GooseThrownMessage`/
+`GooseThrowExplodedMessage` all gained a `source: 'gooseToss' | 'gooseLauncher'` field so one
+shared class/message pair/`updateThrownGeese` loop serves both triggers, distinguished only by
+which balance constants and reward path apply on landing (`resolveGooseTossExplosion` renamed to
+`resolveThrownGooseExplosion` accordingly). `WeaponDefinition` gained two new generic flags for
+this: `isProjectile` (routes `WeaponManager.fireShot()` into a projectile spawn instead of the
+normal per-pellet hitscan loop) and `disableReload` (`Weapon.startReload()` always fails) - both
+written as generic weapon-level flags, not goose-launcher-specific branches, in case a future
+weapon wants either behavior independently. `WeaponManager.grantBonusWeapon(bonusId, restoreId)`
+hard-swaps the active slot (same shape as Gun Game's `replaceActiveWeapon`) and remembers
+`restoreId`; `update()` checks every tick for "active weapon has disableReload and 0 ammo" and
+auto-reverts, so the launcher disappears the instant its 4th shot fires with no manual step. Kills
+with it flow through the exact same `damageEvent`→`playerDied`→`applyPlayerDied` pipeline Goose
+Toss's throws already use (per explicit user request: unlike an ordinary field goose, dying to a
+Launcher shot DOES count toward the shooter's score).
+
+**Verification:** `npx tsc --noEmit` clean, full `npm run test:unit` suite green, `npm run build`
+succeeds. Not yet live-playtested (single-player golden-goose-kill-to-launcher flow, and a
+2-browser multiplayer session confirming correct kill-hit-attribution when two players land the two
+hits) - same "trust the user's live test over assuming from a clean build" pattern as every other
+gameplay-feel feature in this project.
+

@@ -295,6 +295,12 @@ export interface GooseThrownMessage {
   velX: number;
   velY: number;
   velZ: number;
+  /** Which balance/explosion constants and reward path this projectile uses on landing (see
+   * Game.ts's updateThrownGeese/resolveThrownGooseExplosion) - 'gooseLauncher' for the bonus-goose
+   * reward weapon's shots, reusing this same message/entity rather than duplicating a whole second
+   * ballistic-projectile plumbing for what is mechanically the same "a goose flies and explodes"
+   * shape. */
+  source: 'gooseToss' | 'gooseLauncher';
 }
 
 /** Goose Toss mode only: the thrower's own client decided this thrown goose just made contact
@@ -308,6 +314,7 @@ export interface GooseThrowExplodedMessage {
   x: number;
   y: number;
   z: number;
+  source: 'gooseToss' | 'gooseLauncher';
 }
 
 /** King of the Hill mode only: `senderSlot` just claimed the (unheld) golden goose with the
@@ -399,6 +406,43 @@ export interface HordeClearedMessage {
   type: 'hordeCleared';
 }
 
+/** Bonus goose (single-player and multiplayer, every mode except Goose Toss - see config.ts's
+ * BONUS_GOOSE_* comment). Host -> everyone (broadcast, never relayed - host-authored): a new bonus
+ * goose exists. Mirrors GooseSpawnedMessage exactly. */
+export interface BonusGooseSpawnedMessage {
+  type: 'bonusGooseSpawned';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface BonusGooseSnapshotMessage {
+  type: 'bonusGooseSnapshot';
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Guest -> host only, mirrors GooseHitEventMessage - a guest's own local hitscan can land a hit on
+ * its follower copy, but only the host decides when the goose actually dies and who gets credit for
+ * the final hit. */
+export interface BonusGooseHitEventMessage {
+  type: 'bonusGooseHitEvent';
+  senderSlot: PlayerSlot;
+  id: string;
+}
+
+/** Host -> everyone: the bonus goose just died - `killerSlot` is whoever landed the final hit (the
+ * host's own slot if it was the host's shot), null only in the theoretically-unreachable case of no
+ * attribution. Every client removes its own copy and, if `killerSlot` is its own slot, immediately
+ * equips the Goose Launcher (see Game.ts's onMessage handling and WeaponManager.grantBonusWeapon). */
+export interface BonusGooseKilledMessage {
+  type: 'bonusGooseKilled';
+  killerSlot: PlayerSlot | null;
+}
+
 export type NetworkMessage =
   | HelloMessage
   | WelcomeMessage
@@ -431,7 +475,11 @@ export type NetworkMessage =
   | HordeGooseExplodedMessage
   | HordeGooseRemovedMessage
   | HordeWaveStartedMessage
-  | HordeClearedMessage;
+  | HordeClearedMessage
+  | BonusGooseSpawnedMessage
+  | BonusGooseSnapshotMessage
+  | BonusGooseHitEventMessage
+  | BonusGooseKilledMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -466,6 +514,10 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hordeGooseRemoved',
   'hordeWaveStarted',
   'hordeCleared',
+  'bonusGooseSpawned',
+  'bonusGooseSnapshot',
+  'bonusGooseHitEvent',
+  'bonusGooseKilled',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

@@ -10,7 +10,25 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.3.1 (current)
+## v3.4.0 (current)
+
+- Added the bonus "golden goose" - single-player and multiplayer alike, every mode except Goose
+  Toss (whose unarmed loadout has no way to shoot it). Exactly one lives on the map at a time,
+  spawning at a random point after a random delay, with a big center-screen banner announcing it.
+  It still takes 2 hits to kill like any wandering goose, but doesn't explode or deal damage on
+  death - instead, whoever lands the FINAL hit is instantly equipped with a new weapon: the Goose
+  Launcher. In multiplayer, hit attribution is tracked properly even when two different players
+  land the two hits - only the second (killing) shot's player gets the reward.
+- Added the Goose Launcher: a real ballistic weapon (not instant hitscan) that fires exploding
+  geese, reusing the same flight/explosion machinery Goose Toss's pickup-and-throw already proved
+  out. Exactly 4 shots, no reload - once empty, it automatically disappears and whatever weapon was
+  equipped before returns. Deliberately powerful (a near-guaranteed kill within its blast radius),
+  since it's a rare, hard-earned, strictly limited reward. Kills with it count toward the shooter's
+  score in multiplayer through the normal damage/kill-credit pipeline, exactly like a Goose Toss
+  throw - but (per explicit design intent) dying to an ordinary wandering goose on the field still
+  never counts, unchanged.
+
+## v3.3.1
 
 - Fixed a real bug: switching weapons (scroll wheel or number key) could fire an unintended,
   ammo-costing shot on the newly-drawn weapon with no actual button press. Root cause: the

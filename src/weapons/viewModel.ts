@@ -43,6 +43,27 @@ export function createProceduralMeleeViewModel(definition: WeaponDefinition): We
     return { group: new THREE.Group(), muzzleLocalOffset: new THREE.Vector3() };
   }
 
+  // A rare reward weapon deserves to visually read as something other than a re-tinted knife - a
+  // stubby tube-and-stock silhouette instead of the blade/handle shape below, built from the same
+  // "no sourced asset, build it procedurally" precedent.
+  if (definition.id === 'gooseLauncher') {
+    const group = new THREE.Group();
+    const material = new THREE.MeshStandardMaterial({ color: definition.viewModelColor, metalness: 0.5, roughness: 0.4 });
+
+    const barrelLength = 0.32;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, barrelLength, 10), material);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0, -barrelLength / 2);
+    group.add(barrel);
+
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.16), material);
+    stock.position.set(0, -0.02, 0.09);
+    group.add(stock);
+
+    group.position.copy(WEAPON_HIP_POSITION);
+    return { group, muzzleLocalOffset: new THREE.Vector3(0, 0, -barrelLength) };
+  }
+
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ color: definition.viewModelColor, metalness: 0.6, roughness: 0.35 });
 
