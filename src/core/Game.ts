@@ -39,6 +39,7 @@ import { KillFeed } from '../ui/killFeed.ts';
 import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
+import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
@@ -109,6 +110,7 @@ import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { pickRandomRespawnPoint } from './multiplayerSpawn.ts';
 import { applyPlayerDied } from './multiplayerScoring.ts';
 import { DEFAULT_GAME_MODE, pickGunGameUpgrade, resolveWeaponLoadout, type GameMode } from './gameModes.ts';
+import { MODE_EXPLANATIONS } from './modeExplanations.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
@@ -241,6 +243,7 @@ const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'kothScoreTick',
   'hordePlayerEliminated',
   'hordeAmmoDropPickedUp',
+  'modeExplanationReady',
 ]);
 
 /** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`
@@ -411,6 +414,24 @@ export class Game {
    * simulation the same way `player.isDead` does, but permanently for the rest of this Game
    * instance's life rather than until a respawn (see the top of update()). */
   private matchEnded = false;
+  /** True from the moment a non-default-mode match is created until every player has dismissed the
+   * mode-briefing screen (see ui/modeExplanationScreen.ts) - freezes all simulation (enemies, wave
+   * spawners, everything) the same way `matchEnded` does, per explicit user request: "the world is
+   * only truly active once all players or player is in the world." False for `default` mode
+   * (nothing to explain) and for a mid-match late join/rejoin (see MultiplayerSession.
+   * showModeExplanation). */
+  private worldBriefingActive = false;
+  /** Multiplayer only - every slot that has clicked Skip on the mode-briefing screen (own slot
+   * included), populated by the self-reported/relayed `modeExplanationReady` message - same
+   * "converge independently, no host adjudication" pattern as hordeEliminatedSlots. Unused (stays
+   * empty) in single-player, which has nobody else to wait on. */
+  private readonly modeExplanationReadySlots = new Set<PlayerSlot>();
+  private modeExplanationScreen: ModeExplanationScreen | null = null;
+  /** Gun Game's golden-goose variant (per explicit user request): guards the "1 kill from winning"
+   * grant below from re-firing every tick while the async weapon swap (WeaponManager.
+   * grantBonusWeapon) is still in flight - without it, several overlapping grants would fire before
+   * the first one resolves and activeWeaponId actually flips to 'gooseLauncher'. */
+  private gunGameFinisherPending = false;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -906,14 +927,17 @@ export class Game {
         )
       : null;
 
-    // Bonus golden goose - every mode except Goose Toss (per explicit user request "add golden
-    // goose to multiplayer and solo play"; Goose Toss's unarmed loadout has no way to shoot
-    // anything at all, so it's excluded rather than spawning something unreachable) and Goose
-    // Horde (per a later explicit request - "no other goose must spawn that are not part of the
-    // wave", solo and multiplayer alike). Single-player and the multiplayer host run the
-    // spawn-timer/hit-attribution state machine themselves; a guest is a pure follower (see
-    // BonusGooseManager's own isAuthoritative comment).
-    const isBonusGooseEnabled = multiplayer?.gameMode !== 'gooseToss' && !isHordeMode;
+    // Bonus golden goose - per a later explicit request, restricted to the default mode only (every
+    // other mode either has its own reason the ambient goose doesn't fit - Goose Toss's unarmed
+    // loadout can't shoot anything, Goose Horde already has its own wave geese and "no other goose
+    // must spawn that are not part of the wave" - or, for Gun Game specifically, gets its own
+    // distinct golden-goose variant instead, see the "1 kill from winning" grant in
+    // updateMultiplayer). Single-player has no gameMode concept and is always effectively
+    // 'default' (every other GameMode value is multiplayer-only, chosen in CreateRoomScreen, never
+    // single-player's PlaySetupModal), so it keeps the ambient goose too, same as before. Single-
+    // player and the multiplayer host run the spawn-timer/hit-attribution state machine themselves;
+    // a guest is a pure follower (see BonusGooseManager's own isAuthoritative comment).
+    const isBonusGooseEnabled = !isHordeMode && (!multiplayer || multiplayer.gameMode === 'default');
     const bonusGooseManager = isBonusGooseEnabled
       ? new BonusGooseManager(
           renderer.scene,
@@ -1097,6 +1121,7 @@ export class Game {
       onOpponentLeftRoom,
     );
     gameRef.current = game;
+    game.modeExplanationScreen = new ModeExplanationScreen(hudRoot, () => gameRef.current?.handleModeExplanationSkipClicked());
 
     // Goose Toss mode only (see updateGooseToss) - built once here, shown/hidden per pickup/throw
     // rather than rebuilt each time, same reasoning as every weapon view model already attached to
@@ -1178,6 +1203,7 @@ export class Game {
                 roomCode: activeMultiplayer.session.roomCode,
                 initialScoreboard: [],
                 hostRoster: activeMultiplayer.hostRoster ?? undefined,
+                showModeExplanation: true,
               });
               break;
             case 'playerSnapshot': {
@@ -1366,6 +1392,7 @@ export class Game {
               game.bonusGooseManager?.applyKilled(message.killerSlot);
               break;
             case 'hordeWaveStarted':
+              game.hordeGooseManager?.applyWaveStarted(message.wave);
               gooseAnnouncement.show(`Wave ${message.wave} incoming...`);
               break;
             case 'hordeCleared':
@@ -1382,6 +1409,9 @@ export class Game {
               game.checkHordeAllEliminated();
               break;
             }
+            case 'modeExplanationReady':
+              game.receiveModeExplanationReady(message.slot);
+              break;
             case 'hordeAmmoDropSpawned':
               game.ammoDropManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z);
               activeMultiplayer.minimap.addItemDot(message.id);
@@ -1458,6 +1488,16 @@ export class Game {
       }
     }
 
+    // Mode-briefing gate (per explicit user request - see worldBriefingActive's own comment):
+    // every mode except 'default' gets a pre-match explanation the world waits on. Skipped
+    // entirely for a late join/rejoin (multiplayer.showModeExplanation === false - see its own
+    // comment on MultiplayerSession), which drops straight into an already-live match.
+    if (!multiplayer || multiplayer.showModeExplanation) {
+      const effectiveMode: GameMode = multiplayer?.gameMode ?? (isHordeMode ? 'gooseHorde' : 'default');
+      const totalPlayers = activeMultiplayer ? activeMultiplayer.opponents.size + 1 : 1;
+      game.beginModeExplanation(effectiveMode, totalPlayers);
+    }
+
     return game;
   }
 
@@ -1472,7 +1512,10 @@ export class Game {
    * click-to-resume gate is exactly today's fallback - never worse than before. */
   start(): void {
     this.loop.start();
-    this.input.requestPointerLock();
+    // A locked pointer hides the OS cursor - the player couldn't actually see/click the mode
+    // briefing's Skip button if it were requested here while worldBriefingActive is still true.
+    // dismissModeExplanation() requests it instead, once the briefing actually closes.
+    if (!this.worldBriefingActive) this.input.requestPointerLock();
   }
 
   /** Tears down everything this Game instance owns - WebGL context, DOM-appended HUD/menu
@@ -1498,6 +1541,7 @@ export class Game {
     this.gooseAnnouncement.dispose();
     this.bigAnnouncement.dispose();
     this.hordeWaveIndicator?.dispose();
+    this.modeExplanationScreen?.dispose();
     this.explosionEffect.dispose();
     this.gooseManager.dispose();
     this.goldenGooseManager?.dispose();
@@ -1691,6 +1735,17 @@ export class Game {
     // this Game instance, unlike a single death - MatchEndScreen (shown by App, not Game) is what
     // the player sees, and it stays alive underneath until Rematch/Return to Lobby is clicked.
     if (this.matchEnded) {
+      this.input.consumeLookDelta();
+      return;
+    }
+
+    // Mode-briefing gate (per explicit user request - see worldBriefingActive's own comment): the
+    // world isn't "live" yet, so nothing gets to simulate - no enemy/goose AI, no wave spawner, no
+    // physics for anything but staying rendered in its current pose. Checked before the ordinary
+    // pause gate below on purpose: ModeExplanationScreen is its own overlay, not the pause menu,
+    // and pointer lock is deliberately never requested while this is active (see start()), so the
+    // isPaused formula below would otherwise also show the pause menu underneath it.
+    if (this.worldBriefingActive) {
       this.input.consumeLookDelta();
       return;
     }
@@ -1952,6 +2007,28 @@ export class Game {
     }
     if (this.matchEnded) return;
 
+    // Gun Game's own golden-goose variant (per explicit user request, replacing the ambient bonus
+    // goose disabled for every non-default mode above): whoever is exactly one kill from the win
+    // threshold must be carrying the Goose Launcher and land the winning kill with it. Purely
+    // self-authoritative - each client only ever watches and grants its own weapon, same trust
+    // model as every other per-client-authoritative piece of this protocol - checked every tick
+    // rather than only at the moment of the second-to-last kill so that missing all 4 shots and
+    // falling back to the previous gun (see WeaponManager.grantBonusWeapon's own auto-revert once
+    // the disableReload magazine empties) just re-triggers the grant next tick instead of letting
+    // the finishing kill land with anything else.
+    if (this.multiplayer.gameMode === 'gunGame' && !this.player.isDead && !this.gunGameFinisherPending) {
+      const ownScore = this.multiplayerScoreboard.get(this.multiplayer.session.ownSlot) ?? 0;
+      const oneKillFromWin = ownScore === this.multiplayer.killLimit - 1;
+      if (oneKillFromWin && this.weaponManager.activeWeaponId !== 'gooseLauncher') {
+        this.gunGameFinisherPending = true;
+        const previousWeaponId = this.weaponManager.activeWeaponId;
+        this.gooseAnnouncement.show('One kill from victory - finish it with the Goose Launcher!');
+        void this.weaponManager.grantBonusWeapon('gooseLauncher', previousWeaponId).then(() => {
+          this.gunGameFinisherPending = false;
+        });
+      }
+    }
+
     // Host-only housekeeping: no separate server tick exists (the host IS just another player's
     // own tab), so expired rejoin reservations are polled from this client's own update loop
     // instead, at a coarse interval rather than every frame.
@@ -1974,6 +2051,16 @@ export class Game {
         // detection - this is what actually fixes a RemotePlayer standing stuck forever after an
         // abrupt tab close that never fired a clean disconnect event.
         for (const opponent of this.multiplayer.opponents.values()) {
+          // A permanently-eliminated horde player (see checkHordeAllEliminated) stops sending
+          // playerSnapshot forever once dead (updateMultiplayer's own eliminated-branch early
+          // return skips the broadcast below) - that silence is expected, not a dropped
+          // connection, so it must not trip this staleness sweep. Without this guard, every
+          // eliminated player gets spuriously marked 'playerLeft' within MULTIPLAYER_CONNECTION_
+          // TIMEOUT_MS, which desyncs connectedCount (opponents.size+1) across clients - some end
+          // up under-counting and end their own match early (silently, no broadcast to others)
+          // while whichever client is still alive keeps waiting on a count that can now never be
+          // satisfied, which is exactly what "waves never end" looks like from that client's side.
+          if (this.multiplayer.gameMode === 'gooseHorde' && this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
           if (now - opponent.lastMessageAt < MULTIPLAYER_CONNECTION_TIMEOUT_MS) continue;
           this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
           this.removeMultiplayerOpponent(opponent.slot);
@@ -2308,6 +2395,57 @@ export class Game {
     this.player.respawn(this.player.position);
   }
 
+  /** Kicks off the pre-match mode-briefing gate for `mode` (no-op for `default`, which has no
+   * MODE_EXPLANATIONS entry) - called once, right at the end of create(), before this Game
+   * instance's first tick. `totalPlayers` is 1 in single-player. */
+  private beginModeExplanation(mode: GameMode, totalPlayers: number): void {
+    const explanation = MODE_EXPLANATIONS[mode];
+    if (!explanation) return;
+    this.worldBriefingActive = true;
+    this.modeExplanationScreen?.show(explanation.title, explanation.steps, totalPlayers);
+    // A modeExplanationReady broadcast can arrive (and get recorded - see receiveModeExplanation-
+    // Ready) before this method even runs, if another player clicks Skip while this client is
+    // still mid-load - re-check immediately so that signal isn't silently lost.
+    this.recheckModeExplanationReady();
+  }
+
+  /** The mode-briefing screen's Skip button - single-player dismisses immediately (nobody else to
+   * wait on); multiplayer instead broadcasts its own readiness and waits for every other slot to
+   * do the same (see receiveModeExplanationReady), so one player can't skip past the rules while
+   * the rest of the room hasn't even read them yet. */
+  private handleModeExplanationSkipClicked(): void {
+    if (!this.worldBriefingActive) return;
+    if (!this.multiplayer) {
+      this.dismissModeExplanation();
+      return;
+    }
+    const ownSlot = this.multiplayer.session.ownSlot;
+    if (this.modeExplanationReadySlots.has(ownSlot)) return;
+    this.multiplayer.session.connection.send({ type: 'modeExplanationReady', slot: ownSlot });
+    this.receiveModeExplanationReady(ownSlot);
+  }
+
+  /** Multiplayer only - applies one slot's readiness (this client's own, or one learned via the
+   * relayed modeExplanationReady broadcast) to the shared set, updates the live "N/M" readout, and
+   * dismisses the briefing once every currently-connected player is accounted for - every client
+   * converges on the same moment independently, same pattern as checkHordeAllEliminated. */
+  private receiveModeExplanationReady(slot: PlayerSlot): void {
+    if (!this.multiplayer) return;
+    this.modeExplanationReadySlots.add(slot);
+    // The briefing may not have been shown yet on this client (still mid-load while another
+    // player already clicked Skip) - just remember the signal for beginModeExplanation to pick up
+    // rather than acting on it early.
+    this.recheckModeExplanationReady();
+  }
+
+  /** Unfreezes simulation and hands pointer lock back to the player - the world only actually
+   * "starts" from this point on (see worldBriefingActive's own comment). */
+  private dismissModeExplanation(): void {
+    this.worldBriefingActive = false;
+    this.modeExplanationScreen?.hide();
+    this.input.requestPointerLock();
+  }
+
   /** Constructs a fresh RemotePlayer for a slot joining or rejoining an already-running match (see
    * protocol.ts's PlayerJoinedMatchMessage) - mirrors the initial-roster construction in create(),
    * just for one slot arriving later instead of everyone arriving at once. Placed at this client's
@@ -2346,6 +2484,24 @@ export class Game {
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);
     this.multiplayer.multiplayerHud.removeOpponentRow(slot);
+    // A departure shrinks the mode-briefing's own "everyone" total (opponents.size + 1) - without
+    // this, a player disconnecting mid-briefing before clicking Skip could leave the remaining
+    // players stuck waiting forever, since nothing else re-checks readiness once no further
+    // modeExplanationReady message is ever coming for that slot.
+    this.recheckModeExplanationReady();
+  }
+
+  /** Re-evaluates the mode-briefing's ready count against the *current* opponent total without
+   * marking any new slot ready - unlike receiveModeExplanationReady, this never adds to
+   * modeExplanationReadySlots. Needed because the total (opponents.size + 1) can shrink out from
+   * under an in-progress briefing (see removeMultiplayerOpponent), and nothing else would ever
+   * re-check readiness once no further modeExplanationReady message is coming for the slot that
+   * just left. */
+  private recheckModeExplanationReady(): void {
+    if (!this.multiplayer || !this.worldBriefingActive) return;
+    const total = this.multiplayer.opponents.size + 1;
+    this.modeExplanationScreen?.setReadyCount(this.modeExplanationReadySlots.size, total);
+    if (this.modeExplanationReadySlots.size >= total) this.dismissModeExplanation();
   }
 
   /** Goose Horde's limited-lives loss condition (per explicit user request: "if both players have

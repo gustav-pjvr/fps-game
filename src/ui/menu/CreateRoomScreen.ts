@@ -365,6 +365,7 @@ export class CreateRoomScreen {
       roomCode: this.roomCode,
       initialScoreboard: [],
       hostRoster,
+      showModeExplanation: true,
     });
   }
 

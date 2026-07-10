@@ -187,6 +187,11 @@ export class JoinRoomScreen {
               roster: message.roster,
               roomCode: code,
               initialScoreboard: message.activeMatch.scoreboard,
+              // A late join/rejoin drops straight into an already-live match - every other player
+              // dismissed their own mode briefing long ago, so this client must never show one
+              // (which would otherwise require them all to re-click Skip, re-freezing a match
+              // that's already in progress for everyone else).
+              showModeExplanation: false,
             });
             return;
           }
@@ -214,6 +219,7 @@ export class JoinRoomScreen {
             roster: message.roster,
             roomCode: code,
             initialScoreboard: [],
+            showModeExplanation: true,
           });
         }
       },

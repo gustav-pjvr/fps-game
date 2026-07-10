@@ -10,7 +10,44 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.5.1 (current)
+## v3.7.0 (current)
+
+New pre-match mode-briefing screen, per explicit user request: every mode except Default (both
+single-player Goose Horde and every multiplayer mode) now shows a 3-4 step explanation of that
+mode's rules before the match actually goes live, using a small reusable set of geometric icons
+(no sourced screenshots - matches this project's existing "procedural, no external assets for
+non-hero elements" precedent) styled to the game's own dark/chamfered/accent-green identity. In
+multiplayer, every connected player must individually click Skip - the live "N/M ready" count
+shows right on the button itself - before the briefing disappears for anyone; in single-player it
+dismisses on the first click, since there's nobody else to wait on. While any player's briefing is
+up, `Game.update()`'s new `worldBriefingActive` gate freezes all simulation the same way a finished
+match does - no enemy/goose AI, no wave spawner, nothing moves - so the world is only ever truly
+"live" once every player has actually entered it. A late join/rejoin mid-match (see
+`MultiplayerSession.showModeExplanation`) never shows this screen - only a genuinely fresh match
+start or rematch does, since re-gating an already-running match for everyone else would be a
+regression, not a feature.
+
+## v3.6.0
+
+- Fixed multiplayer Goose Horde's guest wave counter never updating: `HordeGooseManager.
+  currentWave` derived from `waveIndex`, which a follower (guest) client never advances - it now
+  mirrors the host's wave number instead, driven by the same `hordeWaveStarted`/`hordeReset`
+  broadcasts that already drive the wave-incoming toast.
+- Fixed multiplayer Goose Horde never actually ending after every player exhausted their 2
+  respawns, letting waves continue indefinitely: a permanently-eliminated player's client stops
+  broadcasting `playerSnapshot` (by design, it's done playing), which within
+  `MULTIPLAYER_CONNECTION_TIMEOUT_MS` tripped the host's stale-connection sweep into treating that
+  silence as a dropped connection - force-removing them from the opponent roster and desyncing the
+  "how many total players" count every client uses to detect "everyone's out." Eliminated slots are
+  now excluded from that sweep.
+- The bonus "golden goose" (the ambient wandering goose that grants the Goose Launcher) is now
+  restricted to the default game mode only - previously it spawned in every mode except Goose Toss
+  and Goose Horde.
+- New Gun Game-specific golden goose variant: whoever is exactly one kill from that match's win
+  threshold is forced onto the Goose Launcher and must land the winning kill with it - re-granted
+  automatically if they empty its 4 shots without scoring and fall back to their previous gun.
+
+## v3.5.1
 
 - Fixed a real regression from v3.5.0: multiplayer Goose Horde was still resetting wave progress
   to wave 1 on every ordinary death, same as before the limited-respawns/lives system was added -

@@ -49,6 +49,12 @@ export interface MultiplayerSession {
    * onHostHello) continues using the one roster/rejoin-token state machine for this room's whole
    * lifetime rather than losing it at the lobby/match boundary. */
   hostRoster?: HostRoster;
+  /** True for a genuinely fresh match start (original Start Match click, or a rematch) - false
+   * only for a mid-match late join/rejoin (see WelcomeMessage.activeMatch), where the match is
+   * already live and every other player has long since dismissed their own briefing. Gates
+   * Game.ts's mode-explanation briefing (see worldBriefingActive) - a late joiner must never
+   * re-freeze/re-gate an already-running match for everyone else. */
+  showModeExplanation: boolean;
 }
 
 /** Everything a matchStart message carries beyond the connection/role itself - used as one bundle
@@ -67,4 +73,5 @@ export interface MultiplayerMatchStartParams {
   roomCode: string;
   initialScoreboard: { slot: PlayerSlot; score: number }[];
   hostRoster?: HostRoster;
+  showModeExplanation: boolean;
 }

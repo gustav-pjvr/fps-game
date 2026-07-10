@@ -53,6 +53,12 @@ export class HordeGooseManager {
   private intermissionTimer = 0;
   private snapshotAccumulator = 0;
   private idCounter = 0;
+  /** Follower side only - a guest never advances its own `waveIndex` (see the constructor's
+   * isAuthoritative comment), so `currentWave` can't derive from it the way the authoritative side
+   * does. Mirrors the host's wave number instead, updated whenever a hordeWaveStarted/hordeReset
+   * broadcast arrives (see applyWaveStarted) - without this a guest's wave HUD indicator would
+   * report "Wave 1" for the entire match regardless of what wave is actually in progress. */
+  private followerWave = 1;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -78,7 +84,7 @@ export class HordeGooseManager {
   }
 
   get currentWave(): number {
-    return this.waveIndex + 1;
+    return this.isAuthoritative ? this.waveIndex + 1 : this.followerWave;
   }
 
   get totalWaves(): number {
@@ -194,6 +200,15 @@ export class HordeGooseManager {
       goose.dispose();
     }
     this.geese.clear();
+    this.followerWave = 1;
+  }
+
+  /** Follower side only (guest): mirrors the host's current wave number, driven by the
+   * hordeWaveStarted broadcast (see currentWave's own comment on why a guest can't derive this
+   * from its own waveIndex). Harmless no-op on the authoritative side, same defensive shape as
+   * every other follower method here. */
+  applyWaveStarted(wave: number): void {
+    this.followerWave = wave;
   }
 
   private beginWave(): void {

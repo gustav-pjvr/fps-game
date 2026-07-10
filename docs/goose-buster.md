@@ -287,3 +287,49 @@ every other host-authoritative flock in this project. `Minimap` gained a paralle
 map (green, string-keyed by crate id rather than `PlayerSlot`) and a shared `placeDot` helper so the
 same rotate-with-player-facing projection math isn't duplicated between opponent and item dots.
 
+## Two live-tested Goose Horde bugs + a Gun Game golden-goose variant (v3.6.0)
+
+**Guest wave counter stuck at 1.** `HordeGooseManager.currentWave` derived from `waveIndex`, which
+only the authoritative side (single-player, the multiplayer host) ever advances - every follower
+(guest) method (`applyRemoteSpawn`/`applyRemoteSnapshot`/`applyExplosion`/`applyRemove`/
+`applyReset`) leaves it untouched, so a guest's own `HordeWaveIndicator` read a permanently-stale
+value. Fixed with a small parallel `followerWave` field, set from the existing `hordeWaveStarted`
+broadcast (previously only used to show the "Wave N incoming..." toast) via a new
+`applyWaveStarted()` method; `currentWave` now branches on `isAuthoritative` to return whichever is
+correct for that side.
+
+**Match never ending after everyone exhausted their respawns.** Root cause: once a player is
+permanently eliminated (see `hordeEliminatedSlots` above), `updateMultiplayer` returns early for
+them every tick - which means they also stop broadcasting `playerSnapshot`, forever. That silence
+looks identical to a dropped connection to the host's own staleness sweep
+(`MULTIPLAYER_CONNECTION_TIMEOUT_MS`, 8s), which force-removed them from `opponents` and broadcast
+`playerLeft` - permanently shrinking `connectedCount` (`opponents.size + 1`) on every remaining
+client without touching `hordeEliminatedSlots`. Different clients ended up with different, wrong
+totals: some under-counted and ended their own match early with no broadcast to tell anyone else,
+while whichever client was still legitimately alive (typically the host) kept waiting on an
+elimination count that could no longer be satisfied - "waves just continue forever" from that
+client's point of view. Fixed by excluding any slot already in `hordeEliminatedSlots` from the
+staleness sweep - going quiet after elimination is expected behavior for this mode, not a sign of a
+dropped connection.
+
+**Golden goose restricted to default mode.** Per explicit user request, the ambient bonus goose
+(`isBonusGooseEnabled`) no longer spawns in every mode except Goose Toss/Goose Horde - now it's
+`default` (or single-player, which has no other mode to be) only. Every other mode either never
+made sense for it in the first place or, for Gun Game, gets a purpose-built replacement instead.
+
+**Gun Game's own golden-goose variant.** Whoever's exactly one kill from that match's `killLimit`
+must fight with, and land the winning kill with, the Goose Launcher. Implemented as a small
+self-authoritative check in `updateMultiplayer` (each client only ever watches and grants its own
+weapon, same trust model as everything else in this protocol): once `ownScore === killLimit - 1`
+and the active weapon isn't already the launcher, `WeaponManager.grantBonusWeapon('gooseLauncher',
+previousWeaponId)` fires. Checked every tick rather than once, so if the player empties all 4 shots
+without scoring and the launcher auto-reverts to their previous gun (see `grantBonusWeapon`'s own
+disableReload-and-0-ammo revert), the very next tick re-grants it rather than letting the finishing
+kill land with anything else. A `gunGameFinisherPending` flag guards against re-firing the grant on
+every tick while the async weapon swap is still in flight.
+
+**Verification:** `npx tsc --noEmit` clean, full `npm run test:unit` suite green, `npm run build`
+succeeds. Not yet live-playtested (2-browser Goose Horde elimination/loss repro, guest wave display,
+Gun Game's forced-finisher weapon) - same "trust the user's live test over assuming from a clean
+build" pattern as every other gameplay-feel feature in this project.
+

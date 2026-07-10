@@ -227,6 +227,7 @@ export class App {
       roomCode,
       initialScoreboard: [],
       hostRoster,
+      showModeExplanation: true,
     });
   }
 

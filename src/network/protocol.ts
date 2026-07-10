@@ -483,6 +483,16 @@ export interface BonusGooseKilledMessage {
   killerSlot: PlayerSlot | null;
 }
 
+/** Self-reported, relayed (see Game.ts's RELAYABLE_MESSAGE_TYPES) - `slot` has clicked Skip on the
+ * pre-match mode-briefing screen (see ui/modeExplanationScreen.ts). Every client tracks the same
+ * set of ready slots and independently dismisses its own briefing (unfreezing world simulation -
+ * see Game.ts's worldBriefingActive) once it covers every currently-connected player, same
+ * "self-reported, no host adjudication" convergence pattern as hordePlayerEliminated. */
+export interface ModeExplanationReadyMessage {
+  type: 'modeExplanationReady';
+  slot: PlayerSlot;
+}
+
 export type NetworkMessage =
   | HelloMessage
   | WelcomeMessage
@@ -523,7 +533,8 @@ export type NetworkMessage =
   | BonusGooseSpawnedMessage
   | BonusGooseSnapshotMessage
   | BonusGooseHitEventMessage
-  | BonusGooseKilledMessage;
+  | BonusGooseKilledMessage
+  | ModeExplanationReadyMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
@@ -566,6 +577,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'bonusGooseSnapshot',
   'bonusGooseHitEvent',
   'bonusGooseKilled',
+  'modeExplanationReady',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one
