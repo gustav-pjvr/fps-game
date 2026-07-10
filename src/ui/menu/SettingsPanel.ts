@@ -1,36 +1,55 @@
 import { Settings } from '../../settings/Settings.ts';
 import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '../../input/actions.ts';
-import { ACCENT, HAIRLINE, TEXT, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { ACCENT, HAIRLINE, TEXT, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 import { GRAPHICS_QUALITY_LABELS, GRAPHICS_QUALITY_ORDER, type GraphicsQuality } from '../../settings/graphicsQuality.ts';
+import { CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../../core/config.ts';
 
 /** Lobby overlay: master volume, mouse sensitivity, and rebindable key bindings - all persisted via Settings. */
 export class SettingsPanel {
   private readonly overlay: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
   private listeningFor: Action | null = null;
   private readonly keyButtons = new Map<Action, HTMLButtonElement>();
   private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
+  private onCloseCallback: () => void = () => {};
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.listeningFor) return;
-    event.preventDefault();
-    Settings.rebindKey(this.listeningFor, event.code);
-    this.listeningFor = null;
-    this.refreshKeyLabels();
+    if (this.listeningFor) {
+      event.preventDefault();
+      Settings.rebindKey(this.listeningFor, event.code);
+      this.listeningFor = null;
+      this.refreshKeyLabels();
+      return;
+    }
+    // Escape closes the panel, same as clicking "Close" - only reacts while actually visible, and
+    // only once no key-rebind capture (above) is in progress, so pressing Escape to *cancel* a
+    // "Press a key…" capture doesn't also close the whole panel in the same keystroke.
+    if (event.key === 'Escape' && this.overlay.style.display !== 'none') {
+      event.preventDefault();
+      this.onCloseCallback();
+    }
   };
 
-  /** onVolumeChange/onGraphicsQualityChange let the caller push changes into a live match in real
-   * time - Settings.setMasterVolume/setGraphicsQuality alone only persist the value for the *next*
-   * SoundEngine/Game to read at construction, they never touch an already-running one. Omit either
-   * when there's no live match to update (e.g. the lobby, which has no SoundEngine or Game yet). */
+  /** onVolumeChange/onGraphicsQualityChange/onFovChange let the caller push changes into a live
+   * match in real time - Settings.setMasterVolume/setGraphicsQuality/setFov alone only persist the
+   * value for the *next* SoundEngine/Game/camera to read, they never touch an already-running one
+   * on their own. Omit any of them when there's no live match to update (e.g. the lobby, which has
+   * no SoundEngine, Game, or camera yet). FOV is additionally re-read live every frame by
+   * WeaponManager.updateAim once gameplay resumes (see Settings.getFov's own comment) -
+   * onFovChange here only covers the instant preview while this panel itself is still open (and
+   * gameplay is therefore frozen behind it, same as every other pause-menu overlay). */
   constructor(
     root: HTMLElement,
     onClose: () => void,
     onVolumeChange?: (value: number) => void,
     onGraphicsQualityChange?: (quality: GraphicsQuality) => void,
+    onFovChange?: (value: number) => void,
   ) {
     this.overlay = createOverlay();
+    this.onCloseCallback = onClose;
 
     const panel = createPanel();
+    this.panel = panel;
     panel.style.width = '420px';
     panel.appendChild(createPanelTitle('SETTINGS'));
     panel.appendChild(this.buildSliderRow('Master Volume', Settings.getMasterVolume(), 0, 1, 0.01, (value) => {
@@ -40,6 +59,10 @@ export class SettingsPanel {
     panel.appendChild(this.buildSliderRow('Mouse Sensitivity', Settings.getMouseSensitivity(), 0.1, 3, 0.05, (value) =>
       Settings.setMouseSensitivity(value),
     ));
+    panel.appendChild(this.buildSliderRow('Field of View', Settings.getFov(), CAMERA_FOV_MIN, CAMERA_FOV_MAX, 1, (value) => {
+      Settings.setFov(value);
+      onFovChange?.(value);
+    }));
     panel.appendChild(this.buildGraphicsQualitySection(onGraphicsQualityChange));
     panel.appendChild(this.buildKeyBindSection());
 
@@ -182,6 +205,7 @@ export class SettingsPanel {
 
   show(): void {
     this.overlay.style.display = 'flex';
+    attachScanSweep(this.panel);
   }
 
   hide(): void {

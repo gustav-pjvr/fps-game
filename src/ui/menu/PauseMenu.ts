@@ -1,4 +1,4 @@
-import { createButton, createOverlay, createPanel, createPanelTitle, MOTION_EASE } from './menuStyles.ts';
+import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, MOTION_EASE } from './menuStyles.ts';
 
 export interface PauseMenuCallbacks {
   onResume: () => void;
@@ -18,6 +18,7 @@ const RESPAWN_UNLOCK_DELAY_MS = 5000;
  * play" gate for a freshly loaded match, since both cases are just "pointer lock is not held". */
 export class PauseMenu {
   private readonly overlay: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
   private readonly respawnButton: HTMLButtonElement | null = null;
   /** Set to the timestamp the pause menu most recently opened; cleared on close. Used to gate
    * "Respawn" behind RESPAWN_UNLOCK_DELAY_MS of *continuous* pause time - see that button's own
@@ -40,6 +41,7 @@ export class PauseMenu {
     this.overlay.dataset.testid = 'pause-menu';
 
     const panel = createPanel();
+    this.panel = panel;
     panel.style.width = '320px';
     panel.style.textAlign = 'center';
     panel.appendChild(createPanelTitle('PAUSED'));
@@ -93,6 +95,7 @@ export class PauseMenu {
 
     if (visible && !wasVisible) {
       this.pausedSinceMs = performance.now();
+      attachScanSweep(this.panel);
     } else if (!visible) {
       this.pausedSinceMs = null;
       this.setRespawnLocked(true);

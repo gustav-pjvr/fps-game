@@ -1,3 +1,5 @@
+import { DISPLAY_FONT } from './menu/menuStyles.ts';
+
 const ENTRY_DURATION = 2.5;
 const FADE_DURATION = 0.4;
 
@@ -9,7 +11,7 @@ export class KillFeed {
   constructor(root: HTMLElement) {
     this.element = document.createElement('div');
     this.element.style.cssText =
-      'position:absolute; top:64px; left:50%; transform:translateX(-50%); font-size:0.95rem;' +
+      `position:absolute; top:64px; left:50%; transform:translateX(-50%); font-family:${DISPLAY_FONT}; font-size:0.95rem;` +
       ' font-weight:600; text-shadow:0 1px 3px #000; opacity:0; pointer-events:none;';
     root.appendChild(this.element);
   }

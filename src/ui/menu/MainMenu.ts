@@ -1,4 +1,4 @@
-import { createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, MOTION_EASE } from './menuStyles.ts';
+import { attachScanSweep, createButton, createCornerBracket, createEyebrow, ACCENT, BODY_FONT, DISPLAY_FONT, MOTION_EASE } from './menuStyles.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts';
 import { GAME_VERSION } from '../../core/version.ts';
 
@@ -107,6 +107,7 @@ export class MainMenu {
 
   show(): void {
     this.element.style.display = 'block';
+    attachScanSweep(this.element);
   }
 
   hide(): void {

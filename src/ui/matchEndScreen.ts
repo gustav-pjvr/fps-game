@@ -17,7 +17,10 @@ import type { PlayerSlot } from '../network/protocol.ts';
 import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../core/gameModes.ts';
 import { MOTION_EASE, attachScanSweep } from './menu/menuStyles.ts';
 
-export type MultiplayerMatchEndReason = 'killLimit' | 'opponentDisconnected';
+/** 'hordeCleared'/'hordeWipe' are Goose Horde's own win/loss reasons - previously both reused
+ * 'killLimit', which is semantically wrong for a co-op mode with no kill limit at all and would
+ * mislabel any reason-specific copy. Fixed in the 2026-07-10 review. */
+export type MultiplayerMatchEndReason = 'killLimit' | 'opponentDisconnected' | 'hordeCleared' | 'hordeWipe';
 
 export interface MultiplayerPlacement {
   slot: PlayerSlot;
@@ -219,7 +222,13 @@ export class MatchEndScreen {
 
   show(result: MultiplayerMatchEndResult): void {
     this.titleElement.textContent =
-      result.reason === 'opponentDisconnected' ? 'OPPONENT DISCONNECTED' : result.won ? 'VICTORY' : 'DEFEAT';
+      result.reason === 'opponentDisconnected'
+        ? 'OPPONENT DISCONNECTED'
+        : result.reason === 'hordeWipe'
+          ? 'THE HORDE WINS'
+          : result.won
+            ? 'VICTORY'
+            : 'DEFEAT';
     // Re-triggers every show(), not just the first - this is the one moment in the whole app
     // that most deserves an emphasized entrance (the match's actual outcome), so it gets its own
     // small extra beat beyond the shared scan-sweep below. Reflow trick (see multiplayerHud's hit
@@ -245,7 +254,8 @@ export class MatchEndScreen {
 
     // A disconnect means the connection this rematch would need is already gone; only the host
     // ever gets to choose, so a guest never sees these regardless of reason.
-    const canRematch = result.reason === 'killLimit' && result.role === 'host';
+    const canRematch =
+      (result.reason === 'killLimit' || result.reason === 'hordeCleared' || result.reason === 'hordeWipe') && result.role === 'host';
     this.rematchButton.style.display = canRematch ? 'inline-block' : 'none';
     this.hostSettings.style.display = canRematch ? 'flex' : 'none';
     if (canRematch) {

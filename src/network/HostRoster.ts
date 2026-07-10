@@ -20,9 +20,12 @@ export type HelloOutcome = { outcome: 'rejoined'; slot: PlayerSlot } | { outcome
  * computeWatchTowerPositions/computeGuaranteedSites were kept pure and separate from actual
  * THREE/RAPIER construction elsewhere in this codebase - here the "actual construction" being
  * separated out is real PeerJS connection objects. */
+/** Every guest slot in ascending allocation order - the lowest one not currently present in
+ * `slots` is handed to the next joiner (see handleHello). */
+const GUEST_SLOTS: readonly PlayerSlot[] = [1, 2, 3];
+
 export class HostRoster {
   private readonly slots = new Map<PlayerSlot, RosterSlotState>();
-  private nextGuestSlot: PlayerSlot = 1;
   private matchInProgress = false;
 
   constructor(hostUsername: string) {
@@ -47,7 +50,13 @@ export class HostRoster {
 
     if (this.slots.size >= MULTIPLAYER_MAX_PLAYERS) return { outcome: 'full' };
 
-    const slot = this.nextGuestSlot++ as PlayerSlot;
+    // Lowest free slot in 1..3, not an ever-incrementing counter - a counter would eventually
+    // allocate slot 4/5/... once an earlier reservation was swept away (slots.size drops below 4
+    // while the counter keeps climbing), silently breaking the protocol's 0-3 PlayerSlot domain.
+    // Confirmed bug, fixed in the 2026-07-10 review. `slots.size < MULTIPLAYER_MAX_PLAYERS` above
+    // already guarantees one of these is free.
+    const slot = GUEST_SLOTS.find((candidate) => !this.slots.has(candidate));
+    if (slot === undefined) return { outcome: 'full' }; // defensive - unreachable given the size check above
     this.slots.set(slot, { slot, username, rejoinToken, connected: true, disconnectedAt: null });
     return { outcome: 'joined', slot };
   }

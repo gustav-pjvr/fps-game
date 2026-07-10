@@ -367,8 +367,14 @@ export class VegetationManager {
  * forest zone's *core* used to be reserved for. Bushes/rocks get their own uniform roll from the
  * chunk RNG, entirely independent of the density field - per project decision, clutter should
  * scatter randomly rather than cluster with trees.
+ *
+ * Exported for the unit-test layer (2026-07-10 review, Phase 6 test-coverage pass). Note: this
+ * function no longer depends on zone membership at all (see the flat-threshold rationale above) -
+ * the CODE_REVIEW.md checklist item asking for "pickType continuity at membership 0" predates that
+ * refactor and no longer applies; tested here instead are the actual current threshold/scatter
+ * invariants.
  */
-function pickType(rawNoise: number, rng: () => number): VegetationTypeId | null {
+export function pickType(rawNoise: number, rng: () => number): VegetationTypeId | null {
   const density = (rawNoise + 1) / 2;
   const treeThreshold = VEGETATION_TREE_DENSITY_THRESHOLD - FOREST_TREE_THRESHOLD_DROP;
 

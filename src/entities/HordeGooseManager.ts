@@ -7,7 +7,8 @@ import {
   GOOSE_SNAPSHOT_SEND_INTERVAL,
   HORDE_GOOSE_BASE_SPEED,
   HORDE_GOOSE_SPAWN_RADIUS,
-  HORDE_MAX_CONCURRENT,
+  HORDE_MAX_CONCURRENT_BASE,
+  HORDE_MAX_CONCURRENT_CEILING,
   HORDE_WAVE_INTERMISSION_SECONDS,
   type HordeWaveSpec,
 } from '../core/config.ts';
@@ -38,13 +39,45 @@ export interface HordeGooseManagerCallbacks {
 
 type Phase = 'active' | 'intermission' | 'cleared';
 
+/** Pure: how many geese are allowed alive at once during `waveIndex` - scales with the current
+ * wave (M5) up to a hard ceiling, rather than a flat cap. Exported so wave-progression accounting
+ * can be unit tested without a live PhysicsWorld/THREE.Scene (2026-07-10 review, Phase 6 test-
+ * coverage pass) - HordeGooseManager itself needs real Rapier physics to spawn/steer geese, which
+ * this repo's Vitest unit-test layer deliberately never touches (see vitest.config.ts's own
+ * comment); this and its two siblings below pull the actual bookkeeping math out where it can be. */
+export function computeConcurrentCap(waveIndex: number): number {
+  return Math.min(HORDE_MAX_CONCURRENT_CEILING, HORDE_MAX_CONCURRENT_BASE + waveIndex);
+}
+
+/** Pure: how many additional geese should spawn this tick - never past the wave's concurrent cap,
+ * never past what's actually left queued. Mirrors the exact stop condition of the `while` loop this
+ * replaced (`spawnQueueRemaining > 0 && geese.size < concurrentCap`), just computed as a count up
+ * front instead of decremented one spawn at a time. */
+export function computeSpawnBudget(spawnQueueRemaining: number, aliveCount: number, concurrentCap: number): number {
+  return Math.max(0, Math.min(spawnQueueRemaining, concurrentCap - aliveCount));
+}
+
+/** Pure: the phase transition once a wave's queue is fully drained and every spawned goose is gone
+ * - 'cleared' once every wave in the table has been survived, otherwise a fresh intermission before
+ * the next wave begins. Returns null (no transition) while the wave still has queued or alive
+ * geese - callers should only act on a non-null result. */
+export function resolveWaveCompletion(
+  spawnQueueRemaining: number,
+  aliveCount: number,
+  waveIndex: number,
+  totalWaves: number,
+): 'cleared' | 'intermission' | null {
+  if (spawnQueueRemaining !== 0 || aliveCount !== 0) return null;
+  return waveIndex + 1 >= totalWaves ? 'cleared' : 'intermission';
+}
+
 /** Owns the live horde flock and wave progression - single-player and the multiplayer host run it
  * fully authoritative (spawn queue, chase AI, hit/contact resolution, wave advancement); a
  * multiplayer guest instead mirrors the host's authoritative geese as follower copies (see
- * HordeGoose.ts's class comment), exact same split as GooseManager. Known simplification: no
- * late-join sync (unlike GooseManager's gooseSyncRequest) - a player joining a horde match already
- * in progress only sees geese spawned from that point on, since this mode wasn't asked to support
- * mid-match joining the way the PvP modes are. */
+ * HordeGoose.ts's class comment), exact same split as GooseManager. A late join/rejoin syncs the
+ * current wave and every live goose via HordeSyncRequestMessage/listForSync (protocol.ts),
+ * mirroring GooseManager's own gooseSyncRequest mechanism - previously a documented gap here,
+ * fixed in the 2026-07-10 review. */
 export class HordeGooseManager {
   private readonly geese = new Map<string, HordeGoose>();
   private waveIndex = 0;
@@ -115,7 +148,11 @@ export class HordeGooseManager {
       }
     }
 
-    while (this.spawnQueueRemaining > 0 && this.geese.size < HORDE_MAX_CONCURRENT) {
+    // Scales with the current wave (M5) rather than a flat cap - see HORDE_MAX_CONCURRENT_BASE's
+    // own comment.
+    const concurrentCap = computeConcurrentCap(this.waveIndex);
+    const spawnBudget = computeSpawnBudget(this.spawnQueueRemaining, this.geese.size, concurrentCap);
+    for (let i = 0; i < spawnBudget; i++) {
       this.spawnQueueRemaining--;
       this.spawnOne();
     }
@@ -138,12 +175,13 @@ export class HordeGooseManager {
       }
     }
 
-    if (this.phase === 'active' && this.spawnQueueRemaining === 0 && this.geese.size === 0) {
-      if (this.waveIndex + 1 >= this.waveTable.length) {
+    if (this.phase === 'active') {
+      const completion = resolveWaveCompletion(this.spawnQueueRemaining, this.geese.size, this.waveIndex, this.waveTable.length);
+      if (completion === 'cleared') {
         this.phase = 'cleared';
         this.callbacks.onCleared();
         this.callbacks.onNetworkCleared?.();
-      } else {
+      } else if (completion === 'intermission') {
         this.phase = 'intermission';
         this.intermissionTimer = HORDE_WAVE_INTERMISSION_SECONDS;
       }
@@ -164,7 +202,7 @@ export class HordeGooseManager {
   /** Host-only: applies a hit reported by a guest, through the exact same one-hit-kill path the
    * host's own local hits already use directly. */
   registerRemoteHit(id: string): void {
-    this.geese.get(id)?.takeDamage(0, -1);
+    this.geese.get(id)?.kill();
   }
 
   /** Single-player only (see Game.ts's resetPlay) - dying restarts the whole run from wave 1,
@@ -217,6 +255,20 @@ export class HordeGooseManager {
     this.phase = 'active';
     this.callbacks.onWaveStart(this.currentWave);
     this.callbacks.onNetworkWaveStart?.(this.currentWave);
+  }
+
+  /** Authoritative side only (single-player has nothing to sync; the multiplayer host is the one
+   * that answers a HordeSyncRequestMessage with this) - mirrors GooseManager.listForSync exactly,
+   * plus `flavor` since a follower's local HordeGoose needs it to render the right descent/lunge
+   * behavior (see HordeGooseSpawnedMessage). */
+  listForSync(): { id: string; x: number; y: number; z: number; flavor: HordeGooseFlavor }[] {
+    return Array.from(this.geese.values(), (goose) => ({
+      id: goose.networkId,
+      x: goose.position.x,
+      y: goose.position.y,
+      z: goose.position.z,
+      flavor: goose.flavor,
+    }));
   }
 
   private spawnOne(): void {

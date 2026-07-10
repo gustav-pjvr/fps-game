@@ -10,6 +10,67 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
+## v3.9.0 (current)
+
+A full 9-phase fix/improvement pass following a comprehensive code review (`docs/CODE_REVIEW.md`),
+covering multiplayer stability, enemy AI, Goose Horde balance, architecture, test coverage, design
+consistency, new features, and repo hygiene.
+
+**Multiplayer stability fixes:**
+- Fixed a real bug where a relayed message's transport-level sender slot was used instead of its
+  own embedded `senderSlot`, misattributing position/respawn/goose/score updates from a 3rd/4th
+  player to the wrong opponent in 3+ player matches.
+- Golden goose now auto-drops when its carrier disconnects, instead of vanishing with them.
+- A guest's `Escape`/disconnect during matchmaking no longer corrupts the host's slot bookkeeping;
+  disconnected slots are now reliably swept and reused instead of leaking.
+- Slot allocation now reuses the lowest freed slot instead of allocating past the 4-player cap.
+- Fixed a mode-briefing deadlock where a late-joining player could raise the "everyone ready"
+  threshold past what remaining players could ever satisfy.
+- Multiplayer Goose Horde now actually ends the match on a co-op win - previously only showed a
+  cosmetic toast with no real match-end.
+- Dead/eliminated players are no longer targeted by the horde.
+
+**Enemy AI:** added threat perception (enemies react to nearby gunshots and nearby deaths, not just
+direct line-of-sight), a fairer aim-error model (wider spread while a target is moving or just
+acquired, narrowing the longer an enemy holds aim), and a light flinch response on taking damage -
+aimed at reducing the "aimless bot" feel while staying balanced against the player.
+
+**Goose Horde:** fixed flyers diving at their spawn point instead of the live player position, fixed
+the horde targeting already-eliminated players, and widened the concurrent-goose cap so later waves
+scale further before hitting the cap.
+
+**Architecture:** `Game.ts` shrunk from 2,738 to 2,165 lines by extracting the network message
+router (`MatchMessageRouter`), per-mode controllers (Goose Toss, King of the Hill, Gun Game),
+`MultiplayerMatchState` (scoreboard/respawn/win-condition), and positional-audio/debug-API helpers
+into their own modules.
+
+**Test coverage:** unit tests grew from 66 to 132, adding coverage for weapon ammo/reserve/burst-fire
+accounting, the win-condition scan, Horde-elimination convergence, `HordeGooseManager` wave
+progression, road-network MST generation, and enemy patrol RNG determinism.
+
+**Design consistency:** the dark tactical/chamfered/accent-green design system (previously only on
+a few screens) is now applied consistently across the pause menu, settings, play setup, multiplayer
+menu, main menu, and death screen, plus the full HUD (health bars, hotbar, kill feed, announcements,
+scoreboard); added a "(you)" scoreboard label so identifying your own row doesn't rely on color
+alone; added a `prefers-reduced-motion` guard; added small-viewport layout clamps for the
+create-room and loadout screens; added keyboard focus-visible styling and Escape/Enter handling on
+menus.
+
+**New features:**
+- FOV setting in Settings (previously hardcoded) - also fixed two related bugs found while wiring
+  it in: weapon aim was silently overriding any FOV setting every frame, and mouse sensitivity
+  scaling used a stale constant instead of the live setting.
+- A minimal, privacy-light match-end telemetry beacon (mode, wave/kills, duration, version - no
+  player-identifying data) via a new Cloudflare Pages Function.
+- Lobby per-player "ready" check before Start Match is enabled.
+- `hordeSyncRequest`, closing a gap where a player joining mid-Horde-match had no way to learn the
+  current wave/live goose state.
+
+**Repo hygiene:** removed the legacy Netlify hosting config and serverless function (hosting has
+been on Cloudflare Pages since v3.0.0); deleted dead exports and a couple of small cleanups
+(explicit `void` on a fire-and-forget call, a real `kill()` method instead of a magic-number
+`takeDamage(0, -1)`, skipping the now-pointless `gooseSyncRequest` round trip in Horde mode).
+
 ## v3.8.1 (current)
 
 Same-day fixes/adjustments to v3.8.0's Loadout system, per live feedback:

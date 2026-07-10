@@ -1,3 +1,5 @@
+import { ACCENT, DISPLAY_FONT } from './menu/menuStyles.ts';
+
 export class Hud {
   private readonly container: HTMLDivElement;
   private readonly ammoElement: HTMLDivElement;
@@ -19,7 +21,7 @@ export class Hud {
 
     this.scoreElement = document.createElement('div');
     this.scoreElement.style.cssText =
-      'position:absolute; top:24px; left:32px; font-size:1.1rem; font-weight:600;' +
+      `position:absolute; top:24px; left:32px; font-family:${DISPLAY_FONT}; font-size:1.1rem; font-weight:600;` +
       ' text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
     this.scoreElement.textContent = 'Score: 0';
     this.container.appendChild(this.scoreElement);
@@ -29,26 +31,25 @@ export class Hud {
       'position:absolute; bottom:24px; left:32px; width:180px; height:14px;' +
       ' background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;';
     this.healthFillElement = document.createElement('div');
-    this.healthFillElement.style.cssText =
-      'height:100%; width:100%; background:#3ecf5f; transition:width 0.15s, background 0.15s;';
+    this.healthFillElement.style.cssText = `height:100%; width:100%; background:${ACCENT}; transition:width 0.15s, background 0.15s;`;
     healthTrack.appendChild(this.healthFillElement);
     this.container.appendChild(healthTrack);
 
     this.healthTextElement = document.createElement('div');
     this.healthTextElement.style.cssText =
-      'position:absolute; bottom:42px; left:32px; font-size:0.8rem; text-shadow:0 1px 3px #000;' +
+      `position:absolute; bottom:42px; left:32px; font-family:${DISPLAY_FONT}; font-size:0.8rem; text-shadow:0 1px 3px #000;` +
       ' font-variant-numeric:tabular-nums;';
     this.container.appendChild(this.healthTextElement);
 
     this.weaponNameElement = document.createElement('div');
     this.weaponNameElement.style.cssText =
-      'position:absolute; bottom:24px; right:32px; font-size:0.85rem; letter-spacing:0.05em;' +
+      `position:absolute; bottom:24px; right:32px; font-family:${DISPLAY_FONT}; font-size:0.85rem; letter-spacing:0.05em;` +
       ' text-transform:uppercase; opacity:0.8; text-shadow:0 1px 3px #000;';
     this.container.appendChild(this.weaponNameElement);
 
     this.ammoElement = document.createElement('div');
     this.ammoElement.style.cssText =
-      'position:absolute; bottom:44px; right:32px; font-size:1.4rem; font-weight:600;' +
+      `position:absolute; bottom:44px; right:32px; font-family:${DISPLAY_FONT}; font-size:1.4rem; font-weight:600;` +
       ' text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
     this.container.appendChild(this.ammoElement);
   }
@@ -75,7 +76,7 @@ export class Hud {
   setHealth(current: number, max: number): void {
     const ratio = Math.max(0, Math.min(1, current / max));
     this.healthFillElement.style.width = `${ratio * 100}%`;
-    this.healthFillElement.style.background = ratio > 0.5 ? '#3ecf5f' : ratio > 0.25 ? '#e0a930' : '#e03b30';
+    this.healthFillElement.style.background = ratio > 0.5 ? ACCENT : ratio > 0.25 ? '#e0a930' : '#e03b30';
     this.healthTextElement.textContent = `${Math.ceil(current)} HP`;
   }
 

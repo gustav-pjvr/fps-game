@@ -18,8 +18,10 @@ interface TownRoadLayout {
 
 /** Prim's algorithm over building centers - O(n^2) is trivial at town scale (n <= 45) and always
  * produces a tree connecting every building with the least total road length, which reads as an
- * intentional street layout rather than a web of redundant connections. */
-function computeMinimumSpanningTree(points: readonly { x: number; z: number }[]): [number, number][] {
+ * intentional street layout rather than a web of redundant connections. Exported for the unit-test
+ * layer (2026-07-10 review, Phase 6 test-coverage pass) - a pure function of a point list, testable
+ * directly without needing real per-town building placement. */
+export function computeMinimumSpanningTree(points: readonly { x: number; z: number }[]): [number, number][] {
   const n = points.length;
   if (n < 2) return [];
 
@@ -55,10 +57,6 @@ function computeMinimumSpanningTree(points: readonly { x: number; z: number }[])
   }
 
   return edges;
-}
-
-function townCellKey(gx: number, gz: number): string {
-  return `${gx},${gz}`;
 }
 
 /**
@@ -108,7 +106,7 @@ export class RoadManager {
           const inThisChunk = midX >= originX && midX < originX + size && midZ >= originZ && midZ < originZ + size;
           if (!inThisChunk) return;
 
-          const id = `${townCellKey(gx, gz)}:${index}`;
+          const id = `${chunkKey(gx, gz)}:${index}`;
           const groundY = sampleHeight(site.siteX, site.siteZ) + ROAD_SURFACE_OFFSET;
           const mesh = this.createSegmentMesh(segment, groundY);
           this.scene.add(mesh);
@@ -139,7 +137,7 @@ export class RoadManager {
   }
 
   private getTownRoadLayout(gx: number, gz: number): TownRoadLayout {
-    const key = townCellKey(gx, gz);
+    const key = chunkKey(gx, gz);
     const cached = this.townLayoutCache.get(key);
     if (cached) return cached;
 

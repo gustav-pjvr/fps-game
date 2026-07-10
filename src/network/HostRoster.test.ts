@@ -81,6 +81,21 @@ describe('HostRoster', () => {
     expect(result.outcome).toBe('joined');
   });
 
+  it('reuses the lowest freed slot instead of allocating past 3', () => {
+    const roster = new HostRoster('Alice');
+    const first = roster.handleHello('Bob', 'token-bob', 0);
+    roster.handleHello('Cara', null, 0);
+    roster.handleHello('Dan', null, 0);
+    if (first.outcome !== 'joined') throw new Error('expected joined');
+    roster.handleDisconnect(first.slot, 1000);
+    roster.sweepExpiredReservations(1000 + MULTIPLAYER_REJOIN_GRACE_PERIOD_MS); // frees slot 1
+
+    // Before the fix, an ever-incrementing counter would hand out slot 4 here - outside
+    // PlayerSlot's 0-3 domain - instead of reclaiming the just-freed slot 1.
+    const rejoiner = roster.handleHello('Newcomer', null, 2000);
+    expect(rejoiner).toEqual({ outcome: 'joined', slot: 1 });
+  });
+
   it('isMatchInProgress reflects startMatch()', () => {
     const roster = new HostRoster('Alice');
     expect(roster.isMatchInProgress()).toBe(false);

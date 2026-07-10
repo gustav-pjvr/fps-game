@@ -1,5 +1,6 @@
 import { DEFAULT_KEY_BINDINGS, type Action } from '../input/actions.ts';
 import { isGraphicsQuality, type GraphicsQuality } from './graphicsQuality.ts';
+import { CAMERA_FOV, CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../core/config.ts';
 
 const STORAGE_KEY = 'fps-game-settings-v1';
 
@@ -8,6 +9,7 @@ interface StoredSettings {
   mouseSensitivity: number;
   keyBindings: Record<string, Action>;
   graphicsQuality: GraphicsQuality;
+  fov: number;
 }
 
 function defaults(): StoredSettings {
@@ -18,6 +20,7 @@ function defaults(): StoredSettings {
     // Matches what this project's own e2e suite is verified against - see the comment on
     // GRAPHICS_QUALITY_PRESETS in graphicsQuality.ts for why Medium, not High, is the safe default.
     graphicsQuality: 'medium',
+    fov: CAMERA_FOV,
   };
 }
 
@@ -36,6 +39,7 @@ function loadFromStorage(): StoredSettings {
           ? { ...base.keyBindings, ...parsed.keyBindings }
           : base.keyBindings,
       graphicsQuality: isGraphicsQuality(parsed.graphicsQuality) ? parsed.graphicsQuality : base.graphicsQuality,
+      fov: typeof parsed.fov === 'number' ? Math.max(CAMERA_FOV_MIN, Math.min(CAMERA_FOV_MAX, parsed.fov)) : base.fov,
     };
   } catch {
     return defaults();
@@ -101,6 +105,21 @@ export const Settings = {
   },
   setGraphicsQuality(value: GraphicsQuality): void {
     state.graphicsQuality = value;
+    persist();
+  },
+
+  /** Read live every frame by WeaponManager.updateAim (the same "no explicit push, just re-read
+   * Settings continuously" pattern getMouseSensitivity/getKeyBindings already use elsewhere) so a
+   * change here takes effect the moment simulation next runs, no separate live-apply plumbing
+   * needed for the per-frame camera.fov assignment itself. SettingsPanel additionally applies it
+   * directly to the live camera on change (see onFovChange) purely for instant visual feedback
+   * while the settings panel itself is open (gameplay - and therefore WeaponManager.update - is
+   * frozen behind it, same as every other pause-menu overlay). */
+  getFov(): number {
+    return state.fov;
+  },
+  setFov(value: number): void {
+    state.fov = Math.max(CAMERA_FOV_MIN, Math.min(CAMERA_FOV_MAX, value));
     persist();
   },
 };

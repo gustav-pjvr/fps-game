@@ -1,4 +1,4 @@
-import { createButton } from './menu/menuStyles.ts';
+import { attachScanSweep, createButton } from './menu/menuStyles.ts';
 
 /** Content sits near the top rather than screen-center (per user request) - clears both the
  * single-player Hud's top-left score text and, in multiplayer, MultiplayerHud's top-left health
@@ -44,6 +44,7 @@ export class DeathScreen {
   show(score: number): void {
     this.scoreElement.textContent = `Score: ${score}`;
     this.element.style.display = 'flex';
+    attachScanSweep(this.element);
   }
 
   hide(): void {

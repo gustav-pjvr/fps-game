@@ -52,7 +52,18 @@ function ensureScrollbarHideStyleInjected(): void {
   if (scrollbarHideStyleInjected) return;
   scrollbarHideStyleInjected = true;
   const style = document.createElement('style');
-  style.textContent = '.loadout-scroll-hide::-webkit-scrollbar { display: none; }';
+  style.textContent =
+    '.loadout-scroll-hide::-webkit-scrollbar { display: none; }' +
+    // Small-viewport clamp: below 980px the fixed 3-column layout (catalog / equipped-slot readout
+    // / character rim) has no room left for any of the three to breathe, so it collapses to a
+    // single scrollable column instead - the overlay itself (normally unscrolled, each column
+    // scrolls independently) becomes the scroll container, and the character rim shrinks to a
+    // fixed height rather than the vh-based sizing that assumes a tall desktop viewport.
+    '@media (max-width: 980px) {' +
+    '  .loadout-body { flex-direction: column; overflow-y: auto; }' +
+    '  .loadout-middle { width: 100% !important; flex-direction: row; flex-wrap: wrap; justify-content: center; }' +
+    '  .loadout-rim { width: 100% !important; height: 340px !important; }' +
+    '}';
   document.head.appendChild(style);
 }
 
@@ -161,6 +172,7 @@ export class LoadoutScreen {
     header.append(titleWrap, closeButton);
 
     const body = document.createElement('div');
+    body.className = 'loadout-body';
     body.style.cssText = 'flex:1; min-height:0; display:flex; gap:32px;';
 
     // --- Left: the weapon catalog, grouped/ordered by category, scrollbar-free (see below) ---
@@ -204,6 +216,7 @@ export class LoadoutScreen {
 
     // --- Middle: the currently-equipped readout for each slot ---
     const middleColumn = document.createElement('div');
+    middleColumn.className = 'loadout-middle';
     middleColumn.style.cssText = 'flex:0 0 auto; width:190px; display:flex; flex-direction:column; justify-content:center; gap:14px;';
     this.slotValueElements = {} as Record<EquippableCategory, HTMLDivElement>;
     for (const category of EQUIPPABLE_CATEGORIES) {
@@ -218,6 +231,7 @@ export class LoadoutScreen {
     rightColumn.style.cssText = 'flex:1; min-width:0; display:flex; align-items:center; justify-content:center;';
 
     const rim = document.createElement('div');
+    rim.className = 'loadout-rim';
     rim.style.cssText =
       `width:min(100%, 420px); height:min(72vh, 620px); border:2px solid ${HAIRLINE};` +
       ` clip-path:${chamferClipPath('top-left', 26)};` +

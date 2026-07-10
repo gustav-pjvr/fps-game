@@ -1,3 +1,5 @@
+import { BODY_FONT, DISPLAY_FONT } from './menu/menuStyles.ts';
+
 const CAPTION_DURATION = 2.8;
 const FADE_DURATION = 0.5;
 
@@ -16,11 +18,11 @@ export class WeaponCaption {
 
     this.nameElement = document.createElement('div');
     this.nameElement.style.cssText =
-      'font-size:1.1rem; font-weight:700; letter-spacing:0.03em; text-shadow:0 1px 3px #000;';
+      `font-family:${DISPLAY_FONT}; font-size:1.1rem; font-weight:700; letter-spacing:0.03em; text-shadow:0 1px 3px #000;`;
 
     this.descriptionElement = document.createElement('div');
     this.descriptionElement.style.cssText =
-      'font-size:0.8rem; opacity:0.85; margin-top:2px; text-shadow:0 1px 3px #000; font-style:italic;';
+      `font-family:${BODY_FONT}; font-size:0.8rem; opacity:0.85; margin-top:2px; text-shadow:0 1px 3px #000; font-style:italic;`;
 
     this.container.append(this.nameElement, this.descriptionElement);
     root.appendChild(this.container);

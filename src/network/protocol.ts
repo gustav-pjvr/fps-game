@@ -67,6 +67,35 @@ export interface RosterUpdateMessage {
   roster: RosterEntry[];
 }
 
+/** Guest -> host only, sent from the pre-match lobby (CreateRoomScreen/JoinRoomScreen) whenever a
+ * guest toggles the lobby's "Ready" button - never relayed/broadcast peer-to-peer the way
+ * ModeExplanationReadyMessage is, because the lobby has no generic relay mechanism at all (unlike
+ * mid-match, which routes everything through MatchMessageRouter's RELAYABLE_MESSAGE_TYPES) - a
+ * guest's one connection only ever reaches the host, so only the host can even see this. The host
+ * aggregates every slot's readiness and rebroadcasts the full picture via LobbyReadyUpdateMessage,
+ * the same "host owns the authoritative view, rebroadcasts it on every change" shape
+ * RosterUpdateMessage already uses for the roster itself. The host's own slot auto-readies (see
+ * CreateRoomScreen) rather than requiring a matching click - the host is already the one who clicks
+ * Start Match, so gating Start Match on the host separately readying up first would just be an
+ * extra click with no real signal behind it. */
+export interface PlayerReadyMessage {
+  type: 'playerReady';
+  slot: PlayerSlot;
+  ready: boolean;
+}
+
+/** Host -> everyone (broadcast), sent whenever the pre-match lobby's aggregate readiness changes
+ * (a guest (un)readied, or the roster itself changed - a join/leave/reservation-expiry shrinks or
+ * grows the set of slots that need to be ready) - mirrors RosterUpdateMessage's own
+ * "host-authoritative, rebroadcast the whole picture on every change" shape rather than a
+ * self-converging relay (see PlayerReadyMessage's own comment on why a relay isn't available here).
+ * `readySlots` is deliberately the full current set, not a delta - the same reasoning
+ * RosterUpdateMessage's own comment gives for carrying the whole roster each time. */
+export interface LobbyReadyUpdateMessage {
+  type: 'lobbyReadyUpdate';
+  readySlots: PlayerSlot[];
+}
+
 /** Host -> a guest connection it is closing immediately because the room already has
  * MULTIPLAYER_MAX_PLAYERS - 1 guests (and no reserved/rejoinable slot matched this hello) - sent
  * once, right before that one DataConnection is closed; never reaches the room's other, already-
@@ -483,6 +512,30 @@ export interface BonusGooseKilledMessage {
   killerSlot: PlayerSlot | null;
 }
 
+/** Guest -> host only, mirrors GooseSyncRequestMessage exactly (see its own comment for the full
+ * two-timing-gap rationale) but for Goose Horde mode's own live flock/wave - covers a documented,
+ * known gap called out in HordeGooseManager's own class comment ("no late-join sync"): a guest
+ * joining or rejoining mid-horde-match previously had no way to learn the current wave number or
+ * any goose that spawned before it connected. Sent once, right after a Horde guest's own connection
+ * callbacks are wired up (see Game.ts's create()), same call site gooseSyncRequest already uses. */
+export interface HordeSyncRequestMessage {
+  type: 'hordeSyncRequest';
+  senderSlot: PlayerSlot;
+}
+
+/** Host -> the one guest that sent HordeSyncRequestMessage (targeted, sendTo - not a broadcast) -
+ * just the current wave number. Deliberately a distinct message from HordeWaveStartedMessage rather
+ * than reusing it: that one also drives the "Wave N incoming…" toast (see Game.ts's handler), which
+ * would misleadingly announce a wave that's already well underway, not actually starting, to a
+ * player who just joined mid-wave. The live goose flock itself piggybacks on the ordinary
+ * HordeGooseSpawnedMessage, sent individually per goose right after this (see
+ * MatchMessageRouter's hordeSyncRequest handler) - mirrors gooseSyncRequest's own handling of
+ * GooseSpawnedMessage exactly, just for HordeGooseManager.listForSync(). */
+export interface HordeSyncStateMessage {
+  type: 'hordeSyncState';
+  wave: number;
+}
+
 /** Self-reported, relayed (see Game.ts's RELAYABLE_MESSAGE_TYPES) - `slot` has clicked Skip on the
  * pre-match mode-briefing screen (see ui/modeExplanationScreen.ts). Every client tracks the same
  * set of ready slots and independently dismisses its own briefing (unfreezing world simulation -
@@ -497,6 +550,8 @@ export type NetworkMessage =
   | HelloMessage
   | WelcomeMessage
   | RosterUpdateMessage
+  | PlayerReadyMessage
+  | LobbyReadyUpdateMessage
   | RoomFullMessage
   | MatchStartMessage
   | PlayerSnapshotMessage
@@ -534,12 +589,16 @@ export type NetworkMessage =
   | BonusGooseSnapshotMessage
   | BonusGooseHitEventMessage
   | BonusGooseKilledMessage
-  | ModeExplanationReadyMessage;
+  | ModeExplanationReadyMessage
+  | HordeSyncRequestMessage
+  | HordeSyncStateMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hello',
   'welcome',
   'rosterUpdate',
+  'playerReady',
+  'lobbyReadyUpdate',
   'roomFull',
   'matchStart',
   'playerSnapshot',
@@ -578,6 +637,8 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'bonusGooseHitEvent',
   'bonusGooseKilled',
   'modeExplanationReady',
+  'hordeSyncRequest',
+  'hordeSyncState',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one

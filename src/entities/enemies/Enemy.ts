@@ -10,12 +10,14 @@ import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import { castHitscan } from '../../combat/hitscan.ts';
 import { applySpreadCone } from '../../combat/spread.ts';
 import type { EnemyArchetype } from './archetypes.ts';
-import { hasLineOfSight, pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
+import { hasLineOfSight, horizontalDistance, pickPatrolDestination, steerWithAvoidance } from './enemySteering.ts';
 import type { EngagementSlots } from './engagementSlots.ts';
 import {
   ENEMY_ALERT_REACTION_TIME,
   ENEMY_ATTACK_INTERVAL,
   ENEMY_ATTACK_RANGE,
+  ENEMY_DEATH_ALERT_RADIUS,
+  ENEMY_HEARING_RANGE,
   ENEMY_HEIGHT,
   ENEMY_LOS_CHECK_INTERVAL,
   ENEMY_MELEE_SWING_COUNT,
@@ -29,6 +31,9 @@ import {
   ENEMY_SEARCH_STOP_DISTANCE,
   ENEMY_STUCK_EPSILON,
   ENEMY_STUCK_WINDOW,
+  ENEMY_THREAT_SEARCH_ERROR_MAX,
+  ENEMY_THREAT_SEARCH_ERROR_MIN,
+  ENEMY_VELOCITY_AIM_PENALTY_MAX_DEG,
   EYE_OFFSET,
   HEADSHOT_MULTIPLIER,
 } from '../../core/config.ts';
@@ -117,6 +122,9 @@ export class Enemy implements Entity, Damageable {
   private aimHoldTimer = 0;
   private burstShotsFired = 0;
   private burstCooldown = 0;
+  /** See updateRangedFiring's own comment - forces the next shot to use aimErrorMaxDeg regardless
+   * of aimHoldTimer. */
+  private nextShotIsFirstSinceAcquiring = false;
   /** 'kite' archetypes only - true while backing away from a player that's closed inside
    * kiteTriggerRange; hysteresis (see updateChase) keeps this from flickering at the boundary. */
   private isKiting = false;
@@ -213,11 +221,66 @@ export class Enemy implements Entity, Damageable {
     return this.archetype.name;
   }
 
-  takeDamage(amount: number, hitColliderHandle: number): void {
+  takeDamage(amount: number, hitColliderHandle: number, sourcePosition?: THREE.Vector3): void {
     if (this.dead) return;
     const isHeadshot = hitColliderHandle === this.headCollider.handle;
     this.health -= isHeadshot ? amount * HEADSHOT_MULTIPLIER : amount;
-    if (this.health <= 0) this.dead = true;
+    if (this.health <= 0) {
+      this.dead = true;
+      return;
+    }
+    // Threat perception (2026-07-10 review, phase A): being shot is unambiguous - no detection
+    // range or line-of-sight gate, unlike spotting the player normally. An idle/patrolling enemy
+    // immediately searches toward roughly where the shot came from instead of continuing to
+    // patrol while taking hits, which used to be the dominant "aimless bot" symptom (the player's
+    // weapons out-range every archetype's own detectionRange several times over). Already-aware
+    // enemies (alert/chase/search) don't need this - they already know where the player is.
+    if (sourcePosition && (this.state === 'idle' || this.state === 'search')) {
+      this.enterSearchToward(sourcePosition, true);
+      return;
+    }
+    // "Flinch" (phase B, light version): a hit while already engaged resets the aim-settle timer,
+    // so return fire visibly suppresses instead of a hit-while-firing enemy shrugging it off with
+    // undiminished accuracy on its very next shot.
+    if (this.state === 'chase') this.aimHoldTimer = 0;
+  }
+
+  /** Shared by takeDamage/onHeardGunshot (a fuzzy estimate, `withError=true`) and onNearbyDeath (an
+   * exact corpse position, `withError=false`) - beelines the given point for ENEMY_SEARCH_DURATION,
+   * same as losing sight of the player mid-chase. */
+  private enterSearchToward(position: THREE.Vector3, withError: boolean): void {
+    if (withError) {
+      const errorRadius =
+        ENEMY_THREAT_SEARCH_ERROR_MIN + Math.random() * (ENEMY_THREAT_SEARCH_ERROR_MAX - ENEMY_THREAT_SEARCH_ERROR_MIN);
+      const angle = Math.random() * Math.PI * 2;
+      this.searchDestination.set(position.x + Math.cos(angle) * errorRadius, position.y, position.z + Math.sin(angle) * errorRadius);
+    } else {
+      this.searchDestination.copy(position);
+    }
+    this.state = 'search';
+    this.searchTimer = ENEMY_SEARCH_DURATION;
+  }
+
+  /** A player gunshot landed within ENEMY_HEARING_RANGE - alerts this enemy toward the shot's
+   * origin if it's currently oblivious (idle). No-op for anything already aware (alert/chase/
+   * search - hearing another shot tells it nothing new) or already dead. */
+  onHeardGunshot(origin: THREE.Vector3): void {
+    if (this.dead || this.state !== 'idle') return;
+    const current = this.rigidBody.translation();
+    if (horizontalDistance(current, origin) > ENEMY_HEARING_RANGE) return;
+    this.enterSearchToward(origin, true);
+  }
+
+  /** A comrade died within ENEMY_DEATH_ALERT_RADIUS and this enemy has line-of-sight to the corpse
+   * - the cheapest possible squad-awareness cue. Only fires for a currently-oblivious (idle) enemy,
+   * same reasoning as onHeardGunshot. */
+  onNearbyDeath(deathPosition: THREE.Vector3, killerPosition: THREE.Vector3): void {
+    if (this.dead || this.state !== 'idle') return;
+    const current = this.rigidBody.translation();
+    if (horizontalDistance(current, deathPosition) > ENEMY_DEATH_ALERT_RADIUS) return;
+    const from = new THREE.Vector3(current.x, current.y + HEAD_OFFSET_Y, current.z);
+    if (!hasLineOfSight(this.physics, from, deathPosition, this.rigidBody, -1)) return;
+    this.enterSearchToward(killerPosition, false);
   }
 
   update(dt: number, player: Player): void {
@@ -411,6 +474,11 @@ export class Enemy implements Entity, Damageable {
   ): void {
     if (!this.hasEngagementSlot) {
       this.hasEngagementSlot = this.engagementSlots.tryAcquire(this.id);
+      // First-shot grace (phase D): just went from "couldn't fire" to "can fire" - the very next
+      // shot always uses the archetype's widest aim error regardless of how long it's actually
+      // held the sightline, so getting spotted never one-taps the player before the tracer's own
+      // warning has had a chance to register. Cleared the instant that shot actually fires.
+      if (this.hasEngagementSlot) this.nextShotIsFirstSinceAcquiring = true;
     }
     if (!this.hasEngagementSlot) {
       this.aimHoldTimer = 0;
@@ -444,7 +512,19 @@ export class Enemy implements Entity, Damageable {
     // the longer the sightline has held (see aimSettleTime), same spread-by-two-axis-angle
     // technique WeaponManager already uses for the player's own weapons.
     const holdT = Math.min(1, this.aimHoldTimer / archetype.aimSettleTime);
-    const errorDeg = archetype.aimErrorMaxDeg - (archetype.aimErrorMaxDeg - archetype.aimErrorMinDeg) * holdT;
+    // Fair accuracy model (phase D): a moving player is genuinely harder to hit, not just
+    // cosmetically - movementBobStrength is the same 0..1 "how much horizontal speed right now"
+    // signal WeaponManager already uses for the player's own view-model bob, so a sprinting player
+    // gets rewarded for movement and a stationary one doesn't. The first shot after acquiring an
+    // engagement slot always uses the archetype's widest error, overriding the settle curve
+    // entirely - getting spotted should never one-tap the player before they've had a chance to
+    // react to the tracer warning.
+    const errorDeg = this.nextShotIsFirstSinceAcquiring
+      ? archetype.aimErrorMaxDeg
+      : archetype.aimErrorMaxDeg -
+        (archetype.aimErrorMaxDeg - archetype.aimErrorMinDeg) * holdT +
+        ENEMY_VELOCITY_AIM_PENALTY_MAX_DEG * player.movementBobStrength;
+    this.nextShotIsFirstSinceAcquiring = false;
     applySpreadCone(direction, THREE.MathUtils.degToRad(errorDeg));
 
     const maxRange = archetype.rangedRange + 5;
@@ -628,10 +708,4 @@ export class Enemy implements Entity, Damageable {
     this.physics.world.removeCollider(this.headCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
   }
-}
-
-function horizontalDistance(a: { x: number; z: number }, b: { x: number; z: number }): number {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return Math.sqrt(dx * dx + dz * dz);
 }

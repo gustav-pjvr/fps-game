@@ -6,7 +6,6 @@ import type { InputManager } from '../input/InputManager.ts';
 import { Settings } from '../settings/Settings.ts';
 import {
   CAMERA_BOB_AMPLITUDE,
-  CAMERA_FOV,
   EYE_OFFSET,
   FOOTSTEP_DISTANCE,
   GRAVITY,
@@ -210,8 +209,12 @@ export class Player implements Entity {
   }
 
   private applyLook(input: InputManager): void {
-    // Scale sensitivity by the current zoom ratio so aiming feels consistent while ADS narrows the FOV.
-    const sensitivity = MOUSE_SENSITIVITY * Settings.getMouseSensitivity() * (this.camera.fov / CAMERA_FOV);
+    // Scale sensitivity by the current zoom ratio so aiming feels consistent while ADS narrows the
+    // FOV. Settings.getFov() (the user's own hip-fire baseline), not the bare CAMERA_FOV constant -
+    // otherwise this ratio would read as something other than 1 at hip fire for anyone who's
+    // changed the FOV slider away from the hardcoded default, silently scaling ordinary look
+    // sensitivity even while not aiming at all.
+    const sensitivity = MOUSE_SENSITIVITY * Settings.getMouseSensitivity() * (this.camera.fov / Settings.getFov());
     const { dx, dy } = input.consumeLookDelta();
     this.yaw -= dx * sensitivity;
     this.pitch -= dy * sensitivity;

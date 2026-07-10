@@ -1,4 +1,4 @@
-import { createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
+import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
 import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, type GooseExplosionDifficulty } from '../../core/config.ts';
 
 export interface MatchSetupConfig {
@@ -16,10 +16,12 @@ export interface MatchSetupConfig {
  * same selector in CreateRoomScreen/matchEndScreen). */
 export class PlaySetupModal {
   private readonly overlay: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
   private readonly enemyInput: HTMLInputElement;
   private readonly targetInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly hordeModeCheckbox: HTMLInputElement;
+  private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
     root: HTMLElement,
@@ -31,6 +33,7 @@ export class PlaySetupModal {
     this.overlay = createOverlay();
 
     const panel = createPanel();
+    this.panel = panel;
     panel.style.width = '360px';
     panel.appendChild(createPanelTitle('MATCH SETUP'));
 
@@ -69,6 +72,20 @@ export class PlaySetupModal {
 
     this.overlay.appendChild(panel);
     root.appendChild(this.overlay);
+
+    // Escape cancels, Enter starts the match - only while this modal is actually visible, so it
+    // doesn't steal keystrokes meant for whatever's behind it.
+    this.onKeyDown = (event) => {
+      if (this.overlay.style.display === 'none') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCancel();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        startButton.click();
+      }
+    };
+    document.addEventListener('keydown', this.onKeyDown);
   }
 
   private buildDifficultyRow(panel: HTMLDivElement, defaultValue: GooseExplosionDifficulty): HTMLSelectElement {
@@ -129,6 +146,7 @@ export class PlaySetupModal {
 
   show(): void {
     this.overlay.style.display = 'flex';
+    attachScanSweep(this.panel);
   }
 
   hide(): void {
@@ -136,6 +154,7 @@ export class PlaySetupModal {
   }
 
   dispose(): void {
+    document.removeEventListener('keydown', this.onKeyDown);
     this.overlay.remove();
   }
 }

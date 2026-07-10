@@ -1,5 +1,13 @@
+import { GAME_VERSION } from './version.ts';
+
 export const FIXED_TIMESTEP = 1 / 60;
 export const MAX_FRAME_TIME = 0.25;
+
+/** Reported by the match-end telemetry beacon (see Game.ts's sendMatchTelemetry) so any future
+ * server-side aggregation can tell which build a data point came from - not read anywhere else in
+ * the client. Re-exports GAME_VERSION (version.ts's own single source of truth) rather than a
+ * separate literal, so it can't drift out of sync with the version shown in the main menu. */
+export const APP_VERSION = GAME_VERSION;
 
 // World seed lives in core/worldSeed.ts (not here) - it's mutable at runtime so each new match
 // generates a different world, unlike every other constant in this file.
@@ -97,6 +105,11 @@ export const MULTIPLAYER_KILL_LIMIT_MIN = 1;
 export const MULTIPLAYER_KILL_LIMIT_MAX = 100;
 
 export const CAMERA_FOV = 75;
+/** Settings panel's Field of View slider bounds (see settings/Settings.ts's getFov/setFov) - wide
+ * enough to matter (a narrow FOV feels like zooming, a wide one feels like a fisheye) without going
+ * so far either direction that the view models/weapon sway (tuned around CAMERA_FOV) look broken. */
+export const CAMERA_FOV_MIN = 60;
+export const CAMERA_FOV_MAX = 110;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
 
@@ -295,6 +308,29 @@ export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
  * it's in range, which reads as an unfair dogpile rather than a fight fought piece by piece. An
  * enemy that can't get a slot still tracks/faces the player, it just doesn't shoot yet. */
 export const ENEMY_MAX_CONCURRENT_ENGAGERS = 2;
+
+/**
+ * Threat perception (2026-07-10 review, enemy AI phase A) - previously an idle/searching enemy had
+ * no reaction at all to being shot, to gunfire, or to a nearby comrade dying, which was the single
+ * biggest reason combat read as "shooting inert props" rather than a firefight (player weapons
+ * out-range every archetype's own detectionRange several times over).
+ */
+/** How far off an attacker's actual position a hit/hearing-triggered search destination lands -
+ * models "I know roughly where that came from," not an exact fix. */
+export const ENEMY_THREAT_SEARCH_ERROR_MIN = 5;
+export const ENEMY_THREAT_SEARCH_ERROR_MAX = 10;
+/** Radius within which a player's own gunshot alerts nearby idle enemies toward the shot's origin -
+ * independent of (and typically much larger than) any archetype's own detectionRange, since a real
+ * gunshot is unmistakable regardless of line-of-sight. */
+export const ENEMY_HEARING_RANGE = 40;
+/** Radius within which an idle enemy with line-of-sight to a just-killed comrade's corpse enters
+ * alert, facing the killer - the cheapest possible "squad awareness" cue. */
+export const ENEMY_DEATH_ALERT_RADIUS = 20;
+/** Fair accuracy model (phase D): scales aim error up by this many extra degrees at the player's
+ * full sprint speed (Player.movementBobStrength === 1), tapering to 0 while stationary - a moving
+ * target is harder to hit, same logic that already makes a *kiting enemy's own movement* widen its
+ * aim (see updateRangedFiring's isStationary param), just applied to the player's motion too. */
+export const ENEMY_VELOCITY_AIM_PENALTY_MAX_DEG = 4;
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
 /** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
  * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that
@@ -474,7 +510,6 @@ export interface HordeWaveSpec {
   readonly jumperChance: number;
   readonly flyerChance: number;
 }
-export const HORDE_WAVE_COUNT = 10;
 export const HORDE_WAVE_TABLE: readonly HordeWaveSpec[] = [
   { count: 5, speedMultiplier: 1.0, jumperChance: 0, flyerChance: 0 },
   { count: 7, speedMultiplier: 1.1, jumperChance: 0, flyerChance: 0 },
@@ -492,7 +527,6 @@ export const HORDE_WAVE_TABLE: readonly HordeWaveSpec[] = [
  * single player, so this isn't just the single-player table extended, it's steeper at every
  * comparable wave (higher starting count, faster ramp, jumpers/flyers introduced a wave or two
  * earlier) and keeps climbing for 5 more waves past where single-player's finale sits. */
-export const HORDE_WAVE_COUNT_MULTIPLAYER = 15;
 export const HORDE_WAVE_TABLE_MULTIPLAYER: readonly HordeWaveSpec[] = [
   { count: 8, speedMultiplier: 1.1, jumperChance: 0, flyerChance: 0 },
   { count: 11, speedMultiplier: 1.2, jumperChance: 0.1, flyerChance: 0 },
@@ -514,8 +548,16 @@ export const HORDE_WAVE_TABLE_MULTIPLAYER: readonly HordeWaveSpec[] = [
  * own addition (not explicitly requested), necessary so wave 10's "A LOT" doesn't tank frame rate.
  * Remaining spawns for a wave queue up and trickle in as earlier ones die/explode, so pressure
  * stays constant rather than dumping the full count on the map at once. Logged via a toast, never
- * a silent cap. */
-export const HORDE_MAX_CONCURRENT = 18;
+ * a silent cap.
+ *
+ * Scaled per-wave (M5, 2026-07-10 review), not a flat number - a flat 18 meant every wave past the
+ * point where `count` first exceeded it (wave 7 in both tables) presented *identical* on-screen
+ * density, so "harder" late waves were only longer and marginally faster, never more intense. Now
+ * `min(HORDE_MAX_CONCURRENT_CEILING, HORDE_MAX_CONCURRENT_BASE + waveIndex)` (see
+ * HordeGooseManager.beginWave) - wave 1 still starts calm and the ceiling still protects frame rate,
+ * but the back half of the table actually gets visibly denser wave over wave instead of flat. */
+export const HORDE_MAX_CONCURRENT_BASE = 12;
+export const HORDE_MAX_CONCURRENT_CEILING = 24;
 /** Breather between waves, long enough to read the "Wave N incoming" toast and catch a breath. */
 export const HORDE_WAVE_INTERMISSION_SECONDS = 4;
 /** Base chase speed (m/s) before a wave's speedMultiplier - noticeably faster than the passive

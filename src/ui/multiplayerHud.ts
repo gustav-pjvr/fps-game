@@ -1,10 +1,10 @@
 import type { PlayerSlot } from '../network/protocol.ts';
-import { MOTION_EASE, ensureMotionKeyframesInjected } from './menu/menuStyles.ts';
+import { ACCENT, DISPLAY_FONT, HAIRLINE, MOTION_EASE, chamferClipPath, ensureMotionKeyframesInjected } from './menu/menuStyles.ts';
 
 const HEALTH_BAR_WIDTH = 140;
 
 function healthColor(ratio: number): string {
-  return ratio > 0.5 ? '#3ecf5f' : ratio > 0.25 ? '#e0a930' : '#e03b30';
+  return ratio > 0.5 ? ACCENT : ratio > 0.25 ? '#e0a930' : '#e03b30';
 }
 
 const MAX_LABEL_LENGTH = 10;
@@ -34,7 +34,7 @@ function createHealthRow(label: string): HealthRow {
   const labelElement = document.createElement('div');
   labelElement.textContent = label;
   labelElement.style.cssText =
-    'width:64px; font-size:0.7rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;' +
+    `width:64px; font-family:${DISPLAY_FONT}; font-size:0.7rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;` +
     ' text-shadow:0 1px 3px #000; opacity:0.85;';
   row.appendChild(labelElement);
 
@@ -43,12 +43,12 @@ function createHealthRow(label: string): HealthRow {
     `width:${HEALTH_BAR_WIDTH}px; height:12px; background:rgba(0,0,0,0.4);` +
     ' border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;';
   const fill = document.createElement('div');
-  fill.style.cssText = 'height:100%; width:100%; background:#3ecf5f; transition:width 0.15s, background 0.15s;';
+  fill.style.cssText = `height:100%; width:100%; background:${ACCENT}; transition:width 0.15s, background 0.15s;`;
   track.appendChild(fill);
   row.appendChild(track);
 
   const text = document.createElement('div');
-  text.style.cssText = 'width:34px; font-size:0.75rem; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
+  text.style.cssText = `width:34px; font-family:${DISPLAY_FONT}; font-size:0.75rem; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;`;
   row.appendChild(text);
 
   // -1 is a sentinel "no baseline yet" - health can't actually be negative, so the very first
@@ -86,17 +86,17 @@ export class MultiplayerHud {
 
     this.scoreboard = document.createElement('div');
     this.scoreboard.style.cssText =
-      'position:absolute; top:16px; left:50%; transform:translateX(-50%); display:flex;' +
-      ' align-items:center; gap:14px; padding:6px 18px; background:rgba(10,10,10,0.55);' +
-      ' border:1px solid rgba(255,255,255,0.15); border-radius:6px; font-weight:700;' +
+      `position:absolute; top:16px; left:50%; transform:translateX(-50%); display:flex; font-family:${DISPLAY_FONT};` +
+      ` align-items:center; gap:14px; padding:6px 18px; background:rgba(10,10,10,0.55);` +
+      ` border:1px solid ${HAIRLINE}; clip-path:${chamferClipPath('top-right', 8)}; font-weight:700;` +
       ' font-size:1.05rem; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
     root.appendChild(this.scoreboard);
 
     this.roomCodeLabel = document.createElement('div');
     this.roomCodeLabel.textContent = `Room: ${roomCode}`;
     this.roomCodeLabel.style.cssText =
-      'position:absolute; top:16px; right:16px; padding:5px 12px; background:rgba(10,10,10,0.55);' +
-      ' border:1px solid rgba(255,255,255,0.15); border-radius:6px; font-size:0.8rem; font-weight:600;' +
+      `position:absolute; top:16px; right:16px; padding:5px 12px; background:rgba(10,10,10,0.55); font-family:${DISPLAY_FONT};` +
+      ` border:1px solid ${HAIRLINE}; clip-path:${chamferClipPath('top-right', 6)}; font-size:0.8rem; font-weight:600;` +
       ' letter-spacing:0.05em; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums; opacity:0.85;';
     root.appendChild(this.roomCodeLabel);
   }
@@ -146,13 +146,19 @@ export class MultiplayerHud {
     this.scoreboard.replaceChildren(
       ...entries.map((entry) => {
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'display:flex; align-items:center; gap:6px;';
-        wrapper.style.color = entry.isYou ? '#3ecf5f' : '#e0625a';
+        wrapper.style.cssText = `display:flex; align-items:center; gap:6px; font-family:${DISPLAY_FONT};`;
+        wrapper.style.color = entry.isYou ? ACCENT : '#e0625a';
+
+        // A text affix, not just color, marks "this row is you" (per accessibility review - a
+        // colorblind player, or anyone glancing quickly, couldn't otherwise tell their own row
+        // apart from an opponent's at this size). Kept short ("(you)") so it doesn't crowd out the
+        // King of the Hill progress bar this row can also carry.
+        const youSuffix = entry.isYou ? ' (you)' : '';
 
         if (kingOfTheHill) {
           const label = document.createElement('div');
           const crown = entry.slot === kingOfTheHill.carrierSlot ? '👑 ' : '';
-          label.textContent = `${crown}${truncateForLabel(entry.name)}`;
+          label.textContent = `${crown}${truncateForLabel(entry.name)}${youSuffix}`;
           wrapper.appendChild(label);
 
           const track = document.createElement('div');
@@ -168,7 +174,7 @@ export class MultiplayerHud {
           fraction.style.cssText = 'font-size:0.8rem;';
           wrapper.appendChild(fraction);
         } else {
-          wrapper.textContent = `${truncateForLabel(entry.name)} ${entry.score}`;
+          wrapper.textContent = `${truncateForLabel(entry.name)}${youSuffix} ${entry.score}`;
         }
 
         return wrapper;

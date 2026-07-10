@@ -17,7 +17,7 @@ import {
   WORLD_EDGE_MOUNTAIN_HEIGHT,
   WORLD_EDGE_RAMP_START,
 } from '../core/config.ts';
-import { sampleFlatZone } from './ZoneMap.ts';
+import { sampleFlatZone, smoothstep } from './ZoneMap.ts';
 import { getWatchTowerPositions, WATCH_TOWER_FOOTPRINT_RADIUS } from './WatchTowerManager.ts';
 
 /**
@@ -31,11 +31,6 @@ import { getWatchTowerPositions, WATCH_TOWER_FOOTPRINT_RADIUS } from './WatchTow
  */
 const SPAWN_CLEARING_RADIUS = ENEMY_RING_BASE_RADIUS + 5;
 const SPAWN_CLEARING_INNER_FRACTION = 0.6;
-
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
-}
 
 function spawnClearingMembership(worldX: number, worldZ: number): number {
   const dx = worldX - SPAWN_X;

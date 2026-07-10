@@ -89,10 +89,6 @@ function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPre
   };
 }
 
-function townCellKey(gx: number, gz: number): string {
-  return `${gx},${gz}`;
-}
-
 /**
  * Town-clustered building placement (WORLD_PLAN.md follow-up: buildings should form clusters like
  * a small town, not scatter one-per-chunk independently). A town's entire layout is a pure function
@@ -145,7 +141,7 @@ export class BuildingManager {
           const preset = this.presets[placement.presetIndex];
           if (!preset) return;
 
-          const id = `${townCellKey(gx, gz)}:${index}`;
+          const id = `${chunkKey(gx, gz)}:${index}`;
           const placed = this.createBuilding(worldX, worldZ, placement.rotationY, preset);
           this.activeBuildings.set(id, placed);
           ownedIds.push(id);
@@ -201,7 +197,7 @@ export class BuildingManager {
    * minimum gap between footprints, capped at TOWN_MAX_PLACEMENT_ATTEMPTS so a crowded roll never
    * stalls a chunk load. */
   private getTownLayout(gx: number, gz: number, site: FlatZoneSite): TownLayout {
-    const key = townCellKey(gx, gz);
+    const key = chunkKey(gx, gz);
     const cached = this.townLayoutCache.get(key);
     if (cached) return cached;
 

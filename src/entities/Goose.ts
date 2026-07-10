@@ -4,7 +4,7 @@ import { allocateEntityId, type Entity } from './Entity.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Damageable } from '../combat/damage.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
-import { steerWithAvoidance } from './enemies/enemySteering.ts';
+import { horizontalDistance, steerWithAvoidance } from './enemies/enemySteering.ts';
 import {
   GOOSE_HEIGHT,
   GOOSE_HITS_TO_KILL,
@@ -201,12 +201,6 @@ export class Goose implements Entity, Damageable {
     this.physics.world.removeCollider(this.bodyCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
   }
-}
-
-function horizontalDistance(a: { x: number; z: number }, b: { x: number; z: number }): number {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return Math.sqrt(dx * dx + dz * dz);
 }
 
 /** Built from plain THREE primitives - no GLTF, per the "build it procedurally" decision (see

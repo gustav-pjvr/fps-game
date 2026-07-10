@@ -23,8 +23,20 @@ export class JoinRoomScreen {
   private readonly statusText: HTMLDivElement;
   private readonly lobbyView: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
+  private readonly readyButton: HTMLButtonElement;
   private connection: PeerConnection | null = null;
   private ownSlot: PlayerSlot | null = null;
+  /** This guest's own current readiness, toggled by the lobby's Ready button (see
+   * PlayerReadyMessage) - reset false on every fresh attemptJoin(), same as ownSlot. */
+  private ownReady = false;
+  /** Mirrors the host's own authoritative readySlots (see LobbyReadyUpdateMessage) purely for
+   * display - this client has no say over anyone else's readiness, it just renders whatever the
+   * host last broadcast. */
+  private readySlots = new Set<PlayerSlot>();
+  /** The most recent roster this screen has seen (from `welcome` or `rosterUpdate`) - kept around
+   * so a `lobbyReadyUpdate` arriving on its own (no roster change involved) can still re-render the
+   * player list with fresh ready tags without needing its own copy of the roster bundled in. */
+  private lastRoster: RosterEntry[] = [];
   /** Set when a `roomFull` message arrives - the host closes this connection shortly afterward
    * (see PeerConnection.ts's own comment on why that close is delayed, not immediate), which would
    * otherwise fire onPeerDisconnected and stomp the "room is full" status with a misleading "the
@@ -35,6 +47,7 @@ export class JoinRoomScreen {
    * in flight. Without this, that in-flight call would resolve *after* this screen moved on and
    * incorrectly resurrect `this.connection`, leaking a PeerJS peer this screen no longer owns. */
   private joinGeneration = 0;
+  private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
     root: HTMLElement,
@@ -100,6 +113,19 @@ export class JoinRoomScreen {
     this.playerList.style.cssText =
       `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px;`;
     this.lobbyView.append(lobbyLabel, this.playerList);
+
+    // "Start Match" only unlocks once every connected slot (this guest included) has clicked
+    // Ready (see PlayerReadyMessage) - the host auto-readies itself, so guests are the only ones
+    // who ever need to click this.
+    this.readyButton = createButton('Ready', 'primary');
+    this.readyButton.style.cssText += 'width:100%; margin-top:14px;';
+    this.readyButton.addEventListener('click', () => {
+      if (this.ownSlot === null || !this.connection) return;
+      this.ownReady = !this.ownReady;
+      this.connection.send({ type: 'playerReady', slot: this.ownSlot, ready: this.ownReady });
+      this.refreshReadyButton();
+    });
+    this.lobbyView.appendChild(this.readyButton);
     panel.appendChild(this.lobbyView);
 
     this.statusText = document.createElement('div');
@@ -115,6 +141,17 @@ export class JoinRoomScreen {
 
     this.overlay.appendChild(panel);
     root.appendChild(this.overlay);
+
+    // Escape cancels - the code input already has its own Enter-to-join listener above, so this
+    // only adds the Escape half of "Enter/Escape handling on modals".
+    this.onKeyDown = (event) => {
+      if (this.overlay.style.display === 'none') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.close();
+      }
+    };
+    document.addEventListener('keydown', this.onKeyDown);
   }
 
   show(): void {
@@ -124,15 +161,29 @@ export class JoinRoomScreen {
     this.codeInput.style.display = 'block';
     this.joinButton.style.display = 'block';
     this.lobbyView.style.display = 'none';
+    this.ownReady = false;
+    this.readySlots = new Set();
+    this.refreshReadyButton();
     this.setStatus('');
     this.codeInput.focus();
   }
 
   private renderPlayerRows(roster: RosterEntry[]): void {
+    this.lastRoster = roster;
     this.playerList.replaceChildren(
-      ...roster.map((entry) => (entry.slot === this.ownSlot ? createPlayerRow(`${entry.username} (you)`) : createPlayerRow(entry.username))),
+      ...roster.map((entry) => {
+        const name = entry.slot === this.ownSlot ? `${entry.username} (you)` : entry.username;
+        const readyTag = this.readySlots.has(entry.slot) ? ' — ✓ Ready' : ' — Not Ready';
+        return createPlayerRow(`${name}${readyTag}`);
+      }),
       ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for a player to join…', true)),
     );
+  }
+
+  /** Label reflects this guest's own toggled state - 'Ready' (unclicked) vs 'Not Ready' (already
+   * clicked, click again to un-ready) - so the button communicates what clicking it again would do. */
+  private refreshReadyButton(): void {
+    this.readyButton.textContent = this.ownReady ? 'Not Ready' : 'Ready';
   }
 
   private attemptJoin(): void {
@@ -149,6 +200,9 @@ export class JoinRoomScreen {
     this.setStatus('Connecting…');
     this.ownSlot = null;
     this.rejectedAsFull = false;
+    this.ownReady = false;
+    this.readySlots = new Set();
+    this.refreshReadyButton();
 
     const username = normalizeUsername(this.usernameInput.value);
     this.usernameInput.value = username;
@@ -202,6 +256,10 @@ export class JoinRoomScreen {
           this.setStatus(message.isRejoin ? 'Reconnected. Waiting for the host to start the match…' : 'Connected. Waiting for the host to start the match…');
         }
         if (message.type === 'rosterUpdate') this.renderPlayerRows(message.roster);
+        if (message.type === 'lobbyReadyUpdate') {
+          this.readySlots = new Set(message.readySlots);
+          this.renderPlayerRows(this.lastRoster);
+        }
         if (message.type === 'roomFull') {
           this.rejectedAsFull = true;
           this.setStatus('That room is full (4 players max).');
@@ -268,6 +326,7 @@ export class JoinRoomScreen {
   dispose(): void {
     this.joinGeneration++;
     this.connection?.dispose();
+    document.removeEventListener('keydown', this.onKeyDown);
     this.overlay.remove();
   }
 }

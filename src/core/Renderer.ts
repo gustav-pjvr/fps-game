@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import {
   CAMERA_FAR,
-  CAMERA_FOV,
   CAMERA_NEAR,
   FOG_COLOR,
   FOG_FAR,
@@ -17,6 +16,7 @@ import {
   TONE_MAPPING_EXPOSURE,
 } from './config.ts';
 import type { GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
+import { Settings } from '../settings/Settings.ts';
 
 function createSky(): Sky {
   const sky = new Sky();
@@ -78,8 +78,12 @@ export class Renderer {
     this.skyEnvironmentTexture = pmremGenerator.fromScene(this.scene, 0, CAMERA_NEAR, CAMERA_FAR).texture;
     pmremGenerator.dispose();
 
+    // The user's own saved FOV (see settings/Settings.ts), not the bare CAMERA_FOV default -
+    // WeaponManager.updateAim re-derives this same value every frame once gameplay starts (so a
+    // mid-match settings change applies live), but this is what a fresh match's very first
+    // rendered frame - before update() has run even once - actually shows.
     this.camera = new THREE.PerspectiveCamera(
-      CAMERA_FOV,
+      Settings.getFov(),
       window.innerWidth / window.innerHeight,
       CAMERA_NEAR,
       CAMERA_FAR,

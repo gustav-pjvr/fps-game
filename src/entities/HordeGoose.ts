@@ -55,8 +55,17 @@ export class HordeGoose implements Entity, Damageable {
    * (explodes in the air, right on top of whatever it was diving at). */
   private flyerAge = 0;
   private flyerLanded = false;
-  private readonly flyerTargetX: number;
-  private readonly flyerTargetZ: number;
+  /** The nearest player's position the *first* time this flyer ticks (effectively "at spawn," a
+   * few ms later) - not the goose's own spawn point. Previously initialized from `position` (the
+   * spawn point itself), so a flyer dove straight down onto the fixed spawn ring instead of at a
+   * player, only ever hitting someone who happened to be standing on that exact ring - the config
+   * comment's own "dives straight down toward the player" was never actually true. Confirmed bug
+   * (M1), fixed in the 2026-07-10 review. Mutable rather than readonly-from-constructor because
+   * the constructor only knows the spawn position, not yet the live nearest-player target
+   * HordeGooseManager computes fresh each tick. */
+  private flyerTargetX: number;
+  private flyerTargetZ: number;
+  private flyerTargetCaptured = false;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -112,6 +121,14 @@ export class HordeGoose implements Entity, Damageable {
     this.dead = true;
   }
 
+  /** Host-only: kills this goose outright, no damage amount involved - used when the host is
+   * applying a hit a guest already reported (HordeGooseManager.registerRemoteHit), where the
+   * hit is known-authoritative and there's nothing left to adjudicate. Never routes through
+   * onRemoteHitReport - only the host's own authoritative copy calls this. */
+  kill(): void {
+    this.dead = true;
+  }
+
   /** Follower mode only: snaps directly to a host-reported position, mirroring Goose.ts's
    * identical method - only the host's copy runs real AI/decides death. */
   snapTo(x: number, y: number, z: number): void {
@@ -131,6 +148,11 @@ export class HordeGoose implements Entity, Damageable {
   }
 
   private updateFlyerDescent(dt: number, targetPosition: THREE.Vector3): void {
+    if (!this.flyerTargetCaptured) {
+      this.flyerTargetCaptured = true;
+      this.flyerTargetX = targetPosition.x;
+      this.flyerTargetZ = targetPosition.z;
+    }
     this.flyerAge += dt;
     const groundY = sampleHeight(this.flyerTargetX, this.flyerTargetZ) + GOOSE_HEIGHT / 2;
     const startY = groundY + HORDE_FLYER_SPAWN_HEIGHT;

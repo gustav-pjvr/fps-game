@@ -3,7 +3,7 @@ import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
-import { HOST_SLOT, type RosterEntry } from '../../network/protocol.ts';
+import { HOST_SLOT, type PlayerSlot, type RosterEntry } from '../../network/protocol.ts';
 import {
   DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
   DEFAULT_MATCH_WEATHER,
@@ -55,11 +55,27 @@ export class CreateRoomScreen {
   private connection: PeerConnection | null = null;
   private hostRoster: HostRoster | null = null;
   private roomCode = '';
+  /** Every slot the pre-match lobby currently considers ready (see PlayerReadyMessage/
+   * LobbyReadyUpdateMessage in protocol.ts) - host-side authoritative, same "one owning side
+   * aggregates and rebroadcasts" shape HostRoster's own roster already uses. The host's own slot is
+   * always a member (see show()'s reset) - it auto-readies rather than needing its own click, since
+   * the host is already the one who clicks Start Match. Reset fresh on every show() (a new room),
+   * pruned on disconnect/reservation-expiry, and consulted by updateStartButtonState/
+   * renderPlayerRows. */
+  private readySlots = new Set<PlayerSlot>();
+  /** Pre-match equivalent of Game.ts's own mid-match sweep - a disconnected guest's slot reservation
+   * only actually frees up via `sweepExpiredReservations`, and nothing polled it while still in
+   * this lobby (Game.ts's sweep doesn't start until a match exists), so a departed guest's grace
+   * period could never expire and their slot stayed reserved (room permanently "full") until a
+   * match was actually started. Cleared on close()/startMatch() - ownership of sweeping moves to
+   * Game.ts's own loop from match start onward. */
+  private reservationSweepInterval: ReturnType<typeof setInterval> | null = null;
   /** Bumped by show()/close() - PeerConnection.hostRoom is async now (the TURN credential fetch),
    * so a Cancel click can land while a hostRoom() call is still in flight. Without this, that
    * in-flight call would resolve *after* close() and incorrectly resurrect `this.connection`,
    * leaking a PeerJS peer this screen no longer thinks it owns. */
   private showGeneration = 0;
+  private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
     root: HTMLElement,
@@ -74,17 +90,23 @@ export class CreateRoomScreen {
     // screen required scrolling to see everything, which they explicitly don't want) - settings on
     // the left, the live player list on the right, rather than stacking the player list underneath
     // everything else and pushing the panel past createPanel's 80vh scroll threshold.
-    panel.style.width = '760px';
+    // `min(760px, 94vw)` (not a bare 760px) so this doesn't overflow the viewport horizontally on a
+    // narrow window/small laptop screen - createPanel's own max-height:80vh + overflow-y:auto
+    // already handles the vertical case, this is the matching horizontal clamp.
+    panel.style.width = 'min(760px, 94vw)';
     panel.appendChild(createPanelTitle('CREATE ROOM'));
 
     const mainRow = document.createElement('div');
-    mainRow.style.cssText = 'display:flex; gap:24px;';
+    // Wraps to a single stacked column below ~640px of actual panel width (see the 94vw clamp
+    // above) rather than staying a fixed two-column row that would squeeze both columns into
+    // unreadably narrow strips - min-width:280px on each column (below) is what triggers the wrap.
+    mainRow.style.cssText = 'display:flex; flex-wrap:wrap; gap:24px;';
     const leftColumn = document.createElement('div');
-    leftColumn.style.cssText = 'flex:1.15; min-width:0;';
+    leftColumn.style.cssText = 'flex:1.15; min-width:280px;';
     const rightColumn = document.createElement('div');
     // A flex column so the player list below can flex:1 and stretch to match the left column's
     // height (the row's default align-items:stretch already makes both columns equally tall).
-    rightColumn.style.cssText = 'flex:1; min-width:0; display:flex; flex-direction:column;';
+    rightColumn.style.cssText = 'flex:1; min-width:280px; display:flex; flex-direction:column;';
 
     const usernameLabel = document.createElement('div');
     usernameLabel.textContent = 'Your name:';
@@ -256,6 +278,18 @@ export class CreateRoomScreen {
 
     this.overlay.appendChild(panel);
     root.appendChild(this.overlay);
+
+    // Escape cancels - no single "Enter" default here (several text/number/select fields share the
+    // form, none of them an obvious single submit target), so Enter is deliberately left to native
+    // per-control activation only, same call as MultiplayerMenu.
+    this.onKeyDown = (event) => {
+      if (this.overlay.style.display === 'none') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.close();
+      }
+    };
+    document.addEventListener('keydown', this.onKeyDown);
   }
 
   /** Starts a fresh room each time this screen is opened, rather than reusing whatever room a
@@ -269,7 +303,26 @@ export class CreateRoomScreen {
     this.usernameInput.value = hostUsername;
     saveUsername(hostUsername);
     this.hostRoster = new HostRoster(hostUsername);
+    // The host auto-readies (see readySlots's own comment) - fresh for every new room, same as
+    // hostRoster itself.
+    this.readySlots = new Set([HOST_SLOT]);
     this.renderPlayerRows(this.hostRoster.currentRoster());
+    this.updateStartButtonState();
+
+    if (this.reservationSweepInterval !== null) clearInterval(this.reservationSweepInterval);
+    this.reservationSweepInterval = setInterval(() => {
+      if (!this.hostRoster || !this.connection) return;
+      const expired = this.hostRoster.sweepExpiredReservations(performance.now());
+      if (expired.length === 0) return;
+      // A swept-away reservation's slot no longer exists in the roster at all - prune it from
+      // readySlots too so the two stay in lockstep (harmless either way given
+      // updateStartButtonState only ever checks readiness for slots still in the current roster,
+      // but there's no reason to let a stale entry linger).
+      for (const slot of expired) this.readySlots.delete(slot);
+      this.renderPlayerRows(this.hostRoster.currentRoster());
+      this.connection.send({ type: 'rosterUpdate', roster: this.hostRoster.currentRoster() });
+      this.broadcastReadyState();
+    }, 2000);
 
     this.roomCode = generateRoomCode();
     this.codeDisplay.textContent = this.roomCode;
@@ -280,14 +333,45 @@ export class CreateRoomScreen {
       onConnected: () => {
         this.setStatus('Connection verified. Ready when you are.');
         this.startButton.style.display = 'block';
+        this.updateStartButtonState();
+        // The just-connected guest's own connection was only added to PeerConnection's map
+        // immediately before this fires (see PeerConnection.attachIncomingGuestConnection), so a
+        // broadcast here (unlike the one inside onHostHello below) actually reaches it - this is
+        // how a newly joined guest learns who's already ready, including the host's own auto-ready.
+        this.broadcastReadyState();
       },
-      onPeerDisconnected: () => {
+      onPeerDisconnected: (slot) => {
         if (!this.hostRoster) return;
+        // Without this, a guest who leaves the pre-match lobby was never actually marked
+        // disconnected - `currentRoster()` kept listing them as `connected: true` forever, their
+        // slot counted against MULTIPLAYER_MAX_PLAYERS permanently (never entering the grace-period
+        // reservation path handleDisconnect starts), and enough join/leave cycles made the room
+        // permanently report full. Confirmed bug, fixed in the 2026-07-10 review.
+        this.hostRoster.handleDisconnect(slot, performance.now());
+        // A departed guest's old readiness no longer means anything - without pruning this, a
+        // guest who readied up and then disconnected would still count as ready while merely
+        // reserved (grace period), and a rejoin must re-ready rather than silently inherit the old
+        // state.
+        this.readySlots.delete(slot);
         this.renderPlayerRows(this.hostRoster.currentRoster());
         this.connection?.send({ type: 'rosterUpdate', roster: this.hostRoster.currentRoster() });
+        this.updateStartButtonState();
+        this.broadcastReadyState();
       },
       onError: (message) => this.setStatus(message),
-      onMessage: () => {}, // nothing else to react to before a match starts
+      onMessage: (message) => {
+        if (message.type !== 'playerReady' || !this.hostRoster) return;
+        // Self-reported - the sender's own message.slot, not a transport-level identity (the lobby
+        // has no senderSlot concept like MatchMessageRouter's mid-match one, since every guest
+        // connection is already keyed by slot at the PeerConnection layer - see onHostHello). No
+        // adjudication needed, same trust model as everywhere else in this protocol: a guest can
+        // only ever toggle its own readiness.
+        if (message.ready) this.readySlots.add(message.slot);
+        else this.readySlots.delete(message.slot);
+        this.renderPlayerRows(this.hostRoster.currentRoster());
+        this.updateStartButtonState();
+        this.broadcastReadyState();
+      },
       onHostHello: (username, rejoinToken) => {
         if (!this.hostRoster) return 'full';
         const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
@@ -296,8 +380,10 @@ export class CreateRoomScreen {
         const roster = this.hostRoster.currentRoster();
         this.renderPlayerRows(roster);
         // Broadcasts to whoever's already connected - this new guest isn't in the connection map
-        // yet (added right after this callback returns), so it never receives its own join here.
+        // yet (added right after this callback returns), so it never receives its own join here
+        // (same as the ready-state broadcast, deferred to onConnected above for the same reason).
         this.connection?.send({ type: 'rosterUpdate', roster });
+        this.updateStartButtonState();
         return { type: 'welcome', yourSlot: outcome.slot, isRejoin: outcome.outcome === 'rejoined', hostUsername, roster };
       },
     }).then((connection) => {
@@ -322,13 +408,46 @@ export class CreateRoomScreen {
 
   private renderPlayerRows(roster: RosterEntry[]): void {
     this.playerList.replaceChildren(
-      ...roster.map((entry) => createPlayerRow(entry.slot === HOST_SLOT ? `${entry.username} (you, host)` : entry.username)),
+      ...roster.map((entry) => {
+        const name = entry.slot === HOST_SLOT ? `${entry.username} (you, host)` : entry.username;
+        const readyTag = this.readySlots.has(entry.slot) ? ' — ✓ Ready' : ' — Not Ready';
+        return createPlayerRow(`${name}${readyTag}`);
+      }),
       ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for a player to join…', true)),
     );
   }
 
+  /** Broadcasts the full current readySlots set to every already-connected guest - mirrors the
+   * existing rosterUpdate broadcast shape exactly (host-authoritative, whole picture every time,
+   * not a delta). Safe to call with no connection yet (a no-op via PeerConnection.send's own empty
+   * loop over zero connections). */
+  private broadcastReadyState(): void {
+    this.connection?.send({ type: 'lobbyReadyUpdate', readySlots: Array.from(this.readySlots) });
+  }
+
+  /** Start Match only becomes clickable once every currently-connected slot (host included, via
+   * its permanent auto-ready membership in readySlots) has readied up - per the Phase 8 roadmap's
+   * own "every connected player" requirement. `roster.length > 0` guards the vacuous-truth case
+   * (Array.prototype.every on an empty array is always true) - shouldn't be reachable in practice
+   * since the host's own slot always exists, but this stays correct even if hostRoster's shape ever
+   * changes. */
+  private updateStartButtonState(): void {
+    if (!this.hostRoster) return;
+    const roster = this.hostRoster.currentRoster();
+    const allReady = roster.length > 0 && roster.every((entry) => this.readySlots.has(entry.slot));
+    this.startButton.disabled = !allReady;
+  }
+
   private startMatch(): void {
     if (!this.connection || !this.hostRoster) return;
+    // Defense in depth - the button itself is already disabled until every slot is ready (see
+    // updateStartButtonState), so a disabled button's own click event never fires in a browser;
+    // this just guards against any other future call path to this method.
+    if (this.startButton.disabled) return;
+    if (this.reservationSweepInterval !== null) {
+      clearInterval(this.reservationSweepInterval);
+      this.reservationSweepInterval = null;
+    }
     this.hostRoster.startMatch();
     const roster = this.hostRoster.currentRoster();
     const seed = generateMultiplayerSeed();
@@ -378,6 +497,10 @@ export class CreateRoomScreen {
     this.connection?.dispose();
     this.connection = null;
     this.hostRoster = null;
+    if (this.reservationSweepInterval !== null) {
+      clearInterval(this.reservationSweepInterval);
+      this.reservationSweepInterval = null;
+    }
     this.overlay.style.display = 'none';
     this.onClose();
   }
@@ -385,6 +508,8 @@ export class CreateRoomScreen {
   dispose(): void {
     this.showGeneration++;
     this.connection?.dispose();
+    if (this.reservationSweepInterval !== null) clearInterval(this.reservationSweepInterval);
+    document.removeEventListener('keydown', this.onKeyDown);
     this.overlay.remove();
   }
 }

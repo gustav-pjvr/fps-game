@@ -33,6 +33,10 @@ interface ManagedEntity {
   readonly debugArchetype?: string;
   dispose(): void;
   update?(dt: number, player: Player): void;
+  /** Enemy-only (see Enemy.ts's own threat-perception methods) - undefined for Target, which has
+   * no AI to alert. */
+  onHeardGunshot?(origin: THREE.Vector3): void;
+  onNearbyDeath?(deathPosition: THREE.Vector3, killerPosition: THREE.Vector3): void;
 }
 
 /** A corpse mid-death-sequence (see the DEATH_* comment in config.ts) - its physics presence is
@@ -97,6 +101,13 @@ export class EntityManager {
     this.entities.push(enemy);
   }
 
+  /** A player gunshot just fired - alerts every currently-oblivious enemy within hearing range
+   * toward its origin (see Enemy.onHeardGunshot's own gating). Cheap no-op when `entities` holds no
+   * enemies (multiplayer, or a match with enemyCount 0) - Target simply doesn't implement this. */
+  notifyGunshot(origin: THREE.Vector3): void {
+    for (const entity of this.entities) entity.onHeardGunshot?.(origin);
+  }
+
   update(dt: number, player: Player): void {
     for (let i = this.entities.length - 1; i >= 0; i--) {
       const entity = this.entities[i];
@@ -105,6 +116,7 @@ export class EntityManager {
       entity.update?.(dt, player);
 
       if (entity.isDead) {
+        const deathPosition = entity.mesh.position.clone();
         // Physics presence goes immediately (same tick as before this feature existed) - only the
         // mesh lingers, for the death sequence below. Nothing can still collide with or shoot
         // through a corpse mid-sequence.
@@ -117,6 +129,11 @@ export class EntityManager {
           startY: entity.mesh.position.y,
           startRotationX: entity.mesh.rotation.x,
         });
+        // Threat perception (phase A): a comrade dying alerts nearby oblivious enemies - the
+        // player is this match's only real killer (single-player has no other combat source that
+        // kills enemies), so their current position doubles as "the direction the threat came
+        // from" for the ones that react.
+        for (const other of this.entities) other.onNearbyDeath?.(deathPosition, player.position);
       }
     }
 

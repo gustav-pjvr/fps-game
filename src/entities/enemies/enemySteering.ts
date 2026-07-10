@@ -108,3 +108,9 @@ export function hasLineOfSight(
   const hit = castHitscan(physics, from, dir, distance, undefined, excludeRigidBody);
   return !hit || hit.colliderHandle === targetColliderHandle;
 }
+
+export function horizontalDistance(a: { x: number; z: number }, b: { x: number; z: number }): number {
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dz * dz);
+}

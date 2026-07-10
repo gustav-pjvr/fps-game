@@ -1,10 +1,13 @@
+import { ACCENT, DISPLAY_FONT, chamferClipPath } from './menu/menuStyles.ts';
+
+const SLOT_CLIP = `clip-path:${chamferClipPath('top-right', 6)};`;
 const SLOT_STYLE =
-  'padding:6px 14px; background:rgba(0,0,0,0.45); border:2px solid rgba(255,255,255,0.25);' +
-  ' border-radius:4px; font-size:0.8rem; color:#eee; text-shadow:0 1px 2px #000;' +
+  `padding:6px 14px; background:rgba(0,0,0,0.45); border:2px solid rgba(255,255,255,0.25); ${SLOT_CLIP}` +
+  ` font-family:${DISPLAY_FONT}; font-size:0.8rem; color:#eee; text-shadow:0 1px 2px #000;` +
   ' transition:background 0.1s, border-color 0.1s;';
 const SLOT_ACTIVE_STYLE =
-  'padding:6px 14px; background:rgba(255,255,255,0.18); border:2px solid #fff;' +
-  ' border-radius:4px; font-size:0.8rem; color:#fff; font-weight:600; text-shadow:0 1px 2px #000;' +
+  `padding:6px 14px; background:rgba(62,207,95,0.22); border:2px solid ${ACCENT}; ${SLOT_CLIP}` +
+  ` font-family:${DISPLAY_FONT}; font-size:0.8rem; color:#fff; font-weight:600; text-shadow:0 1px 2px #000;` +
   ' transition:background 0.1s, border-color 0.1s;';
 
 export class Hotbar {

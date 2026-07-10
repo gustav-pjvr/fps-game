@@ -2,7 +2,7 @@
 
 A browser-based first-person shooter built from scratch with Three.js and Rapier physics — procedurally generated open world, AI enemies, a full weapon set, and up to 4-player peer-to-peer multiplayer with host-picked game modes. No game engine, no backend server: the world generates from a shared seed, and multiplayer runs entirely over WebRTC with one player's browser acting as host.
 
-Live at **[gustavgame.netlify.app](https://gustavgame.netlify.app)**.
+Live at **[hunter-n-goose.pages.dev](https://hunter-n-goose.pages.dev/)**.
 
 ## Features
 
@@ -87,4 +87,4 @@ docs/         Development notes and planning documents
 
 ## Deployment
 
-Deployed via Netlify (`netlify.toml`), including a serverless function for TURN credential issuance (`netlify/functions/turn-credentials.mts`) used as a fallback when direct peer-to-peer WebRTC connections can't establish across NATs.
+Deployed via Cloudflare Pages (`npm run deploy`, `wrangler pages deploy dist`), including Pages Functions for TURN credential issuance (`functions/api/turn-credentials.ts`, used as a fallback when direct peer-to-peer WebRTC connections can't establish across NATs) and a minimal match-end telemetry beacon (`functions/api/telemetry.ts`).

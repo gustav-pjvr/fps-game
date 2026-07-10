@@ -48,6 +48,37 @@ export function ensureMotionKeyframesInjected(): void {
     @keyframes rowSlideIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
     @keyframes pulseGlow { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
     @keyframes hitFlash { 0% { background: rgba(224, 72, 60, 0.35); } 100% { background: transparent; } }
+
+    /* Accessibility: a player with vestibular motion sensitivity (prefers-reduced-motion) still
+     * needs every element to land in its *final* state - just without the sweep/reveal/slide en
+     * route there. Collapsing each animation to a near-zero duration (rather than 'animation: none',
+     * which would freeze elements at their 0% keyframe - e.g. scanSweep's sweep line stuck fully
+     * visible forever, or titleReveal's text stuck at scale(0.92)) keeps every element's genuinely
+     * final, intended appearance while skipping the motion itself. Global universal selector rather
+     * than a per-component opt-in, since every animation/transition in the app (including the
+     * JS-triggered ones like multiplayerHud's hitFlash reflow-restart) is declared with plain CSS
+     * animation/transition properties and none of them need to survive at full duration for
+     * reduced-motion users - a hitFlash that resolves in ~0ms instead of 0.35s still communicates
+     * "you were hit". */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    /* Keyboard focus-visible styling: an accent-colored outline on whatever's keyboard-focused
+     * (buttons, inputs, selects) so tabbing through a panel is actually legible - browsers' default
+     * focus ring is a thin blue rectangle that reads as broken against this near-black theme.
+     * :focus-visible (not :focus) so a mouse click doesn't also draw the ring - only keyboard/
+     * programmatic focus does, matching how sighted mouse users already expect these controls to
+     * look. */
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid ${ACCENT};
+      outline-offset: 2px;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -112,7 +143,10 @@ export function createTextInput(placeholder: string, maxLength: number): HTMLInp
   input.maxLength = maxLength;
   input.style.cssText =
     `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
-    ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px;`;
+    // Chamfered, not rounded (see the class comment above) - matches every other input-shaped
+    // surface in this system (createButton, LoadoutScreen's slot sockets, CreateRoomScreen's
+    // manually-styled selects) instead of standing out as the one rounded-rectangle field.
+    ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; clip-path:${chamferClipPath('top-right', 8)};`;
   return input;
 }
 

@@ -18,6 +18,7 @@ import type { InputManager } from '../input/InputManager.ts';
 import type { Action } from '../input/actions.ts';
 import type { Player } from '../entities/Player.ts';
 import type { ScopeOverlay } from '../ui/scope.ts';
+import { Settings } from '../settings/Settings.ts';
 import {
   ADS_LERP_SPEED,
   CAMERA_FOV,
@@ -396,7 +397,16 @@ export class WeaponManager {
     const targetAim = !this.switching && input.isActionActive('aim') ? 1 : 0;
     this.aimAmount = THREE.MathUtils.damp(this.aimAmount, targetAim, ADS_LERP_SPEED, dt);
 
-    this.camera.fov = THREE.MathUtils.lerp(CAMERA_FOV, adsFov, this.aimAmount);
+    // The user's live FOV setting (see settings/Settings.ts), not the bare CAMERA_FOV constant -
+    // read fresh every frame so a mid-match Settings.setFov() change applies on the very next
+    // tick, same "just re-read Settings continuously" pattern applyLook's mouse-sensitivity read
+    // already uses. Weapons authored with `adsFov: CAMERA_FOV` (see definitions.ts) are the ones
+    // that deliberately have no dedicated zoom of their own - that literal value is a sentinel for
+    // "same as hip fire," so it needs to track the live setting too, not stay pinned to the old
+    // hardcoded default while every other weapon's hip fire already moved.
+    const baseFov = Settings.getFov();
+    const effectiveAdsFov = adsFov === CAMERA_FOV ? baseFov : adsFov;
+    this.camera.fov = THREE.MathUtils.lerp(baseFov, effectiveAdsFov, this.aimAmount);
     this.camera.updateProjectionMatrix();
 
     this.updateWeaponSway(dt);
@@ -489,7 +499,7 @@ export class WeaponManager {
       const isEntityHit = isDamageable(target);
       this.onImpact(hit.point, isEntityHit);
       if (isDamageable(target)) {
-        target.takeDamage(damage, hit.colliderHandle);
+        target.takeDamage(damage, hit.colliderHandle, origin);
         if (hit.distance >= LONG_SHOT_DISTANCE) this.onLongShot(hit.distance);
       }
     }

@@ -1,4 +1,4 @@
-import { createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
 export interface MultiplayerMenuCallbacks {
   onCreateRoom: () => void;
@@ -11,11 +11,14 @@ export interface MultiplayerMenuCallbacks {
  * MULTIPLAYER_PLAN.md §2 for the room-code design this leads into. */
 export class MultiplayerMenu {
   private readonly overlay: HTMLDivElement;
+  private readonly panel: HTMLDivElement;
+  private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(root: HTMLElement, callbacks: MultiplayerMenuCallbacks) {
     this.overlay = createOverlay();
 
     const panel = createPanel();
+    this.panel = panel;
     panel.style.width = '360px';
     panel.appendChild(createPanelTitle('MULTIPLAYER'));
 
@@ -45,10 +48,23 @@ export class MultiplayerMenu {
 
     this.overlay.appendChild(panel);
     root.appendChild(this.overlay);
+
+    // Escape closes - no single "Enter" default here (Create Room vs Join Room are equally
+    // weighted choices, not a primary/secondary pair), so Enter is deliberately left to native
+    // per-button activation only.
+    this.onKeyDown = (event) => {
+      if (this.overlay.style.display === 'none') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        callbacks.onClose();
+      }
+    };
+    document.addEventListener('keydown', this.onKeyDown);
   }
 
   show(): void {
     this.overlay.style.display = 'flex';
+    attachScanSweep(this.panel);
   }
 
   hide(): void {
@@ -56,6 +72,7 @@ export class MultiplayerMenu {
   }
 
   dispose(): void {
+    document.removeEventListener('keydown', this.onKeyDown);
     this.overlay.remove();
   }
 }

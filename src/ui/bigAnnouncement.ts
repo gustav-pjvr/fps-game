@@ -1,3 +1,5 @@
+import { DISPLAY_FONT } from './menu/menuStyles.ts';
+
 const ENTRY_DURATION = 3;
 const FADE_DURATION = 0.5;
 
@@ -12,7 +14,7 @@ export class BigAnnouncement {
   constructor(root: HTMLElement) {
     this.element = document.createElement('div');
     this.element.style.cssText =
-      'position:absolute; top:28%; left:50%; transform:translate(-50%, -50%); font-size:2.6rem;' +
+      `position:absolute; top:28%; left:50%; transform:translate(-50%, -50%); font-family:${DISPLAY_FONT}; font-size:2.6rem;` +
       ' font-weight:800; letter-spacing:0.04em; color:#ffd54a; text-align:center; opacity:0;' +
       ' pointer-events:none; z-index:30; text-shadow:0 4px 20px rgba(0,0,0,0.8), 0 0 30px rgba(255,213,74,0.5);' +
       ' transition:opacity 0.3s;';
