@@ -1,7 +1,7 @@
 import { LobbyScene } from '../lobby/LobbyScene.ts';
 import { MainMenu } from '../ui/menu/MainMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
-import { InventoryPanel } from '../ui/menu/InventoryPanel.ts';
+import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { PlaySetupModal, type MatchSetupConfig } from '../ui/menu/PlaySetupModal.ts';
 import { LoadingScreen } from '../ui/menu/LoadingScreen.ts';
 import { MultiplayerMenu } from '../ui/menu/MultiplayerMenu.ts';
@@ -22,9 +22,9 @@ export class App {
   private currentGame: Game | null = null;
   private readonly mainMenu: MainMenu;
   private readonly settingsPanel: SettingsPanel;
-  // Assigned in create() before enterLobby() shows the menu that can open it - InventoryPanel's
+  // Assigned in create() before enterLobby() shows the menu that can open it - LoadoutScreen's
   // creation is async (it renders each weapon's preview thumbnail), unlike the other lobby panels.
-  private inventoryPanel!: InventoryPanel;
+  private loadoutScreen!: LoadoutScreen;
   private readonly loadingScreen: LoadingScreen;
   private playSetupModal: PlaySetupModal | null = null;
   private readonly multiplayerMenu: MultiplayerMenu;
@@ -46,7 +46,7 @@ export class App {
       onPlay: () => this.openPlaySetup(),
       onMultiplayer: () => this.multiplayerMenu.show(),
       onSettings: () => this.settingsPanel.show(),
-      onInventory: () => this.inventoryPanel.show(),
+      onLoadout: () => this.loadoutScreen.show(),
     });
     this.settingsPanel = new SettingsPanel(overlayRoot, () => this.settingsPanel.hide());
     this.loadingScreen = new LoadingScreen(overlayRoot);
@@ -85,7 +85,7 @@ export class App {
     overlayRoot: HTMLElement,
   ): Promise<App> {
     const app = new App(lobbyContainer, gameContainer, hudRoot, overlayRoot);
-    app.inventoryPanel = await InventoryPanel.create(overlayRoot, () => app.inventoryPanel.hide());
+    app.loadoutScreen = await LoadoutScreen.create(overlayRoot, () => app.loadoutScreen.hide());
     await app.enterLobby();
     return app;
   }

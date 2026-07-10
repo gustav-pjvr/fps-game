@@ -43,9 +43,10 @@ export function createProceduralMeleeViewModel(definition: WeaponDefinition): We
     return { group: new THREE.Group(), muzzleLocalOffset: new THREE.Vector3() };
   }
 
-  // A rare reward weapon deserves to visually read as something other than a re-tinted knife - a
-  // stubby tube-and-stock silhouette instead of the blade/handle shape below, built from the same
-  // "no sourced asset, build it procedurally" precedent.
+  // A rare reward weapon deserves to visually read as something other than a re-tinted knife or a
+  // plain tube-and-box - a flared muzzle, a chamber bulge, an L-shaped shoulder stock, and a grip
+  // break up what used to be just one cylinder and one box, same "no sourced asset, build it
+  // procedurally" precedent every non-hero shape in this project already follows.
   if (definition.id === 'gooseLauncher') {
     const group = new THREE.Group();
     const material = new THREE.MeshStandardMaterial({ color: definition.viewModelColor, metalness: 0.5, roughness: 0.4 });
@@ -56,12 +57,97 @@ export function createProceduralMeleeViewModel(definition: WeaponDefinition): We
     barrel.position.set(0, 0, -barrelLength / 2);
     group.add(barrel);
 
-    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.16), material);
-    stock.position.set(0, -0.02, 0.09);
-    group.add(stock);
+    // Flared muzzle cap - a blunderbuss-style bell instead of a plain pipe end.
+    const muzzleCap = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.05, 0.045, 10), material);
+    muzzleCap.rotation.x = Math.PI / 2;
+    muzzleCap.position.set(0, 0, -barrelLength + 0.02);
+    group.add(muzzleCap);
+
+    // Chamber bulge behind the barrel - breaks up the "one straight tube" read.
+    const chamber = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.065, 0.09, 10), material);
+    chamber.rotation.x = Math.PI / 2;
+    chamber.position.set(0, 0.005, 0.03);
+    group.add(chamber);
+
+    // L-shaped shoulder stock (two pieces) instead of one plain box.
+    const stockArm = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.05, 0.14), material);
+    stockArm.position.set(0, -0.005, 0.13);
+    group.add(stockArm);
+    const stockPlate = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.11, 0.03), material);
+    stockPlate.position.set(0, -0.04, 0.2);
+    group.add(stockPlate);
+
+    // Pistol grip.
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.09, 0.04), material);
+    grip.position.set(0, -0.07, 0.06);
+    grip.rotation.x = -0.25;
+    group.add(grip);
 
     group.position.copy(WEAPON_HIP_POSITION);
-    return { group, muzzleLocalOffset: new THREE.Vector3(0, 0, -barrelLength) };
+    return { group, muzzleLocalOffset: new THREE.Vector3(0, 0, -barrelLength - 0.04) };
+  }
+
+  // Burst SMG - no sourced .glb exists for it either (only the 4 base blaster models are bundled),
+  // so this reads as a distinct multi-part silhouette rather than a re-tinted existing gun:
+  // receiver, ribbed handguard, a forward-curved magazine (the MP5's single most recognizable
+  // element), a collapsible stock, grip, and front/rear sights.
+  if (definition.id === 'mp5') {
+    const group = new THREE.Group();
+    const material = new THREE.MeshStandardMaterial({ color: definition.viewModelColor, metalness: 0.55, roughness: 0.4 });
+
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.075, 0.22), material);
+    receiver.position.set(0, 0, 0.03);
+    group.add(receiver);
+
+    const barrelCenterZ = -0.15;
+    const barrelHalfLength = 0.09;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.022, barrelHalfLength * 2, 8), material);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, -0.005, barrelCenterZ);
+    group.add(barrel);
+
+    // Ribbed "Slimline" handguard slats along the barrel.
+    for (let i = 0; i < 4; i++) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.014, 0.014), material);
+      slat.position.set(0, -0.005, -0.09 - i * 0.028);
+      group.add(slat);
+    }
+
+    // Curved magazine, forward of the grip - two segments joined at an angle rather than one
+    // straight rectangle, since the forward curve is the gun's most recognizable silhouette cue.
+    const magUpper = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.09, 0.032), material);
+    magUpper.position.set(0, -0.09, -0.01);
+    group.add(magUpper);
+    const magLower = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.028), material);
+    magLower.position.set(0, -0.16, -0.035);
+    magLower.rotation.x = 0.35;
+    group.add(magLower);
+
+    // Collapsible stock - thin rod + end plate, not a fixed solid stock.
+    const stockRod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.16, 6), material);
+    stockRod.rotation.x = Math.PI / 2;
+    stockRod.position.set(0, 0.01, 0.21);
+    group.add(stockRod);
+    const stockPlate = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.08, 0.02), material);
+    stockPlate.position.set(0, 0, 0.29);
+    group.add(stockPlate);
+
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.09, 0.03), material);
+    grip.position.set(0, -0.075, 0.055);
+    grip.rotation.x = -0.2;
+    group.add(grip);
+
+    // Rear sight drum + front sight post.
+    const rearSight = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.02, 8), material);
+    rearSight.position.set(0, 0.045, 0.05);
+    group.add(rearSight);
+    const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.03, 0.008), material);
+    frontSight.position.set(0, 0.03, barrelCenterZ - barrelHalfLength + 0.02);
+    group.add(frontSight);
+
+    group.position.copy(WEAPON_HIP_POSITION);
+    const muzzleLocalOffset = new THREE.Vector3(0, -0.005, barrelCenterZ - barrelHalfLength);
+    return { group, muzzleLocalOffset };
   }
 
   const group = new THREE.Group();

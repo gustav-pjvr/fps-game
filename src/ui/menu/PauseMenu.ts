@@ -6,6 +6,7 @@ export interface PauseMenuCallbacks {
   onResetPlay: () => void;
   onReturnToLobby: () => void;
   onRespawn: () => void;
+  onLoadout: () => void;
 }
 
 /** How long the pause menu must stay continuously open before "Respawn" unlocks - see the class
@@ -30,7 +31,11 @@ export class PauseMenu {
    * a "Respawn" button instead (per user request) - an unstuck button for a player who spawned
    * inside geometry (e.g. inside a house), teleporting them to a fresh random point without
    * touching health/score. */
-  constructor(root: HTMLElement, callbacks: PauseMenuCallbacks, isMultiplayer: boolean) {
+  /** `showLoadoutButton` (per explicit user request): only the three modes that don't already
+   * restrict/manage weapons themselves (see core/gameModes.ts's modeUsesCustomLoadout) get a
+   * "Loadout" button here - every other mode's loadout is fixed by the mode itself, so there'd be
+   * nothing meaningful to change mid-match. */
+  constructor(root: HTMLElement, callbacks: PauseMenuCallbacks, isMultiplayer: boolean, showLoadoutButton: boolean) {
     this.overlay = createOverlay();
     this.overlay.dataset.testid = 'pause-menu';
 
@@ -69,6 +74,11 @@ export class PauseMenu {
       const resetButton = createButton('Reset Play');
       resetButton.addEventListener('click', callbacks.onResetPlay);
       buttonColumn.append(resetButton);
+    }
+    if (showLoadoutButton) {
+      const loadoutButton = createButton('Loadout');
+      loadoutButton.addEventListener('click', callbacks.onLoadout);
+      buttonColumn.append(loadoutButton);
     }
     buttonColumn.append(lobbyButton);
     panel.appendChild(buttonColumn);

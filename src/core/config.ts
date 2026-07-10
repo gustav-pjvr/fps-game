@@ -237,6 +237,11 @@ export const WEAPON_HOLSTER_DROP = 0.35;
 export const RELOAD_TILT_ANGLE = 0.5;
 export const RELOAD_DIP = 0.08;
 
+/** Time between rounds within a single burst (see WeaponDefinition.burstCount, currently only the
+ * MP5) - distinct from `fireRate`, which instead gates time between the *start* of one burst and
+ * the next. Tuned fast enough to read as one "rrrat" rather than three separate clicks. */
+export const WEAPON_BURST_SHOT_INTERVAL_SECONDS = 0.08;
+
 export const TARGET_HEALTH = 40;
 export const TARGET_RADIUS = 0.5;
 export const TARGET_HEAD_RADIUS = 0.18;

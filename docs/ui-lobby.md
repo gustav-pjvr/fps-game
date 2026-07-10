@@ -129,3 +129,63 @@ A short round of live-playtest feedback, fixed and pushed the same day.
 round - the pointer-lock fix in particular depends on real user-gesture timing that a headless
 check can't meaningfully exercise; worth an eyeball in normal play.
 
+## Loadout system replaces the read-only Inventory panel (2026-07-10)
+
+Per explicit user request: the old `InventoryPanel.ts` (a read-only showcase of every weapon) is
+replaced by real loadout management. "Inventory" is now "**Loadout**" everywhere (main menu button,
+page title) - a genuinely different feature, not a rename of the same thing.
+
+- **Its own full page**, not a small centered modal - `LoadoutScreen.ts` fills the whole overlay
+  (`inset:0`) instead of reusing `createPanel()`'s ~80vh-capped box, per explicit "more space"
+  request.
+- **Categories, not a flat list.** New `WeaponCategory` (`primary`/`secondary`/`melee`/`special`) in
+  `core/gameModes.ts`, with an explicit `WEAPON_CATEGORIES` map (sniper/rifle/shotgun = primary,
+  pistol/mp5 = secondary, knife = melee, Goose Launcher = special/non-equippable) - the category is
+  what actually stops a player stacking multiple primaries, since a loadout slot only ever accepts a
+  weapon whose category matches it. Left column lists weapons grouped and ordered exactly as
+  requested (`CATEGORY_DISPLAY_ORDER`, not `WEAPON_DEFINITIONS`' own object-key order): Primary
+  (Sniper, Rifle, Shotgun) → Secondary (Pistol, MP5) → Melee (Knife) → Special (Goose Launcher,
+  visibly dimmed, `draggable=false`, "Reward only - not equippable").
+- **Drag-and-drop equip.** Native HTML5 DnD - each equippable card is `draggable`, each of the three
+  slot sockets on the right validates the dragged weapon's category against its own before accepting
+  a drop (a mismatched drop is silently rejected, no visual settle). Every successful drop updates
+  the in-memory loadout and persists immediately.
+- **Rotating character preview** (`loadoutCharacterPreview.ts`, new): unlike `weaponThumbnail.ts`'s
+  deliberate one-shot render-then-dispose, this keeps its own `WebGLRenderer`/`requestAnimationFrame`
+  loop alive for as long as the page is open - a live turntable inside a circular chamfered "rim"
+  (this project's existing signature chamfer motif, scaled up), not a static image. Reuses the exact
+  same Kenney "Mini Characters" model + idle-animation lookup `RemotePlayer.ts` already uses for
+  opponents (the only downloaded character skin this project has). **Scope decision:** the character
+  does not visibly hold the equipped weapon in-hand - no bone-attachment precedent exists anywhere in
+  this codebase (checked `Enemy.ts`/`RemotePlayer.ts`, neither attaches a weapon mesh to a bone), and
+  building that from scratch is a separate, much larger effort; equipped weapons are communicated via
+  the slot sockets' own text instead.
+- **Persists like the saved username.** New `core/loadout.ts` directly mirrors `core/username.ts`'s
+  shape (`localStorage` + try/catch fallback) - a chosen loadout survives a reload/return visit the
+  same way a typed username already does.
+- **Actually drives spawned weapons**, for the three modes that don't already restrict/manage the
+  loadout themselves (`modeUsesCustomLoadout`: Default, King of the Hill, Goose Horde - single-player
+  and multiplayer alike). `resolveWeaponLoadout()` gained a third `customLoadout` parameter,
+  consumed only by those three modes' new branch; every restricted mode (Gun Game, 1 Shot 1 Kill,
+  etc.) is unaffected. An empty slot falls back to a sane default (rifle/pistol/knife) rather than
+  blocking match start, per explicit confirmed decision. **Key simplification found during
+  research:** `RemotePlayer.ts` never renders a held-weapon mesh for opponents, so `WeaponManager` was
+  already fully local, per-client state with zero network dependency (confirmed by Gun Game's
+  existing per-player-random starting weapon) - a chosen loadout needed no new network message at
+  all, single-player and multiplayer alike.
+- **Pause menu "Loadout" button**, shown only for the three unrestricted modes
+  (`PauseMenu`'s new `showLoadoutButton`), opening a second, per-match `LoadoutScreen` instance (same
+  duplication `SettingsPanel` already has between the lobby and in-match contexts). A mid-match
+  change does **not** apply instantly - per explicit request, it takes effect on the player's *next*
+  respawn. `Game.ts` tracks this with a `pendingLoadoutRebuild` flag, checked at the top of both
+  `resetPlay()` (single-player) and `multiplayerRespawn()` (multiplayer): disposes the old
+  `WeaponManager` (new `WeaponManager.dispose()` - detaches every slot's view model from the camera)
+  and rebuilds a fresh one via the same closure (`buildWeaponManager`) the original match-start
+  construction already used, refreshing the hotbar afterward.
+
+**Verification:** `npx tsc --noEmit` clean, full `npm run test:unit` suite green (new
+`gameModes.test.ts` covers the custom-loadout fallback/override behavior), `npm run build`
+succeeds. Not yet live-playtested (drag-and-drop interaction, the rotating character render, and
+the mid-match deferred-apply timing are all visual/gameplay-feel concerns a clean build can't
+confirm) - single-player first, then a 2-browser multiplayer pass, is the real sign-off here.
+

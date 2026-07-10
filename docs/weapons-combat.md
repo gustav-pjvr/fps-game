@@ -207,3 +207,40 @@ per the risk-based testing approach, a full regression pass isn't warranted. Ran
 test alone against the live dev server (exercises the actual death→respawn flow end to end) -
 passed in 40s.
 
+## Burst-fire MP5 + Goose Launcher model rework (2026-07-10)
+
+Per user request: a new burst-fire SMG ("MP5") joins the roster, and the Goose Launcher reward
+weapon's placeholder look (one cylinder + one box) gets a proper multi-part model. Landed alongside
+the new Loadout system (see [UI & Lobby](ui-lobby.md)), which is what actually makes the MP5
+choosable in the three unrestricted modes.
+
+- **Burst mechanic** (`weapons/WeaponManager.ts`): a new optional `WeaponDefinition.burstCount`
+  (currently only the MP5, 3) - a trigger pull fires the first round immediately, then
+  `burstCount - 1` more at `WEAPON_BURST_SHOT_INTERVAL_SECONDS` (~0.08s) intervals via two new
+  private fields (`burstShotsRemaining`/`burstShotTimer`) checked at the top of `update()`, before
+  any fresh input is read - the player's pull already committed to the full burst, same as a real
+  gun's mechanism running its course. Stops early (not an error) if the magazine empties mid-burst.
+  `beginSwitch()` resets `burstShotsRemaining` to 0 so a burst can't bleed into a freshly-drawn
+  different weapon after a mid-burst weapon switch. `fireRate` still gates time *between* bursts,
+  distinct from the new interval *within* one - `Weapon.ts` itself needed no changes, `tryFire()`/
+  `cooldown` already do exactly what each individual round needs.
+- **MP5 model** (`weapons/viewModel.ts`): no sourced `.glb` exists for it (only the 4 base Kenney
+  blaster models are bundled in `public/assets`), so it's built procedurally in
+  `createProceduralMeleeViewModel`'s existing "no sourced asset" fallback (already special-cases the
+  Goose Launcher the same way despite the function's name) - researched real MP5 design cues
+  (curved magazine, ribbed "Slimline" handguard, collapsible stock) to inform a distinct multi-part
+  silhouette: receiver, barrel + handguard slats, a two-segment forward-curved magazine (the gun's
+  single most recognizable element), a collapsible-stock rod + end plate, grip, and front/rear
+  sights - not a re-tinted knife or existing gun.
+- **Goose Launcher rework** (same function, existing `gooseLauncher` branch): the single cylinder +
+  box gained a flared muzzle cap, a chamber bulge, an L-shaped two-piece stock, and a grip - same
+  gold `MeshStandardMaterial` as before, just a proper silhouette instead of "one tube, one box."
+- **Gun Game pool**: `mp5` added to `GUN_GAME_POOL` (`core/gameModes.ts`) - it's a real gun now,
+  belongs in the kill-upgrade rotation alongside the other four.
+
+**Verification:** `npx tsc --noEmit` clean, full `npm run test:unit` suite green (new
+`gameModes.test.ts` covers the Gun Game pool/upgrade behavior), `npm run build` succeeds. Not yet
+live-playtested (burst-fire feel/timing and both reworked models are visual/gameplay-feel concerns
+a clean build can't confirm) - same "trust the user's live test" pattern as every other
+gameplay-feel feature in this project.
+

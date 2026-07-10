@@ -30,7 +30,48 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
 
 /** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user
  * request ("knife is not in this mode"). */
-const GUN_GAME_POOL: readonly string[] = ['pistol', 'rifle', 'shotgun', 'sniper'];
+const GUN_GAME_POOL: readonly string[] = ['pistol', 'mp5', 'rifle', 'shotgun', 'sniper'];
+
+/** Which loadout slot a weapon belongs to (see ui/menu/LoadoutScreen.ts) - drives both the Loadout
+ * page's left-column grouping and which slot a given weapon can be dragged into. 'special' (only
+ * the Goose Launcher today) is shown for reference but is never draggable/equippable - it's a
+ * mid-match reward, not a loadout choice. Weapons with no entry here (currently just 'unarmed',
+ * Goose Toss's placeholder) never appear on the Loadout page at all. */
+export type WeaponCategory = 'primary' | 'secondary' | 'melee' | 'special';
+export const WEAPON_CATEGORIES: Readonly<Record<string, WeaponCategory>> = {
+  sniper: 'primary',
+  rifle: 'primary',
+  shotgun: 'primary',
+  pistol: 'secondary',
+  mp5: 'secondary',
+  knife: 'melee',
+  gooseLauncher: 'special',
+};
+
+/** A player's own chosen weapon per slot (see core/loadout.ts for persistence) - null means "not
+ * chosen yet," resolved to LOADOUT_SLOT_DEFAULTS's entry for that slot rather than blocking match
+ * start, per explicit user decision. */
+export interface PlayerLoadout {
+  primary: string | null;
+  secondary: string | null;
+  melee: string | null;
+}
+
+export const LOADOUT_SLOT_DEFAULTS: Readonly<Record<'primary' | 'secondary' | 'melee', string>> = {
+  primary: 'rifle',
+  secondary: 'pistol',
+  melee: 'knife',
+};
+
+/** Modes that don't already restrict or manage the player's loadout themselves (Gun Game rotates
+ * weapons on kill; 1 Shot 1 Kill/Sniper Duel/Knife Only/Goose Toss are single-weapon by design) -
+ * these three instead use whatever the player picked on the Loadout page (see
+ * resolveWeaponLoadout's own customLoadout branch), single-player and multiplayer alike per
+ * explicit user request. */
+const UNRESTRICTED_GAME_MODES: ReadonlySet<GameMode> = new Set(['default', 'kingOfTheHill', 'gooseHorde']);
+export function modeUsesCustomLoadout(mode: GameMode): boolean {
+  return UNRESTRICTED_GAME_MODES.has(mode);
+}
 
 export interface WeaponLoadout {
   /** What `WeaponManager.create()` gets as `definitionIds` - Gun Game's is always exactly one
@@ -44,29 +85,38 @@ export interface WeaponLoadout {
 }
 
 const FIXED_LOADOUTS: Partial<Record<GameMode, WeaponLoadout>> = {
-  default: { weaponIds: ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'] },
   oneShotOneKill: { weaponIds: ['pistol'], damageOverrides: { pistol: PLAYER_HEALTH } },
   sniperDuel: { weaponIds: ['sniper'], damageOverrides: { sniper: PLAYER_HEALTH } },
   knifeOnly: { weaponIds: ['knife'] },
   // Not "no weapons" (WeaponManager requires at least one) - a harmless zero-damage placeholder
   // that Game.ts's Goose Toss handling never actually lets fire, see definitions.ts's 'unarmed'.
   gooseToss: { weaponIds: ['unarmed'] },
-  // Full arsenal, same as 'default' - King of the Hill's twist is the golden goose objective, not
-  // a restricted loadout. Weapons are gated (fire consumed) only while carrying it - see
-  // Game.ts's updateGoldenGoose, not a loadout-level restriction like gooseToss's 'unarmed'.
-  kingOfTheHill: { weaponIds: ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'] },
-  // Full arsenal - this is a PvE co-op survival mode, not a restricted-loadout PvP variant.
-  gooseHorde: { weaponIds: ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'] },
 };
+/** Fallback for the three unrestricted modes when, for whatever reason, no custom loadout is
+ * available at all (e.g. a caller that doesn't pass one) - the old fixed 5-weapon arsenal, so
+ * behavior never regresses to "0 weapons" outside the normal per-slot-default path below. */
+const FULL_ARSENAL: WeaponLoadout = { weaponIds: ['pistol', 'rifle', 'shotgun', 'sniper', 'knife'] };
 
 /** The starting loadout for a given mode - random for Gun Game (a fresh pick per call, so two
  * players in the same Gun Game match don't necessarily start with the same weapon), fixed for
- * every other mode. `rng` defaults to `Math.random` - each player's own weapon is purely local
- * state (WeaponManager isn't networked), so there's no need for this to agree across clients the
- * way, say, the world seed does. */
-export function resolveWeaponLoadout(mode: GameMode, rng: () => number = Math.random): WeaponLoadout {
+ * every other restricted mode, and player-chosen (with per-slot fallback defaults) for the three
+ * unrestricted modes (see modeUsesCustomLoadout). `rng` defaults to `Math.random` - each player's
+ * own weapon is purely local state (WeaponManager isn't networked - confirmed no opponent ever
+ * renders a held-weapon mesh, see RemotePlayer.ts), so there's no need for any of this to agree
+ * across clients the way, say, the world seed does. */
+export function resolveWeaponLoadout(mode: GameMode, rng: () => number = Math.random, customLoadout?: PlayerLoadout): WeaponLoadout {
   if (mode === 'gunGame') return { weaponIds: [pickRandomGunGameWeapon(rng)] };
-  return FIXED_LOADOUTS[mode] ?? FIXED_LOADOUTS.default!;
+  if (modeUsesCustomLoadout(mode)) {
+    if (!customLoadout) return FULL_ARSENAL;
+    return {
+      weaponIds: [
+        customLoadout.primary ?? LOADOUT_SLOT_DEFAULTS.primary,
+        customLoadout.secondary ?? LOADOUT_SLOT_DEFAULTS.secondary,
+        customLoadout.melee ?? LOADOUT_SLOT_DEFAULTS.melee,
+      ],
+    };
+  }
+  return FIXED_LOADOUTS[mode] ?? FULL_ARSENAL;
 }
 
 function pickRandomGunGameWeapon(rng: () => number): string {

@@ -6,7 +6,7 @@ export interface MainMenuCallbacks {
   onPlay: () => void;
   onMultiplayer: () => void;
   onSettings: () => void;
-  onInventory: () => void;
+  onLoadout: () => void;
 }
 
 /**
@@ -86,11 +86,11 @@ export class MainMenu {
     settingsButton.style.minWidth = '200px';
     settingsButton.addEventListener('click', callbacks.onSettings);
 
-    const inventoryButton = createButton('INVENTORY');
-    inventoryButton.style.minWidth = '200px';
-    inventoryButton.addEventListener('click', callbacks.onInventory);
+    const loadoutButton = createButton('LOADOUT');
+    loadoutButton.style.minWidth = '200px';
+    loadoutButton.addEventListener('click', callbacks.onLoadout);
 
-    buttonRow.append(playButton, multiplayerButton, settingsButton, inventoryButton);
+    buttonRow.append(playButton, multiplayerButton, settingsButton, loadoutButton);
     this.element.appendChild(buttonRow);
 
     // Small, unobtrusive - a version tag belongs in a corner, not competing with the actual UI.

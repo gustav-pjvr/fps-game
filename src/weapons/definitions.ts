@@ -41,6 +41,11 @@ export interface WeaponDefinition {
    * automatically swaps back out for the player's previous weapon the moment it empties (see
    * grantBonusWeapon). */
   readonly disableReload?: boolean;
+  /** A single trigger pull fires this many rounds in rapid succession (see WeaponManager's
+   * WEAPON_BURST_SHOT_INTERVAL_SECONDS-paced burst handling) before `fireRate`'s cooldown gates the
+   * next pull. Undefined/1 = today's behavior (one round per press/tick) for every other weapon.
+   * Currently only the MP5. */
+  readonly burstCount?: number;
 }
 
 export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
@@ -62,6 +67,29 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     viewModelColor: 0x2a2a2a,
     barrelLength: 0.22,
     kind: 'ranged',
+  },
+  /** Burst-fire SMG - fires 3 rounds per trigger pull (see WeaponManager's burst handling), never
+   * fully automatic. Sits between the pistol (weak, reliable) and rifle (full-auto spray) in the
+   * power curve - a controlled-burst niche neither existing gun covers. */
+  mp5: {
+    id: 'mp5',
+    name: 'Sable MP-5',
+    description: 'Three at a time. Every time.',
+    damage: 17,
+    fireRate: 2.6,
+    magazineSize: 30,
+    reloadTime: 1.6,
+    spreadRadians: 0.014,
+    recoilKick: 0.018,
+    adsFov: 50,
+    adsSpreadMultiplier: 0.45,
+    hasScope: false,
+    automatic: false,
+    pelletCount: 1,
+    viewModelColor: 0x2c3238,
+    barrelLength: 0.3,
+    kind: 'ranged',
+    burstCount: 3,
   },
   rifle: {
     id: 'rifle',

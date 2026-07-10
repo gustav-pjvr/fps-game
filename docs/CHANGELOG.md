@@ -10,7 +10,20 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.7.0 (current)
+## v3.8.0 (current)
+
+New Loadout system, replacing the old read-only Inventory panel: a dedicated full page (character
+rotating inside a slotted rim, guns listed by category on the left) where players drag weapons into
+Primary/Secondary/Melee slots to build their own loadout, which persists locally (same mechanism as
+the saved username) and now actually drives which 3 weapons a player spawns with in Default, King
+of the Hill, and Goose Horde - single-player and multiplayer alike. A "Loadout" button on the pause
+menu lets a player change it mid-match for those same modes, taking effect on their next respawn
+rather than instantly. Also new: a burst-fire SMG (MP5, 3 rounds per trigger pull) with its own
+distinct procedural model, and a reworked Goose Launcher model (was one cylinder and one box, now a
+proper multi-part shape) - see `docs/weapons-combat.md` and `docs/ui-lobby.md` for the full detail
+on both.
+
+## v3.7.0
 
 New pre-match mode-briefing screen, per explicit user request: every mode except Default (both
 single-player Goose Horde and every multiplayer mode) now shows a 3-4 step explanation of that

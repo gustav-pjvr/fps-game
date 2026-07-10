@@ -31,6 +31,7 @@ import {
   WEAPON_SWAY_LOOK_FACTOR,
   WEAPON_SWAY_MAX,
   WEAPON_SWITCH_DURATION,
+  WEAPON_BURST_SHOT_INTERVAL_SECONDS,
 } from '../core/config.ts';
 
 const HITSCAN_RANGE = 500;
@@ -66,6 +67,11 @@ export class WeaponManager {
    * Cleared the instant the revert is kicked off (before the async rebuild resolves) so a slow
    * asset load can't re-trigger this on a later frame. */
   private pendingRestoreId: string | null = null;
+  /** Burst-fire (see WeaponDefinition.burstCount, currently only the MP5): rounds still owed from
+   * the burst a trigger pull just kicked off, and the countdown to the next one -
+   * WEAPON_BURST_SHOT_INTERVAL_SECONDS apart, distinct from `fireRate`'s between-burst cooldown. */
+  private burstShotsRemaining = 0;
+  private burstShotTimer = 0;
 
   /** Weapon sway (VISUAL_REALISM.md §6) - the view model lags behind the camera's own look
    * rotation instead of being rigidly bolted to it. Tracked as yaw/pitch deltas between ticks
@@ -189,6 +195,16 @@ export class WeaponManager {
     this.pendingRestoreId = restoreId;
   }
 
+  /** Detaches every slot's view model from the camera - a mid-match Loadout change (see Game.ts's
+   * applyPendingLoadoutIfNeeded) rebuilds an entirely fresh WeaponManager rather than mutating this
+   * one's slots in place, so the old instance needs a clean way to let go of its view models before
+   * being discarded. Does not touch `camera`/`physics` themselves - only what this instance added. */
+  dispose(): void {
+    for (const slot of this.slots) {
+      this.camera.remove(slot.viewModel);
+    }
+  }
+
   private get active(): WeaponSlot {
     const slot = this.slots[this.activeIndex];
     if (!slot) throw new Error('Active weapon slot missing');
@@ -263,12 +279,26 @@ export class WeaponManager {
       if (!input.isActionActive('fire')) this.fireLockedUntilRelease = false;
     }
 
+    // A burst already in flight (see WeaponDefinition.burstCount) finishes resolving before any
+    // fresh input is read this tick - the player's trigger pull already committed to the full
+    // burst, same as a real gun's mechanism running its course.
+    if (this.burstShotsRemaining > 0) {
+      this.burstShotTimer -= dt;
+      if (this.burstShotTimer <= 0) this.fireBurstShot(player);
+      return;
+    }
+
     const firePressed =
       !this.fireLockedUntilRelease &&
       (this.active.weapon.definition.automatic ? input.isActionActive('fire') : input.consumeJustPressed('fire'));
     if (firePressed) {
       if (this.active.weapon.tryFire()) {
         this.fireShot(player);
+        const burstCount = this.active.weapon.definition.burstCount ?? 1;
+        if (burstCount > 1) {
+          this.burstShotsRemaining = burstCount - 1;
+          this.burstShotTimer = WEAPON_BURST_SHOT_INTERVAL_SECONDS;
+        }
       } else if (this.active.weapon.ammo <= 0 && this.active.weapon.startReload()) {
         // Auto-reload: trying to fire an empty magazine starts a reload without needing manual R.
         this.onReloadStart(this.active.weapon.definition.id);
@@ -285,6 +315,20 @@ export class WeaponManager {
       const restoreId = this.pendingRestoreId;
       this.pendingRestoreId = null;
       void this.replaceActiveWeapon(restoreId);
+    }
+  }
+
+  /** Fires the next round of an in-progress burst (see the WEAPON_BURST_SHOT_INTERVAL_SECONDS
+   * check in update()) - same tryFire()/fireShot() pipeline a fresh trigger pull uses, just called
+   * again on a short timer instead of waiting for another press. Stops the burst early (rather
+   * than erroring) if the magazine runs dry mid-burst. */
+  private fireBurstShot(player: Player): void {
+    if (this.active.weapon.tryFire()) {
+      this.fireShot(player);
+      this.burstShotsRemaining--;
+      this.burstShotTimer = WEAPON_BURST_SHOT_INTERVAL_SECONDS;
+    } else {
+      this.burstShotsRemaining = 0;
     }
   }
 
@@ -315,6 +359,10 @@ export class WeaponManager {
     // actually released, regardless of whether it's currently held or was just clicked mid-switch.
     this.fireLockedUntilRelease = true;
     input.consumeJustPressed('fire');
+    // An in-progress burst (see WeaponDefinition.burstCount) must not bleed into whatever weapon
+    // is drawn next - without this, switching away mid-burst would resume firing the *new*
+    // weapon once the switch animation completes and update()'s burst check runs again.
+    this.burstShotsRemaining = 0;
   }
 
   private updateSwitching(dt: number): void {

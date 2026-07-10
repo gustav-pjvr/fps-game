@@ -109,8 +109,10 @@ import {
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { pickRandomRespawnPoint } from './multiplayerSpawn.ts';
 import { applyPlayerDied } from './multiplayerScoring.ts';
-import { DEFAULT_GAME_MODE, pickGunGameUpgrade, resolveWeaponLoadout, type GameMode } from './gameModes.ts';
+import { DEFAULT_GAME_MODE, pickGunGameUpgrade, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
+import { loadStoredLoadout } from './loadout.ts';
+import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
@@ -427,6 +429,22 @@ export class Game {
    * empty) in single-player, which has nobody else to wait on. */
   private readonly modeExplanationReadySlots = new Set<PlayerSlot>();
   private modeExplanationScreen: ModeExplanationScreen | null = null;
+  /** Mid-match Loadout page, opened from the pause menu for unrestricted modes only (see
+   * PauseMenu's own showLoadoutButton flag) - a separate instance from the lobby's own LoadoutScreen
+   * (App.ts owns that one), mirroring how SettingsPanel is already duplicated per-match rather than
+   * reused across the lobby/gameplay boundary. */
+  private loadoutScreen: LoadoutScreen | null = null;
+  /** Set when the mid-match Loadout page closes (see loadoutScreen's onClose) - applied at the next
+   * respawn, not instantly (per explicit user request: "it only updates/changes their guns in
+   * their hand on their next respawn"). Checked and cleared by applyPendingLoadoutIfNeeded. */
+  private pendingLoadoutRebuild = false;
+  /** Same weapon-building closure the initial WeaponManager.create() call used - assigned once,
+   * right after construction (see create()'s own comment on this forward-reference), so
+   * applyPendingLoadoutIfNeeded can call it again later with a *different* set of weaponIds without
+   * duplicating every callback WeaponManager.create() needs. */
+  private rebuildWeaponManagerFn:
+    | ((weaponIds: string[], damageOverrides?: Readonly<Record<string, number>>, reserveAmmo?: Readonly<Record<string, number>>) => Promise<WeaponManager>)
+    | null = null;
   /** Gun Game's golden-goose variant (per explicit user request): guards the "1 kill from winning"
    * grant below from re-firing every tick while the async weapon swap (WeaponManager.
    * grantBonusWeapon) is still in flight - without it, several overlapping grants would fire before
@@ -442,7 +460,9 @@ export class Game {
     private readonly buildings: BuildingManager,
     private readonly watchTowers: WatchTowerManager,
     private readonly entityManager: EntityManager,
-    private readonly weaponManager: WeaponManager,
+    // Mutable, not readonly: a mid-match Loadout change rebuilds this entirely at the player's next
+    // respawn (see applyPendingLoadoutIfNeeded) rather than mutating WeaponManager's own internals.
+    private weaponManager: WeaponManager,
     private readonly impactMarkers: ImpactMarkers,
     private readonly tracers: Tracers,
     private readonly muzzleFlash: MuzzleFlash,
@@ -600,6 +620,11 @@ export class Game {
     // (ambient wandering flock, bonus golden goose) below, not just HordeGooseManager's own
     // construction further down.
     const isHordeMode = matchConfig.hordeMode || multiplayer?.gameMode === 'gooseHorde';
+    // Single-player has no gameMode concept (per user request) and is always effectively 'default'
+    // unless the horde toggle is on - used both to resolve the starting loadout below and to gate
+    // the pause menu's Loadout button (see modeUsesCustomLoadout) to only the three modes that
+    // don't already restrict/manage weapons themselves.
+    const currentGameMode: GameMode = multiplayer?.gameMode ?? (isHordeMode ? 'gooseHorde' : DEFAULT_GAME_MODE);
     // Single-player: a new seed per match (not per practice-reset) so each new game generates a
     // different world. Multiplayer: both sides use the exact same externally-generated seed (see
     // MULTIPLAYER_PLAN.md §1) - never randomizeWorldSeed() here, or the two players' worlds would
@@ -708,9 +733,10 @@ export class Game {
     const longShotCallout = new LongShotCallout(hudRoot);
 
     onProgress?.('Loading weapons…', 0.05);
-    // Single-player never has a mode (per user request) - resolveWeaponLoadout('default') is the
-    // same unrestricted 5-weapon loadout this was a literal array for before game modes existed.
-    const loadout = resolveWeaponLoadout(multiplayer?.gameMode ?? DEFAULT_GAME_MODE);
+    // The stored loadout is only ever consumed for the three unrestricted modes (see
+    // modeUsesCustomLoadout) - harmless to always read/pass it in otherwise, every restricted
+    // mode's own branch ignores the third parameter entirely.
+    const loadout = resolveWeaponLoadout(currentGameMode, Math.random, loadStoredLoadout());
     // Goose Horde multiplayer's limited ammo economy (per explicit user request) - every other
     // mode omits this entirely, keeping the existing unlimited-reload behavior unchanged.
     const isHordeMultiplayer = isHordeMode && !!multiplayer;
@@ -719,78 +745,86 @@ export class Game {
           loadout.weaponIds.map((id) => [id, (WEAPON_DEFINITIONS[id]?.magazineSize ?? 0) * HORDE_STARTING_RESERVE_MAGAZINES]),
         )
       : undefined;
-    const weaponManager = await WeaponManager.create(
-      renderer.camera,
-      physics,
-      loadout.weaponIds,
-      scopeOverlay,
-      (point, isEntityHit) => {
-        impactMarkers.spawn(point, isEntityHit);
-        if (isEntityHit) {
-          hitMarker.trigger();
-          sound.playHitConfirm();
-        }
-      },
-      (start, end) => {
-        tracers.spawn(start, end);
-        // Purely cosmetic on the receiving end (MULTIPLAYER_PLAN.md §3) - the shot itself already
-        // resolved locally (damage, if any, is reported separately via the hit pipeline below).
-        multiplayer?.connection.send({
-          type: 'fireEvent',
-          senderSlot: multiplayer.ownSlot,
-          originX: start.x,
-          originY: start.y,
-          originZ: start.z,
-          endX: end.x,
-          endY: end.y,
-          endZ: end.z,
-          // weaponManager isn't assigned in this outer scope until after this very call resolves,
-          // but this callback only ever fires later, during gameplay - by then it's safely
-          // assigned, same as every other closure captured in this constructor call.
-          //
-          // activeWeaponId, not weaponSlotNames[activeWeaponIndex] - the latter returns the
-          // display name (e.g. "Kestrel P9"), which playGunshot's `${weaponId}_shot` buffer
-          // lookup never matches, silently falling through to its generic fallback sound. This is
-          // why every multiplayer opponent's gunshot sounded the same regardless of weapon.
-          weaponId: weaponManager.activeWeaponId,
-        });
-      },
-      (weaponId) => sound.playGunshot(weaponId),
-      (weaponId) => sound.playReloadClick(weaponId),
-      (distance) => longShotCallout.show(distance),
-      (point) => muzzleFlash.spawn(point),
-      // Goose Launcher's isProjectile firing path (see WeaponManager.fireShot) - spawns a real
-      // ballistic ThrownGoose instead of instant hitscan, reusing the exact same thrownGeese map/
-      // updateThrownGeese loop Goose Toss's pickup-and-throw already uses (see ThrownGoose.ts's
-      // class comment on why the two share one plumbing). `game` isn't assigned in this outer scope
-      // until after this whole call resolves, but this callback only ever fires later during
-      // gameplay - same forward-reference pattern the fireEvent callback above already relies on.
-      (origin, _muzzleWorld, direction) => {
-        const id = crypto.randomUUID();
-        const spawnPoint = origin.clone().addScaledVector(direction, 0.6);
-        const velocity = direction.clone().multiplyScalar(GOOSE_LAUNCHER_PROJECTILE_SPEED);
-        const ownSlot = multiplayer?.ownSlot ?? null;
-        const thrown = new ThrownGoose(id, ownSlot, 'gooseLauncher', spawnPoint, velocity);
-        renderer.scene.add(thrown.mesh);
-        game.thrownGeese.set(id, thrown);
-        if (multiplayer) {
-          multiplayer.connection.send({
-            type: 'gooseThrown',
+    // Extracted into a reusable closure (not just called once inline) - a mid-match Loadout change
+    // (see applyPendingLoadoutIfNeeded) needs to rebuild a fresh WeaponManager from a *new* set of
+    // weaponIds at the player's next respawn, using the exact same callbacks the original match
+    // start already wires up. Every callback below reads `game.weaponManager`/`game.thrownGeese`
+    // (the instance's *current* fields) rather than closing over a specific WeaponManager instance,
+    // so a later rebuild doesn't leave stale closures pointing at the disposed one - `game` isn't
+    // assigned in this outer scope until after the very first call resolves, but none of these
+    // callbacks fire until real gameplay ticks later, by which point it's always assigned.
+    const buildWeaponManager = (
+      weaponIds: string[],
+      damageOverrides?: Readonly<Record<string, number>>,
+      reserveAmmo?: Readonly<Record<string, number>>,
+    ) =>
+      WeaponManager.create(
+        renderer.camera,
+        physics,
+        weaponIds,
+        scopeOverlay,
+        (point, isEntityHit) => {
+          impactMarkers.spawn(point, isEntityHit);
+          if (isEntityHit) {
+            hitMarker.trigger();
+            sound.playHitConfirm();
+          }
+        },
+        (start, end) => {
+          tracers.spawn(start, end);
+          // Purely cosmetic on the receiving end (MULTIPLAYER_PLAN.md §3) - the shot itself already
+          // resolved locally (damage, if any, is reported separately via the hit pipeline below).
+          multiplayer?.connection.send({
+            type: 'fireEvent',
             senderSlot: multiplayer.ownSlot,
-            id,
-            originX: spawnPoint.x,
-            originY: spawnPoint.y,
-            originZ: spawnPoint.z,
-            velX: velocity.x,
-            velY: velocity.y,
-            velZ: velocity.z,
-            source: 'gooseLauncher',
+            originX: start.x,
+            originY: start.y,
+            originZ: start.z,
+            endX: end.x,
+            endY: end.y,
+            endZ: end.z,
+            // activeWeaponId, not weaponSlotNames[activeWeaponIndex] - the latter returns the
+            // display name (e.g. "Kestrel P9"), which playGunshot's `${weaponId}_shot` buffer
+            // lookup never matches, silently falling through to its generic fallback sound. This is
+            // why every multiplayer opponent's gunshot sounded the same regardless of weapon.
+            weaponId: game.weaponManager.activeWeaponId,
           });
-        }
-      },
-      loadout.damageOverrides,
-      initialReserveAmmo,
-    );
+        },
+        (weaponId) => sound.playGunshot(weaponId),
+        (weaponId) => sound.playReloadClick(weaponId),
+        (distance) => longShotCallout.show(distance),
+        (point) => muzzleFlash.spawn(point),
+        // Goose Launcher's isProjectile firing path (see WeaponManager.fireShot) - spawns a real
+        // ballistic ThrownGoose instead of instant hitscan, reusing the exact same thrownGeese map/
+        // updateThrownGeese loop Goose Toss's pickup-and-throw already uses (see ThrownGoose.ts's
+        // class comment on why the two share one plumbing).
+        (origin, _muzzleWorld, direction) => {
+          const id = crypto.randomUUID();
+          const spawnPoint = origin.clone().addScaledVector(direction, 0.6);
+          const velocity = direction.clone().multiplyScalar(GOOSE_LAUNCHER_PROJECTILE_SPEED);
+          const ownSlot = multiplayer?.ownSlot ?? null;
+          const thrown = new ThrownGoose(id, ownSlot, 'gooseLauncher', spawnPoint, velocity);
+          renderer.scene.add(thrown.mesh);
+          game.thrownGeese.set(id, thrown);
+          if (multiplayer) {
+            multiplayer.connection.send({
+              type: 'gooseThrown',
+              senderSlot: multiplayer.ownSlot,
+              id,
+              originX: spawnPoint.x,
+              originY: spawnPoint.y,
+              originZ: spawnPoint.z,
+              velX: velocity.x,
+              velY: velocity.y,
+              velZ: velocity.z,
+              source: 'gooseLauncher',
+            });
+          }
+        },
+        damageOverrides,
+        reserveAmmo,
+      );
+    const weaponManager = await buildWeaponManager(loadout.weaponIds, loadout.damageOverrides, initialReserveAmmo);
 
     onProgress?.('Loading combatants…', 0.1);
     const entityManager = await EntityManager.create(
@@ -1051,7 +1085,7 @@ export class Game {
     const gameRef: { current: Game | null } = { current: null };
     const deathScreen = new DeathScreen(
       hudRoot,
-      () => gameRef.current?.resetPlay(),
+      () => void gameRef.current?.resetPlay(),
       () => onReturnToLobby?.(),
     );
     // PauseMenu is created before SettingsPanel so the settings overlay (later DOM sibling)
@@ -1061,11 +1095,13 @@ export class Game {
       {
         onResume: () => input.requestPointerLock(),
         onSettings: () => settingsPanel.show(),
-        onResetPlay: () => gameRef.current?.resetPlay(),
+        onResetPlay: () => void gameRef.current?.resetPlay(),
         onReturnToLobby: () => onReturnToLobby?.(),
         onRespawn: () => gameRef.current?.manualRespawn(),
+        onLoadout: () => gameRef.current?.openLoadoutScreen(),
       },
       multiplayer !== undefined,
+      modeUsesCustomLoadout(currentGameMode),
     );
     const settingsPanel = new SettingsPanel(
       hudRoot,
@@ -1122,6 +1158,11 @@ export class Game {
     );
     gameRef.current = game;
     game.modeExplanationScreen = new ModeExplanationScreen(hudRoot, () => gameRef.current?.handleModeExplanationSkipClicked());
+    game.rebuildWeaponManagerFn = buildWeaponManager;
+    // A separate per-match instance from App.ts's own lobby LoadoutScreen (same duplication
+    // SettingsPanel already has) - only ever opened from the pause menu, and only for the three
+    // unrestricted modes (see PauseMenu's showLoadoutButton).
+    game.loadoutScreen = await LoadoutScreen.create(hudRoot, () => gameRef.current?.handleLoadoutScreenClosed());
 
     // Goose Toss mode only (see updateGooseToss) - built once here, shown/hidden per pickup/throw
     // rather than rebuilt each time, same reasoning as every weapon view model already attached to
@@ -1542,6 +1583,7 @@ export class Game {
     this.bigAnnouncement.dispose();
     this.hordeWaveIndicator?.dispose();
     this.modeExplanationScreen?.dispose();
+    this.loadoutScreen?.dispose();
     this.explosionEffect.dispose();
     this.gooseManager.dispose();
     this.goldenGooseManager?.dispose();
@@ -1584,11 +1626,18 @@ export class Game {
    * calls multiplayerRespawn() on its own, so this is just a way to skip that wait, not a separate
    * reset path - it must never touch matchConfig/entityManager (there's no AI to reset, and
    * spawnEncountersAsync must never run in a multiplayer match at all). */
-  private resetPlay(): void {
+  private async resetPlay(): Promise<void> {
     if (this.multiplayer) {
-      if (this.player.isDead) this.multiplayerRespawn();
+      if (this.player.isDead) void this.multiplayerRespawn();
       return;
     }
+
+    // A mid-match Loadout change (see handleLoadoutScreenClosed) takes effect right here - the
+    // single-player equivalent of "the next respawn" (both an actual death-respawn and a manual
+    // "Reset Play" restart count, since both put the player back at a fresh spawn point). Awaited
+    // before resetAllAmmo() below so that call always targets the *current* WeaponManager, not one
+    // about to be disposed.
+    await this.applyPendingLoadoutIfNeeded();
 
     // Goose Horde: dying restarts the whole challenge from wave 1 (per explicit user request) at a
     // fresh random point on the map, not the fixed single-player spawn, and skips respawning
@@ -2078,7 +2127,7 @@ export class Game {
       if (!eliminated) {
         this.multiplayer.deathTimer += dt;
         if (this.multiplayer.deathTimer >= MULTIPLAYER_RESPAWN_DELAY) {
-          this.multiplayerRespawn();
+          void this.multiplayerRespawn();
         }
       }
       return;
@@ -2113,8 +2162,14 @@ export class Game {
    * which is how every other player's RemotePlayer for this slot learns where to snap to either
    * way. Must clear MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT from *every* other currently
    * connected player, not just one. */
-  private multiplayerRespawn(): void {
+  private async multiplayerRespawn(): Promise<void> {
     if (!this.multiplayer) return;
+
+    // A mid-match Loadout change (see handleLoadoutScreenClosed) takes effect right here - awaited
+    // before resetAllAmmo() below so that call always targets the *current* WeaponManager, not one
+    // about to be disposed. Same shape as single-player's resetPlay() own hook.
+    await this.applyPendingLoadoutIfNeeded();
+    if (!this.multiplayer) return; // re-check: the match could have ended while the rebuild awaited
 
     const ownSlot = this.multiplayer.session.ownSlot;
     const otherPositions = Array.from(this.multiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
@@ -2444,6 +2499,43 @@ export class Game {
     this.worldBriefingActive = false;
     this.modeExplanationScreen?.hide();
     this.input.requestPointerLock();
+  }
+
+  /** The mid-match Loadout page's Close button - just hides it and marks a rebuild pending (see
+   * applyPendingLoadoutIfNeeded); the pause menu underneath is still showing (pointer lock was
+   * never re-requested to open this), so the player explicitly resumes from there same as closing
+   * Settings. Applied at the *next* respawn per explicit user request, not instantly. */
+  private handleLoadoutScreenClosed(): void {
+    this.loadoutScreen?.hide();
+    this.pendingLoadoutRebuild = true;
+  }
+
+  /** Opened from the pause menu (unrestricted modes only). */
+  private openLoadoutScreen(): void {
+    this.loadoutScreen?.show();
+  }
+
+  /** Called at the top of both resetPlay() (single-player) and multiplayerRespawn() (multiplayer) -
+   * a no-op unless the mid-match Loadout page was actually closed since the last check. Rebuilds an
+   * entirely fresh WeaponManager from whatever's currently stored (see core/loadout.ts) rather than
+   * mutating the existing one's slots in place - same shape the initial match-start construction
+   * already uses (see create()'s buildWeaponManager), just called again later with different
+   * weaponIds. */
+  private async applyPendingLoadoutIfNeeded(): Promise<void> {
+    if (!this.pendingLoadoutRebuild || !this.rebuildWeaponManagerFn) return;
+    this.pendingLoadoutRebuild = false;
+
+    const mode: GameMode = this.multiplayer?.gameMode ?? (this.hordeGooseManager ? 'gooseHorde' : DEFAULT_GAME_MODE);
+    const loadout = resolveWeaponLoadout(mode, Math.random, loadStoredLoadout());
+    const isHordeMultiplayer = mode === 'gooseHorde' && !!this.multiplayer;
+    const reserveAmmo = isHordeMultiplayer
+      ? Object.fromEntries(loadout.weaponIds.map((id) => [id, (WEAPON_DEFINITIONS[id]?.magazineSize ?? 0) * HORDE_STARTING_RESERVE_MAGAZINES]))
+      : undefined;
+
+    this.weaponManager.dispose();
+    this.weaponManager = await this.rebuildWeaponManagerFn(loadout.weaponIds, loadout.damageOverrides, reserveAmmo);
+    this.hotbar.setSlots(this.weaponManager.weaponSlotNames);
+    this.lastActiveWeaponIndex = -1; // forces the weapon-caption toast to re-announce the new active weapon, same as a fresh match start
   }
 
   /** Constructs a fresh RemotePlayer for a slot joining or rejoining an already-running match (see
