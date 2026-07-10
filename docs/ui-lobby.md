@@ -145,21 +145,33 @@ page title) - a genuinely different feature, not a rename of the same thing.
   weapon whose category matches it. Left column lists weapons grouped and ordered exactly as
   requested (`CATEGORY_DISPLAY_ORDER`, not `WEAPON_DEFINITIONS`' own object-key order): Primary
   (Sniper, Rifle, Shotgun) → Secondary (Pistol, MP5) → Melee (Knife) → Special (Goose Launcher,
-  visibly dimmed, `draggable=false`, "Reward only - not equippable").
-- **Drag-and-drop equip.** Native HTML5 DnD - each equippable card is `draggable`, each of the three
-  slot sockets on the right validates the dragged weapon's category against its own before accepting
-  a drop (a mismatched drop is silently rejected, no visual settle). Every successful drop updates
-  the in-memory loadout and persists immediately.
+  visibly dimmed, not clickable, "Reward only - not equippable").
+- **Click to equip.** Each equippable card gets a `click` listener that fills its own category's
+  slot (`{ ...this.loadout, [category]: weapon.id }`), persisted immediately - no drag-and-drop
+  (an earlier pass tried native HTML5 DnD; switched to a plain click per explicit user feedback, a
+  simpler interaction with no drag-target validation to get wrong).
+- **Three columns, not two.** Weapon catalog (left, scrollable) → the three equipped-slot readouts
+  (middle, a fixed-width column of its own) → the rotating character (right) - the slots moved out
+  from an overlay pinned to the character's rim into their own column between the two, per explicit
+  user request.
 - **Rotating character preview** (`loadoutCharacterPreview.ts`, new): unlike `weaponThumbnail.ts`'s
   deliberate one-shot render-then-dispose, this keeps its own `WebGLRenderer`/`requestAnimationFrame`
-  loop alive for as long as the page is open - a live turntable inside a circular chamfered "rim"
-  (this project's existing signature chamfer motif, scaled up), not a static image. Reuses the exact
-  same Kenney "Mini Characters" model + idle-animation lookup `RemotePlayer.ts` already uses for
-  opponents (the only downloaded character skin this project has). **Scope decision:** the character
-  does not visibly hold the equipped weapon in-hand - no bone-attachment precedent exists anywhere in
-  this codebase (checked `Enemy.ts`/`RemotePlayer.ts`, neither attaches a weapon mesh to a bone), and
-  building that from scratch is a separate, much larger effort; equipped weapons are communicated via
-  the slot sockets' own text instead.
+  loop alive for as long as the page is open - a live turntable inside a tall rectangular chamfered
+  "rim" (this project's existing signature chamfer motif, scaled up - not a circle, per explicit
+  user request for a "decently sized" vertical frame with room for the whole character), not a
+  static image. Reuses the exact same Kenney "Mini Characters" model + idle-animation lookup
+  `RemotePlayer.ts` already uses for opponents (the only downloaded character skin this project
+  has). **Scope decision:** the character does not visibly hold the equipped weapon in-hand - no
+  bone-attachment precedent exists anywhere in this codebase (checked `Enemy.ts`/`RemotePlayer.ts`,
+  neither attaches a weapon mesh to a bone), and building that from scratch is a separate, much
+  larger effort; equipped weapons are communicated via the middle column's own text instead.
+- **No visible scrollbar on the weapon catalog.** `scrollbar-width:none`/`-ms-overflow-style:none`
+  inline (Firefox/legacy Edge) plus a small one-time injected `::-webkit-scrollbar{display:none}`
+  rule (Chromium/Safari, which has no inline-style equivalent - mirrors `menuStyles.ts`'s own
+  `ensureMotionKeyframesInjected` pattern for the same reason). In its place, a soft bottom fade +
+  pulsing chevron (`scrollHint`) that only shows while there's actually more to scroll to
+  (`scrollTop + clientHeight < scrollHeight`, rechecked on every `scroll` event) - a short catalog
+  that already fits never shows it at all, rather than it being a permanent decoration.
 - **Persists like the saved username.** New `core/loadout.ts` directly mirrors `core/username.ts`'s
   shape (`localStorage` + try/catch fallback) - a chosen loadout survives a reload/return visit the
   same way a typed username already does.

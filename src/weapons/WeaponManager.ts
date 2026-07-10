@@ -323,7 +323,10 @@ export class WeaponManager {
    * again on a short timer instead of waiting for another press. Stops the burst early (rather
    * than erroring) if the magazine runs dry mid-burst. */
   private fireBurstShot(player: Player): void {
-    if (this.active.weapon.tryFire()) {
+    // consumeBurstRound(), not tryFire() - the opening shot's tryFire() already set the
+    // fireRate cooldown that gates the *next* burst; reusing it here would block every follow-up
+    // round in this same burst (see Weapon.consumeBurstRound's own comment on the bug this fixes).
+    if (this.active.weapon.consumeBurstRound()) {
       this.fireShot(player);
       this.burstShotsRemaining--;
       this.burstShotTimer = WEAPON_BURST_SHOT_INTERVAL_SECONDS;

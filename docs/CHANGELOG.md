@@ -10,7 +10,22 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.8.0 (current)
+## v3.8.1 (current)
+
+Same-day fixes/adjustments to v3.8.0's Loadout system, per live feedback:
+
+- Fixed the MP5 firing only one round instead of a 3-round burst - the follow-up rounds were
+  routed through the same cooldown gate the opening shot uses to pace *between* bursts, which
+  silently blocked them. Now uses a dedicated path that only checks reload/ammo.
+- Loadout page: click to equip a weapon instead of dragging it.
+- The character preview's circular rim is now a taller rectangle, sized to comfortably fit the
+  whole spinning character.
+- The equipped Primary/Secondary/Melee readout moved into its own column between the weapon list
+  and the character, instead of overlaying the character's rim.
+- The weapon list's scrollbar is hidden; a soft fade + chevron now hints when there's more to
+  scroll to instead.
+
+## v3.8.0
 
 New Loadout system, replacing the old read-only Inventory panel: a dedicated full page (character
 rotating inside a slotted rim, guns listed by category on the left) where players drag weapons into

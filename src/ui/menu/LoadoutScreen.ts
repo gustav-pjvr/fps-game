@@ -1,7 +1,21 @@
 import { loadGLTF } from '../../core/AssetLoader.ts';
 import { WEAPON_DEFINITIONS, type WeaponDefinition } from '../../weapons/definitions.ts';
 import { WEAPON_MODEL_SPECS, createProceduralMeleeViewModel } from '../../weapons/viewModel.ts';
-import { createButton, createEyebrow, chamferClipPath, attachScanSweep, ACCENT, TEXT, STEEL, HAIRLINE, BG_RAISED, BG_VOID, DISPLAY_FONT, BODY_FONT } from './menuStyles.ts';
+import {
+  createButton,
+  createEyebrow,
+  chamferClipPath,
+  attachScanSweep,
+  ensureMotionKeyframesInjected,
+  ACCENT,
+  TEXT,
+  STEEL,
+  HAIRLINE,
+  BG_RAISED,
+  BG_VOID,
+  DISPLAY_FONT,
+  BODY_FONT,
+} from './menuStyles.ts';
 import { createStatBadge } from './statIcons.ts';
 import { renderWeaponThumbnail } from './weaponThumbnail.ts';
 import { WEAPON_CATEGORIES, LOADOUT_SLOT_DEFAULTS, type WeaponCategory, type PlayerLoadout } from '../../core/gameModes.ts';
@@ -28,6 +42,20 @@ const CATEGORY_DISPLAY_ORDER: Record<WeaponCategory, readonly string[]> = {
   special: ['gooseLauncher'],
 };
 
+/** One-time injected rule so the weapon list can hide its scrollbar in WebKit/Blink browsers (no
+ * inline-style equivalent exists for the `::-webkit-scrollbar` pseudo-element) - paired with the
+ * `scrollbar-width`/`-ms-overflow-style` inline properties below, which cover Firefox/legacy Edge.
+ * Mirrors menuStyles.ts's own ensureMotionKeyframesInjected pattern for the same reason (inline
+ * `style.cssText` can't declare this either). */
+let scrollbarHideStyleInjected = false;
+function ensureScrollbarHideStyleInjected(): void {
+  if (scrollbarHideStyleInjected) return;
+  scrollbarHideStyleInjected = true;
+  const style = document.createElement('style');
+  style.textContent = '.loadout-scroll-hide::-webkit-scrollbar { display: none; }';
+  document.head.appendChild(style);
+}
+
 interface WeaponCard {
   readonly element: HTMLDivElement;
   readonly weapon: WeaponDefinition;
@@ -37,12 +65,11 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
   const isSpecial = category === 'special';
   const card = document.createElement('div');
   card.dataset.weaponId = weapon.id;
-  card.draggable = !isSpecial;
   card.style.cssText =
     'display:flex; flex-direction:column; gap:10px; padding:14px 16px;' +
     ` background:${BG_RAISED}; border:1px solid ${isSpecial ? REWARD_GOLD : HAIRLINE};` +
     ` clip-path:${chamferClipPath('top-right', 10)}; transition:border-color 0.15s ease-out, transform 0.12s ease-out;` +
-    (isSpecial ? ' opacity:0.75;' : ' cursor:grab;') +
+    (isSpecial ? ' opacity:0.75;' : ' cursor:pointer;') +
     (isSpecial ? ` box-shadow:0 0 14px rgba(255,213,74,0.2);` : '');
 
   if (isSpecial) {
@@ -96,22 +123,22 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
 }
 
 /** Full-page loadout management (per explicit user request - replaces the old read-only
- * "Inventory" showcase): the player's character rotates inside a slotted rim on the right
- * (Primary/Secondary/Melee - see LoadoutCharacterPreview), guns grouped by category on the left,
- * dragged into the matching slot to equip. The category label is the whole point - it's what stops
- * a player stacking multiple primaries, since a slot only ever accepts a weapon whose own
- * WEAPON_CATEGORIES entry matches it. Persists immediately on every drop (see core/loadout.ts),
- * same "survives a reload" mechanism the saved username already uses. */
+ * "Inventory" showcase): guns grouped by category on the left (clicked to equip), the currently
+ * equipped Primary/Secondary/Melee readout in the middle, and the player's character spinning
+ * inside a tall rim on the right. The category label is the whole point - it's what stops a player
+ * stacking multiple primaries, since clicking a weapon only ever fills *its own* category's slot.
+ * Persists immediately on every click (see core/loadout.ts), same "survives a reload" mechanism
+ * the saved username already uses. */
 export class LoadoutScreen {
   private readonly overlay: HTMLDivElement;
   private readonly characterPreview: LoadoutCharacterPreview;
   private readonly slotValueElements: Record<EquippableCategory, HTMLDivElement>;
-  private readonly slotSocketElements: Record<EquippableCategory, HTMLDivElement>;
   private readonly cards: WeaponCard[];
   private loadout: PlayerLoadout;
-  private draggedWeaponId: string | null = null;
 
   private constructor(root: HTMLElement, cards: WeaponCard[], onClose: () => void) {
+    ensureScrollbarHideStyleInjected();
+    ensureMotionKeyframesInjected();
     this.cards = cards;
     this.loadout = loadStoredLoadout();
 
@@ -134,10 +161,17 @@ export class LoadoutScreen {
     header.append(titleWrap, closeButton);
 
     const body = document.createElement('div');
-    body.style.cssText = 'flex:1; min-height:0; display:flex; gap:40px;';
+    body.style.cssText = 'flex:1; min-height:0; display:flex; gap:32px;';
+
+    // --- Left: the weapon catalog, grouped/ordered by category, scrollbar-free (see below) ---
+    const leftColumnWrap = document.createElement('div');
+    leftColumnWrap.style.cssText = 'flex:1.3; min-width:0; position:relative; display:flex; min-height:0;';
 
     const leftColumn = document.createElement('div');
-    leftColumn.style.cssText = 'flex:1.1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:22px; padding-right:8px;';
+    leftColumn.className = 'loadout-scroll-hide';
+    leftColumn.style.cssText =
+      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:22px;' +
+      ' scrollbar-width:none; -ms-overflow-style:none;';
     for (const category of ['primary', 'secondary', 'melee', 'special'] as const) {
       const section = document.createElement('div');
       section.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
@@ -147,59 +181,81 @@ export class LoadoutScreen {
       leftColumn.appendChild(section);
     }
 
+    // A soft fade + chevron standing in for a scrollbar - present only while there's more to see
+    // below the fold (see updateScrollHint), so it reads as "more below" rather than a permanent
+    // decoration once the player has already scrolled to the bottom.
+    const scrollHint = document.createElement('div');
+    scrollHint.style.cssText =
+      'position:absolute; left:0; right:0; bottom:0; height:64px; pointer-events:none;' +
+      ` background:linear-gradient(to bottom, transparent, ${BG_VOID}); display:flex;` +
+      ' align-items:flex-end; justify-content:center; padding-bottom:6px; opacity:0; transition:opacity 0.2s ease-out;';
+    const chevron = document.createElement('div');
+    chevron.textContent = '▾';
+    chevron.style.cssText = `color:${STEEL}; font-size:1.1rem; animation:pulseGlow 1.6s ease-in-out infinite;`;
+    scrollHint.appendChild(chevron);
+
+    const updateScrollHint = (): void => {
+      const hasMoreBelow = leftColumn.scrollTop + leftColumn.clientHeight < leftColumn.scrollHeight - 2;
+      scrollHint.style.opacity = hasMoreBelow ? '1' : '0';
+    };
+    leftColumn.addEventListener('scroll', updateScrollHint);
+
+    leftColumnWrap.append(leftColumn, scrollHint);
+
+    // --- Middle: the currently-equipped readout for each slot ---
+    const middleColumn = document.createElement('div');
+    middleColumn.style.cssText = 'flex:0 0 auto; width:190px; display:flex; flex-direction:column; justify-content:center; gap:14px;';
+    this.slotValueElements = {} as Record<EquippableCategory, HTMLDivElement>;
+    for (const category of EQUIPPABLE_CATEGORIES) {
+      const { socket, value } = this.buildSlotSocket(category);
+      this.slotValueElements[category] = value;
+      middleColumn.appendChild(socket);
+    }
+
+    // --- Right: the rotating character, inside a tall rectangle rather than a circle (per
+    // explicit user request - "decently sized to have the character spinning inside") ---
     const rightColumn = document.createElement('div');
-    rightColumn.style.cssText = 'flex:1; min-width:0; display:flex; align-items:center; justify-content:center; position:relative;';
+    rightColumn.style.cssText = 'flex:1; min-width:0; display:flex; align-items:center; justify-content:center;';
 
     const rim = document.createElement('div');
     rim.style.cssText =
-      `position:relative; width:min(100%, 420px); aspect-ratio:1; border-radius:50%;` +
-      ` border:2px solid ${HAIRLINE}; box-shadow:inset 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);` +
-      ` display:flex; align-items:center; justify-content:center; overflow:hidden;`;
+      `width:min(100%, 420px); height:min(72vh, 620px); border:2px solid ${HAIRLINE};` +
+      ` clip-path:${chamferClipPath('top-left', 26)};` +
+      ` box-shadow:inset 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03); overflow:hidden;`;
     const characterHost = document.createElement('div');
     characterHost.style.cssText = 'width:100%; height:100%;';
     rim.appendChild(characterHost);
     this.characterPreview = new LoadoutCharacterPreview(characterHost);
+    rightColumn.appendChild(rim);
 
-    const sockets = document.createElement('div');
-    sockets.style.cssText = 'position:absolute; top:50%; right:-24px; transform:translateY(-50%); display:flex; flex-direction:column; gap:14px;';
-    this.slotValueElements = {} as Record<EquippableCategory, HTMLDivElement>;
-    this.slotSocketElements = {} as Record<EquippableCategory, HTMLDivElement>;
-    for (const category of EQUIPPABLE_CATEGORIES) {
-      const { socket, value } = this.buildSlotSocket(category);
-      this.slotSocketElements[category] = socket;
-      this.slotValueElements[category] = value;
-      sockets.appendChild(socket);
-    }
-
-    rightColumn.append(rim, sockets);
-    body.append(leftColumn, rightColumn);
+    body.append(leftColumnWrap, middleColumn, rightColumn);
 
     this.overlay.append(header, body);
     root.appendChild(this.overlay);
 
     for (const card of cards) {
-      if (!card.element.draggable) continue;
-      card.element.addEventListener('dragstart', (e) => {
-        this.draggedWeaponId = card.weapon.id;
-        e.dataTransfer?.setData('text/plain', card.weapon.id);
-        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-        card.element.style.opacity = '0.5';
-      });
-      card.element.addEventListener('dragend', () => {
-        this.draggedWeaponId = null;
-        card.element.style.opacity = '1';
+      const category = WEAPON_CATEGORIES[card.weapon.id];
+      if (!category || category === 'special') continue;
+      const equippableCategory: EquippableCategory = category;
+      card.element.addEventListener('click', () => {
+        this.loadout = { ...this.loadout, [equippableCategory]: card.weapon.id };
+        saveLoadout(this.loadout);
+        this.refreshAllSlots();
       });
     }
 
     this.refreshAllSlots();
+    // Run once after layout settles, so the hint's initial visibility matches whether the list
+    // actually overflows (a short catalog never shows it at all).
+    requestAnimationFrame(updateScrollHint);
   }
 
   private buildSlotSocket(category: EquippableCategory): { socket: HTMLDivElement; value: HTMLDivElement } {
     const socket = document.createElement('div');
     socket.dataset.testid = `loadout-slot-${category}`;
     socket.style.cssText =
-      `min-width:170px; padding:12px 16px; background:${BG_RAISED}; border:1px solid ${HAIRLINE};` +
-      ` clip-path:${chamferClipPath('top-right', 8)}; transition:border-color 0.15s ease-out;`;
+      `padding:12px 16px; background:${BG_RAISED}; border:1px solid ${HAIRLINE};` +
+      ` clip-path:${chamferClipPath('top-right', 8)};`;
 
     const label = document.createElement('div');
     label.textContent = CATEGORY_LABELS[category].toUpperCase();
@@ -209,26 +265,6 @@ export class LoadoutScreen {
     value.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.95rem; font-weight:600; color:${TEXT};`;
 
     socket.append(label, value);
-
-    socket.addEventListener('dragover', (e) => {
-      if (this.draggedWeaponId && WEAPON_CATEGORIES[this.draggedWeaponId] === category) {
-        e.preventDefault();
-        socket.style.borderColor = ACCENT;
-      }
-    });
-    socket.addEventListener('dragleave', () => {
-      socket.style.borderColor = HAIRLINE;
-    });
-    socket.addEventListener('drop', (e) => {
-      e.preventDefault();
-      socket.style.borderColor = HAIRLINE;
-      const weaponId = this.draggedWeaponId;
-      if (!weaponId || WEAPON_CATEGORIES[weaponId] !== category) return; // mismatched category - rejected, no state change
-      this.loadout = { ...this.loadout, [category]: weaponId };
-      saveLoadout(this.loadout);
-      this.refreshAllSlots();
-    });
-
     return { socket, value };
   }
 

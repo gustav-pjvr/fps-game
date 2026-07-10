@@ -79,6 +79,18 @@ export class Weapon {
     return true;
   }
 
+  /** Fires the 2nd/3rd round of an already-committed burst (see WeaponDefinition.burstCount and
+   * WeaponManager's burst handling) - deliberately does NOT check or touch `cooldown`. `tryFire()`'s
+   * cooldown gates the interval between *bursts* (set once, by the burst's opening shot); reusing
+   * it here would block every follow-up round, since WEAPON_BURST_SHOT_INTERVAL_SECONDS (the pacing
+   * *within* a burst) is always much shorter than 1/fireRate - confirmed the actual bug behind the
+   * MP5 firing exactly one round instead of three. */
+  consumeBurstRound(): boolean {
+    if (this.reloading || this.ammoInMagazine <= 0) return false;
+    this.ammoInMagazine--;
+    return true;
+  }
+
   /** Returns whether a reload actually began (false if already reloading, magazine already full,
    * the weapon has disableReload set - see WeaponDefinition.disableReload - or (Goose Horde
    * multiplayer only) the reserve is already empty, since a reload with nothing to draw from would

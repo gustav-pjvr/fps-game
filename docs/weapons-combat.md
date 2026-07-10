@@ -222,8 +222,15 @@ choosable in the three unrestricted modes.
   gun's mechanism running its course. Stops early (not an error) if the magazine empties mid-burst.
   `beginSwitch()` resets `burstShotsRemaining` to 0 so a burst can't bleed into a freshly-drawn
   different weapon after a mid-burst weapon switch. `fireRate` still gates time *between* bursts,
-  distinct from the new interval *within* one - `Weapon.ts` itself needed no changes, `tryFire()`/
-  `cooldown` already do exactly what each individual round needs.
+  distinct from the new interval *within* one.
+  **Fixed same day (live-reported: "MP5 isn't burst shot, it's single shot"):** the follow-up rounds
+  were originally fired via `Weapon.tryFire()`, the same method the opening shot uses - but that
+  opening shot had already set `cooldown = 1 / fireRate` (~0.38s for the MP5), and since
+  `WEAPON_BURST_SHOT_INTERVAL_SECONDS` (~0.08s) is always far shorter than that, every follow-up
+  round's `tryFire()` call found `cooldown > 0` and silently failed, killing the burst after exactly
+  one round. Fixed with a new `Weapon.consumeBurstRound()` that checks reload/ammo like `tryFire()`
+  but deliberately never touches `cooldown` - that field's job is gating the *next burst's* start
+  (set once, by the opening shot), not pacing rounds within the current one.
 - **MP5 model** (`weapons/viewModel.ts`): no sourced `.glb` exists for it (only the 4 base Kenney
   blaster models are bundled in `public/assets`), so it's built procedurally in
   `createProceduralMeleeViewModel`'s existing "no sourced asset" fallback (already special-cases the
