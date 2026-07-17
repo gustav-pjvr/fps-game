@@ -414,6 +414,20 @@ export class WeaponManager {
     if (!this.switching) {
       this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
 
+      // The hip/ADS offsets above were hand-tuned at the original fixed CAMERA_FOV (75). Apparent
+      // size of a camera-attached object scales with 1/tan(fov/2), so at a wider user FOV the gun
+      // renders smaller and reads as floating detached in front of the player instead of held
+      // (confirmed via live screenshots at high FOV). Scaling the whole offset vector by the tan
+      // ratio pulls the gun proportionally closer, keeping its on-screen size and placement as
+      // tuned regardless of the FOV setting. At full ADS a weapon with a real zoom renders at its
+      // own authored adsFov (exactly what the ADS offset was tuned against - factor 1), while a
+      // sentinel weapon (adsFov === CAMERA_FOV, "no dedicated zoom") renders at the live base FOV
+      // and needs the same compensation as hip fire.
+      const tunedTan = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
+      const hipScale = tunedTan / Math.tan(THREE.MathUtils.degToRad(baseFov) / 2);
+      const adsScale = adsFov === CAMERA_FOV ? hipScale : 1;
+      this.active.viewModel.position.multiplyScalar(THREE.MathUtils.lerp(hipScale, adsScale, this.aimAmount));
+
       // Dip + tilt the weapon while reloading, peaking at the midpoint and settling back to
       // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
       const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);

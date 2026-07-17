@@ -10,7 +10,23 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.9.0 (current)
+## v3.9.1 (current)
+
+Three fixes from live playtesting of v3.9.0:
+
+- High graphics quality no longer overexposes the scene - the sky environment-map fill was still
+  bright enough (even after an earlier reduction) to lift every shadowed surface toward white and
+  flatten contrast next to Medium; its intensity is halved again (0.4 -> 0.2).
+- The weapon view model now compensates for the FOV setting - the hip/ADS positions were tuned at
+  the old fixed 75° FOV, so wider FOVs rendered the gun smaller and visibly floating in front of
+  the player instead of held. The offset now scales toward the camera by the FOV tangent ratio,
+  keeping the gun's on-screen size and placement as tuned at any FOV. Weapons with a real ADS zoom
+  are unaffected while aiming (their authored zoom FOV was already the ADS tuning baseline).
+- The Loadout page's rotating character no longer clips against its frame's edges - the preview
+  camera is pulled back (~20% smaller on screen); the frame itself is unchanged and the character's
+  proportions/idle animation stay identical to in-match.
+
+## v3.9.0
 
 A full 9-phase fix/improvement pass following a comprehensive code review (`docs/CODE_REVIEW.md`),
 covering multiplayer stability, enemy AI, Goose Horde balance, architecture, test coverage, design

@@ -16,7 +16,10 @@ export interface GraphicsQualityPreset {
    * meaningful when environmentLighting is true. The sky's own PMREM is bright enough that at the
    * default 1.0 it stacks with the full-intensity direct sun to noticeably overexpose/bleach every
    * surface (confirmed visually) - full sky brightness plus full direct sun double-counts the same
-   * light source. Scaled down so it reads as fill alongside the sun, not a second sun. */
+   * light source. Scaled down so it reads as fill alongside the sun, not a second sun. Lowered
+   * again 0.4 -> 0.2 after live side-by-side screenshots (2026-07-17) showed High still reading
+   * washed-out/low-contrast next to Medium's flat 0.6 ambient - at 0.4 the env fill was lifting
+   * every shadowed surface enough to flatten the whole image toward white. */
   readonly environmentIntensity: number;
 }
 
@@ -29,7 +32,7 @@ export interface GraphicsQualityPreset {
 export const GRAPHICS_QUALITY_PRESETS: Record<GraphicsQuality, GraphicsQualityPreset> = {
   low: { shadowsEnabled: false, shadowMapSize: SUN_SHADOW_MAP_SIZE_MEDIUM, pixelRatioCap: 1, environmentLighting: false, environmentIntensity: 1 },
   medium: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_MEDIUM, pixelRatioCap: 2, environmentLighting: false, environmentIntensity: 1 },
-  high: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_HIGH, pixelRatioCap: 2, environmentLighting: true, environmentIntensity: 0.4 },
+  high: { shadowsEnabled: true, shadowMapSize: SUN_SHADOW_MAP_SIZE_HIGH, pixelRatioCap: 2, environmentLighting: true, environmentIntensity: 0.2 },
 };
 
 export const GRAPHICS_QUALITY_ORDER: GraphicsQuality[] = ['low', 'medium', 'high'];

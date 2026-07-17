@@ -51,8 +51,11 @@ export class LoadoutCharacterPreview {
     rim.position.set(-2, 1, -1.5);
     this.scene.add(rim);
 
+    // Pulled back 3.6 -> 4.5 (2026-07-17, live feedback): at 3.6 the character overflowed the
+    // rim's edges (head/arms clipped by the canvas bounds). Framing is fixed by camera distance,
+    // not model scale, so the idle animation's proportions/amplitude stay identical to in-match.
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
-    this.camera.position.set(0, 0.15, 3.6);
+    this.camera.position.set(0, 0.15, 4.5);
     this.camera.lookAt(0, 0.05, 0);
 
     this.turntable = new THREE.Group();
