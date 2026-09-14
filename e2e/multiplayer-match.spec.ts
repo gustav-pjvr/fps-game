@@ -44,6 +44,8 @@ test('starting a multiplayer match spawns both players with no AI and syncs move
   await guestPage.getByPlaceholder('ABCDEF').fill(code);
   await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
 
+  // The lobby ready check (v3.9.0) keeps Start Match disabled until every guest clicks Ready.
+  await guestPage.getByRole('button', { name: 'Ready', exact: true }).click();
   const startButton = hostPage.getByRole('button', { name: 'Start Match', exact: true });
   await startButton.waitFor({ state: 'visible', timeout: 20000 });
   await startButton.click();

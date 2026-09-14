@@ -211,7 +211,9 @@ export class App {
     // The host's *current* roster (whoever's actually still connected, including anyone who
     // rejoined since the last match started) rather than the original match-start roster, which
     // could still list a slot that's since disconnected for good.
-    const roster = hostRoster?.currentRoster() ?? this.currentMultiplayerSession.roster;
+    // Connected slots only: a slot still inside its rejoin grace period would otherwise come back as
+    // a frozen ghost RemotePlayer that also stalls the mode briefing until the staleness sweep reaps it.
+    const roster = hostRoster?.connectedRoster() ?? this.currentMultiplayerSession.roster;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
     connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, spawns, roster });

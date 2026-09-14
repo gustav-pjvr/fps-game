@@ -54,9 +54,10 @@ function tintGold(mesh: THREE.Group): void {
 /** The bonus "golden goose" (see config.ts's BONUS_GOOSE_* comment) - exactly one at a time,
  * respawning after a random delay once killed. Reuses the plain wandering `Goose` class as-is for
  * mesh/AI (tinted gold), but deliberately does NOT let it manage its own death: every Goose
- * instance here is constructed with a hit-report callback (repurposing the "follower" mechanism
- * Goose.ts normally reserves for multiplayer guests, here used unconditionally on every side) so
- * `takeDamage` always just reports "a local hit landed" instead of deciding death internally - this
+ * instance here is constructed with a hit-report callback (the same hook Goose.ts's multiplayer
+ * followers use, here used on every side) so `takeDamage` always just reports "a local hit landed"
+ * instead of deciding death internally. The callback only routes hits: the authoritative copy
+ * still passes isFollower=false so it wanders like any other goose (see spawnOne) - this
  * manager tracks hit count AND which slot landed each hit itself, since (unlike the normal
  * exploding goose) death here needs to remember WHO gets credit for the final hit, not just that it
  * happened. Same authoritative(single-player/host)/follower(guest) split as GooseManager/
@@ -135,7 +136,11 @@ export class BonusGooseManager {
     this.id = id;
     this.hitsTaken = 0;
     this.lastHitSlot = null;
-    this.goose = new Goose(this.physics, new THREE.Vector3(x, y, z), id, Math.random, () => this.registerLocalHit());
+    // isFollower=false explicitly: this is the authoritative copy, so it must run the normal wander
+    // AI even though it also passes a hit callback (see Goose.ts's class comment on the two
+    // switches). Without it the callback alone selected follower mode and the golden goose never
+    // moved from its spawn point.
+    this.goose = new Goose(this.physics, new THREE.Vector3(x, y, z), id, Math.random, () => this.registerLocalHit(), false);
     tintGold(this.goose.mesh);
     this.scene.add(this.goose.mesh);
 

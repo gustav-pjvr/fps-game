@@ -358,7 +358,26 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onError: (message) => this.setStatus(message),
+      onError: (message, kind) => {
+        if (generation !== this.showGeneration) return;
+        if (kind === 'brokerLost') {
+          this.setStatus('Lost contact with the matchmaking server. Reconnecting so new players can still join…');
+          return;
+        }
+        if (kind === 'networkBlocked') {
+          // A guest's connection attempt failed its ICE negotiation. The room itself is fine, but the
+          // raw PeerJS text ("Negotiation of connection to <uuid> failed.") told the host nothing.
+          this.setStatus(
+            "A player tried to join but couldn't connect through the network. Strict work, school or mobile networks can block peer-to-peer play; try a different network.",
+          );
+          return;
+        }
+        this.setStatus(message);
+      },
+      onBrokerReconnected: () => {
+        if (generation !== this.showGeneration || !this.hostRoster) return;
+        this.setStatus(this.hostRoster.currentRoster().length > 1 ? 'Connection verified. Ready when you are.' : 'Waiting for other players to join…');
+      },
       onMessage: (message) => {
         if (message.type !== 'playerReady' || !this.hostRoster) return;
         // Self-reported - the sender's own message.slot, not a transport-level identity (the lobby
@@ -376,6 +395,9 @@ export class CreateRoomScreen {
         if (!this.hostRoster) return 'full';
         const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
         if (outcome.outcome === 'full') return 'full';
+        // A rejoin may take over a slot whose stale connection was still marked ready. The player on
+        // the new connection hasn't readied, so they must click Ready again.
+        this.readySlots.delete(outcome.slot);
 
         const roster = this.hostRoster.currentRoster();
         this.renderPlayerRows(roster);
@@ -433,7 +455,9 @@ export class CreateRoomScreen {
    * changes. */
   private updateStartButtonState(): void {
     if (!this.hostRoster) return;
-    const roster = this.hostRoster.currentRoster();
+    // Connected slots only: a guest who left sits in a 90s rejoin reservation and can never click
+    // Ready, which used to lock Start Match for that whole grace period.
+    const roster = this.hostRoster.connectedRoster();
     const allReady = roster.length > 0 && roster.every((entry) => this.readySlots.has(entry.slot));
     this.startButton.disabled = !allReady;
   }
@@ -449,7 +473,9 @@ export class CreateRoomScreen {
       this.reservationSweepInterval = null;
     }
     this.hostRoster.startMatch();
-    const roster = this.hostRoster.currentRoster();
+    // Connected slots only (see HostRoster.connectedRoster): a reserved slot would otherwise get a
+    // spawn point and a frozen ghost RemotePlayer on every client.
+    const roster = this.hostRoster.connectedRoster();
     const seed = generateMultiplayerSeed();
     // min/max on the <input> only enforces on form submission, not on reading .value directly - a
     // cleared field, pasted text, or an out-of-range number all need clamping here too.

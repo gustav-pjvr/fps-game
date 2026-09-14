@@ -144,6 +144,9 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (!opponent) break; // disconnected/unknown slot - a relay-hop race, not an error
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
       opponent.health = message.health;
+      // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
+      // they're alive again, even if their respawnEvent was somehow missed.
+      opponent.isDead = false;
       break;
     }
     case 'fireEvent': {
@@ -177,6 +180,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (activeMultiplayer.gameMode !== 'gooseHorde') {
         applyPlayerDied(ctx.scoreboard, ctx.deathCounts, message);
       }
+      const victim = activeMultiplayer.opponents.get(message.victimSlot);
+      if (victim) victim.isDead = true;
       if (message.victimSlot !== activeMultiplayer.session.ownSlot) {
         const victimName = activeMultiplayer.usernames.get(message.victimSlot) ?? 'A player';
         const killerName = message.killerSlot !== null ? activeMultiplayer.usernames.get(message.killerSlot) : null;
@@ -204,7 +209,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // "A goose spawns whenever a player dies" - a dying guest can't spawn its own
       // authoritative goose (see GooseManager's class comment), so the host does it here on
       // that guest's behalf the moment its playerDied arrives. The host's own death instead
-      // takes the direct path in update()'s wasDead block (this message never loops back to
+      // takes the direct path in update()'s death-handling block (this message never loops back to
       // its own sender, so the host would otherwise never react to its own death here).
       if (!ctx.isHordeMode && activeMultiplayer.session.role === 'host') {
         const victimPosition = activeMultiplayer.opponents.get(message.victimSlot)?.remotePlayer.position;
@@ -245,6 +250,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // wrong here for a guest receiving a relayed message.
       const opponent = activeMultiplayer.opponents.get(message.senderSlot);
       opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
+      if (opponent) opponent.isDead = false;
       break;
     }
     case 'footstepEvent': {
@@ -293,7 +299,17 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // locally at the moment it sends this (see updateGoldenGoose), same self-authoritative
       // pattern as goosePickedUp above.
       // message.senderSlot - see playerSnapshot's own comment on the transport-slot bug.
-      ctx.goldenGooseManager?.claim(message.senderSlot);
+      // Claims aren't arbitrated, so two players pressing E within one network round trip each saw
+      // the OTHER's claim arrive and handed the goose over: A thought B carried it and B thought A
+      // did, nobody scored and nobody could drop it, so the match could never end. Deterministic
+      // tie-break instead: a claim only displaces an existing carrier with a LOWER slot number.
+      // Every client applies the same rule to the same pair of claims, so all converge on the
+      // lowest-numbered claimant. A legitimate claim after a drop is unaffected (the ordered channel
+      // delivers the drop first, leaving no carrier to compare against).
+      if (ctx.goldenGooseManager) {
+        const currentCarrier = ctx.goldenGooseManager.carrierSlot;
+        if (currentCarrier === null || message.senderSlot < currentCarrier) ctx.goldenGooseManager.claim(message.senderSlot);
+      }
       break;
     case 'goldenGooseDropped':
       ctx.goldenGooseManager?.drop(new THREE.Vector3(message.x, message.y, message.z));
@@ -338,6 +354,9 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       ctx.gooseAnnouncement.show(`Wave ${message.wave} incoming...`);
       break;
     case 'hordeCleared':
+      // Marks the follower manager cleared so Game.update()'s own isCleared check ends the match on
+      // guests too. Before this, only the host's podium appeared and guests stayed in a frozen world.
+      ctx.hordeGooseManager?.applyCleared();
       ctx.gooseAnnouncement.show('The horde has been cleared - you survived!');
       break;
     case 'hordeReset':
@@ -388,7 +407,15 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       ctx.removeMultiplayerOpponent(message.slot);
       break;
     case 'playerJoinedMatch':
-      if (message.slot !== activeMultiplayer.session.ownSlot) void ctx.addMultiplayerOpponent(message.slot, message.username);
+      if (message.slot === activeMultiplayer.session.ownSlot) break;
+      // A brand-new player can be handed a slot a departed player used (lowest free slot is reused),
+      // and the scoreboard keeps a leaver's entry for the podium. Without this the newcomer
+      // inherited that score, possibly joining one kill from the win. A genuine rejoin keeps its own.
+      if (!message.isRejoin) {
+        ctx.scoreboard.delete(message.slot);
+        ctx.deathCounts.delete(message.slot);
+      }
+      void ctx.addMultiplayerOpponent(message.slot, message.username);
       break;
   }
 }

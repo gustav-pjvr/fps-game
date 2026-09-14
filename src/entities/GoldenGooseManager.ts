@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildGooseMesh } from './Goose.ts';
+import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 
 const GOLDEN_TINT = 0xffd54a;
@@ -62,5 +62,6 @@ export class GoldenGooseManager {
 
   dispose(): void {
     this.scene.remove(this.mesh);
+    disposeProceduralMesh(this.mesh);
   }
 }

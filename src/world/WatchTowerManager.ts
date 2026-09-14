@@ -300,7 +300,7 @@ export class WatchTowerManager {
       const end = CORNERS[flight + 1]!;
       const rampCollider = createRampCollider(this.physics.world, rigidBody, start, end, WATCH_TOWER_STAIR_WIDTH);
       colliderHandles.push(rampCollider.handle);
-      colliderHandles.push(createOuterFlightRailing(this.physics.world, rigidBody, start, end).handle);
+      colliderHandles.push(createBoxCollider(this.physics.world, rigidBody, outerFlightRailingBox(start, end)).handle);
 
       // A landing at every corner except the first (ground level already serves as the landing
       // there) and the last (the top platform, created below, serves as the landing there).
@@ -311,7 +311,7 @@ export class WatchTowerManager {
           start.z,
         );
         colliderHandles.push(this.physics.world.createCollider(landingDesc, rigidBody).handle);
-        colliderHandles.push(createOuterLandingRailing(this.physics.world, rigidBody, start).handle);
+        colliderHandles.push(createBoxCollider(this.physics.world, rigidBody, outerLandingRailingBox(start)).handle);
       }
     }
 
@@ -354,6 +354,32 @@ function createRampCollider(world: RAPIER.World, rigidBody: RAPIER.RigidBody, st
   return world.createCollider(desc, rigidBody);
 }
 
+/** One box's full placement in the tower's local frame (centered, like both a Rapier cuboid and a
+ * THREE.BoxGeometry). Each stair/landing railing is computed once as one of these and then built
+ * as both its collider (createBoxCollider) and its visible mesh (createBoxMesh), so the two can't
+ * drift apart - the same "can't drift out of sync" reasoning as createTowerVisual's ramp comment.
+ * Those railings used to have colliders but no mesh at all, so players bumped into and shot
+ * invisible 1m walls all the way up the stairs. */
+interface BoxTransform {
+  readonly center: THREE.Vector3;
+  readonly rotation: THREE.Quaternion;
+  readonly halfExtents: THREE.Vector3;
+}
+
+function createBoxCollider(world: RAPIER.World, rigidBody: RAPIER.RigidBody, box: BoxTransform): RAPIER.Collider {
+  const desc = RAPIER.ColliderDesc.cuboid(box.halfExtents.x, box.halfExtents.y, box.halfExtents.z)
+    .setTranslation(box.center.x, box.center.y, box.center.z)
+    .setRotation({ x: box.rotation.x, y: box.rotation.y, z: box.rotation.z, w: box.rotation.w });
+  return world.createCollider(desc, rigidBody);
+}
+
+function createBoxMesh(box: BoxTransform, material: THREE.Material): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2), material);
+  mesh.position.copy(box.center);
+  mesh.quaternion.copy(box.rotation);
+  return mesh;
+}
+
 /** A thin, tall rail along one flight's *outer* edge (the side facing away from the shaft) -
  * without this, a player sprinting straight through a switchback turn (not slowing down to pivot
  * onto the next flight, exactly the failure mode caught by manually testing this in the dev
@@ -361,7 +387,7 @@ function createRampCollider(world: RAPIER.World, rigidBody: RAPIER.RigidBody, st
  * instead of climbing) has nothing physically stopping them from running off the side mid-climb.
  * Reuses the same tilted-box-via-quaternion approach as createRampCollider, offset outward by
  * half the stair width and raised half the railing height above the ramp surface. */
-function createOuterFlightRailing(world: RAPIER.World, rigidBody: RAPIER.RigidBody, start: THREE.Vector3, end: THREE.Vector3): RAPIER.Collider {
+function outerFlightRailingBox(start: THREE.Vector3, end: THREE.Vector3): BoxTransform {
   const delta = new THREE.Vector3().subVectors(end, start);
   const horizontalDirection = new THREE.Vector3(delta.x, 0, delta.z).normalize();
   // Perpendicular to the flight's horizontal direction, in the XZ plane - rotate 90 degrees
@@ -391,28 +417,34 @@ function createOuterFlightRailing(world: RAPIER.World, rigidBody: RAPIER.RigidBo
   const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), railDirection);
   const railMidpoint = new THREE.Vector3().addVectors(railStart, railEnd).multiplyScalar(0.5);
 
-  const desc = RAPIER.ColliderDesc.cuboid(railLength / 2, WATCH_TOWER_RAILING_HEIGHT / 2, RAILING_HALF_THICKNESS)
-    .setTranslation(railMidpoint.x, railMidpoint.y, railMidpoint.z)
-    .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w });
-  return world.createCollider(desc, rigidBody);
+  return {
+    center: railMidpoint,
+    rotation,
+    halfExtents: new THREE.Vector3(railLength / 2, WATCH_TOWER_RAILING_HEIGHT / 2, RAILING_HALF_THICKNESS),
+  };
 }
 
 /** A single rail segment on a landing's outer edge (the side facing away from the shaft, the
  * direction a player continuing straight through the corner would overshoot toward) - same
- * motivation as createOuterFlightRailing, for the flat landings between flights. */
-function createOuterLandingRailing(world: RAPIER.World, rigidBody: RAPIER.RigidBody, corner: THREE.Vector3): RAPIER.Collider {
+ * motivation as outerFlightRailingBox, for the flat landings between flights. */
+function outerLandingRailingBox(corner: THREE.Vector3): BoxTransform {
   const outward = new THREE.Vector3(corner.x, 0, corner.z).normalize();
   const perpendicular = new THREE.Vector3(-outward.z, 0, outward.x);
   // Same "offset by half-width plus the railing's own half-thickness" fix as
-  // createOuterFlightRailing - see its comment for why the naive half-width-only offset overlaps
-  // the landing's own edge instead of sitting flush against it.
-  const center = corner.clone().addScaledVector(outward, WATCH_TOWER_STAIR_WIDTH / 2 + RAILING_HALF_THICKNESS);
+  // outerFlightRailingBox - see its comment for why the naive half-width-only offset overlaps
+  // the landing's own edge instead of sitting flush against it. `outward` is horizontal, so the
+  // offset keeps corner.y, then the rail is raised half its own height above the landing.
+  const center = corner
+    .clone()
+    .addScaledVector(outward, WATCH_TOWER_STAIR_WIDTH / 2 + RAILING_HALF_THICKNESS)
+    .setY(corner.y + WATCH_TOWER_RAILING_HEIGHT / 2);
 
   const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), perpendicular);
-  const desc = RAPIER.ColliderDesc.cuboid(WATCH_TOWER_STAIR_WIDTH / 2, WATCH_TOWER_RAILING_HEIGHT / 2, RAILING_HALF_THICKNESS)
-    .setTranslation(center.x, corner.y + WATCH_TOWER_RAILING_HEIGHT / 2, center.z)
-    .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w });
-  return world.createCollider(desc, rigidBody);
+  return {
+    center,
+    rotation,
+    halfExtents: new THREE.Vector3(WATCH_TOWER_STAIR_WIDTH / 2, WATCH_TOWER_RAILING_HEIGHT / 2, RAILING_HALF_THICKNESS),
+  };
 }
 
 /** Four thin, tall colliders around the lookout platform's perimeter - without these, climbing
@@ -433,7 +465,8 @@ function createPlatformRailingColliders(world: RAPIER.World, rigidBody: RAPIER.R
 }
 
 /** Purely cosmetic geometry - matches the collider layout exactly in position/size (shaft, ramps,
- * landings, platform) but adds visible step-edge strips along each ramp (a thin protruding band
+ * landings, platform, and every railing: the stair/landing ones via the exact BoxTransform their
+ * colliders use) but adds visible step-edge strips along each ramp (a thin protruding band
  * every ~1.2m along the slope, same "cosmetic detail on top of a plain collider shape" approach
  * already used for the crate stack's tier bands) so a smooth ramp collider still *reads* as a
  * staircase, not a wheelchair ramp. */
@@ -478,10 +511,15 @@ function createTowerVisual(towerMaterial: THREE.Material, stepMaterial: THREE.Ma
       group.add(stepEdge);
     }
 
+    // Same box, same loop shape (one per flight, a landing rail at every corner but the first) as
+    // createTower's own railing colliders - see BoxTransform.
+    group.add(createBoxMesh(outerFlightRailingBox(start, end), railingMaterial));
+
     if (flight > 0) {
       const landing = new THREE.Mesh(new THREE.BoxGeometry(WATCH_TOWER_STAIR_WIDTH, LANDING_HALF_THICKNESS * 2, WATCH_TOWER_STAIR_WIDTH), towerMaterial);
       landing.position.copy(start);
       group.add(landing);
+      group.add(createBoxMesh(outerLandingRailingBox(start), railingMaterial));
     }
   }
 
@@ -504,6 +542,15 @@ function createTowerVisual(towerMaterial: THREE.Material, stepMaterial: THREE.Ma
     railing.position.set(span.x, railingY, span.z);
     group.add(railing);
   }
+
+  // A 16m tower that neither casts nor receives shadows reads as pasted onto the scene - every
+  // other placed prop (crates, geese, ammo crates) already opts in the same way.
+  group.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
 
   return group;
 }

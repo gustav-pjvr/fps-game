@@ -55,7 +55,7 @@ export class KingOfTheHillController {
   }
 
   /** Shared by a voluntary drop (fire button, above) and an automatic drop on the carrier's own
-   * death (see Game.ts's wasDead block, via dropIfCarrying below) - resets the local hold-time
+   * death (see Game.ts's death-handling block, via dropIfCarrying below) - resets the local hold-time
    * accumulator and broadcasts so every other client relocates/unhides it at the same spot. */
   private drop(position: THREE.Vector3): void {
     this.goldenGooseManager.drop(position);
@@ -70,7 +70,7 @@ export class KingOfTheHillController {
   }
 
   /** Drops the goose at `position` iff `slot` is the one currently carrying it - the shared guard
-   * Game.ts's wasDead death-transition block needs before calling drop() unconditionally (dying
+   * Game.ts's death-handling block needs before calling drop() unconditionally (dying
    * while NOT carrying must obviously do nothing). */
   dropIfCarrying(slot: PlayerSlot, position: THREE.Vector3): void {
     if (this.goldenGooseManager.carrierSlot === slot) this.drop(position);

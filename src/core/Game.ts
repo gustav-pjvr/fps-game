@@ -81,6 +81,7 @@ import {
   KOTH_POINTS_TO_WIN,
   type MatchWeather,
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
+  MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_RESPAWN_DELAY,
   NIGHT_AMBIENT_INTENSITY,
   NIGHT_SUN_COLOR,
@@ -124,6 +125,9 @@ const SPAWN_BATCH_SIZE = 4;
 /** Flat ambient fill used on Low/Medium graphics quality in place of image-based lighting (see
  * Game.addLighting/applyGraphicsQuality). */
 const AMBIENT_FILL_INTENSITY = 0.6;
+/** While this client has clicked Skip on the mode briefing and is still waiting on others, it
+ * re-broadcasts its readiness this often (see resendModeExplanationReady). */
+const MODE_EXPLANATION_READY_RESEND_SECONDS = 1;
 
 export interface MatchConfig {
   enemyCount: number;
@@ -172,11 +176,30 @@ export class Game {
   /** Damage requested via the debug API, applied inside the next update tick (see installDebugApi). */
   private pendingDebugDamage = 0;
   /** Damage from a network `damageEvent`, applied inside the next update tick rather than
-   * immediately in the WebRTC message callback - update() detects death by comparing isDead
-   * across the tick (wasDead), so applying it outside a tick boundary would make the death
-   * transition unobservable (isDead would already be true before wasDead is captured), and
-   * neither the death screen nor the `playerDied` reply would ever fire. */
+   * immediately in the WebRTC message callback, so it lands in tick order with everything else.
+   * Death detection no longer depends on that ordering (see deathHandled), since goose explosions
+   * still apply damage straight from a network callback. */
   private pendingNetworkDamage = 0;
+  /** True once the current death has been processed (death screen, playerDied broadcast, horde life,
+   * KOTH drop); cleared the first tick the player is alive again. Replaces the old per-tick
+   * `wasDead` comparison, which missed any death caused BETWEEN ticks: a guest killed by a goose or
+   * horde explosion (applied directly from the gooseExploded/hordeGooseExploded message callback)
+   * was already dead when the next tick captured wasDead, so no death screen, no playerDied and no
+   * horde life lost; they froze for 3s and silently respawned. */
+  private deathHandled = false;
+  /** Fixed-step tick counter, used to collapse several hit confirmations in the same tick (a
+   * shotgun's 8 pellets) into one hit marker and one sound. */
+  private tickCount = 0;
+  private lastHitConfirmTick = -1;
+  /** Compared alongside lastActiveWeaponIndex: a Goose Launcher grant or a Gun Game upgrade swaps
+   * the weapon inside the SAME slot, which the index alone never noticed (stale hotbar, no caption). */
+  private lastActiveWeaponId = '';
+  private modeExplanationResendAccumulator = 0;
+  /** Set after construction (same forward-reference pattern as modeExplanationScreen); only needed
+   * to build the mid-match Loadout page lazily, the first time the pause menu opens it. */
+  private hudRoot: HTMLElement | null = null;
+  private loadoutScreenLoading = false;
+  private disposed = false;
   /** Set when death is detected while the pause menu is open (multiplayer only - single-player
    * can never die while paused, see the early-return above isPaused's own comment) - per user
    * request, the death/respawn screen must never visually overlay the pause menu. The death ITSELF
@@ -307,6 +330,7 @@ export class Game {
     private readonly onOpponentLeftRoom?: () => void,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
+    this.lastActiveWeaponId = weaponManager.activeWeaponId;
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
@@ -371,10 +395,8 @@ export class Game {
           })),
         })),
       getWorldSeed: () => getWorldSeed(),
-      // Queued, not applied immediately: update() detects death by comparing isDead across the
-      // tick (wasDead), so damage landing *between* ticks would make the death transition
-      // unobservable and the death screen would never show. Queuing routes debug damage through
-      // the exact same within-tick path enemy damage takes.
+      // Queued, not applied immediately, so debug damage takes the exact same within-tick path enemy
+      // damage takes (death handling itself copes with either, see deathHandled).
       damagePlayer: (amount) => {
         this.pendingDebugDamage += amount;
       },
@@ -562,7 +584,9 @@ export class Game {
         scopeOverlay,
         (point, isEntityHit) => {
           impactMarkers.spawn(point, isEntityHit);
-          if (isEntityHit) {
+          // Once per tick: this fires per pellet, so a shotgun blast stacked up to 8 hit sounds.
+          if (isEntityHit && game.lastHitConfirmTick !== game.tickCount) {
+            game.lastHitConfirmTick = game.tickCount;
             hitMarker.trigger();
             sound.playHitConfirm();
           }
@@ -787,7 +811,10 @@ export class Game {
               const isMine = !multiplayer || killerSlot === multiplayer.ownSlot;
               if (!isMine) return;
               gooseAnnouncement.show('You claimed the Goose Launcher!');
-              void weaponManager.grantBonusWeapon('gooseLauncher', weaponManager.activeWeaponId);
+              // game.weaponManager, not the create()-local `weaponManager`: a mid-match Loadout change
+              // rebuilds it at the next respawn, and the stale capture granted the launcher to the
+              // disposed instance (a frozen launcher model on screen, the live gun unchanged).
+              void game.weaponManager.grantBonusWeapon('gooseLauncher', game.weaponManager.activeWeaponId);
             },
             onNetworkSpawn:
               multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'bonusGooseSpawned', id, x, y, z }) : undefined,
@@ -846,7 +873,7 @@ export class Game {
           // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
           (amount) => multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount }),
         );
-        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now() });
+        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), isDead: false });
         usernames.set(entry.slot, entry.username);
         minimap.addDot(entry.slot);
         multiplayerHud.addOpponentRow(entry.slot, entry.username);
@@ -867,6 +894,7 @@ export class Game {
         hostSweepAccumulator: 0,
         deathTimer: 0,
         lastDamageSourceSlot: null,
+        lastDamageSourceAt: 0,
         hordeRespawnsUsed: 0,
         hordeEliminatedSlots: new Set<PlayerSlot>(),
       };
@@ -967,7 +995,10 @@ export class Game {
     // A separate per-match instance from App.ts's own lobby LoadoutScreen (same duplication
     // SettingsPanel already has) - only ever opened from the pause menu, and only for the three
     // unrestricted modes (see PauseMenu's showLoadoutButton).
-    game.loadoutScreen = await LoadoutScreen.create(hudRoot, () => gameRef.current?.handleLoadoutScreenClosed());
+    // Built lazily on first open (see openLoadoutScreen) rather than here: most matches never open it,
+    // and each instance used to cost several WebGL contexts (thumbnails plus a live preview) on every
+    // match start, restricted modes included.
+    game.hudRoot = hudRoot;
 
     // Per-mode controllers (see core/modeControllers/) - each mode gets at most one, matching its
     // own gameMode. Constructed here rather than earlier alongside their underlying managers
@@ -1028,6 +1059,7 @@ export class Game {
         applyNetworkDamage: (amount, sourceSlot) => {
           game.pendingNetworkDamage += amount;
           activeMultiplayer.lastDamageSourceSlot = sourceSlot;
+          activeMultiplayer.lastDamageSourceAt = performance.now();
         },
         healLocalPlayerToFull: () => game.healLocalPlayerToFull(),
         checkHordeAllEliminated: () => game.checkHordeAllEliminated(),
@@ -1049,6 +1081,13 @@ export class Game {
         // minimap removed.
         onPeerDisconnected: (slot) => {
           if (activeMultiplayer.session.role === 'guest') {
+            // Already on the podium: endMultiplayerMatch is a no-op once ended, so a host who closed
+            // the tab (instead of clicking Return to Lobby, which sends hostLeftRoom) left the guest
+            // stranded there forever. Treat it the same as hostLeftRoom.
+            if (game.multiplayerMatchState.hasEnded) {
+              game.onOpponentLeftRoom?.();
+              return;
+            }
             game.endMultiplayerMatch(false, 'opponentDisconnected');
             return;
           }
@@ -1061,8 +1100,10 @@ export class Game {
         // perspective that's the same "match is over" outcome; from the host's perspective there's
         // no specific slot to react to here (a genuinely per-guest error still fires that guest's
         // own connection 'close' separately, handled by onPeerDisconnected above).
-        onError: () => {
-          if (activeMultiplayer.session.role === 'guest') game.endMultiplayerMatch(false, 'opponentDisconnected');
+        // Except a lost broker websocket ('brokerLost'): the data channel to the host doesn't use the
+        // broker once open, so ending the match on it threw guests out of perfectly healthy games.
+        onError: (_message, kind) => {
+          if (activeMultiplayer.session.role === 'guest' && kind !== 'brokerLost') game.endMultiplayerMatch(false, 'opponentDisconnected');
         },
         onMessage: (message, senderSlot) => routeMatchMessage(routerContext, message, senderSlot),
         // Host-only - resolves a mid-match join/rejoin's hello into the exact reply to send back,
@@ -1076,7 +1117,16 @@ export class Game {
           const outcome = hostRoster.handleHello(username, rejoinToken, performance.now());
           if (outcome.outcome === 'full') return 'full';
 
-          const roster = hostRoster.currentRoster();
+          // Connected slots only: the joiner builds a RemotePlayer for every roster entry, and a slot
+          // sitting in its rejoin grace period used to become a frozen ghost on their screen for up to
+          // 90s (guests never run the staleness sweep that would reap it).
+          const roster = hostRoster.connectedRoster();
+          if (outcome.outcome === 'joined') {
+            // A brand-new player may be handed a departed player's slot; don't let them inherit that
+            // score (see the matching reset in MatchMessageRouter's playerJoinedMatch case).
+            game.multiplayerMatchState.scoreboard.delete(outcome.slot);
+            game.multiplayerMatchState.deathCounts.delete(outcome.slot);
+          }
           if (hostRoster.isMatchInProgress()) {
             const otherPositions = Array.from(activeMultiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
             otherPositions.push({ x: player.position.x, z: player.position.z });
@@ -1153,6 +1203,13 @@ export class Game {
    * click-to-resume gate is exactly today's fallback - never worse than before. */
   start(): void {
     this.loop.start();
+    // A host that dropped while this guest was still loading fired its close event on the room
+    // screen's callbacks (or App's silenced ones during a rematch), never on Game's, so the guest
+    // would otherwise play on alone against a dead connection forever.
+    if (this.multiplayer?.session.role === 'guest' && !this.multiplayer.session.connection.isConnectedTo(HOST_SLOT)) {
+      this.endMultiplayerMatch(false, 'opponentDisconnected');
+      return;
+    }
     // A locked pointer hides the OS cursor - the player couldn't actually see/click the mode
     // briefing's Skip button if it were requested here while worldBriefingActive is still true.
     // dismissModeExplanation() requests it instead, once the briefing actually closes.
@@ -1167,6 +1224,7 @@ export class Game {
    * to immediately create a fresh one on the same room for a rematch - the underlying
    * PeerConnection must survive the swap, or there'd be no connection left for the new Game to use. */
   dispose(options?: { keepConnectionAlive?: boolean }): void {
+    this.disposed = true;
     this.loop.stop();
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
@@ -1248,6 +1306,7 @@ export class Game {
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
     if (this.hordeGooseManager) {
+      this.hordeGooseManager.recenter(spawnPoint.x, spawnPoint.y);
       this.hordeGooseManager.resetToWaveOne();
     } else {
       this.gooseManager.clearAll();
@@ -1410,6 +1469,7 @@ export class Game {
   }
 
   private readonly update = (dt: number): void => {
+    this.tickCount++;
     // Match end (MULTIPLAYER_PLAN.md §7 phase 4) freezes simulation permanently for the rest of
     // this Game instance, unlike a single death - MatchEndScreen (shown by App, not Game) is what
     // the player sees, and it stays alive underneath until Rematch/Return to Lobby is clicked.
@@ -1426,6 +1486,7 @@ export class Game {
     // isPaused formula below would otherwise also show the pause menu underneath it.
     if (this.worldBriefingActive) {
       this.input.consumeLookDelta();
+      this.resendModeExplanationReady(dt);
       return;
     }
 
@@ -1455,6 +1516,9 @@ export class Game {
     // never unpause to become effectively unkillable while still looking alive to the opponent.
     if (isPaused && !this.multiplayer) {
       this.input.consumeLookDelta();
+      // WeaponManager.update doesn't run while frozen, so without this the scope overlay and zoomed
+      // FOV stayed up behind the pause menu.
+      this.weaponManager.cancelAim();
       return;
     }
 
@@ -1462,7 +1526,8 @@ export class Game {
       void this.resetPlay();
     }
 
-    const wasDead = this.player.isDead;
+    // Re-arms death handling the first tick the player is alive (see deathHandled).
+    if (!this.player.isDead) this.deathHandled = false;
 
     if (this.pendingNetworkDamage > 0) {
       this.player.takeDamage(this.pendingNetworkDamage);
@@ -1489,6 +1554,8 @@ export class Game {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause.
       this.input.consumeLookDelta();
+      // Same as the single-player pause above: drop the scope/zoom behind the death screen or pause menu.
+      this.weaponManager.cancelAim();
     } else {
       // Runs before weaponManager.update() specifically so a throw's 'fire' press is consumed
       // here first - WeaponManager never sees it, so the harmless 'unarmed' placeholder weapon
@@ -1530,7 +1597,7 @@ export class Game {
         if (!this.player.isDead) targets.push(this.player.position);
         if (this.multiplayer) {
           for (const opponent of this.multiplayer.opponents.values()) {
-            if (this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
+            if (opponent.isDead || this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
             targets.push(opponent.remotePlayer.position);
           }
         }
@@ -1565,8 +1632,12 @@ export class Game {
       }
     }
 
-    if (this.weaponManager.activeWeaponIndex !== this.lastActiveWeaponIndex) {
+    const activeWeaponId = this.weaponManager.activeWeaponId;
+    if (this.weaponManager.activeWeaponIndex !== this.lastActiveWeaponIndex || activeWeaponId !== this.lastActiveWeaponId) {
+      // A same-slot swap (launcher grant, Gun Game upgrade) changes the slot's name too.
+      if (activeWeaponId !== this.lastActiveWeaponId) this.hotbar.setSlots(this.weaponManager.weaponSlotNames);
       this.lastActiveWeaponIndex = this.weaponManager.activeWeaponIndex;
+      this.lastActiveWeaponId = activeWeaponId;
       this.weaponCaption.show(this.weaponManager.weaponName, this.weaponManager.weaponDescription);
     }
 
@@ -1583,7 +1654,8 @@ export class Game {
     this.explosionEffect.update(dt);
     this.updateMultiplayer(dt);
 
-    if (this.player.isDead && !wasDead) {
+    if (this.player.isDead && !this.deathHandled) {
+      this.deathHandled = true;
       // Single-player's own match-end telemetry funnel - there's no explicit "match end" concept
       // in single-player (the player can respawn indefinitely via resetPlay), so a death is the
       // natural per-run boundary, same as the death screen's own score readout. Multiplayer sends
@@ -1625,7 +1697,8 @@ export class Game {
         // learn a kill actually landed. `lastDamageSourceSlot` is this client's own best-effort
         // record of who dealt it (see the damageEvent handler in create()) - self-reported, not
         // adjudicated by anyone else, same trust model this protocol already uses for health.
-        const killerSlot = this.multiplayer.lastDamageSourceSlot;
+        const recentlyDamaged = performance.now() - this.multiplayer.lastDamageSourceAt <= MULTIPLAYER_KILL_CREDIT_WINDOW_MS;
+        const killerSlot = recentlyDamaged ? this.multiplayer.lastDamageSourceSlot : null;
         const ownSlot = this.multiplayer.session.ownSlot;
         this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot });
         // Goose Horde is co-op - per explicit user request, nobody should score points off a
@@ -1743,6 +1816,11 @@ export class Game {
           if (this.multiplayer.gameMode === 'gooseHorde' && this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
           if (now - opponent.lastMessageAt < MULTIPLAYER_CONNECTION_TIMEOUT_MS) continue;
           this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
+          // Actually close their connection too. A silent tab (typically backgrounded, which halts
+          // its requestAnimationFrame loop) used to stay connected: removed from everyone's match,
+          // never told so, yet its damageEvents were still relayed and applied. Closing it ends the
+          // match on their side, and they can rejoin with the same room code.
+          this.multiplayer.session.connection.disconnectGuest(opponent.slot);
           this.removeMultiplayerOpponent(opponent.slot);
           this.multiplayer.session.connection.send({ type: 'playerLeft', slot: opponent.slot });
         }
@@ -1854,10 +1932,17 @@ export class Game {
   private updateHordeAmmoDrops(dt: number): void {
     if (!this.ammoDropManager || !this.multiplayer) return;
 
-    const positions = [this.player.position];
-    for (const opponent of this.multiplayer.opponents.values()) positions.push(opponent.remotePlayer.position);
+    // Living players only: crates used to anchor near corpses (and near permanently eliminated
+    // players) and could be walked over by a dead body.
+    const positions: THREE.Vector3[] = [];
+    if (!this.player.isDead) positions.push(this.player.position);
+    for (const opponent of this.multiplayer.opponents.values()) {
+      if (opponent.isDead || this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
+      positions.push(opponent.remotePlayer.position);
+    }
     this.ammoDropManager.update(dt, positions, this.multiplayer.session.role === 'host');
 
+    if (this.player.isDead) return;
     const nearestId = this.ammoDropManager.findNearestWithinRadius(this.player.position, HORDE_AMMO_DROP_PICKUP_RADIUS);
     if (nearestId === null || !this.ammoDropManager.removeById(nearestId)) return;
     this.multiplayer.minimap.removeItemDot(nearestId);
@@ -1952,6 +2037,10 @@ export class Game {
       this.player.applyKnockback(this.player.position.clone().sub(position), knockback);
     }
 
+    // Single-player enemies/targets (a no-op in multiplayer, which has none). The launcher is the
+    // golden goose's reward, and its blasts used to damage nothing but players.
+    this.entityManager.applyExplosion(position, radius, maxDamage);
+
     if (!this.multiplayer || throwerSlot === null) return;
     for (const opponent of this.multiplayer.opponents.values()) {
       const amount = computeExplosionDamage(position.distanceTo(opponent.remotePlayer.position), radius, maxDamage);
@@ -1983,6 +2072,9 @@ export class Game {
   healLocalPlayerToFull(): void {
     if (this.player.isDead) return;
     this.player.respawn(this.player.position);
+    // A fresh round for the killer too: whoever damaged them before this kill no longer has a claim
+    // on their next death.
+    if (this.multiplayer) this.multiplayer.lastDamageSourceSlot = null;
   }
 
   /** Kicks off the pre-match mode-briefing gate for `mode` (no-op for `default`, which has no
@@ -2037,6 +2129,24 @@ export class Game {
     this.worldBriefingActive = false;
     this.modeExplanationScreen?.hide();
     this.input.requestPointerLock();
+    // One last readiness broadcast on the way out: the slowest player may have finished loading only
+    // moments ago, after this client's periodic resends had already stopped mattering to anyone else.
+    if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'modeExplanationReady', slot: this.multiplayer.session.ownSlot });
+  }
+
+  /** While waiting on the briefing, re-broadcast this client's own readiness every
+   * MODE_EXPLANATION_READY_RESEND_SECONDS. A ready signal sent while another player was still inside
+   * Game.create() landed on their room screen's (or App's silenced) callbacks and was dropped, and
+   * the Skip button refuses to send twice, so a fast skipper could leave a slower loader frozen on
+   * the briefing forever. Receivers dedupe via the ready-slot Set, so repeats are harmless. */
+  private resendModeExplanationReady(dt: number): void {
+    if (!this.multiplayer) return;
+    const ownSlot = this.multiplayer.session.ownSlot;
+    if (!this.modeExplanationReadySlots.has(ownSlot)) return;
+    this.modeExplanationResendAccumulator += dt;
+    if (this.modeExplanationResendAccumulator < MODE_EXPLANATION_READY_RESEND_SECONDS) return;
+    this.modeExplanationResendAccumulator = 0;
+    this.multiplayer.session.connection.send({ type: 'modeExplanationReady', slot: ownSlot });
   }
 
   /** The mid-match Loadout page's Close button - just hides it and marks a rebuild pending (see
@@ -2048,9 +2158,23 @@ export class Game {
     this.pendingLoadoutRebuild = true;
   }
 
-  /** Opened from the pause menu (unrestricted modes only). */
+  /** Opened from the pause menu (unrestricted modes only). Built on first use, see create(). */
   private openLoadoutScreen(): void {
-    this.loadoutScreen?.show();
+    if (this.loadoutScreen) {
+      this.loadoutScreen.show();
+      return;
+    }
+    if (this.loadoutScreenLoading || !this.hudRoot) return;
+    this.loadoutScreenLoading = true;
+    void LoadoutScreen.create(this.hudRoot, () => this.handleLoadoutScreenClosed()).then((screen) => {
+      this.loadoutScreenLoading = false;
+      if (this.disposed) {
+        screen.dispose();
+        return;
+      }
+      this.loadoutScreen = screen;
+      screen.show();
+    });
   }
 
   /** Called at the top of both resetPlay() (single-player) and multiplayerRespawn() (multiplayer) -
@@ -2096,7 +2220,7 @@ export class Game {
       remotePlayer.dispose(this.renderer.scene);
       return;
     }
-    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now() });
+    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), isDead: false });
     this.multiplayer.usernames.set(slot, username);
     this.multiplayer.minimap.addDot(slot);
     this.multiplayer.multiplayerHud.addOpponentRow(slot, username);
@@ -2130,6 +2254,13 @@ export class Game {
     // modeExplanationParticipants's own comment).
     this.modeExplanationParticipants.delete(slot);
     this.recheckModeExplanationReady();
+    // Goose Horde: the "everyone is out" check compares eliminated slots against CONNECTED players,
+    // so a departed player must leave the eliminated set too. Otherwise, with 3 players, A eliminated
+    // then leaving and B eliminated later counted 2 of 2 and ended the run while C was still alive.
+    // Re-checking here also covers the reverse: the last surviving teammate leaving must end the run
+    // for the eliminated players left waiting.
+    this.multiplayer.hordeEliminatedSlots.delete(slot);
+    this.checkHordeAllEliminated();
   }
 
   /** Re-evaluates the mode-briefing's ready count against the *current* opponent total without

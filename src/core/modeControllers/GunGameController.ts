@@ -35,7 +35,9 @@ export class GunGameController {
    * fresh each call (not captured) since a mid-match Loadout change can rebuild Game's own
    * WeaponManager instance between ticks. */
   checkFinisherGrant(player: Player, weaponManager: WeaponManager, killLimit: number): void {
-    if (player.isDead || this.finisherPending) return;
+    // A kill limit of 1 (allowed by the room screen) made "one kill from winning" true at score 0,
+    // forcing every player onto the launcher from spawn. There is no finisher round in that match.
+    if (killLimit <= 1 || player.isDead || this.finisherPending) return;
 
     const ownScore = this.matchState.scoreboard.get(this.session.ownSlot) ?? 0;
     const oneKillFromWin = ownScore === killLimit - 1;

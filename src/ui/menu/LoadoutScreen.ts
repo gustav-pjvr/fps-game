@@ -17,7 +17,7 @@ import {
   BODY_FONT,
 } from './menuStyles.ts';
 import { createStatBadge } from './statIcons.ts';
-import { renderWeaponThumbnail } from './weaponThumbnail.ts';
+import { getCachedWeaponThumbnail, releaseThumbnailRenderer, renderWeaponThumbnail } from './weaponThumbnail.ts';
 import { WEAPON_CATEGORIES, LOADOUT_SLOT_DEFAULTS, type WeaponCategory, type PlayerLoadout } from '../../core/gameModes.ts';
 import { loadStoredLoadout, saveLoadout } from '../../core/loadout.ts';
 import { LoadoutCharacterPreview } from './loadoutCharacterPreview.ts';
@@ -304,26 +304,38 @@ export class LoadoutScreen {
       ...CATEGORY_DISPLAY_ORDER.melee,
       ...CATEGORY_DISPLAY_ORDER.special,
     ];
-    const cards = await Promise.all(
-      orderedWeaponIds.map(async (weaponId): Promise<WeaponCard> => {
-        const weapon = WEAPON_DEFINITIONS[weaponId]!;
-        const category = WEAPON_CATEGORIES[weaponId]!;
-        const spec = WEAPON_MODEL_SPECS[weapon.id];
-        let thumbnailDataUrl: string | null = null;
-        try {
-          if (spec) {
-            const gltf = await loadGLTF(spec.path);
-            thumbnailDataUrl = renderWeaponThumbnail(gltf.scene);
-          } else {
-            const { group } = createProceduralMeleeViewModel(weapon);
-            thumbnailDataUrl = renderWeaponThumbnail(group);
+    // Thumbnails are cached per weapon for the whole session (see weaponThumbnail.ts), so only the
+    // first LoadoutScreen actually renders anything - every later one (Game.ts builds one per
+    // match) just reuses the cached data URLs and never touches WebGL at all.
+    let cards: WeaponCard[];
+    try {
+      cards = await Promise.all(
+        orderedWeaponIds.map(async (weaponId): Promise<WeaponCard> => {
+          const weapon = WEAPON_DEFINITIONS[weaponId]!;
+          const category = WEAPON_CATEGORIES[weaponId]!;
+          const spec = WEAPON_MODEL_SPECS[weapon.id];
+          let thumbnailDataUrl = getCachedWeaponThumbnail(weapon.id);
+          if (thumbnailDataUrl === null) {
+            try {
+              if (spec) {
+                const gltf = await loadGLTF(spec.path);
+                thumbnailDataUrl = renderWeaponThumbnail(weapon.id, gltf.scene);
+              } else {
+                const { group } = createProceduralMeleeViewModel(weapon);
+                thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
+              }
+            } catch (error) {
+              console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
+            }
           }
-        } catch (error) {
-          console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
-        }
-        return { element: buildWeaponCard(weapon, thumbnailDataUrl, category), weapon };
-      }),
-    );
+          return { element: buildWeaponCard(weapon, thumbnailDataUrl, category), weapon };
+        }),
+      );
+    } finally {
+      // The whole catalog shares one offscreen renderer - release its context as soon as the batch
+      // is done rather than holding it for the session.
+      releaseThumbnailRenderer();
+    }
 
     return new LoadoutScreen(root, cards, onClose);
   }

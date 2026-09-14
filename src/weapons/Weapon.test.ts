@@ -106,6 +106,31 @@ describe('Weapon ammo/reload (unlimited reserve - every mode except Goose Horde 
     weapon.tryFire();
     expect(weapon.startReload()).toBe(false);
   });
+
+  it('refillAmmo (respawn/practice reset) leaves a disableReload weapon with only the shots it had left', () => {
+    // The bug this locks in: respawn calls WeaponManager.resetAllAmmo -> refillAmmo on every slot,
+    // so dying while holding the Goose Launcher used to hand back a full 4-shot magazine.
+    const launcher = WEAPON_DEFINITIONS.gooseLauncher!;
+    const weapon = new Weapon(launcher);
+    weapon.tryFire();
+    weapon.refillAmmo();
+    expect(weapon.ammo).toBe(launcher.magazineSize - 1);
+  });
+
+  it('restock refills a disableReload weapon in full (re-granting the bonus weapon already held)', () => {
+    const launcher = WEAPON_DEFINITIONS.gooseLauncher!;
+    const weapon = new Weapon(launcher);
+    weapon.tryFire();
+    weapon.restock();
+    expect(weapon.ammo).toBe(launcher.magazineSize);
+  });
+
+  it('refillAmmo still refills an ordinary weapon in full', () => {
+    const weapon = new Weapon(PISTOL);
+    weapon.tryFire();
+    weapon.refillAmmo();
+    expect(weapon.ammo).toBe(PISTOL.magazineSize);
+  });
 });
 
 describe('Weapon reserve ammo (Goose Horde multiplayer only)', () => {

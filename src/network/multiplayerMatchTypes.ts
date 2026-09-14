@@ -21,6 +21,11 @@ export interface RemoteOpponent {
    * every message received from this slot, not just playerSnapshot. Unused on a guest's own client
    * (guests never run the staleness sweep - see updateMultiplayer). */
   lastMessageAt: number;
+  /** Set by their relayed playerDied, cleared by their respawnEvent or next playerSnapshot. A dead
+   * player stops sending snapshots, so their avatar freezes where they fell; without this, horde
+   * geese kept chasing and exploding on that corpse, and ammo crates anchored to (and were picked up
+   * by) it. */
+  isDead: boolean;
 }
 
 /** Everything Game tracks about an in-progress multiplayer match beyond the MultiplayerSession it
@@ -68,6 +73,11 @@ export interface ActiveMultiplayer {
   /** This client's own best-effort "who last damaged me" tracking for kill-credit (see
    * protocol.ts's PlayerDiedMessage doc) - reset to null on respawn/match start. */
   lastDamageSourceSlot: PlayerSlot | null;
+  /** performance.now() of the damageEvent that set lastDamageSourceSlot. Kill credit only goes to
+   * that slot if the death lands within MULTIPLAYER_KILL_CREDIT_WINDOW_MS of it, so a death to a
+   * goose explosion (or your own blast) long after someone last shot you no longer hands them a
+   * free kill. */
+  lastDamageSourceAt: number;
   /** Goose Horde co-op only (per explicit user request): this client's own count of respawns
    * already used, out of HORDE_MAX_RESPAWNS - self-authoritative, same trust model as everything
    * else this client alone decides about itself. Once it reaches HORDE_MAX_RESPAWNS, the next

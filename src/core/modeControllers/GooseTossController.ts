@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ThrownGoose } from '../../entities/ThrownGoose.ts';
-import { buildGooseMesh } from '../../entities/Goose.ts';
+import { buildGooseMesh, disposeProceduralMesh } from '../../entities/Goose.ts';
 import type { GooseManager } from '../../entities/GooseManager.ts';
 import type { InputManager } from '../../input/InputManager.ts';
 import type { MultiplayerSession } from '../../network/MultiplayerSession.ts';
@@ -61,7 +61,10 @@ export class GooseTossController {
     }
 
     if (!input.consumeJustPressed('fire')) return;
-    const id = this.heldGooseId;
+    // A fresh id per throw, not the picked-up goose's id: two players can win the same pickup race
+    // (see GoosePickedUpMessage), and both then threw under one id, so the second gooseThrown
+    // overwrote the first in every client's thrownGeese map and orphaned a goose mid-air.
+    const id = crypto.randomUUID();
     this.heldGooseId = null;
     this.viewModel.visible = false;
 
@@ -92,5 +95,6 @@ export class GooseTossController {
 
   dispose(): void {
     this.camera.remove(this.viewModel);
+    disposeProceduralMesh(this.viewModel);
   }
 }

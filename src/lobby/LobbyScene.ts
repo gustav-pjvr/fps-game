@@ -184,6 +184,10 @@ export class LobbyScene {
   dispose(): void {
     cancelAnimationFrame(this.frameHandle);
     window.removeEventListener('resize', this.onResize);
+    // Explicit context loss before dispose (after the last frame: the rAF loop was just cancelled
+    // above) - see Renderer.dispose's comment. The lobby is rebuilt on every return from a match, so
+    // an un-lost context here leaks one live context per lobby/match cycle.
+    this.webgl.forceContextLoss();
     this.webgl.dispose();
     this.webgl.domElement.remove();
   }

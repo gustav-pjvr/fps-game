@@ -14,17 +14,21 @@ export class SettingsPanel {
   private onCloseCallback: () => void = () => {};
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    // Document-level listener, so it hears every keypress for the panel's whole lifetime: nothing
+    // below may react while the panel is hidden. The capture branch used to run first, so a
+    // capture left armed when the panel closed silently rebound that action to the next gameplay key.
+    if (this.overlay.style.display === 'none') return;
     if (this.listeningFor) {
       event.preventDefault();
-      Settings.rebindKey(this.listeningFor, event.code);
+      // Escape cancels the "Press a key…" capture without binding anything, and returns before the
+      // close branch below, so the same keystroke doesn't also close the whole panel.
+      if (event.key !== 'Escape') Settings.rebindKey(this.listeningFor, event.code);
       this.listeningFor = null;
       this.refreshKeyLabels();
       return;
     }
-    // Escape closes the panel, same as clicking "Close" - only reacts while actually visible, and
-    // only once no key-rebind capture (above) is in progress, so pressing Escape to *cancel* a
-    // "Press a key…" capture doesn't also close the whole panel in the same keystroke.
-    if (event.key === 'Escape' && this.overlay.style.display !== 'none') {
+    // Escape closes the panel, same as clicking "Close".
+    if (event.key === 'Escape') {
       event.preventDefault();
       this.onCloseCallback();
     }
@@ -210,6 +214,11 @@ export class SettingsPanel {
 
   hide(): void {
     this.overlay.style.display = 'none';
+    // Disarm any "Press a key…" capture still pending, and put its button label back.
+    if (this.listeningFor) {
+      this.listeningFor = null;
+      this.refreshKeyLabels();
+    }
   }
 
   dispose(): void {

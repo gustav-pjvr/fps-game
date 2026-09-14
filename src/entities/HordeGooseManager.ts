@@ -97,8 +97,10 @@ export class HordeGooseManager {
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly callbacks: HordeGooseManagerCallbacks,
-    private readonly centerX: number,
-    private readonly centerZ: number,
+    // Mutable: single-player Goose Horde respawns the player at a fresh random point after every
+    // death, and the ring must follow them there (see recenter).
+    private centerX: number,
+    private centerZ: number,
     /** Single-player uses the 10-wave HORDE_WAVE_TABLE; multiplayer uses its own harder, longer
      * HORDE_WAVE_TABLE_MULTIPLAYER (see config.ts) - passed in rather than imported directly so
      * this class doesn't need to know which mode it's running in. Wave count is simply the table's
@@ -226,6 +228,22 @@ export class HordeGooseManager {
     this.spawnQueueRemaining = 0;
     this.intermissionTimer = 0;
     this.beginWave();
+  }
+
+  /** Moves the spawn ring's center. Single-player's resetPlay calls this with the player's new random
+   * respawn point before resetToWaveOne; without it, walkers and jumpers kept spawning around the
+   * FIRST spawn point, possibly hundreds of metres away, so later runs dragged. */
+  recenter(x: number, z: number): void {
+    this.centerX = x;
+    this.centerZ = z;
+  }
+
+  /** Follower side only (guest): the host just cleared the final wave. A follower never runs its own
+   * wave state machine (update() returns early), so `phase` stayed 'active' forever and
+   * Game.update()'s `isCleared` win check only ever fired on the host: guests were left in a frozen
+   * world after a co-op win. */
+  applyCleared(): void {
+    this.phase = 'cleared';
   }
 
   /** Follower side only (guest): the host just reset the whole run to wave 1 - clears every local

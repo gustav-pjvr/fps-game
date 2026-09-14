@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { lockPointer, openPauseMenu } from './helpers.ts';
+import { equipPistol, lockPointer, openPauseMenu } from './helpers.ts';
 
 declare global {
   interface Window {
@@ -48,6 +48,8 @@ test('pausing does not grant invincibility in multiplayer - damage still applies
   await guestPage.getByPlaceholder('ABCDEF').fill(code);
   await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
 
+  // The lobby ready check (v3.9.0) keeps Start Match disabled until every guest clicks Ready.
+  await guestPage.getByRole('button', { name: 'Ready', exact: true }).click();
   const startButton = hostPage.getByRole('button', { name: 'Start Match', exact: true });
   await startButton.waitFor({ state: 'visible', timeout: 20000 });
   await startButton.click();
@@ -56,6 +58,7 @@ test('pausing does not grant invincibility in multiplayer - damage still applies
   await waitForMatchReady(guestPage);
   await lockPointer(hostPage);
   await lockPointer(guestPage);
+  await equipPistol(hostPage);
 
   // The guest pauses and stays paused for the rest of the test - the exact scenario reported: a
   // player sitting in the pause menu while the opponent keeps shooting.

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { lockPointer } from './helpers.ts';
+import { equipPistol, lockPointer } from './helpers.ts';
 
 declare global {
   interface Window {
@@ -36,6 +36,9 @@ const KILL_ATTEMPT_OFFSETS: Array<[number, number]> = [
  * until the guest's own health reads 0 - same technique as multiplayer-combat.spec.ts, reused here
  * because match-end needs several kills in a row, not just one. */
 async function killOpponentOnce(hostPage: Page, guestPage: Page): Promise<void> {
+  // Every round, not once: a respawn (and the Rematch's fresh match) rebuilds the default loadout,
+  // which starts on the automatic rifle again (see equipPistol).
+  await equipPistol(hostPage);
   for (const [offsetX, offsetZ] of KILL_ATTEMPT_OFFSETS) {
     const opponentPosition = await hostPage.evaluate(() => window.__gameDebug?.getOpponentPosition());
     if (!opponentPosition) throw new Error('host has no opponent position');
@@ -90,7 +93,10 @@ test('reaching the kill limit ends the match for both players, and Rematch start
 
   // Kill limit defaults to 15 (DEFAULT_MULTIPLAYER_KILL_LIMIT) - explicitly picks the lowest option
   // instead, since this test needs to actually reach it, not just start a match.
-  await hostPage.selectOption('select', String(KILL_LIMIT));
+  // The kill limit is a free number input since v3.2.0; the old first-<select> target now hits the
+  // goose difficulty dropdown instead. `:visible` because the (hidden) podium's rematch panel has a
+  // kill-limit input of its own.
+  await hostPage.locator('input[type="number"]:visible').fill(String(KILL_LIMIT));
 
   await guestPage.goto('/');
   await guestPage.getByRole('button', { name: 'MULTIPLAYER', exact: true }).click();
@@ -98,6 +104,8 @@ test('reaching the kill limit ends the match for both players, and Rematch start
   await guestPage.getByPlaceholder('ABCDEF').fill(code);
   await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
 
+  // The lobby ready check (v3.9.0) keeps Start Match disabled until every guest clicks Ready.
+  await guestPage.getByRole('button', { name: 'Ready', exact: true }).click();
   const startButton = hostPage.getByRole('button', { name: 'Start Match', exact: true });
   await startButton.waitFor({ state: 'visible', timeout: 20000 });
   await startButton.click();
@@ -159,7 +167,7 @@ test('reaching the kill limit ends the match for both players, and Rematch start
 /** The other half of phase 4's lifecycle work: a mid-match disconnect ends the match too, rather
  * than leaving the remaining player's RemotePlayer frozen in place forever with no way out short
  * of a page reload (the pre-phase-4 behavior). No Rematch option here - the connection itself is gone. */
-test('the opponent disconnecting mid-match ends it for the remaining player', async ({ browser }) => {
+test('the host disconnecting mid-match ends it for the guest', async ({ browser }) => {
   test.setTimeout(60000);
 
   const hostContext = await browser.newContext();
@@ -182,6 +190,8 @@ test('the opponent disconnecting mid-match ends it for the remaining player', as
   await guestPage.getByPlaceholder('ABCDEF').fill(code);
   await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
 
+  // The lobby ready check (v3.9.0) keeps Start Match disabled until every guest clicks Ready.
+  await guestPage.getByRole('button', { name: 'Ready', exact: true }).click();
   const startButton = hostPage.getByRole('button', { name: 'Start Match', exact: true });
   await startButton.waitFor({ state: 'visible', timeout: 20000 });
   await startButton.click();
@@ -197,14 +207,19 @@ test('the opponent disconnecting mid-match ends it for the remaining player', as
   // the guest's tab in this environment) - that timing is WebRTC's concern, not this feature's. This
   // still exercises the exact product code path (PeerConnection 'close' -> Game's onDisconnected ->
   // endMultiplayerMatch), just triggered deterministically instead of waiting on browser teardown.
-  await guestPage.evaluate(() => window.__gameDebug?.debugDisconnect());
+  //
+  // Disconnects the HOST: since 4-player lobbies (v2.1.0) a guest leaving deliberately does NOT end
+  // the match for the host (the rest of the room keeps playing, see Game.ts's onPeerDisconnected),
+  // so the old guest-disconnects-then-host-ends expectation could never pass. A guest's only
+  // connection is to the host, and losing it always ends the guest's match.
+  await hostPage.evaluate(() => window.__gameDebug?.debugDisconnect());
 
-  await hostPage.waitForFunction(() => window.__gameDebug?.isMultiplayerMatchEnded() === true, { timeout: 10000 });
-  const matchEndScreen = hostPage.locator('[data-testid="match-end-screen"]');
+  await guestPage.waitForFunction(() => window.__gameDebug?.isMultiplayerMatchEnded() === true, { timeout: 15000 });
+  const matchEndScreen = guestPage.locator('[data-testid="match-end-screen"]');
   await expect(matchEndScreen).toBeVisible();
   await expect(matchEndScreen).toContainText('OPPONENT DISCONNECTED');
-  // No rematch possible once the connection itself is gone, even though this side is the host.
-  await expect(hostPage.getByRole('button', { name: 'Rematch', exact: true })).toBeHidden();
+  // Rematch is host-only, and there is no connection left to rematch over anyway.
+  await expect(guestPage.getByRole('button', { name: 'Rematch', exact: true })).toBeHidden();
 
   await hostContext.close();
   await guestContext.close();

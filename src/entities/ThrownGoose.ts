@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildGooseMesh } from './Goose.ts';
+import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import { GRAVITY } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 
@@ -48,7 +48,12 @@ export class ThrownGoose {
     this.mesh.rotation.z += dt * 4;
   }
 
+  /** Also frees the mesh's own GPU resources (buildGooseMesh allocates fresh geometries/materials
+   * per call) - every caller (Game.ts's updateThrownGeese/dispose, MatchMessageRouter's
+   * gooseExploded) drops the entry right after and only reads `id`/`source` from it afterwards, so
+   * nothing ever shows this mesh again. */
   dispose(scene: THREE.Scene): void {
     scene.remove(this.mesh);
+    disposeProceduralMesh(this.mesh);
   }
 }

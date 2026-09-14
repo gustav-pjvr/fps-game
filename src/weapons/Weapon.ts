@@ -110,11 +110,23 @@ export class Weapon {
     this.reserveAmmo += amount;
   }
 
-  /** Instant full refill, cancelling any in-progress reload - for the practice-reset feature, not
-   * gameplay. Also tops the reserve back up to full (Goose Horde multiplayer only) rather than
-   * leaving it partially drained after a practice reset, matching "a clean slate" for every other
-   * stat this touches. */
+  /** Instant full refill, cancelling any in-progress reload - for the practice-reset feature and
+   * every respawn (WeaponManager.resetAllAmmo), not gameplay. Also tops the reserve back up to full
+   * (Goose Horde multiplayer only) rather than leaving it partially drained after a practice reset,
+   * matching "a clean slate" for every other stat this touches. A disableReload weapon (the Goose
+   * Launcher reward, see WeaponDefinition.disableReload) is skipped: it's a limited-shot bonus, not
+   * part of the loadout, so dying or resetting while holding it used to hand out 4 fresh shots. It
+   * now keeps whatever it had left, and WeaponManager's empty-magazine auto-revert still swaps the
+   * original weapon back once those are spent. */
   refillAmmo(): void {
+    if (this.definition.disableReload) return;
+    this.restock();
+  }
+
+  /** The unconditional refill behind refillAmmo(), disableReload weapons included. Only for
+   * WeaponManager.grantBonusWeapon re-granting the bonus weapon the player is already holding,
+   * where a fresh magazine is exactly the point of the reward. */
+  restock(): void {
     this.ammoInMagazine = this.definition.magazineSize;
     this.reloading = false;
     this.reloadTimeRemaining = 0;

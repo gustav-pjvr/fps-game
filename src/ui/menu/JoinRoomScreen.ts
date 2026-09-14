@@ -1,4 +1,4 @@
-import { PeerConnection } from '../../network/PeerConnection.ts';
+import { NETWORK_BLOCKED_MESSAGE, PeerConnection } from '../../network/PeerConnection.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
@@ -6,6 +6,13 @@ import { getOrCreateRejoinToken } from '../../core/multiplayerRejoin.ts';
 import { MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
 import { createPlayerRow } from './CreateRoomScreen.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
+
+/** How long a join attempt may go without the host's `welcome` before giving up. A healthy join
+ * (including one relayed through TURN) completes in a few seconds. */
+const JOIN_TIMEOUT_MS = 25_000;
+const JOIN_TIMEOUT_MESSAGE =
+  "Couldn't reach the host. Check the room is still open on their screen. If it is, one of your " +
+  'networks is blocking peer-to-peer play, so try a different network (a phone hotspot usually works).';
 
 /** Guest side of the room-code flow: type in a code someone gave you, connect, verify the
  * connection with a `hello`/`welcome` exchange (see HostRoster.ts), then wait on a live roster for
@@ -47,6 +54,13 @@ export class JoinRoomScreen {
    * in flight. Without this, that in-flight call would resolve *after* this screen moved on and
    * incorrectly resurrect `this.connection`, leaking a PeerJS peer this screen no longer owns. */
   private joinGeneration = 0;
+  /** Gives up on an attempt that never received a `welcome`. Without it a guest whose network
+   * blocked the peer-to-peer path sat on "Connecting…" with no explanation until ICE eventually
+   * failed (or forever, if it never reported failure). */
+  private joinTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** True once this attempt has already shown a specific failure reason, so the connection's own
+   * follow-up 'close' doesn't overwrite it with a generic message. Reset per attempt. */
+  private joinFailureShown = false;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
@@ -196,10 +210,13 @@ export class JoinRoomScreen {
     // A stale in-flight attempt (e.g. the player edited the code and hit Join again before the
     // first attempt resolved) shouldn't leave two connections racing to attach.
     this.connection?.dispose();
+    this.connection = null;
+    this.clearJoinTimeout();
     this.joinButton.disabled = true;
     this.setStatus('Connecting…');
     this.ownSlot = null;
     this.rejectedAsFull = false;
+    this.joinFailureShown = false;
     this.ownReady = false;
     this.readySlots = new Set();
     this.refreshReadyButton();
@@ -210,22 +227,53 @@ export class JoinRoomScreen {
     const rejoinToken = getOrCreateRejoinToken(code);
 
     const generation = ++this.joinGeneration;
+    this.joinTimeout = setTimeout(() => {
+      this.joinTimeout = null;
+      if (generation !== this.joinGeneration || this.ownSlot !== null || this.rejectedAsFull) return;
+      // Invalidate this attempt before disposing, so the connection's own close/error events (which
+      // the generation guards below now ignore) can't overwrite the explanation.
+      this.joinGeneration++;
+      this.connection?.dispose();
+      this.connection = null;
+      this.setStatus(JOIN_TIMEOUT_MESSAGE);
+      this.joinButton.disabled = false;
+    }, JOIN_TIMEOUT_MS);
+
+    // Every callback is generation-guarded: a superseded attempt's connection still fires close/error
+    // events after being disposed, which used to overwrite the current attempt's status text.
     void PeerConnection.joinRoom(code, username, rejoinToken, {
       onConnected: () => {}, // the welcome message itself (below) carries everything worth reacting to
       onPeerDisconnected: () => {
+        if (generation !== this.joinGeneration) return;
+        this.clearJoinTimeout();
         if (this.rejectedAsFull) return; // already showing the real reason - don't overwrite it
+        if (this.ownSlot === null) {
+          // Closed before any welcome ever arrived: the host never actually answered, so "the host
+          // disconnected" was misleading. This is how a blocked network (ICE failure) ends.
+          if (!this.joinFailureShown) this.setStatus(NETWORK_BLOCKED_MESSAGE);
+          this.joinButton.disabled = false;
+          return;
+        }
         this.setStatus('The host disconnected.');
         this.joinButton.disabled = false;
         this.codeInput.style.display = 'block';
         this.joinButton.style.display = 'block';
         this.lobbyView.style.display = 'none';
       },
-      onError: (message) => {
+      onError: (message, kind) => {
+        if (generation !== this.joinGeneration) return;
+        // Already in the lobby: a dropped broker websocket doesn't affect the open data channel to
+        // the host, so there's nothing to tell the player.
+        if (kind === 'brokerLost' && this.ownSlot !== null) return;
+        this.clearJoinTimeout();
+        this.joinFailureShown = true;
         this.setStatus(message);
         this.joinButton.disabled = false;
       },
       onMessage: (message) => {
+        if (generation !== this.joinGeneration) return;
         if (message.type === 'welcome') {
+          this.clearJoinTimeout();
           this.ownSlot = message.yourSlot;
           if (message.activeMatch) {
             // A rejoin, or a brand new player joining after Start Match was already clicked -
@@ -296,9 +344,16 @@ export class JoinRoomScreen {
       // reload - a real, user-reported symptom. Surfacing it and re-enabling the Join button is a
       // strictly additive safety net regardless of what turns out to actually cause a given failure.
       if (generation !== this.joinGeneration) return;
+      this.clearJoinTimeout();
       this.setStatus(error instanceof Error ? error.message : 'Failed to join room - try again.');
       this.joinButton.disabled = false;
     });
+  }
+
+  private clearJoinTimeout(): void {
+    if (this.joinTimeout === null) return;
+    clearTimeout(this.joinTimeout);
+    this.joinTimeout = null;
   }
 
   private startMatch(params: MultiplayerMatchStartParams): void {
@@ -316,6 +371,7 @@ export class JoinRoomScreen {
 
   private close(): void {
     this.joinGeneration++;
+    this.clearJoinTimeout();
     this.connection?.dispose();
     this.connection = null;
     this.joinButton.disabled = false;
@@ -325,6 +381,7 @@ export class JoinRoomScreen {
 
   dispose(): void {
     this.joinGeneration++;
+    this.clearJoinTimeout();
     this.connection?.dispose();
     document.removeEventListener('keydown', this.onKeyDown);
     this.overlay.remove();

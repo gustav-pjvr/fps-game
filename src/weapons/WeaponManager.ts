@@ -186,14 +186,36 @@ export class WeaponManager {
     // Same phantom-fire guard as beginSwitch - a kill upgrade can land while the player is still
     // holding fire from the kill itself, and the fresh weapon shouldn't inherit that as a press.
     this.fireLockedUntilRelease = true;
+    // Same burst reset as beginSwitch, for the same reason: a burst in flight belongs to the weapon
+    // that fired it. Without this, if round 1 of an MP5 burst kills the golden goose, rounds 2-3
+    // fire from the freshly granted Goose Launcher and spend half its 4 shots (likewise a Gun Game
+    // kill-upgrade landing mid-burst).
+    this.burstShotsRemaining = 0;
+    this.burstShotTimer = 0;
+    // A pending bonus restore only means something while a disableReload weapon is held. If
+    // anything else replaces the launcher first (a Gun Game kill-upgrade), the recorded target is
+    // stale and must not survive into the next grant, which never overwrites a pending restore.
+    if (!newSlot.weapon.definition.disableReload) this.pendingRestoreId = null;
   }
 
   /** The bonus golden-goose reward (see entities/BonusGooseManager.ts) - same hard-swap shape as
    * replaceActiveWeapon, but also remembers `restoreId` so update() can automatically swap back to
    * it the instant the bonus weapon's magazine empties (see the disableReload check there). */
   async grantBonusWeapon(bonusId: string, restoreId: string): Promise<void> {
+    // Already holding it (another golden goose killed with the launcher itself): top the magazine
+    // up in place. Rebuilding was wasted work, and the old code then recorded `restoreId` (the
+    // launcher's own id at that moment) as the restore target, so the auto-revert "restored" an
+    // empty launcher that can never reload. restock(), not refillAmmo(): the latter deliberately
+    // skips disableReload weapons (see Weapon.refillAmmo). The existing pending restore is kept.
+    if (this.activeWeaponId === bonusId) {
+      this.active.weapon.restock();
+      return;
+    }
     await this.replaceActiveWeapon(bonusId);
-    this.pendingRestoreId = restoreId;
+    // Never record the bonus weapon as its own restore target, and never overwrite a restore that
+    // is already pending: the first grant saw the player's real weapon, a later overlapping one
+    // may not have.
+    if (this.pendingRestoreId === null && restoreId !== bonusId) this.pendingRestoreId = restoreId;
   }
 
   /** Detaches every slot's view model from the camera - a mid-match Loadout change (see Game.ts's
@@ -264,6 +286,24 @@ export class WeaponManager {
 
   get activeWeaponIndex(): number {
     return this.activeIndex;
+  }
+
+  /** Drops out of ADS instantly: scope overlay hidden, view model shown, camera back at the live
+   * base FOV. Game calls this every tick the player is frozen (paused in single-player, or dead),
+   * because update(), and with it updateAim, isn't called then, so a scope overlay and zoomed FOV
+   * used to stay up behind the pause menu and death screen. Idempotent, and a single comparison
+   * once already un-aimed: updateAim only ever shows the scope/hides the view model while
+   * aimAmount >= SCOPE_REVEAL_THRESHOLD, so aimAmount === 0 plus an un-zoomed camera means there
+   * is nothing left to undo. The view model's pose is left alone; updateAim re-derives it from
+   * aimAmount on the first tick after unfreezing. */
+  cancelAim(): void {
+    const baseFov = Settings.getFov();
+    if (this.aimAmount === 0 && this.camera.fov === baseFov) return;
+    this.aimAmount = 0;
+    this.scopeOverlay.setVisible(false);
+    this.active.viewModel.visible = true;
+    this.camera.fov = baseFov;
+    this.camera.updateProjectionMatrix();
   }
 
   update(dt: number, input: InputManager, player: Player): void {
@@ -388,8 +428,8 @@ export class WeaponManager {
         this.switching = false;
       }
     }
-
-    this.active.viewModel.position.y = WEAPON_HIP_POSITION.y - WEAPON_HOLSTER_DROP * this.switchProgress;
+    // The holster/draw pose itself is written by updateAim (runs right after this, same tick), so
+    // it shares the FOV compensation there instead of setting an unscaled position of its own.
   }
 
   private updateAim(dt: number, input: InputManager, player: Player): void {
@@ -411,23 +451,36 @@ export class WeaponManager {
 
     this.updateWeaponSway(dt);
 
-    if (!this.switching) {
-      this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
+    this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
 
-      // The hip/ADS offsets above were hand-tuned at the original fixed CAMERA_FOV (75). Apparent
-      // size of a camera-attached object scales with 1/tan(fov/2), so at a wider user FOV the gun
-      // renders smaller and reads as floating detached in front of the player instead of held
-      // (confirmed via live screenshots at high FOV). Scaling the whole offset vector by the tan
-      // ratio pulls the gun proportionally closer, keeping its on-screen size and placement as
-      // tuned regardless of the FOV setting. At full ADS a weapon with a real zoom renders at its
-      // own authored adsFov (exactly what the ADS offset was tuned against - factor 1), while a
-      // sentinel weapon (adsFov === CAMERA_FOV, "no dedicated zoom") renders at the live base FOV
-      // and needs the same compensation as hip fire.
-      const tunedTan = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
-      const hipScale = tunedTan / Math.tan(THREE.MathUtils.degToRad(baseFov) / 2);
-      const adsScale = adsFov === CAMERA_FOV ? hipScale : 1;
-      this.active.viewModel.position.multiplyScalar(THREE.MathUtils.lerp(hipScale, adsScale, this.aimAmount));
+    // The hip/ADS offsets above were hand-tuned at the original fixed CAMERA_FOV (75). Apparent
+    // size of a camera-attached object scales with 1/tan(fov/2), so at a wider user FOV the gun
+    // renders smaller and reads as floating detached in front of the player instead of held
+    // (confirmed via live screenshots at high FOV). Scaling the whole offset vector by the tan
+    // ratio pulls the gun proportionally closer, keeping its on-screen size and placement as
+    // tuned regardless of the FOV setting. At full ADS a weapon with a real zoom renders at its
+    // own authored adsFov (exactly what the ADS offset was tuned against - factor 1), while a
+    // sentinel weapon (adsFov === CAMERA_FOV, "no dedicated zoom") renders at the live base FOV
+    // and needs the same compensation as hip fire. Applied mid-switch too: the switch animation
+    // used to write its own unscaled position.y while this block was skipped, so at any FOV but
+    // 75 the gun popped between the two poses at the start and end of every switch.
+    const tunedTan = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
+    const hipScale = tunedTan / Math.tan(THREE.MathUtils.degToRad(baseFov) / 2);
+    const adsScale = adsFov === CAMERA_FOV ? hipScale : 1;
+    this.active.viewModel.position.multiplyScalar(THREE.MathUtils.lerp(hipScale, adsScale, this.aimAmount));
 
+    if (this.switching) {
+      // Holster drop: y slides from the compensated pose above (switchProgress 0, so a switch's
+      // first and last frames meet the normal pose exactly) to the same fixed holster height the
+      // animation always used (switchProgress 1). That end point is deliberately NOT scaled: it's
+      // what puts the gun below the frame for the swap, and a scaled drop at FOV 110 would stop
+      // short of the (wider) bottom edge. At FOV 75 the scale is 1 and this is the old animation.
+      this.active.viewModel.position.y = THREE.MathUtils.lerp(
+        this.active.viewModel.position.y,
+        WEAPON_HIP_POSITION.y - WEAPON_HOLSTER_DROP,
+        this.switchProgress,
+      );
+    } else {
       // Dip + tilt the weapon while reloading, peaking at the midpoint and settling back to
       // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
       const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);
@@ -453,7 +506,10 @@ export class WeaponManager {
    * a debug teleport/lookAt) can't fling the view model to an extreme angle. */
   private updateWeaponSway(dt: number): void {
     const euler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
-    const yawDelta = euler.y - this.previousCameraYaw;
+    // 'YXZ' yaw lives in [-PI, PI], so turning through the +/-180 degree seam reads as a ~2 PI jump
+    // between ticks and the gun twitched to the opposite WEAPON_SWAY_MAX clamp. Wrapped back into
+    // [-PI, PI]. Pitch needs no wrap: 'YXZ' keeps it within [-PI/2, PI/2].
+    const yawDelta = THREE.MathUtils.euclideanModulo(euler.y - this.previousCameraYaw + Math.PI, Math.PI * 2) - Math.PI;
     const pitchDelta = euler.x - this.previousCameraPitch;
     this.previousCameraYaw = euler.y;
     this.previousCameraPitch = euler.x;

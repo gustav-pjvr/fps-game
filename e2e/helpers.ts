@@ -8,11 +8,36 @@ export async function waitForGameReady(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 20000 });
 }
 
-/** Clicks the pause menu's Resume button (shown by default on a freshly loaded match, since it
- * doubles as the "click to play" gate) to engage pointer lock, then waits for it to take effect. */
+/** Ensures pointer lock is engaged, clicking the pause menu's Resume button if needed. Since v3.0.0
+ * Game.start() requests pointer lock itself, which succeeds whenever the match starts close enough
+ * behind a real click (the host's Start Match, single-player's Start Match), so the pause menu and its
+ * Resume button may never appear at all. Only a match with no local click behind it (a guest whose
+ * start arrived over the network) still opens on the pause menu. Polls for either outcome because
+ * start()'s lock request resolves asynchronously. */
 export async function lockPointer(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Resume', exact: true }).click();
+  const resume = page.getByRole('button', { name: 'Resume', exact: true });
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (await page.evaluate(() => window.__gameDebug?.isPointerLocked() === true)) return;
+    if (await resume.isVisible().catch(() => false)) {
+      await resume.click();
+      break;
+    }
+    await page.waitForTimeout(100);
+  }
   await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, { timeout: 5000 });
+}
+
+/** Switches to the Kestrel P9 pistol (slot 2 of the default rifle/pistol/knife loadout, v3.8.0) and
+ * waits for the switch to finish. The multiplayer combat tests are written around the pistol's 20
+ * damage per shot, and they fire with a quick mouse down/up: that click never fires the slot-1 rifle,
+ * which is automatic and only shoots while fire is held at the moment a tick samples input, whereas
+ * a semi-automatic pistol queues the press. Requires pointer lock (keys are ignored while unlocked). */
+export async function equipPistol(page: Page): Promise<void> {
+  await page.keyboard.press('Digit2');
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Kestrel P9', { timeout: 5000 });
+  // The switch animation (WEAPON_SWITCH_DURATION, 0.35s) blocks firing until it completes.
+  await page.waitForTimeout(500);
 }
 
 export async function holdKey(page: Page, key: string, durationMs: number): Promise<void> {

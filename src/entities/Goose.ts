@@ -41,8 +41,12 @@ const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
  * collider, so its own local hitscan still registers a hit) driven externally by the host's
  * broadcasts: position comes from `snapTo` (see GooseManager's gooseSnapshot handling), and a hit
  * just reports itself via `onRemoteHitReport` instead of self-adjudicating, since only the host's
- * copy decides when a goose actually dies. Passing `onRemoteHitReport` is what selects follower
- * mode - see `update`/`takeDamage` below.
+ * copy decides when a goose actually dies. Two separate switches: `onRemoteHitReport` only decides
+ * where a hit goes (see `takeDamage`), `isFollower` decides whether the goose runs its own wander
+ * AI (see `update`). `isFollower` defaults to "has a hit-report callback", which is exactly right
+ * for every follower copy; the one caller that needs them apart is BonusGooseManager's
+ * authoritative golden goose, which routes hits to its own attribution logic yet still has to
+ * wander (reading the callback alone as "follower" froze it in place forever).
  */
 export class Goose implements Entity, Damageable {
   readonly id = allocateEntityId();
@@ -70,6 +74,10 @@ export class Goose implements Entity, Damageable {
     public readonly networkId: string,
     private readonly patrolRng: () => number = Math.random,
     private readonly onRemoteHitReport?: () => void,
+    /** Snapshot-driven mirror: no local wander AI, position only ever set via `snapTo`. Defaults
+     * to "has a hit-report callback" so every existing follower call site (GooseManager's and
+     * BonusGooseManager's applyRemoteSpawn) keeps its exact behaviour - see the class comment. */
+    private readonly isFollower: boolean = onRemoteHitReport !== undefined,
   ) {
     this.spawnPosition = position.clone();
     this.destination = position.clone();
@@ -96,9 +104,10 @@ export class Goose implements Entity, Damageable {
 
   /** Ignores `amount` - a goose always dies on the GOOSE_HITS_TO_KILL'th hit regardless of which
    * weapon landed it, unlike Enemy/Target's amount-based health. Deliberate divergence from the
-   * generic Damageable contract; see the class comment. Follower mode (onRemoteHitReport present)
-   * never sets `dead` itself - only the host's authoritative copy decides that, via GooseManager's
-   * gooseExploded broadcast. */
+   * generic Damageable contract; see the class comment. With onRemoteHitReport present (every
+   * follower, plus BonusGooseManager's authoritative golden goose) this never sets `dead` itself -
+   * whoever owns the callback decides that (the host's GooseManager via its gooseExploded
+   * broadcast, or BonusGooseManager's own hit attribution). */
   takeDamage(_amount: number, _hitColliderHandle: number): void {
     if (this.dead) return;
     if (this.onRemoteHitReport) {
@@ -109,9 +118,11 @@ export class Goose implements Entity, Damageable {
     if (this.hitsTaken >= GOOSE_HITS_TO_KILL) this.dead = true;
   }
 
-  /** Follower mode is a no-op here - its position comes from `snapTo` instead (see class comment). */
+  /** Follower mode is a no-op here - its position comes from `snapTo` instead (see class comment).
+   * Keyed on `isFollower`, not on the hit callback, so an authoritative goose that merely routes
+   * its hits elsewhere still wanders. */
   update(dt: number): void {
-    if (this.dead || this.onRemoteHitReport) return;
+    if (this.dead || this.isFollower) return;
 
     const current = this.rigidBody.translation();
     this.repathTimer -= dt;
@@ -193,14 +204,39 @@ export class Goose implements Entity, Damageable {
 
   /** Guarded against a second call - see RemotePlayer.ts's identical guard for why: re-entering
    * Rapier's removal path for an already-removed collider/rigid body isn't guaranteed safe (a
-   * live 2-browser repro caught this exact class of bug producing a WASM-level crash). */
+   * live 2-browser repro caught this exact class of bug producing a WASM-level crash). Also frees
+   * the mesh's GPU resources: every owner (GooseManager, BonusGooseManager) removes the mesh from
+   * the scene right before calling this and never shows it again - Goose Toss's held goose and
+   * the thrown one are separate buildGooseMesh() copies, not this one. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.world.removeCollider(this.bodyCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
+    disposeProceduralMesh(this.mesh);
   }
+}
+
+/** Frees every geometry and material under `root` - for the procedurally built props here
+ * (buildGooseMesh, AmmoDrop.ts's buildAmmoDropMesh) that allocate all of their own resources per
+ * call with nothing shared between instances, so each owner must release its own on removal or a
+ * long Goose Horde run leaks one full goose/crate worth of GPU buffers per kill/pickup. Deduped
+ * because several child meshes inside one build share a geometry/material (the eyes, wings, legs,
+ * the white body parts). Only for a mesh already out of the scene that is never shown again -
+ * never for a GLTF clone, whose geometry/materials are shared with the asset cache (see
+ * weaponThumbnail.ts's note on exactly that). */
+export function disposeProceduralMesh(root: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    geometries.add(child.geometry);
+    const material: THREE.Material | THREE.Material[] = child.material;
+    for (const m of Array.isArray(material) ? material : [material]) materials.add(m);
+  });
+  for (const geometry of geometries) geometry.dispose();
+  for (const material of materials) material.dispose();
 }
 
 /** Built from plain THREE primitives - no GLTF, per the "build it procedurally" decision (see

@@ -39,7 +39,12 @@ export class HostRoster {
   handleHello(username: string, rejoinToken: string | null, _now: number): HelloOutcome {
     if (rejoinToken !== null) {
       for (const slot of this.slots.values()) {
-        if (slot.rejoinToken === rejoinToken && !slot.connected) {
+        // A token match counts even while the slot still reads as connected: a player who reloads
+        // or reconnects before the host has noticed the old connection dying (WebRTC close can take
+        // seconds, the staleness sweep 8s) used to be treated as a stranger, handed a fresh slot
+        // with a zero score, or refused as 'full' in a 4-player room. The old connection is stale
+        // by definition, and PeerConnection closes it when the slot is handed to the new one.
+        if (slot.rejoinToken === rejoinToken) {
           slot.connected = true;
           slot.disconnectedAt = null;
           slot.username = username;
@@ -98,6 +103,18 @@ export class HostRoster {
 
   currentRoster(): RosterEntry[] {
     return Array.from(this.slots.values(), (s) => ({ slot: s.slot, username: s.username }));
+  }
+
+  /** Only slots with a live connection, excluding grace-period reservations. What a match actually
+   * starts with (lobby Start Match readiness, matchStart/rematch spawns, a late joiner's roster):
+   * including a reserved slot gave everyone a frozen ghost RemotePlayer for it, and kept Start Match
+   * disabled for the whole 90s grace period after a guest left the lobby, since a disconnected slot
+   * can never click Ready. A reserved player who comes back mid-match rejoins through the normal
+   * onHostHello path. */
+  connectedRoster(): RosterEntry[] {
+    return Array.from(this.slots.values())
+      .filter((s) => s.connected)
+      .map((s) => ({ slot: s.slot, username: s.username }));
   }
 
   startMatch(): void {

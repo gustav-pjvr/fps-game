@@ -32,7 +32,13 @@ export class InputManager {
   /** Re-requests pointer lock - safe to call from a click handler (a valid user gesture) even if
    * already locked, e.g. respawning without forcing a second "click to play" step. */
   requestPointerLock(): void {
-    this.canvas.requestPointerLock();
+    // Chrome refuses by rejecting this promise (a re-lock within ~1s of the player pressing Escape,
+    // or a request without a user gesture). Left unhandled, every refusal surfaced as an
+    // "Uncaught (in promise)" error. The refusal itself needs nothing here: onPointerLockError
+    // already keeps `locked` false, so the pause menu stays up as the fallback, same as before.
+    // Older browsers return undefined instead of a promise, hence the widened type and the `?.`.
+    const pending: Promise<void> | undefined = this.canvas.requestPointerLock();
+    pending?.catch(() => {});
   }
 
   /** Releases pointer lock so the OS cursor reappears - used on player death so death-screen

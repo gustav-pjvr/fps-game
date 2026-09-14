@@ -148,6 +148,12 @@ export class Renderer {
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
     this.skyEnvironmentTexture.dispose();
+    // three's WebGLRenderer.dispose() frees its own caches but never releases the context itself,
+    // which then lingers until the canvas is garbage collected - and every lobby/match cycle opens
+    // fresh contexts, so repeated cycles creep toward Chrome's ~16 live-context cap, past which it
+    // silently kills the oldest one and a canvas goes blank. Losing it explicitly frees the slot
+    // right now. Always after the last render: Game.dispose stops the loop before calling this.
+    this.webgl.forceContextLoss();
     this.webgl.dispose();
     this.webgl.domElement.remove();
   }

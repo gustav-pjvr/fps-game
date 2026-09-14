@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { lockPointer } from './helpers.ts';
+import { equipPistol, lockPointer } from './helpers.ts';
 
 declare global {
   interface Window {
@@ -64,6 +64,8 @@ test('shots land against a moving target, not just a stationary one', async ({ b
   await guestPage.getByPlaceholder('ABCDEF').fill(code);
   await guestPage.getByRole('button', { name: 'Join', exact: true }).click();
 
+  // The lobby ready check (v3.9.0) keeps Start Match disabled until every guest clicks Ready.
+  await guestPage.getByRole('button', { name: 'Ready', exact: true }).click();
   const startButton = hostPage.getByRole('button', { name: 'Start Match', exact: true });
   await startButton.waitFor({ state: 'visible', timeout: 20000 });
   await startButton.click();
@@ -72,6 +74,7 @@ test('shots land against a moving target, not just a stationary one', async ({ b
   await waitForMatchReady(guestPage);
   await lockPointer(hostPage);
   await lockPointer(guestPage);
+  await equipPistol(hostPage);
 
   const opponentPosition = await hostPage.evaluate(() => window.__gameDebug?.getOpponentPosition());
   if (!opponentPosition) throw new Error('host has no opponent position yet');

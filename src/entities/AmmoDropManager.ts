@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildAmmoDropMesh } from './AmmoDrop.ts';
+import { disposeProceduralMesh } from './Goose.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import {
   HORDE_AMMO_DROP_MAX_CONCURRENT,
@@ -108,12 +109,19 @@ export class AmmoDropManager {
     const drop = this.drops.get(id);
     if (!drop) return false;
     this.scene.remove(drop.mesh);
+    // buildAmmoDropMesh allocates fresh geometries/materials per crate, so each removal frees its
+    // own - a long Goose Horde run otherwise leaks one crate's GPU buffers per pickup. Nothing
+    // reuses the mesh afterwards (positions() only ever hands out live drops).
+    disposeProceduralMesh(drop.mesh);
     this.drops.delete(id);
     return true;
   }
 
   dispose(): void {
-    for (const drop of this.drops.values()) this.scene.remove(drop.mesh);
+    for (const drop of this.drops.values()) {
+      this.scene.remove(drop.mesh);
+      disposeProceduralMesh(drop.mesh);
+    }
     this.drops.clear();
   }
 }

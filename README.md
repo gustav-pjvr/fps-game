@@ -87,4 +87,6 @@ docs/         Development notes and planning documents
 
 ## Deployment
 
-Deployed via Cloudflare Pages (`npm run deploy`, `wrangler pages deploy dist`), including Pages Functions for TURN credential issuance (`functions/api/turn-credentials.ts`, used as a fallback when direct peer-to-peer WebRTC connections can't establish across NATs) and a minimal match-end telemetry beacon (`functions/api/telemetry.ts`).
+Deployed via Cloudflare Pages (`npm run deploy`, `wrangler pages deploy dist`), including Pages Functions for TURN credential issuance (`functions/api/turn-credentials.ts`) and a minimal match-end telemetry beacon (`functions/api/telemetry.ts`).
+
+**Cross-network multiplayer needs a TURN relay.** Players on strict networks (work/school firewalls, carrier-grade NAT, managed devices) cannot reach each other directly, and PeerJS's old public relay (`turn.peerjs.com`) no longer exists. The only relay the game offers is the one `functions/api/turn-credentials.ts` fetches from Metered.ca, and it stays empty until `METERED_API_KEY` and `METERED_APP_NAME` are set in the Cloudflare Pages project's environment variables. Check with `curl https://hunter-n-goose.pages.dev/api/turn-credentials`: `{"iceServers":[]}` means no relay is configured.

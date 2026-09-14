@@ -10,7 +10,59 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.9.1 (current)
+## v3.9.2 (current)
+
+Multiplayer connection fix plus a verified bug sweep (2026-09-14). Full diagnosis of the connection
+problem in `docs/multiplayer.md` ("Players can't join my lobby").
+
+**Connecting to a lobby:**
+- Root cause of "other players can't join my lobby": the game had no working TURN relay. PeerJS's
+  public relay (`turn.peerjs.com`) no longer exists and the Metered.ca relay was never configured, so
+  players on strict networks (managed devices, work/school firewalls, carrier-grade NAT) had no path
+  to each other. The dead relay entries are removed; a real relay still needs the Metered.ca
+  environment variables set in Cloudflare Pages (see README, "Deployment").
+- A join that can't get through now gives up after 25 seconds with a clear "your network is blocking
+  peer-to-peer play" message, instead of hanging on "Connecting…" and then claiming "The host
+  disconnected."
+- The host's lobby explains a failed join instead of showing PeerJS's raw error text, and the host
+  automatically re-registers the room code if its connection to the matchmaking server drops
+  (previously the code silently stopped working until a reload).
+- A dropped matchmaking-server connection no longer ends a guest's running match.
+- Messages between players now arrive in the order they were sent.
+
+**Multiplayer fixes:**
+- A guest killed by a goose or horde-goose explosion now gets a real death (death screen, kill feed,
+  Goose Horde life used). Previously they froze for 3 seconds and silently respawned, so guests in
+  Goose Horde effectively had infinite lives.
+- Winning multiplayer Goose Horde now ends the match for guests too, not just the host.
+- The mode briefing can no longer leave a slower-loading player frozen forever: readiness is re-sent
+  until everyone has it.
+- King of the Hill: two players pressing E at the same moment no longer deadlocks the golden goose.
+- Goose Horde: an eliminated player leaving no longer ends the run while a teammate is still alive,
+  and the last survivor leaving now correctly ends it.
+- Start Match is no longer locked for 90 seconds after a guest leaves the lobby, and a player who
+  left no longer comes back as a frozen "ghost" at match start, on a rematch, or for a late joiner.
+- A new player who takes a departed player's slot starts at zero instead of inheriting their score.
+- A player who reloads and rejoins before the host notices keeps their slot and score instead of
+  being treated as a stranger (or refused as "room full").
+- A backgrounded, timed-out player is now actually disconnected (they can rejoin) instead of staying
+  invisible while still dealing damage.
+- A guest on the podium returns to the lobby if the host closes their tab.
+- Kill credit only goes to someone who damaged you in the last 8 seconds.
+- Horde geese and ammo crates ignore dead players.
+- Gun Game with a kill limit of 1 no longer forces everyone onto the Goose Launcher from spawn.
+- Goose Toss: two players grabbing the same goose can no longer orphan a thrown goose mid-air.
+
+**Gameplay fixes:**
+- The golden goose's Goose Launcher reward now works after changing loadout mid-match, and its blasts
+  (and thrown geese) now damage enemies and targets in single-player.
+- Single-player Goose Horde waves now spawn around your respawn point, not your first spawn point.
+- A shotgun blast plays one hit-confirm, not up to eight.
+- The hotbar and weapon caption update when the Goose Launcher is granted or Gun Game upgrades you.
+- The scope and zoom no longer stay up behind the pause menu and death screen.
+- The mid-match Loadout page is only built when opened, instead of on every match start.
+
+## v3.9.1
 
 Three fixes from live playtesting of v3.9.0:
 
@@ -87,7 +139,7 @@ been on Cloudflare Pages since v3.0.0); deleted dead exports and a couple of sma
 (explicit `void` on a fire-and-forget call, a real `kill()` method instead of a magic-number
 `takeDamage(0, -1)`, skipping the now-pointless `gooseSyncRequest` round trip in Horde mode).
 
-## v3.8.1 (current)
+## v3.8.1
 
 Same-day fixes/adjustments to v3.8.0's Loadout system, per live feedback:
 

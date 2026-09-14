@@ -7,6 +7,7 @@ import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks } from './enemies/Enemy.
 import { createArchetypePicker } from './enemies/archetypes.ts';
 import { EngagementSlots } from './enemies/engagementSlots.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
+import { computeExplosionDamage } from '../combat/explosion.ts';
 import {
   DEATH_FALL_ANGLE,
   DEATH_FALL_DURATION,
@@ -33,6 +34,9 @@ interface ManagedEntity {
   readonly debugArchetype?: string;
   dispose(): void;
   update?(dt: number, player: Player): void;
+  /** Both Target and Enemy implement Damageable; optional here only so the interface stays honest
+   * about what EntityManager actually relies on. */
+  takeDamage?(amount: number, hitColliderHandle: number, sourcePosition?: THREE.Vector3): void;
   /** Enemy-only (see Enemy.ts's own threat-perception methods) - undefined for Target, which has
    * no AI to alert. */
   onHeardGunshot?(origin: THREE.Vector3): void;
@@ -106,6 +110,19 @@ export class EntityManager {
    * enemies (multiplayer, or a match with enemyCount 0) - Target simply doesn't implement this. */
   notifyGunshot(origin: THREE.Vector3): void {
     for (const entity of this.entities) entity.onHeardGunshot?.(origin);
+  }
+
+  /** Splash damage from a Goose Launcher shot or thrown goose, with the same linear falloff players
+   * get. Previously these blasts only ever hurt players, so the single-player golden-goose reward
+   * weapon could not damage a single enemy or target. Deaths are picked up by update() as usual
+   * (score, kill feed, death sequence). `-1` as the collider handle means "body hit", never a
+   * headshot multiplier. */
+  applyExplosion(position: THREE.Vector3, radius: number, maxDamage: number): void {
+    for (const entity of this.entities) {
+      if (entity.isDead || !entity.takeDamage) continue;
+      const amount = computeExplosionDamage(entity.mesh.position.distanceTo(position), radius, maxDamage);
+      if (amount > 0) entity.takeDamage(amount, -1, position);
+    }
   }
 
   update(dt: number, player: Player): void {

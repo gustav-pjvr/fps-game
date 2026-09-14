@@ -5,7 +5,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Damageable } from '../combat/damage.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { steerWithAvoidance } from './enemies/enemySteering.ts';
-import { buildGooseMesh } from './Goose.ts';
+import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import {
   GOOSE_HEIGHT,
   GOOSE_RADIUS,
@@ -21,6 +21,11 @@ export type HordeGooseFlavor = 'walker' | 'jumper' | 'flyer';
 
 const WADDLE_BOB_SPEED = 11;
 const WADDLE_ROCK_ANGLE = 0.22;
+
+/** How far a horde goose must move horizontally before its ground height is resampled - same
+ * value and reasoning as Goose.ts/Enemy.ts's identical constant (`sampleHeight` is a 4-octave fBm
+ * plus a 9-cell Worley scan per call, and a late wave can have dozens of these chasing at once). */
+const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
 
 /** Goose Horde's aggressive, always-chasing goose - a parallel to (not a subclass of) both the
  * passive wandering Goose and the GLTF/archetype-coupled Enemy, reusing each's relevant piece:
@@ -66,6 +71,15 @@ export class HordeGoose implements Entity, Damageable {
   private flyerTargetX: number;
   private flyerTargetZ: number;
   private flyerTargetCaptured = false;
+  /** Ground height (plus half a goose) under flyerTargetX/Z, sampled once when the target is
+   * captured - see updateFlyerDescent. */
+  private flyerGroundY = 0;
+
+  /** Chase-path terrain height cache - initialized to NaN so the first groundHeightAt call always
+   * resamples, exactly like Goose.ts's identical fields. */
+  private heightSampleX = Number.NaN;
+  private heightSampleZ = Number.NaN;
+  private cachedGroundHeight = 0;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -152,9 +166,12 @@ export class HordeGoose implements Entity, Damageable {
       this.flyerTargetCaptured = true;
       this.flyerTargetX = targetPosition.x;
       this.flyerTargetZ = targetPosition.z;
+      // The descent never leaves this x/z, so its ground height is sampled exactly once here rather
+      // than re-running the same expensive sampleHeight call at the same point every tick.
+      this.flyerGroundY = sampleHeight(this.flyerTargetX, this.flyerTargetZ) + GOOSE_HEIGHT / 2;
     }
     this.flyerAge += dt;
-    const groundY = sampleHeight(this.flyerTargetX, this.flyerTargetZ) + GOOSE_HEIGHT / 2;
+    const groundY = this.flyerGroundY;
     const startY = groundY + HORDE_FLYER_SPAWN_HEIGHT;
     const t = Math.min(1, this.flyerAge / HORDE_FLYER_DESCENT_SECONDS);
     const y = startY + (groundY - startY) * t;
@@ -201,7 +218,7 @@ export class HordeGoose implements Entity, Damageable {
     const step = Math.min(distance, speed * dt);
     const nextX = current.x + steeredDir.x * step;
     const nextZ = current.z + steeredDir.z * step;
-    const groundY = sampleHeight(nextX, nextZ) + GOOSE_HEIGHT / 2;
+    const groundY = this.groundHeightAt(nextX, nextZ) + GOOSE_HEIGHT / 2;
 
     this.rigidBody.setNextKinematicTranslation({ x: nextX, y: groundY, z: nextZ });
     this.waddlePhase += dt * WADDLE_BOB_SPEED;
@@ -210,13 +227,32 @@ export class HordeGoose implements Entity, Damageable {
     this.mesh.rotation.z = Math.sin(this.waddlePhase) * WADDLE_ROCK_ANGLE;
   }
 
+  /** Cached terrain height, resampled only after HEIGHT_RESAMPLE_DISTANCE_SQ of horizontal movement
+   * - a straight port of Goose.ts's groundHeightAt (same perf bug, fixed there first: this used to
+   * call sampleHeight uncached every tick for every chasing goose). NaN-initialized sample point
+   * means the first call always resamples, including right after a flyer lands. */
+  private groundHeightAt(x: number, z: number): number {
+    const dx = x - this.heightSampleX;
+    const dz = z - this.heightSampleZ;
+    if (!(dx * dx + dz * dz < HEIGHT_RESAMPLE_DISTANCE_SQ)) {
+      this.cachedGroundHeight = sampleHeight(x, z);
+      this.heightSampleX = x;
+      this.heightSampleZ = z;
+    }
+    return this.cachedGroundHeight;
+  }
+
   /** Guarded against a second call - same reasoning as Goose.ts/RemotePlayer.ts's identical guard
-   * (re-entering Rapier's removal path for an already-removed collider isn't guaranteed safe). */
+   * (re-entering Rapier's removal path for an already-removed collider isn't guaranteed safe). Also
+   * frees the mesh's GPU resources (buildGooseMesh allocates per goose): every HordeGooseManager
+   * path removes the mesh from the scene right before this and reads only position/networkId
+   * afterwards, so nothing shows it again. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.world.removeCollider(this.bodyCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
+    disposeProceduralMesh(this.mesh);
   }
 }

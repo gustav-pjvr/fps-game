@@ -13,43 +13,48 @@ const ROOM_ID_PREFIX = 'fpsgame-';
  * are a fallback for the ones they don't). */
 const TURN_FETCH_TIMEOUT_MS = 2000;
 
-/** PeerJS's own built-in default (mirrored here, not imported - it's internal to the library, not
- * part of its public API) - one Google STUN server plus a shared public TURN relay
- * (turn.peerjs.com) it already ships with. Passing a `config` to `new Peer(...)` at all
- * *replaces* PeerJS's own default entirely rather than merging with it (confirmed by reading
- * PeerJS's source - `config` is forwarded as-is to `RTCPeerConnection`), so any additional ICE
- * servers this app wants to offer (see fetchIceServers) have to be explicitly combined with these,
- * never just appended on top of "whatever PeerJS would have used by default" - that default stops
- * existing the moment `config` is set at all. */
-const PEERJS_DEFAULT_ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+/** Public STUN servers, always offered. Passing a `config` to `new Peer(...)` replaces PeerJS's own
+ * built-in ICE list entirely (it is forwarded as-is to `RTCPeerConnection`), so everything this app
+ * wants has to be listed explicitly.
+ *
+ * STUN only: this list used to also mirror PeerJS's shared public TURN relay
+ * (eu-0/us-0.turn.peerjs.com), but those hostnames no longer resolve (verified 2026-09-14 against
+ * Google and Cloudflare DNS; Chrome reported "TURN host lookup received error"), so they silently
+ * contributed nothing. Relay (TURN) servers now come only from this app's own
+ * /api/turn-credentials function. Without one, two players whose networks block a direct
+ * peer-to-peer path (work/school firewalls, carrier-grade NAT) cannot connect at all: the guest sits
+ * on "Connecting..." until ICE gives up. That was the root cause of the 2026-09-14 "players can't
+ * join my lobby" report. */
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
 ];
 
-/** Fetches *additional* TURN relay credentials from this app's own Cloudflare Pages Function
- * (functions/api/turn-credentials.ts), which proxies Metered.ca's free tier server-side so the API
- * key never reaches the client - combined with PEERJS_DEFAULT_ICE_SERVERS (never in place of them)
- * into the full list passed to `new Peer(...)`. Falls back to just the defaults on any failure: no
- * function deployed (e.g. local `vite dev`, which doesn't run Pages functions at all), no
- * credentials configured yet, a timeout, or Metered's API being down - this is a fallback path for
- * network pairings PeerJS's own defaults can't traverse, never a hard dependency for connecting at
- * all. Called once per `Peer` constructed - still exactly one `Peer` per browser tab regardless of
- * player count (the host relays to guests, guests never connect to each other), so this doesn't
- * multiply with lobby size. */
+/** Fetches TURN relay credentials from this app's own Cloudflare Pages Function
+ * (functions/api/turn-credentials.ts), which proxies Metered.ca server-side so the API key never
+ * reaches the client, and appends them to DEFAULT_ICE_SERVERS. Metered's list includes a TURN-over-TLS
+ * entry on port 443, the only relay path most locked-down networks allow. Falls back to STUN only on
+ * any failure (no function under `vite dev`, credentials not configured, a timeout, Metered down), so
+ * room creation is never blocked on it. Called once per `Peer`, i.e. once per browser tab. */
 async function buildIceServers(): Promise<RTCIceServer[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TURN_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch('/api/turn-credentials', { signal: controller.signal });
-    if (!response.ok) return PEERJS_DEFAULT_ICE_SERVERS;
+    if (!response.ok) return DEFAULT_ICE_SERVERS;
     const data = (await response.json()) as { iceServers?: RTCIceServer[] };
-    return [...PEERJS_DEFAULT_ICE_SERVERS, ...(data.iceServers ?? [])];
+    return [...DEFAULT_ICE_SERVERS, ...(data.iceServers ?? [])];
   } catch {
-    return PEERJS_DEFAULT_ICE_SERVERS;
+    return DEFAULT_ICE_SERVERS;
   } finally {
     clearTimeout(timeout);
   }
 }
+
+/** Host only: backoff for re-registering the room code with the PeerJS broker after its websocket
+ * drops (see PeerConnection.scheduleBrokerReconnect). */
+const BROKER_RECONNECT_BASE_DELAY_MS = 1000;
+const BROKER_RECONNECT_MAX_DELAY_MS = 15_000;
 
 const CODE_LENGTH = 6;
 /** Alphanumeric only (PeerJS peer IDs must start/end alphanumeric), excluding visually ambiguous
@@ -76,7 +81,13 @@ export interface PeerConnectionCallbacks {
    * the match ends - star topology gives a guest no path to any other guest without the host
    * relaying, so losing the host is unrecoverable for it. */
   onPeerDisconnected: (slot: PlayerSlot) => void;
-  onError: (message: string) => void;
+  /** `kind` lets callers tell a lost broker websocket (harmless to an already-open data channel)
+   * apart from a failure that really ends a join attempt or a match (see classifyPeerError). */
+  onError: (message: string, kind: PeerErrorKind) => void;
+  /** Host-only, optional. Fires when the room code has been re-registered with the broker after a
+   * dropped websocket (see PeerConnection.scheduleBrokerReconnect), i.e. new players can find the
+   * room again. */
+  onBrokerReconnected?: () => void;
   onMessage: (message: NetworkMessage, senderSlot: PlayerSlot) => void;
   /** Host-only. Called when a new connection's `hello` arrives, before it's added to the
    * connection map - the caller owns roster/rejoin policy (see HostRoster.ts) and whatever
@@ -88,10 +99,30 @@ export interface PeerConnectionCallbacks {
   onHostHello?: (username: string, rejoinToken: string | null) => WelcomeMessage | 'full' | Promise<WelcomeMessage | 'full'>;
 }
 
-function describePeerError(error: PeerError<string>): string {
-  if (error.type === 'peer-unavailable') return 'No room found with that code.';
-  if (error.type === 'unavailable-id') return 'That room code is already taken - try again.';
-  return error.message || 'Connection error.';
+/** What a PeerJS/WebRTC error means for the game, rather than PeerJS's own type strings:
+ * - `brokerLost`: the signalling websocket dropped. Already-open data channels keep working; the host
+ *   re-registers automatically, and a guest that already has its welcome can ignore it.
+ * - `roomNotFound`: no peer is registered under that room code.
+ * - `roomCodeTaken`: the host's randomly generated code collided with a live one.
+ * - `networkBlocked`: ICE negotiation failed, so no direct or relayed path exists between the two
+ *   browsers (strict firewall or NAT with no working TURN relay).
+ * - `other`: anything else. */
+export type PeerErrorKind = 'brokerLost' | 'roomNotFound' | 'roomCodeTaken' | 'networkBlocked' | 'other';
+
+export const NETWORK_BLOCKED_MESSAGE =
+  "Couldn't connect through this network. Work, school and some mobile networks block direct " +
+  'peer-to-peer play, so try again on a different network (a phone hotspot usually works).';
+
+const BROKER_ERROR_TYPES: ReadonlySet<string> = new Set(['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected']);
+
+/** Pure mapping from a PeerJS error `type` to a game-level kind plus player-facing text (exported
+ * for the unit tests). Covers both Peer-level types and DataConnection ones ('negotiation-failed'). */
+export function classifyPeerError(type: string, rawMessage: string): { kind: PeerErrorKind; message: string } {
+  if (type === 'peer-unavailable') return { kind: 'roomNotFound', message: 'No room found with that code.' };
+  if (type === 'unavailable-id') return { kind: 'roomCodeTaken', message: 'That room code is already taken - try again.' };
+  if (type === 'negotiation-failed') return { kind: 'networkBlocked', message: NETWORK_BLOCKED_MESSAGE };
+  if (BROKER_ERROR_TYPES.has(type)) return { kind: 'brokerLost', message: 'Lost contact with the matchmaking server.' };
+  return { kind: 'other', message: rawMessage || 'Connection error.' };
 }
 
 /** Thin wrapper around PeerJS for this game's multiplayer shape: host-relay star topology, up to
@@ -104,13 +135,45 @@ function describePeerError(error: PeerError<string>): string {
 export class PeerConnection {
   private readonly connections = new Map<PlayerSlot, DataConnection>();
   private ownSlotValue: PlayerSlot = HOST_SLOT;
+  private disposed = false;
+  private brokerReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private brokerReconnectAttempts = 0;
 
   private constructor(
     private readonly peer: Peer,
     private readonly role: MultiplayerRole,
     private callbacks: PeerConnectionCallbacks,
   ) {
-    peer.on('error', (error) => this.callbacks.onError(describePeerError(error)));
+    peer.on('error', (error) => this.reportError(error));
+    // A host whose broker websocket drops (network blip, sleeping laptop, a long-backgrounded tab)
+    // stays reachable for players already connected, but PeerJS leaves it "disconnected": the room
+    // code is no longer registered, so every new join or rejoin gets "No room found" until the host
+    // reloads. Re-register automatically instead. Guests don't need the broker once connected.
+    peer.on('disconnected', () => this.scheduleBrokerReconnect());
+    peer.on('open', () => {
+      if (this.brokerReconnectAttempts === 0) return; // the first registration, not a reconnect
+      this.brokerReconnectAttempts = 0;
+      this.callbacks.onBrokerReconnected?.();
+    });
+  }
+
+  private reportError(error: PeerError<string>): void {
+    const { kind, message } = classifyPeerError(error.type, error.message);
+    this.callbacks.onError(message, kind);
+  }
+
+  /** Host only. Retries `peer.reconnect()` with exponential backoff until the broker accepts the
+   * room code again. A failed attempt ends in another 'disconnected' event (PeerJS's `_abort`
+   * disconnects rather than destroys once the peer has been open), which lands back here. */
+  private scheduleBrokerReconnect(): void {
+    if (this.role !== 'host' || this.disposed || this.peer.destroyed || this.brokerReconnectTimer !== null) return;
+    const delay = Math.min(BROKER_RECONNECT_MAX_DELAY_MS, BROKER_RECONNECT_BASE_DELAY_MS * 2 ** this.brokerReconnectAttempts);
+    this.brokerReconnectAttempts++;
+    this.brokerReconnectTimer = setTimeout(() => {
+      this.brokerReconnectTimer = null;
+      if (this.disposed || this.peer.destroyed || !this.peer.disconnected) return;
+      this.peer.reconnect();
+    }, delay);
   }
 
   /** Registers this browser under the room code and waits for guests to connect. Async only
@@ -132,8 +195,12 @@ export class PeerConnection {
     const peer = new Peer({ config: { iceServers } });
     const instance = new PeerConnection(peer, 'guest', callbacks);
     // Must wait for our own peer to finish registering with the broker before connecting outward -
-    // connecting before `open` fires would queue on a socket that isn't ready yet.
-    peer.on('open', () => instance.attachHostConnection(peer.connect(ROOM_ID_PREFIX + code), username, rejoinToken));
+    // connecting before `open` fires would queue on a socket that isn't ready yet. `once`, not `on`:
+    // a later broker re-registration must never open a second connection to the host.
+    // `reliable: true` is what makes PeerJS create an *ordered* data channel (it maps straight to
+    // RTCDataChannel's `ordered`); without it messages could overtake each other, e.g. a
+    // gooseExploded arriving before its gooseSpawned, or playerJoinedMatch before playerLeft.
+    peer.once('open', () => instance.attachHostConnection(peer.connect(ROOM_ID_PREFIX + code, { reliable: true }), username, rejoinToken));
     return instance;
   }
 
@@ -142,7 +209,7 @@ export class PeerConnection {
    * this is (see onHostHello). PeerJS's own DataConnection 'data' event only ever fires once the
    * channel is actually open, so there's no need to separately gate this on an 'open' event. */
   private attachIncomingGuestConnection(connection: DataConnection): void {
-    connection.on('error', (error) => this.callbacks.onError(describePeerError(error)));
+    connection.on('error', (error) => this.reportError(error));
     connection.on('data', (data) => {
       if (!isNetworkMessage(data) || data.type !== 'hello') return; // ignore anything before hello resolves
       void Promise.resolve(this.callbacks.onHostHello?.(data.username, data.rejoinToken)).then((result) => {
@@ -158,12 +225,20 @@ export class PeerConnection {
         }
 
         const slot = result.yourSlot;
+        const previous = this.connections.get(slot);
         this.connections.set(slot, connection);
         connection.send(result);
         connection.on('close', () => {
+          // Only the connection currently holding this slot may report it gone. A rejoin replaces the
+          // map entry with the new connection, and the old one's close event can land seconds later;
+          // acting on it used to delete the NEW connection and remove the rejoined player again.
+          if (this.connections.get(slot) !== connection) return;
           this.connections.delete(slot);
           this.callbacks.onPeerDisconnected(slot);
         });
+        // Same slot handed to a new connection (see HostRoster.handleHello's token takeover): the
+        // old one is stale, close it so it stops relaying/sending as that player.
+        if (previous && previous !== connection) previous.close();
         // The listener above only exists to catch the initial hello - once accepted, every
         // further message from this connection is slot-known gameplay/lobby traffic routed
         // through the normal onMessage callback instead.
@@ -183,7 +258,7 @@ export class PeerConnection {
     this.connections.set(HOST_SLOT, connection);
     connection.on('open', () => connection.send({ type: 'hello', username, rejoinToken }));
     connection.on('close', () => this.callbacks.onPeerDisconnected(HOST_SLOT));
-    connection.on('error', (error) => this.callbacks.onError(describePeerError(error)));
+    connection.on('error', (error) => this.reportError(error));
     connection.on('data', (data) => {
       if (!isNetworkMessage(data)) return;
       if (data.type === 'welcome') {
@@ -228,6 +303,13 @@ export class PeerConnection {
     this.connections.delete(slot);
   }
 
+  /** Whether a data channel to `slot` exists and is open right now. Lets a guest notice at match
+   * start that the host went away while it was still loading (that close event landed on the room
+   * screen's callbacks, not Game's). */
+  isConnectedTo(slot: PlayerSlot): boolean {
+    return this.connections.get(slot)?.open === true;
+  }
+
   ownRole(): MultiplayerRole {
     return this.role;
   }
@@ -245,6 +327,12 @@ export class PeerConnection {
   }
 
   dispose(): void {
+    // Set before destroy(): destroy() itself emits 'disconnected', which must not schedule a reconnect.
+    this.disposed = true;
+    if (this.brokerReconnectTimer !== null) {
+      clearTimeout(this.brokerReconnectTimer);
+      this.brokerReconnectTimer = null;
+    }
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();
     this.peer.destroy();

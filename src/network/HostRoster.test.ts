@@ -35,14 +35,32 @@ describe('HostRoster', () => {
     expect(rejoined).toEqual({ outcome: 'rejoined', slot: joined.slot });
   });
 
-  it('does not rejoin a slot that is still connected', () => {
+  it('a matching token takes over a slot the host still believes is connected', () => {
     const roster = new HostRoster('Alice');
-    roster.handleHello('Bob', 'token-bob', 0);
-    // Bob never disconnected - a second hello with the same token (e.g. a stale duplicate) should
-    // not match a still-connected slot, and since capacity isn't exhausted, it's treated as a
-    // fresh join instead.
+    const first = roster.handleHello('Bob', 'token-bob', 0);
+    // Bob reloaded before the host noticed his old connection die. Treating this as a fresh join
+    // used to put Bob in two slots at once (his ghost plus a new zero-score slot), or refuse him as
+    // 'full' in a 4-player room. The same token means the same player: hand the slot back.
     const result = roster.handleHello('Bob', 'token-bob', 1000);
-    expect(result.outcome).toBe('joined');
+    expect(result).toEqual({ outcome: 'rejoined', slot: first.outcome === 'joined' ? first.slot : -1 });
+    expect(roster.currentRoster()).toHaveLength(2);
+  });
+
+  it('a token takeover still works when the room is otherwise full', () => {
+    const roster = new HostRoster('Alice');
+    for (let i = 1; i < MULTIPLAYER_MAX_PLAYERS; i++) roster.handleHello(`Guest${i}`, `token-${i}`, 0);
+    expect(roster.handleHello('Guest1', 'token-1', 500).outcome).toBe('rejoined');
+    expect(roster.handleHello('Stranger', 'token-x', 500).outcome).toBe('full');
+  });
+
+  it('connectedRoster leaves out grace-period reservations', () => {
+    const roster = new HostRoster('Alice');
+    const bob = roster.handleHello('Bob', 'token-bob', 0);
+    roster.handleHello('Cara', 'token-cara', 0);
+    if (bob.outcome !== 'joined') throw new Error('expected Bob to join');
+    roster.handleDisconnect(bob.slot, 100);
+    expect(roster.currentRoster().map((e) => e.username)).toEqual(['Alice', 'Bob', 'Cara']);
+    expect(roster.connectedRoster().map((e) => e.username)).toEqual(['Alice', 'Cara']);
   });
 
   it('a reserved (disconnected, within grace period) slot still counts against capacity', () => {

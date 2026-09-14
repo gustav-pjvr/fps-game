@@ -579,3 +579,38 @@ decided locally (host) or arrived via a `gooseExploded` broadcast (guest).
 every phase. The crash fix has a real live re-repro (not just code review) confirming it. Game
 modes: 3/4 live-verified, Gun Game's kill-upgrade not live-tested (needs real combat). Held
 entirely local per explicit instruction - no push until the user reviews and says so.
+
+## "Players can't join my lobby": root cause is no working TURN relay (2026-09-14)
+
+**Report (Gustav):** other players could not connect to a created lobby; the guest sat on
+"Connecting…" for 10 to 30 seconds. The devices involved are managed (JumpCloud, Mimecast).
+
+**Diagnosis, measured rather than guessed:**
+- The lobby code path itself works: a scripted host + guest against the live site joined in about
+  1.4s, including a lowercase room code (the input upper-cases on every keystroke).
+- The PeerJS broker is reachable from a managed device (`https://0.peerjs.com/peerjs/id` returned an
+  id there), so Mimecast is not blocking signalling. The failure is at the ICE / peer-to-peer step.
+- **The only TURN relay the game offered no longer exists.** `eu-0.turn.peerjs.com` and
+  `us-0.turn.peerjs.com` return no A record from Google or Cloudflare DNS, and Chrome's ICE probe
+  logged `TURN host lookup received error` for both. The 2026-07-06 note above assumed this relay was
+  a working baseline.
+- **The game's own relay was never switched on.** Live `/api/turn-credentials` returns
+  `{"iceServers":[]}`: the Metered.ca signup noted as pending on 2026-07-06 never happened (or its
+  env vars are wrong).
+- So every connection was STUN-only. Two peers behind a strict firewall or symmetric/carrier-grade
+  NAT (typical of managed devices and corporate networks, which often block UDP entirely) have no
+  path, and ICE fails. A simulated UDP-blocked guest (`--force-webrtc-ip-handling-policy=
+  disable_non_proxied_udp`) reproduced it exactly.
+
+**Fixes (code):** removed the dead PeerJS TURN entries (STUN only, from Google and Cloudflare, until
+a relay is configured); the guest now gives up after 25s with a "your network is blocking
+peer-to-peer play" message instead of hanging, and an ICE failure no longer shows the misleading
+"The host disconnected."; the host's lobby explains a failed join instead of printing PeerJS's raw
+"Negotiation of connection to <uuid> failed."; the host re-registers its room code automatically if
+its broker websocket drops (previously the code silently died until reload); a lost broker websocket
+no longer ends a guest's running match; the data channel is now ordered (`reliable: true`).
+
+**Still required (account action, not code):** a TURN relay. Metered.ca free tier: set
+`METERED_API_KEY` and `METERED_APP_NAME` in the Cloudflare Pages project, redeploy, and confirm
+`/api/turn-credentials` returns a non-empty list including a `turns:` entry on port 443 (the only
+relay transport most locked-down networks allow).

@@ -83,6 +83,10 @@ export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 30;
  * (MULTIPLAYER_PLAN.md §4a/§4) - a PvP match should keep flowing after a kill, not stop at a death
  * screen until someone clicks a button the way single-player's practice-reset flow does. */
 export const MULTIPLAYER_RESPAWN_DELAY = 3;
+/** How recently another player must have damaged you for your death to count as their kill (see
+ * ActiveMultiplayer.lastDamageSourceAt). Long enough to credit a shot followed by a finishing goose
+ * blast, short enough that an unrelated later death isn't credited to whoever last hit you. */
+export const MULTIPLAYER_KILL_CREDIT_WINDOW_MS = 8_000;
 
 /** World-distance the opponent-position minimap (MULTIPLAYER_PLAN.md §4b) represents at its edge -
  * inside this radius the dot is placed proportionally; beyond it, the dot clamps to the rim, still
@@ -407,7 +411,7 @@ export const GOOSE_PATROL_REPATH_MAX = 12;
 /** How many geese are scattered around the map the instant a match starts. */
 export const GOOSE_SPAWN_COUNT_INITIAL = 3;
 /** A new goose spawns every time a player dies (any player in multiplayer, the local player in
- * single-player - see Game.ts's wasDead/playerDied hooks), capped here so a long match doesn't
+ * single-player - see Game.ts's deathHandled/playerDied hooks), capped here so a long match doesn't
  * accumulate an unbounded flock. */
 export const GOOSE_MAX_CONCURRENT = 8;
 /** A freshly spawned goose must land at least this far from the player who triggered the spawn. */
