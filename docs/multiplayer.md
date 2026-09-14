@@ -610,7 +610,10 @@ peer-to-peer play" message instead of hanging, and an ICE failure no longer show
 its broker websocket drops (previously the code silently died until reload); a lost broker websocket
 no longer ends a guest's running match; the data channel is now ordered (`reliable: true`).
 
-**Still required (account action, not code):** a TURN relay. Metered.ca free tier: set
-`METERED_API_KEY` and `METERED_APP_NAME` in the Cloudflare Pages project, redeploy, and confirm
-`/api/turn-credentials` returns a non-empty list including a `turns:` entry on port 443 (the only
-relay transport most locked-down networks allow).
+**Relay switched on (same day):** Gustav created the Metered.ca app `hunter-n-goose` (free 20GB
+plan) and set `METERED_APP_NAME` / `METERED_API_KEY` in the Cloudflare Pages project; a redeploy
+picked them up. Live `/api/turn-credentials` now returns 5 entries, including
+`turns:standard.relay.metered.ca:443?transport=tcp`. Verified: a relay-only ICE probe allocated
+relay candidates over UDP, TCP and TLS, and the simulated UDP-blocked guest that previously timed
+out joined a live production lobby in 4.6s. If joins regress, first check that endpoint still
+returns servers (an empty list means the env vars are missing or Metered's free quota ran out).
