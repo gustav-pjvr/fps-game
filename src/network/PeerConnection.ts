@@ -299,8 +299,13 @@ export class PeerConnection {
    * guest's connection - distinct from the ordinary disconnect path, which already comes through
    * the DataConnection's own 'close' event via attachIncomingGuestConnection. */
   disconnectGuest(slot: PlayerSlot): void {
-    this.connections.get(slot)?.close();
+    const connection = this.connections.get(slot);
+    // Remove the map entry BEFORE closing: PeerJS emits 'close' synchronously from close(), and the
+    // close handler's "is this still the slot's connection" guard then treats it as already handled.
+    // Closing first ran onPeerDisconnected too, so the caller's own removal (the staleness sweep)
+    // happened twice and a duplicate playerLeft went out.
     this.connections.delete(slot);
+    connection?.close();
   }
 
   /** Whether a data channel to `slot` exists and is open right now. Lets a guest notice at match

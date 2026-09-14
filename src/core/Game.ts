@@ -1145,7 +1145,12 @@ export class Game {
                 gooseDifficulty: activeMultiplayer.gooseDifficulty,
                 gameMode: activeMultiplayer.gameMode,
                 weather: activeMultiplayer.weather,
-                scoreboard: Array.from(game.multiplayerMatchState.scoreboard, ([slot, score]) => ({ slot, score })),
+                // Only slots in the roster handed over above: the joiner learns usernames from that
+                // roster alone, so a reserved or departed slot's score would sit in its scoreboard with
+                // no name and silently drop off its podium (which iterates known usernames).
+                scoreboard: Array.from(game.multiplayerMatchState.scoreboard, ([slot, score]) => ({ slot, score })).filter((entry) =>
+                  roster.some((rosterEntry) => rosterEntry.slot === entry.slot),
+                ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
               },
             };
@@ -1303,6 +1308,10 @@ export class Game {
     const spawnPoint = this.hordeGooseManager ? pickRandomHordeSpawnPoint() : new THREE.Vector2(SPAWN_X, SPAWN_Z);
     const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
+    // Re-arm death handling at the respawn itself, not on the next tick: this runs after an await,
+    // so a goose explosion landing between here and that tick would otherwise kill the player with
+    // deathHandled still true from the previous death, skipping the whole death sequence.
+    this.deathHandled = false;
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
     if (this.hordeGooseManager) {
@@ -1885,6 +1894,7 @@ export class Game {
     const { x, z } = pickRandomRespawnPoint(otherPositions);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
+    this.deathHandled = false; // same reason as resetPlay: re-armed at the respawn, not a tick later
     // Per user request: a fresh life should mean a fresh loadout, not carrying over whatever ammo
     // was left in each weapon at the moment of death - single-player's own resetPlay() already
     // does this same refill, this path (multiplayer's respawn) had just been missing it.
@@ -2174,6 +2184,11 @@ export class Game {
       }
       this.loadoutScreen = screen;
       screen.show();
+    }).catch(() => {
+      // Without this a failed build left loadoutScreenLoading stuck true, so the pause menu's
+      // Loadout button did nothing for the rest of the match (plus an unhandled rejection). Clearing
+      // the flag lets the next click simply try again.
+      this.loadoutScreenLoading = false;
     });
   }
 

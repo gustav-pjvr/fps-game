@@ -10,7 +10,21 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.9.2 (current)
+## v3.9.3 (current)
+
+Four small fixes from the independent review of v3.9.2:
+
+- A death landing in the brief moment between a respawn and the next game tick (for example a goose
+  explosion right at the new spawn point) is now handled like any other death, instead of being
+  silently skipped.
+- Removing a timed-out player no longer runs the disconnect path twice (which sent a duplicate
+  "player left" message).
+- A player joining mid-match no longer receives scores for players they can't see, which used to
+  make a departed player's score silently drop off that joiner's podium.
+- If the mid-match Loadout page ever fails to build, the pause menu's Loadout button can be clicked
+  again instead of staying dead for the rest of the match.
+
+## v3.9.2
 
 Multiplayer connection fix plus a verified bug sweep (2026-09-14). Full diagnosis of the connection
 problem in `docs/multiplayer.md` ("Players can't join my lobby").
