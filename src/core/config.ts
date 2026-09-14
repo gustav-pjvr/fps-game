@@ -1059,8 +1059,4 @@ export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 4;
 
 export const DEFAULT_ENEMY_COUNT = 3;
 export const DEFAULT_TARGET_COUNT = 5;
-/** Upper bound for EACH of the single-player Play setup's Enemies and Targets fields (see
- * PlaySetupModal). Raised from 50 to 300 at Gustav's request (2026-09-14). At the top end the spawn
- * rings grow to roughly 105 m around spawn (Game.ringRadius), reaching into the edge-mountain slopes,
- * and every enemy runs its own AI and line-of-sight checks, so very large counts cost frame rate. */
-export const MAX_MATCH_ENTITY_COUNT = 300;
+export const MAX_MATCH_ENTITY_COUNT = 50;
