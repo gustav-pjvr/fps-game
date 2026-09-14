@@ -10,7 +10,13 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.9.4 (current)
+## v3.9.5 (current)
+
+- The single-player Play setup now allows up to 300 enemies and up to 300 targets (was 50 each),
+  per Gustav's request. Very large counts spread spawns out to roughly 105 m from the start point
+  and cost frame rate, since every enemy runs its own AI.
+
+## v3.9.4
 
 Five fixes Gustav asked for on 2026-09-14:
 
