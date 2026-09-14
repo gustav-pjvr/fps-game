@@ -17,6 +17,10 @@ export const APP_VERSION = GAME_VERSION;
  * content out of the actual spawn/combat area, not just world origin (0,0). */
 export const SPAWN_X = 0;
 export const SPAWN_Z = 8;
+/** Extra clearance (metres) a player spawn point must keep from any house footprint or watch tower
+ * footprint (see Game.ts's isSpawnBlocked), on top of the structure's own extent: a player capsule
+ * is 0.4 m in radius, so this keeps the spawn comfortably outside walls and stair rails. */
+export const SPAWN_STRUCTURE_CLEARANCE = 2;
 export const ENEMY_RING_BASE_RADIUS = 25;
 
 /** Up to 4 players in one lobby (1 host + up to 3 guests), host-relay star topology - see
@@ -1046,9 +1050,11 @@ export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 4;
  * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,
  * solid exterior only - real premade structures from Kenney's Modular Buildings kit (CC0), not a
  * plain box. Placement is now town-clustered within flat zones rather than one-per-chunk - see
- * TOWN_* constants near the zone system below, and BuildingManager.ts. The building's own box
- * collider top face doubles as the rooftop landing surface - no separate platform collider is
- * needed since an axis-aligned box's top is already flat and walkable.
+ * TOWN_* constants near the zone system below, and BuildingManager.ts. Colliders follow the real
+ * shape (2026-09-14, see src/world/buildingColliders.ts): a wall box up to the storey top (still
+ * shrunk by BUILDING_COLLIDER_FOOTPRINT_SHRINK) plus convex prisms that follow each roof slope,
+ * computed at runtime from the loaded model. Previously one box ran all the way to the ridge, so
+ * shots stopped in the empty air above sloped roofs and a player on a roof hovered at ridge height.
  */
 
 export const DEFAULT_ENEMY_COUNT = 3;

@@ -202,6 +202,15 @@ export function getWatchTowerPositions(): { x: number; z: number }[] {
   return watchTowerPositionsCache.positions;
 }
 
+/** True if world point (x, z) is within `margin` metres of any watch tower's solid footprint,
+ * anywhere in the world (a pure function of the seed, so it answers the same before chunks load).
+ * Used to keep player spawn points out of the stair switchbacks: every spawn path used terrain
+ * height alone, so a spawn inside a tower's footprint put the player inside its geometry. */
+export function isPointInsideWatchTower(x: number, z: number, margin: number): boolean {
+  const reach = WATCH_TOWER_FOOTPRINT_RADIUS + margin;
+  return getWatchTowerPositions().some((tower) => Math.hypot(x - tower.x, z - tower.z) < reach);
+}
+
 export class WatchTowerManager {
   private readonly towerMaterial: THREE.Material;
   private readonly stepMaterial: THREE.Material;

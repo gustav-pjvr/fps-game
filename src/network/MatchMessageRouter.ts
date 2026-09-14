@@ -76,6 +76,10 @@ export interface MatchMessageContext {
    * Game.pendingNetworkDamage) and records the payload's own sender as the kill-credit source. */
   applyNetworkDamage(amount: number, sourceSlot: PlayerSlot): void;
   healLocalPlayerToFull(): void;
+  /** Guest only: the host declared the scoreboard win condition met (see MatchEndedMessage). */
+  applyHostMatchEnd(winnerSlot: PlayerSlot, scoreboard: readonly { slot: PlayerSlot; score: number }[]): void;
+  /** Host only: the verdict it already announced, or null while the match is still running. */
+  endedMatchVerdict(): { winnerSlot: PlayerSlot; scoreboard: { slot: PlayerSlot; score: number }[] } | null;
   checkHordeAllEliminated(): void;
   receiveModeExplanationReady(slot: PlayerSlot): void;
   removeMultiplayerOpponent(slot: PlayerSlot): void;
@@ -243,6 +247,13 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
         for (const goose of ctx.gooseManager.listForSync()) {
           activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'gooseSpawned', ...goose });
         }
+        // Every non-Horde guest sends this the moment its match callbacks are attached, so it is the
+        // one reliable point to catch a guest that missed the host's one-off matchEnded: a player who
+        // joined or rejoined while the host sat on the podium (HostRoster keeps the match "in
+        // progress" there), or one still loading when the result went out. Guests never decide the
+        // winner themselves anymore, so without this replay that player's match would never end.
+        const verdict = ctx.endedMatchVerdict();
+        if (verdict) activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'matchEnded', ...verdict });
       }
       break;
     case 'respawnEvent': {
@@ -399,6 +410,10 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     case 'hordeAmmoDropPickedUp':
       ctx.ammoDropManager?.removeById(message.id);
       activeMultiplayer.minimap.removeItemDot(message.id);
+      break;
+    case 'matchEnded':
+      // Host-authored and never relayed; the host ends its own match directly when it sends this.
+      if (activeMultiplayer.session.role === 'guest') ctx.applyHostMatchEnd(message.winnerSlot, message.scoreboard);
       break;
     case 'hostLeftRoom':
       ctx.onOpponentLeftRoom();

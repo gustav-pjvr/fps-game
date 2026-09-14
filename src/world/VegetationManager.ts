@@ -6,6 +6,10 @@ import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { sampleFlatZone } from './ZoneMap.ts';
+import { isPointInsideWatchTower } from './WatchTowerManager.ts';
+
+/** Extra metres of vegetation-free ground around each watch tower's solid footprint. */
+const WATCH_TOWER_VEGETATION_CLEARANCE = 1.5;
 import {
   FOREST_TREE_THRESHOLD_DROP,
   MULTIPLAYER_SPAWN_POINTS,
@@ -219,6 +223,9 @@ export class VegetationManager {
       // Keep town pads entirely clear of vegetation - a tree or boulder in the middle of a
       // building cluster would look wrong and a rock's collider could interfere with a building.
       if (sampleFlatZone(worldX, worldZ).membership > 0) continue;
+      // Same for watch towers: a tree trunk or (now that clutter spawns again) a rock's box collider
+      // on a tower's stairs or in its flattened clearing blocked the climb and looked broken.
+      if (isPointInsideWatchTower(worldX, worldZ, WATCH_TOWER_VEGETATION_CLEARANCE)) continue;
 
       const rawNoise = this.densityNoise2D(worldX * VEGETATION_DENSITY_NOISE_FREQUENCY, worldZ * VEGETATION_DENSITY_NOISE_FREQUENCY);
       const type = pickType(rawNoise, rng);
@@ -375,16 +382,19 @@ export class VegetationManager {
  * invariants.
  */
 export function pickType(rawNoise: number, rng: () => number): VegetationTypeId | null {
-  const density = (rawNoise + 1) / 2;
-  const treeThreshold = VEGETATION_TREE_DENSITY_THRESHOLD - FOREST_TREE_THRESHOLD_DROP;
-
-  if (density > treeThreshold) {
-    return TREE_TYPES[Math.floor((density * 997) % TREE_TYPES.length)] ?? TREE_TYPES[0]!;
-  }
-
+  // Clutter rolls FIRST, independent of the density field, exactly as the docstring above intends.
+  // It used to roll only after the tree check failed, and once the effective tree threshold was
+  // tuned down to 0 (density is in [0, 1], so any rawNoise above -1 passes) that fallthrough became
+  // unreachable in practice: bushes and rocks silently stopped spawning anywhere (2026-09-14 fix).
   const scatterRoll = rng();
   if (scatterRoll < VEGETATION_BUSH_PROBABILITY) return 'bush';
   if (scatterRoll < VEGETATION_BUSH_PROBABILITY + VEGETATION_ROCK_PROBABILITY) return 'rock';
+
+  const density = (rawNoise + 1) / 2;
+  const treeThreshold = VEGETATION_TREE_DENSITY_THRESHOLD - FOREST_TREE_THRESHOLD_DROP;
+  if (density > treeThreshold) {
+    return TREE_TYPES[Math.floor((density * 997) % TREE_TYPES.length)] ?? TREE_TYPES[0]!;
+  }
   return null;
 }
 

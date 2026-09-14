@@ -785,3 +785,29 @@ Threaded through the same 4 sites `gooseDifficulty`/`gameMode` already establish
 `MultiplayerMatchStartParams`) - a new `weather: MatchWeather` field at each, read from a 4th
 `CreateRoomScreen`/`matchEndScreen` selector cloned from the existing goose-difficulty template.
 
+
+## House roof colliders, bushes and rocks, spawn safety (2026-09-14)
+
+**Roof colliders follow the roof.** Every house used to get one cuboid (footprint shrunk 0.85 per
+the v3.3.1 invisible-wall fix) whose height ran to the roof ridge, so its flat top filled the empty
+air above both gable slopes: shots that visibly cleared a roof stopped in mid-air, and a player on a
+roof hovered at ridge height. `src/world/buildingColliders.ts` (pure, unit tested) now derives the
+shape from the loaded model at runtime: upward-facing triangles are grouped into flat or sloped
+pieces (pieces under 2% of the footprint, like door trim, are ignored), a wall box keeps the shrunk
+footprint but stops at the storey top under the lowest eave, and each roof piece becomes a convex
+prism dropped onto the slab below it and clamped inside that slab's outline, so there is still no
+invisible ledge under the eaves. All three presets measured a 40.5 degree roof pitch. Verified with
+the real `castHitscan` against a real `placeForChunk` house: a shot 0.35 m above a slope now passes,
+one below hits the drawn gable, and collider and visual roofs agree within 0.10 m on house-a.
+Known leftover: house-c is T-shaped and its single wall box still fills the two empty back corners
+(about 1.1 by 2.6 m, 2.75 m tall; the old box did this up to 6.5 m).
+
+**Bushes and rocks spawn again.** `pickType` rolled the bush/rock scatter only after the tree
+density check failed, and the effective tree threshold had been tuned to 0, so that fallthrough was
+unreachable and no bush or rock spawned anywhere. The scatter roll now comes first, independent of
+density, as its docstring always described.
+
+**Spawn safety.** `BuildingManager.isPointInsideBuilding` and `isPointInsideWatchTower` answer "is
+there a structure here" from the seeded layout alone, and every player spawn path (multiplayer
+initial points, respawns, the unstick respawn, late joins, single-player Goose Horde) now steps off
+any house or tower through `findClearSpawnPoint` in `src/core/multiplayerSpawn.ts`.

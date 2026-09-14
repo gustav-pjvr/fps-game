@@ -36,6 +36,32 @@ export function pickMultiplayerSpawnPoints(playerCount: number): SpawnPoint[] {
 
 const RESPAWN_ATTEMPTS = 20;
 
+/** "Is there a building or tower here?" for a candidate spawn (x, z). Injected rather than imported
+ * so these functions stay pure and unit-testable without the world managers. */
+export type SpawnBlockedCheck = (x: number, z: number) => boolean;
+const NEVER_BLOCKED: SpawnBlockedCheck = () => false;
+
+const CLEAR_SPAWN_SEARCH_STEP = 2;
+const CLEAR_SPAWN_SEARCH_RINGS = 15;
+const CLEAR_SPAWN_SEARCH_ANGLES = 16;
+
+/** `preferred` if it is clear, otherwise the nearest clear point on expanding rings around it (2 m
+ * apart, out to 30 m). Every spawn used terrain height alone, so a spawn point that happened to land
+ * on a house or watch tower put the player inside its collider. Falls back to `preferred` if nothing
+ * within reach is clear, which is no worse than before. */
+export function findClearSpawnPoint(preferred: SpawnPoint, isBlocked: SpawnBlockedCheck): SpawnPoint {
+  if (!isBlocked(preferred.x, preferred.z)) return preferred;
+  for (let ring = 1; ring <= CLEAR_SPAWN_SEARCH_RINGS; ring++) {
+    const radius = ring * CLEAR_SPAWN_SEARCH_STEP;
+    for (let i = 0; i < CLEAR_SPAWN_SEARCH_ANGLES; i++) {
+      const angle = (i / CLEAR_SPAWN_SEARCH_ANGLES) * 2 * Math.PI;
+      const candidate = { x: preferred.x + Math.cos(angle) * radius, z: preferred.z + Math.sin(angle) * radius };
+      if (!isBlocked(candidate.x, candidate.z)) return candidate;
+    }
+  }
+  return preferred;
+}
+
 /** Picks one fresh spawn point for a mid-match respawn - independent of
  * pickMultiplayerSpawnPoints (which only runs once, at match start/rematch/late-join), and
  * independent per client: each player's own client picks where *it* respawns and reports the
@@ -46,13 +72,17 @@ const RESPAWN_ATTEMPTS = 20;
  * the initial spawn placement is, so it keeps the bounded-retry shape: sample a fresh random point
  * on the same ring, keep the one with the largest minimum distance to any other player if none of
  * the attempts clear the threshold outright. */
-export function pickRandomRespawnPoint(otherPositions: readonly SpawnPoint[]): SpawnPoint {
+export function pickRandomRespawnPoint(otherPositions: readonly SpawnPoint[], isBlocked: SpawnBlockedCheck = NEVER_BLOCKED): SpawnPoint {
   let best: SpawnPoint | null = null;
   let bestMinDistance = -Infinity;
+  let firstCandidate: SpawnPoint | null = null;
 
   for (let attempt = 0; attempt < RESPAWN_ATTEMPTS; attempt++) {
     const angle = Math.random() * 2 * Math.PI;
     const candidate: SpawnPoint = { x: Math.cos(angle) * MULTIPLAYER_SPAWN_RADIUS, z: Math.sin(angle) * MULTIPLAYER_SPAWN_RADIUS };
+    firstCandidate ??= candidate;
+    // Inside a house or tower is never acceptable, however far it is from everyone else.
+    if (isBlocked(candidate.x, candidate.z)) continue;
     const minDistance = otherPositions.length === 0 ? Infinity : Math.min(...otherPositions.map((p) => distance(candidate, p)));
     if (minDistance >= MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT) return candidate;
     if (minDistance > bestMinDistance) {
@@ -62,6 +92,7 @@ export function pickRandomRespawnPoint(otherPositions: readonly SpawnPoint[]): S
   }
 
   // Exhausted the attempt budget (shouldn't happen at these radius/count/threshold values) -
-  // return whichever sampled candidate had the largest minimum distance from any other player.
-  return best!;
+  // return whichever sampled candidate had the largest minimum distance from any other player. If
+  // every candidate was blocked (vanishingly unlikely), step out from the first one to clear ground.
+  return best ?? findClearSpawnPoint(firstCandidate!, isBlocked);
 }

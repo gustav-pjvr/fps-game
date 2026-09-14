@@ -53,6 +53,13 @@ export class MultiplayerMatchState {
     for (const entry of entries) this.scoreboard.set(entry.slot, entry.score);
   }
 
+  /** Adopts the host's final scoreboard wholesale (see protocol.ts's MatchEndedMessage), so a guest's
+   * podium matches the host's exactly even if a last playerDied/kothScoreTick was still in flight. */
+  replaceScoreboard(entries: readonly { slot: PlayerSlot; score: number }[]): void {
+    this.scoreboard.clear();
+    for (const entry of entries) this.scoreboard.set(entry.slot, entry.score);
+  }
+
   /** Applies one death's kill-credit to both maps - Goose Horde is co-op, so per explicit user
    * request nobody scores off a teammate's death (accidental friendly fire or otherwise), and this
    * mode has no kill-limit win condition anyway (see findWinner). Mirrors the exact gate

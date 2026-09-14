@@ -35,19 +35,24 @@ describe('canopyGeometryFor', () => {
   });
 });
 
-/** pickType's own docstring records that this codebase's density tuning ("remove forest spawn and
- * generation restrictions") landed the effective tree threshold at exactly 0 - so density > 0 (i.e.
- * any rawNoise strictly greater than -1) always returns a tree, and the bush/rock scatter roll only
- * ever runs at the single boundary point rawNoise === -1 (density === 0 exactly). These tests lock
- * in that actual current behavior. Note: CODE_REVIEW.md's Phase 6 checklist asks for "pickType
- * continuity at membership 0," a leftover from a design (blending tree density by zone membership)
- * that predates this flat-threshold refactor and no longer exists in the source - membership isn't
- * a parameter of pickType at all anymore, so that specific invariant no longer applies. */
+/** The effective tree threshold is exactly 0 (density tuning, see pickType's docstring), so any
+ * rawNoise above -1 is "tree density". Bushes and rocks therefore get their own scatter roll FIRST,
+ * independent of density: previously the roll only ran after the tree check failed, which at a zero
+ * threshold was effectively never, so no bush or rock ever spawned (2026-09-14 fix). Note:
+ * CODE_REVIEW.md's Phase 6 checklist asks for "pickType continuity at membership 0," a leftover from
+ * a design (blending tree density by zone membership) that no longer exists in the source. */
 describe('pickType', () => {
-  it('always returns a real tree type once density is above the (currently zero) threshold', () => {
+  it('returns a real tree type when the scatter roll misses and density is above the threshold', () => {
     for (const rawNoise of [-0.999, -0.5, 0, 0.3, 0.999, 1]) {
-      const type = pickType(rawNoise, () => 0.99); // rng should never even be consulted on this path
+      const type = pickType(rawNoise, () => 0.99); // past the bush and rock bands
       expect(TREE_TYPES).toContain(type);
+    }
+  });
+
+  it('spawns bushes and rocks at ANY density, from their own independent roll', () => {
+    for (const rawNoise of [-0.5, 0, 0.3, 0.999]) {
+      expect(pickType(rawNoise, () => 0)).toBe('bush');
+      expect(pickType(rawNoise, () => VEGETATION_BUSH_PROBABILITY + 0.001)).toBe('rock');
     }
   });
 
@@ -56,14 +61,22 @@ describe('pickType', () => {
     expect(pickType(0.2, rng)).toBe(pickType(0.2, rng));
   });
 
-  it('falls through to the bush/rock scatter roll only at the exact density-zero boundary (rawNoise = -1)', () => {
-    const bushRoll = pickType(-1, () => 0); // 0 < VEGETATION_BUSH_PROBABILITY
-    expect(bushRoll).toBe('bush');
+  it('places nothing when the scatter roll misses and density is at the zero threshold', () => {
+    expect(pickType(-1, () => VEGETATION_BUSH_PROBABILITY + VEGETATION_ROCK_PROBABILITY + 0.001)).toBeNull();
+  });
 
-    const rockRoll = pickType(-1, () => VEGETATION_BUSH_PROBABILITY + 0.001); // past bush, still within rock band
-    expect(rockRoll).toBe('rock');
-
-    const nothingRoll = pickType(-1, () => VEGETATION_BUSH_PROBABILITY + VEGETATION_ROCK_PROBABILITY + 0.001);
-    expect(nothingRoll).toBeNull();
+  it('keeps the configured clutter share: roughly bush + rock probability of all candidates', () => {
+    let seed = 12345;
+    const rng = (): number => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    const samples = 20000;
+    let clutter = 0;
+    for (let i = 0; i < samples; i++) {
+      const type = pickType(0.2, rng);
+      if (type === 'bush' || type === 'rock') clutter++;
+    }
+    expect(clutter / samples).toBeCloseTo(VEGETATION_BUSH_PROBABILITY + VEGETATION_ROCK_PROBABILITY, 1);
   });
 });

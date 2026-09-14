@@ -546,7 +546,21 @@ export interface ModeExplanationReadyMessage {
   slot: PlayerSlot;
 }
 
+/** Host -> everyone (host-authored broadcast, never relayed): the scoreboard win condition was met
+ * (kill limit, or King of the Hill's points). The host is the ONLY client that decides this. Every
+ * client used to scan its own scoreboard independently, and since each applies its own death credit
+ * immediately but learns about everyone else's one network hop later, two players reaching the limit
+ * at the same moment could each see the other win (both podiums showing DEFEAT, or both VICTORY).
+ * The host sees every playerDied/kothScoreTick in one order, so its answer is the single truth.
+ * `scoreboard` is the host's final scoreboard, which guests adopt so every podium is identical. */
+export interface MatchEndedMessage {
+  type: 'matchEnded';
+  winnerSlot: PlayerSlot;
+  scoreboard: { slot: PlayerSlot; score: number }[];
+}
+
 export type NetworkMessage =
+  | MatchEndedMessage
   | HelloMessage
   | WelcomeMessage
   | RosterUpdateMessage
@@ -594,6 +608,7 @@ export type NetworkMessage =
   | HordeSyncStateMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
+  'matchEnded',
   'hello',
   'welcome',
   'rosterUpdate',

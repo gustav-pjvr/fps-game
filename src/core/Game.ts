@@ -14,7 +14,7 @@ import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
 import { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
-import { WatchTowerManager } from '../world/WatchTowerManager.ts';
+import { isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
@@ -88,6 +88,7 @@ import {
   NIGHT_SUN_INTENSITY,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
+  SPAWN_STRUCTURE_CLEARANCE,
   SPAWN_X,
   SPAWN_Z,
   SUN_DIRECTION_X,
@@ -100,7 +101,7 @@ import {
   APP_VERSION,
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
-import { pickRandomRespawnPoint } from './multiplayerSpawn.ts';
+import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
 import { DEFAULT_GAME_MODE, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
 import { loadStoredLoadout } from './loadout.ts';
@@ -145,10 +146,29 @@ function waitForNextFrame(): Promise<void> {
 /** Single-player Goose Horde's own spawn point - a random location on the map rather than the
  * fixed single-player spawn, per explicit user request ("not the middle"). Plain Math.random(),
  * not a seeded RNG - single-player has no other client that needs to agree on this. */
-function pickRandomHordeSpawnPoint(): THREE.Vector2 {
+function pickRandomHordeSpawnPoint(isBlocked: SpawnBlockedCheck): THREE.Vector2 {
   const angle = Math.random() * Math.PI * 2;
   const radius = HORDE_PLAYER_SPAWN_MIN_RADIUS + Math.random() * (HORDE_PLAYER_SPAWN_MAX_RADIUS - HORDE_PLAYER_SPAWN_MIN_RADIUS);
-  return new THREE.Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius);
+  // This annulus overlaps towns and towers, so step off any structure the random point landed on.
+  const clear = findClearSpawnPoint({ x: Math.cos(angle) * radius, z: Math.sin(angle) * radius }, isBlocked);
+  return new THREE.Vector2(clear.x, clear.z);
+}
+
+/** Single-player's fixed spawn, stepped off any house. The world seed is random per match and towns
+ * are NOT kept clear of this point: measured across 2000 seeds, (SPAWN_X, SPAWN_Z) sat inside a
+ * town in 123 of them (about 6%), so on those maps the player started inside or against a house and
+ * every shot hit its wall. The target/enemy rings stay centred on the nominal spawn. */
+function clearFixedSpawnPoint(isBlocked: SpawnBlockedCheck): THREE.Vector2 {
+  const clear = findClearSpawnPoint({ x: SPAWN_X, z: SPAWN_Z }, isBlocked);
+  return new THREE.Vector2(clear.x, clear.z);
+}
+
+/** Every player spawn path goes through this: "is (x, z) inside, or within SPAWN_STRUCTURE_CLEARANCE
+ * of, a house or a watch tower?" Spawns used terrain height alone, so a point landing on a house or
+ * a tower's stairs put the player inside its collider (the reason the multiplayer pause menu has an
+ * unstick "Respawn" button at all). */
+function makeSpawnBlockedCheck(buildings: BuildingManager): SpawnBlockedCheck {
+  return (x, z) => buildings.isPointInsideBuilding(x, z, SPAWN_STRUCTURE_CLEARANCE) || isPointInsideWatchTower(x, z, SPAWN_STRUCTURE_CLEARANCE);
 }
 
 /** Score lives in a shared mutable holder, not a Game field - EntityManager.create() (async) is
@@ -200,6 +220,10 @@ export class Game {
   private hudRoot: HTMLElement | null = null;
   private loadoutScreenLoading = false;
   private disposed = false;
+  /** See makeSpawnBlockedCheck. Assigned in the constructor (it needs the BuildingManager). */
+  private readonly isSpawnBlocked: SpawnBlockedCheck;
+  /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
+  private hostDeclaredWinner: PlayerSlot | null = null;
   /** Set when death is detected while the pause menu is open (multiplayer only - single-player
    * can never die while paused, see the early-return above isPaused's own comment) - per user
    * request, the death/respawn screen must never visually overlay the pause menu. The death ITSELF
@@ -331,6 +355,7 @@ export class Game {
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
+    this.isSpawnBlocked = makeSpawnBlockedCheck(buildings);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
@@ -372,7 +397,9 @@ export class Game {
       raycastForward: () => {
         const origin = this.renderer.camera.position.clone();
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.renderer.camera.quaternion);
-        const hit = castHitscan(this.physics, origin, direction, 500);
+        // Excludes the player's own capsule, exactly like a real shot (WeaponManager.firePellet): the
+        // eye sits inside the capsule, so without this every probe reported a hit at distance 0.
+        const hit = castHitscan(this.physics, origin, direction, 500, this.player.ownCollider);
         if (!hit) return { hit: false };
         return {
           hit: true,
@@ -503,11 +530,17 @@ export class Game {
     // single-player spawn ("the middle") - per explicit user request. Multiplayer already spawns
     // every player at their own per-slot point regardless of mode, so this only ever applies to
     // the single-player (!multiplayer) branch.
-    const ownSpawn = ownSpawnPoint
-      ? new THREE.Vector2(ownSpawnPoint.x, ownSpawnPoint.z)
+    // The host picked every slot's point before any world existed (pickMultiplayerSpawnPoints on a
+    // fixed ring), so this client steps its OWN point off any house/tower it landed on. Other
+    // clients still place this player's RemotePlayer at the host-picked point, but the first
+    // playerSnapshot (~33 ms) corrects it, same as a late join.
+    const isSpawnBlocked = makeSpawnBlockedCheck(buildings);
+    const clearOwnSpawnPoint = ownSpawnPoint ? findClearSpawnPoint(ownSpawnPoint, isSpawnBlocked) : null;
+    const ownSpawn = clearOwnSpawnPoint
+      ? new THREE.Vector2(clearOwnSpawnPoint.x, clearOwnSpawnPoint.z)
       : isHordeMode && !multiplayer
-        ? pickRandomHordeSpawnPoint()
-        : new THREE.Vector2(SPAWN_X, SPAWN_Z);
+        ? pickRandomHordeSpawnPoint(isSpawnBlocked)
+        : clearFixedSpawnPoint(isSpawnBlocked);
 
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
     for (let i = 0; i < 30; i++) {
@@ -1062,6 +1095,8 @@ export class Game {
           activeMultiplayer.lastDamageSourceAt = performance.now();
         },
         healLocalPlayerToFull: () => game.healLocalPlayerToFull(),
+        applyHostMatchEnd: (winnerSlot, scoreboard) => game.applyHostMatchEnd(winnerSlot, scoreboard),
+        endedMatchVerdict: () => game.endedMatchVerdict(),
         checkHordeAllEliminated: () => game.checkHordeAllEliminated(),
         receiveModeExplanationReady: (slot) => game.receiveModeExplanationReady(slot),
         removeMultiplayerOpponent: (slot) => game.removeMultiplayerOpponent(slot),
@@ -1130,7 +1165,7 @@ export class Game {
           if (hostRoster.isMatchInProgress()) {
             const otherPositions = Array.from(activeMultiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
             otherPositions.push({ x: player.position.x, z: player.position.z });
-            const spawnPoint = pickRandomRespawnPoint(otherPositions);
+            const spawnPoint = pickRandomRespawnPoint(otherPositions, game.isSpawnBlocked);
             await game.addMultiplayerOpponent(outcome.slot, username);
             activeMultiplayer.session.connection.send({ type: 'playerJoinedMatch', slot: outcome.slot, username, isRejoin: outcome.outcome === 'rejoined' });
             return {
@@ -1305,7 +1340,7 @@ export class Game {
     // Goose Horde: dying restarts the whole challenge from wave 1 (per explicit user request) at a
     // fresh random point on the map, not the fixed single-player spawn, and skips respawning
     // enemies/targets/the ambient goose flock entirely - none of those are part of this mode.
-    const spawnPoint = this.hordeGooseManager ? pickRandomHordeSpawnPoint() : new THREE.Vector2(SPAWN_X, SPAWN_Z);
+    const spawnPoint = this.hordeGooseManager ? pickRandomHordeSpawnPoint(this.isSpawnBlocked) : clearFixedSpawnPoint(this.isSpawnBlocked);
     const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
     // Re-arm death handling at the respawn itself, not on the next tick: this runs after an await,
@@ -1772,18 +1807,23 @@ export class Game {
     // Win condition: first to killLimit ends the match. Checked here rather than where each score
     // actually changes (the playerDied handling scattered across create()'s onMessage and update()'s
     // own death-transition block) so there's exactly one place that decides "the match is over,"
-    // regardless of which slot's score just crossed the line - every client runs this same check
-    // against its own copy of the scoreboard (kept in sync purely by relaying playerDied messages),
-    // so no host adjudication is needed for everyone to converge on the same outcome.
+    // regardless of which slot's score just crossed the line. Only the HOST runs this check and then
+    // announces the result (MatchEndedMessage): when every client decided independently, two players
+    // reaching the limit at the same moment could each see the other win, because each client
+    // credits its own death at once but everyone else's one network hop later.
     if (!this.multiplayerMatchState.hasEnded) {
       // King of the Hill scores points, not kills, and Goose Horde has no scoreboard win condition
       // at all (its survival/victory is driven entirely by HordeGooseManager's onCleared callback
       // instead - see the 'hordeCleared' toast above) - both handled inside findWinner itself.
       // Still tagged 'killLimit' as the end reason regardless of mode (the match-end screen's copy
       // just says "VICTORY"/"DEFEAT" either way, no mode-specific wording exists to reuse here).
-      const winner = this.multiplayerMatchState.findWinner(this.multiplayer.gameMode, this.multiplayer.killLimit);
-      if (winner !== null) {
-        this.endMultiplayerMatch(winner === this.multiplayer.session.ownSlot, 'killLimit');
+      if (this.multiplayer.session.role === 'host') {
+        const winner = this.multiplayerMatchState.findWinner(this.multiplayer.gameMode, this.multiplayer.killLimit);
+        if (winner !== null) {
+          this.hostDeclaredWinner = winner;
+          this.multiplayer.session.connection.send({ type: 'matchEnded', ...this.endedMatchVerdict()! });
+          this.endMultiplayerMatch(winner === this.multiplayer.session.ownSlot, 'killLimit');
+        }
       }
     }
     if (this.multiplayerMatchState.hasEnded) return;
@@ -1891,7 +1931,7 @@ export class Game {
 
     const ownSlot = this.multiplayer.session.ownSlot;
     const otherPositions = Array.from(this.multiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
-    const { x, z } = pickRandomRespawnPoint(otherPositions);
+    const { x, z } = pickRandomRespawnPoint(otherPositions, this.isSpawnBlocked);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
     this.deathHandled = false; // same reason as resetPlay: re-armed at the respawn, not a tick later
@@ -1929,7 +1969,7 @@ export class Game {
 
     const ownSlot = this.multiplayer.session.ownSlot;
     const otherPositions = Array.from(this.multiplayer.opponents.values(), (o) => ({ x: o.remotePlayer.position.x, z: o.remotePlayer.position.z }));
-    const { x, z } = pickRandomRespawnPoint(otherPositions);
+    const { x, z } = pickRandomRespawnPoint(otherPositions, this.isSpawnBlocked);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.debugTeleport(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
@@ -2294,6 +2334,26 @@ export class Game {
     const total = this.modeExplanationParticipants.size;
     this.modeExplanationScreen?.setReadyCount(this.modeExplanationReadySlots.size, total);
     if (this.modeExplanationReadySlots.size >= total) this.dismissModeExplanation();
+  }
+
+  /** Guest side of MatchEndedMessage: adopts the host's final scoreboard (so every podium is
+   * identical) and ends the match with the host's verdict. No-op once already ended (a disconnect
+   * or Horde result may have got there first). */
+  /** Host only: the winner and final scoreboard it announced via MatchEndedMessage, or null while the
+   * match runs (and always null on a guest, or in Goose Horde, which never has a scoreboard winner).
+   * Replayed to any guest that asks for a sync afterwards (see MatchMessageRouter's gooseSyncRequest). */
+  endedMatchVerdict(): { winnerSlot: PlayerSlot; scoreboard: { slot: PlayerSlot; score: number }[] } | null {
+    if (this.hostDeclaredWinner === null) return null;
+    return {
+      winnerSlot: this.hostDeclaredWinner,
+      scoreboard: Array.from(this.multiplayerMatchState.scoreboard, ([slot, score]) => ({ slot, score })),
+    };
+  }
+
+  applyHostMatchEnd(winnerSlot: PlayerSlot, scoreboard: readonly { slot: PlayerSlot; score: number }[]): void {
+    if (!this.multiplayer || this.multiplayerMatchState.hasEnded) return;
+    this.multiplayerMatchState.replaceScoreboard(scoreboard);
+    this.endMultiplayerMatch(winnerSlot === this.multiplayer.session.ownSlot, 'killLimit');
   }
 
   /** Goose Horde's limited-lives loss condition (per explicit user request: "if both players have

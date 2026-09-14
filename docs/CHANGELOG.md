@@ -10,7 +10,26 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.9.3 (current)
+## v3.9.4 (current)
+
+Five fixes Gustav asked for on 2026-09-14:
+
+- **Bullets no longer stop in empty air above house roofs.** Each house used to have one collision
+  box running all the way up to the roof ridge. Colliders now follow the real roof slopes, measured
+  from the house models themselves, so shots that visibly clear a roof pass over it and a player on
+  a roof stands on the slope instead of hovering at ridge height.
+- **Bushes and rocks spawn again.** They silently stopped appearing after a vegetation density
+  change; they now get their own random roll again.
+- **Spawn points no longer land inside houses or watch towers.** Every spawn (single-player,
+  single-player Goose Horde, multiplayer match start, respawns, the pause-menu unstick respawn, and
+  late joiners) steps off any structure. Single-player's fixed spawn point was inside a town on
+  about 6% of maps.
+- **A kill-limit race can no longer give two different winners.** The host now decides who reached
+  the kill limit (or King of the Hill's points) and tells everyone, including the final scoreboard,
+  so every player sees the same podium.
+- **The single-player smoke tests** are updated for the three-slot loadout (rifle, pistol, knife).
+
+## v3.9.3
 
 Four small fixes from the independent review of v3.9.2:
 
