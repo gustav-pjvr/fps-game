@@ -513,6 +513,106 @@ export const ENEMY_TACTICAL_MIN_RANGE = 4;
 export const ENEMY_TACTICAL_AVOID_TIME = 10;
 /** Close enough to the peek or cover spot to stop shuffling and act. */
 export const ENEMY_PEEK_STEP_TOLERANCE = 0.3;
+
+/**
+ * Enemy AI v2, step 4 (docs/enemy-ai-v2.md): the search grid (entities/enemies/searchGrid.ts). When
+ * the squad loses the player, cells around the last known position hold the chance the player is
+ * there; it spreads outward over time, searchers wipe what they walk near or can see, and they are
+ * sent to the likeliest cells in pairs. Replaces "walk to one point and wait 6 s".
+ */
+/** Cell edge and grid radius: 4 m cells in a disc of radius 5 cells, 44 m across - the leash range. */
+export const ENEMY_SEARCH_GRID_CELL = 4;
+export const ENEMY_SEARCH_GRID_RADIUS_CELLS = 5;
+/** Probability flow to neighbouring cells per second. The spread after t seconds is about
+ * sqrt(rate * t / 2) cells, so 2.5 puts the likely area about 2.5 cells (10 m) out after 5 s, roughly
+ * a player slipping away at half walking pace (PLAYER_MOVE_SPEED is 5 m/s). The first value, 0.15,
+ * spread only about 2.4 m in 5 s, a tenth of what a walking player covers, so one enemy glancing at
+ * the spot ended the whole search (found at checkpoint D, docs/enemy-ai-v2.md). */
+export const ENEMY_SEARCH_DIFFUSION_RATE = 2.5;
+/** Seconds without a sighting before a grid starts, so a player ducking behind a tree for a moment
+ * does not trigger a full search. */
+export const ENEMY_SEARCH_GRID_START_DELAY = 1;
+/** The search ends when four fifths of the probability has been cleared, but not before
+ * ENEMY_SEARCH_GRID_MIN_DURATION (a glance at a spot the player plainly left is not a search), and
+ * always by ENEMY_SEARCH_GRID_MAX_DURATION. */
+export const ENEMY_SEARCH_GRID_GIVE_UP_MASS = 0.2;
+export const ENEMY_SEARCH_GRID_MIN_DURATION = 10;
+export const ENEMY_SEARCH_GRID_MAX_DURATION = 30;
+/** Rays per tick for clearing cells by sight, from what position picking leaves of the budget. */
+export const ENEMY_SEARCH_CLEAR_RAYS_PER_TICK = 4;
+/** A searcher clears cells it can see within this range and half-angle of its facing... */
+export const ENEMY_SEARCH_CLEAR_RANGE = 12;
+export const ENEMY_SEARCH_CLEAR_HALF_ANGLE_DEG = 60;
+/** ...and any cell it walks within this of, no ray needed. */
+export const ENEMY_SEARCH_PROXIMITY_CLEAR = 2;
+/** Seconds between re-sending searchers to the likeliest cells. */
+export const ENEMY_SEARCH_ASSIGN_INTERVAL = 0.5;
+/** Height above ground of the point checked in each cell - roughly a player's chest. */
+export const ENEMY_SEARCH_CELL_CHECK_HEIGHT = 1;
+
+/**
+ * Enemy AI v2, step 5 (docs/enemy-ai-v2.md): readable enemies - short synthesised callouts
+ * (entities/enemies/calloutDirector.ts decides which are heard), a glint before a Ridge Walker's
+ * long shot, and a stagger on heavy hits.
+ */
+/** One voiced callout of each kind at most this often, and any two at least this far apart - a
+ * squad, not a chorus. */
+export const ENEMY_CALLOUT_KIND_COOLDOWN = 4;
+export const ENEMY_CALLOUT_GLOBAL_COOLDOWN = 1.2;
+/** Callouts from farther than this are not heard. */
+export const ENEMY_CALLOUT_AUDIBLE_RANGE = 45;
+/** Seconds of glint before a telegraphed shot, and how far away a Ridge Walker must be for its shot
+ * to be telegraphed - close up, the player can see it aiming anyway. */
+export const ENEMY_GLINT_LEAD_TIME = 0.6;
+export const ENEMY_GLINT_MIN_DISTANCE = 15;
+/** A hit of at least this much damage (after the headshot multiplier) staggers an enemy for
+ * ENEMY_STAGGER_DURATION: it neither moves nor fires. Light hits only reset its aim, as before. */
+export const ENEMY_STAGGER_DAMAGE_THRESHOLD = 25;
+export const ENEMY_STAGGER_DURATION = 0.5;
+/** How far a staggered enemy tips back, in radians, at the moment of the hit. */
+export const ENEMY_STAGGER_LURCH_RAD = 0.35;
+
+/**
+ * Enemy AI v2, step 6 (docs/enemy-ai-v2.md): the pacing director behind the opt-in "Director" solo
+ * mode (entities/enemies/director/), Left 4 Dead's build-up, peak, fade and relax cycle.
+ */
+/** Enemies at the start of a Director match, with no practice targets; the director sends the rest. */
+export const ENEMY_DIRECTOR_INITIAL_COUNT = 2;
+/** Intensity (0 to 1) per point of damage the player takes, and per enemy they kill within
+ * ENEMY_DIRECTOR_KILL_RADIUS: 50 HP lost, or 7 close kills, is a full peak. */
+export const ENEMY_DIRECTOR_INTENSITY_PER_DAMAGE = 0.02;
+export const ENEMY_DIRECTOR_INTENSITY_PER_KILL = 0.15;
+export const ENEMY_DIRECTOR_KILL_RADIUS = 20;
+/** Intensity drained per second, only while no enemy is chasing the player. */
+export const ENEMY_DIRECTOR_DECAY_PER_SECOND = 0.08;
+/** Build-up turns to peak at this intensity; peak holds a random 3 to 5 s; fade ends once intensity
+ * is below ENEMY_DIRECTOR_FADE_EXIT; relax lasts a random 30 to 45 s. */
+export const ENEMY_DIRECTOR_PEAK_THRESHOLD = 1;
+export const ENEMY_DIRECTOR_PEAK_MIN = 3;
+export const ENEMY_DIRECTOR_PEAK_MAX = 5;
+export const ENEMY_DIRECTOR_FADE_EXIT = 0.3;
+export const ENEMY_DIRECTOR_RELAX_MIN = 30;
+export const ENEMY_DIRECTOR_RELAX_MAX = 45;
+/** Waves of two every 8 s during build-up, never more than 8 enemies alive. */
+export const ENEMY_DIRECTOR_MAX_ALIVE = 8;
+export const ENEMY_DIRECTOR_WAVE_SIZE = 2;
+export const ENEMY_DIRECTOR_WAVE_INTERVAL = 8;
+/** Seconds before a wave that found nowhere hidden to come in tries again. */
+export const ENEMY_DIRECTOR_RETRY_DELAY = 1;
+/** Share of waves that are all Rush Jobs, and share that bring a Ridge Walker; the rest mix. */
+export const ENEMY_DIRECTOR_RUSHER_WAVE_SHARE = 0.2;
+export const ENEMY_DIRECTOR_SNIPER_WAVE_SHARE = 0.2;
+/** Where reinforcements come in: 18 to 30 m out, within 100 degrees of straight behind the player,
+ * 6 points drawn and at most 6 sight checks a wave, never closer than 3 m to each other. */
+export const ENEMY_DIRECTOR_SPAWN_MIN_RADIUS = 18;
+export const ENEMY_DIRECTOR_SPAWN_MAX_RADIUS = 30;
+export const ENEMY_DIRECTOR_SPAWN_BEHIND_HALF_ANGLE_DEG = 100;
+export const ENEMY_DIRECTOR_SPAWN_CANDIDATES = 6;
+export const ENEMY_DIRECTOR_SPAWN_RAYS = 6;
+export const ENEMY_DIRECTOR_SPAWN_MIN_SPACING = 3;
+/** Added to half the camera's horizontal view: a reinforcement never comes in this close to the
+ * edge of the screen either. */
+export const ENEMY_DIRECTOR_SPAWN_VIEW_MARGIN_DEG = 15;
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
 /** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
  * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that

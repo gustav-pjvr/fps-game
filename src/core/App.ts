@@ -100,7 +100,13 @@ export class App {
     this.playSetupModal?.dispose();
     this.playSetupModal = new PlaySetupModal(
       this.overlayRoot,
-      { enemyCount: DEFAULT_ENEMY_COUNT, targetCount: DEFAULT_TARGET_COUNT, gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, hordeMode: false },
+      {
+        enemyCount: DEFAULT_ENEMY_COUNT,
+        targetCount: DEFAULT_TARGET_COUNT,
+        gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
+        hordeMode: false,
+        directorMode: false,
+      },
       MAX_MATCH_ENTITY_COUNT,
       (config) => void this.startMatch(config),
       () => this.playSetupModal?.hide(),
@@ -157,7 +163,7 @@ export class App {
       // gooseDifficulty here is unused - multiplayer reads it from the session (params.gooseDifficulty)
       // instead, see Game.ts's ActiveMultiplayer.gooseDifficulty. Present only to satisfy MatchConfig's
       // shape, same reasoning as the enemyCount/targetCount zeros above.
-      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, hordeMode: false },
+      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, hordeMode: false, directorMode: false },
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
       () => void this.returnToLobby(),
       { connection, role, ...params },

@@ -8,6 +8,8 @@ import { ENEMY_ARCHETYPES } from './archetypes.ts';
 import { ObstacleRegistry } from './tactics/obstacleRegistry.ts';
 import { pointSegmentDistance, type LosProbe } from './tactics/tacticalQuery.ts';
 import type { TacticalContext } from './tactics/planner.ts';
+import type { IntentKind } from './calloutDirector.ts';
+import { ENEMY_STAGGER_DAMAGE_THRESHOLD, ENEMY_STAGGER_DURATION } from '../../core/config.ts';
 import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
 import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
@@ -83,8 +85,18 @@ function setup(role: 'shooter' | 'reserve', canMove = true) {
     claimsFor: () => [],
     fireLinesFor: () => [],
   });
-  const behaviour = new CombatBehaviour(body, {} as PhysicsWorld, coordinator, knowledge, { onRangedShotFired: () => {} }, mulberry32(2), body.position);
-  return { body, behaviour, context };
+  const intents: IntentKind[] = [];
+  const behaviour = new CombatBehaviour(
+    body,
+    {} as PhysicsWorld,
+    coordinator,
+    knowledge,
+    { emit: (event) => intents.push(event.kind) },
+    { onRangedShotFired: () => {} },
+    mulberry32(2),
+    body.position,
+  );
+  return { body, behaviour, context, intents };
 }
 
 /** Runs `ticks` ticks with no sightline and returns the distinct phases seen, in order. */
@@ -133,6 +145,16 @@ describe('CombatBehaviour fighting from a spot', () => {
     expect(s.behaviour.pickDebug?.source).not.toBe('trunk');
   });
 
+  it('looks for no spot when the player is inside the near edge of its band, and drops the one it had', () => {
+    const s = setup('shooter');
+    s.behaviour.refreshPick(s.context(0), 8);
+    expect(s.behaviour.pickDebug).not.toBeNull();
+    // The player walks up to 4 m, inside the 0.35 x 16 = 5.6 m near edge: no spot, no rays.
+    s.body.position = { x: 0, y: 0.85, z: 4 };
+    expect(s.behaviour.refreshPick(s.context(1), 8)).toBe(0);
+    expect(s.behaviour.pickDebug).toBeNull();
+  });
+
   it('lets a holder fight on without its own sightline only while the squad saw the player recently', () => {
     const s = setup('shooter');
     expect(s.behaviour.canFightBlind()).toBe(false);
@@ -140,5 +162,53 @@ describe('CombatBehaviour fighting from a spot', () => {
     expect(s.behaviour.canFightBlind()).toBe(true);
     s.behaviour.standDown();
     expect(s.behaviour.pickDebug).toBeNull();
+  });
+});
+
+describe('CombatBehaviour readability (step 5)', () => {
+  it('a light hit does not stagger; a heavy one does, is announced, and wears off', () => {
+    const s = setup('shooter');
+    expect(s.behaviour.onHeavyHit(ENEMY_STAGGER_DAMAGE_THRESHOLD - 1)).toBe(false);
+    expect(s.behaviour.isStaggered).toBe(false);
+    expect(s.intents).toEqual([]);
+
+    expect(s.behaviour.onHeavyHit(ENEMY_STAGGER_DAMAGE_THRESHOLD)).toBe(true);
+    expect(s.behaviour.isStaggered).toBe(true);
+    expect(s.behaviour.staggerLurch).toBeGreaterThan(0);
+    expect(s.intents).toEqual(['staggered']);
+
+    s.behaviour.tickCooldowns(ENEMY_STAGGER_DURATION + 0.01);
+    expect(s.behaviour.isStaggered).toBe(false);
+    expect(s.behaviour.staggerLurch).toBe(0);
+  });
+
+  it('announces becoming a flanker once, not every tick', () => {
+    const body = new FakeBody(-1, 12);
+    const knowledge = new SquadKnowledge();
+    knowledge.reportSeen(2, player.position);
+    // Two gunners hold the shooter tokens, so the third (this body, id 1) is sent round the side.
+    const coordinator = new CombatCoordinator({ shooter: 2 }, mulberry32(1));
+    const gunner = (id: number, x: number, z: number) => ({ id, x, z, canShoot: true, rangedRange: 16, hasLineOfSight: true });
+    coordinator.update([gunner(2, 0, 9.6), gunner(3, 1, 9.6), gunner(1, -1, 12)], {
+      now: 0,
+      threat: { x: 0, z: 0 },
+      isThreatVisible: true,
+    });
+    expect(coordinator.roleOf(1)).toBe('flanker');
+    const intents: IntentKind[] = [];
+    const behaviour = new CombatBehaviour(
+      body,
+      {} as PhysicsWorld,
+      coordinator,
+      knowledge,
+      { emit: (event) => intents.push(event.kind) },
+      { onRangedShotFired: () => {} },
+      mulberry32(2),
+      body.position,
+    );
+    for (let tick = 0; tick < 10; tick++) {
+      behaviour.update(DT, player, body.position, Math.hypot(body.position.x, body.position.z), false, tick * DT);
+    }
+    expect(intents).toEqual(['flanking']);
   });
 });

@@ -5,6 +5,7 @@ import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { castHitscan } from '../../combat/hitscan.ts';
 import { applySpreadCone } from '../../combat/spread.ts';
 import type { EnemyArchetype } from './archetypes.ts';
+import type { IntentEvent } from './calloutDirector.ts';
 import {
   ENEMY_ATTACK_RANGE,
   ENEMY_MELEE_SWING_COUNT,
@@ -17,6 +18,10 @@ import {
  * sound, matching how the player's own WeaponManager reports its shots. */
 export interface EnemyCombatHooks {
   onRangedShotFired: (origin: THREE.Vector3, end: THREE.Vector3, hitPlayer: boolean) => void;
+  /** Enemy AI v2 step 5: the one callout the squad voices this tick (calloutDirector.ts decides). */
+  onCallout?: (event: IntentEvent) => void;
+  /** Enemy AI v2 step 5: a visual cue - a glint before a long shot, or a stagger. */
+  onCue?: (event: IntentEvent) => void;
 }
 
 /** Per-enemy firing state, moved out of Enemy.ts by the enemy AI v2 split (commit 0). */

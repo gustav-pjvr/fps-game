@@ -49,23 +49,60 @@ export interface GameDebugApi {
     /** The spot it is fighting from (step 3): 'trunk' | 'tower' | 'houseCorner' | 'open', its phase
      * ('moving' | 'hiding' | 'peeking') and whether it is covered; null when it has none. */
     pick: { x: number; z: number; source: string; phase: string; covered: boolean } | null;
+    /** The search-grid cell it is heading for while searching (step 4), else null. */
+    searchTarget: { x: number; z: number } | null;
+    /** Knocked off balance by a heavy hit right now (step 5). */
+    staggered: boolean;
     x: number;
     y: number;
     z: number;
   }[];
   /** Enemy AI v2: what the squad believes about the player right now. */
   getSquadDebug(): {
+    /** Game time in seconds (the squad clock) - use it to time behaviour in e2e checks. */
+    clock: number;
     belief: { x: number; z: number; source: string; confidence: number; age: number } | null;
     visibleCount: number;
     secondsSinceSeen: number;
     /** How many enemies hold each combat role right now. */
     roles: Record<string, number>;
+    /** Step 5: callouts voiced ('spotted', 'flanking', 'lostThem') and cues shown ('glint',
+     * 'staggered') so far this match. */
+    callouts: Record<string, number>;
+    /** The live search grid (step 4): cell count, probability left (1 at the start), age in
+     * seconds and the likeliest cell; null when the squad is not searching. */
+    searchGrid: { cells: number; total: number; age: number; peak: { x: number; z: number; probability: number } | null } | null;
+    /** Search grids built this match, and why the last one ended ('seen' | 'forgotten' | 'cleared'
+     * | 'timedOut'), with its age and the chance left then. */
+    searchGridsBuilt: number;
+    lastSearchEnd: { reason: string; age: number; total: number } | null;
   };
-  /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground, so
-   * a behaviour test can stage a known layout. */
+  /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground and
+   * makes that its patrol home, so a behaviour test can stage a known layout that stays put. */
   placeEnemy(index: number, x: number, z: number): void;
   /** Enemy AI v2: registered cover (tree trunks, houses) within `radius` of (x, z), by centre. */
   getCoverNear(x: number, z: number, radius: number): { kind: string; x: number; z: number }[];
+  /** Test-only, like damagePlayer: real damage to the live enemy at `index` through takeDamage. */
+  damageEnemy(index: number, amount: number): void;
+  /** Enemy AI v2 step 6: the pacing director in a Director match, null in any other match. */
+  getDirectorDebug(): {
+    phase: string;
+    intensity: number;
+    totalSpawned: number;
+    /** The last wave's reinforcements, each with where the player stood and looked when it came in,
+     * whether the spawner found it hidden from the player's eye, and a fresh check once placed of
+     * whether it was on screen (inside the view with a clear line to its head). */
+    lastSpawns: {
+      x: number;
+      z: number;
+      playerX: number;
+      playerZ: number;
+      forwardX: number;
+      forwardZ: number;
+      hidden: boolean;
+      onScreen: boolean;
+    }[];
+  } | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

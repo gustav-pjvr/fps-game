@@ -77,13 +77,34 @@ describe('SquadKnowledge indirect evidence', () => {
     expect(knowledge.belief?.position.x).toBe(0);
   });
 
-  it('fresh evidence replaces a sighting older than the override age', () => {
+  it('no rumour moves the belief while anyone still sees the player, however long ago it began', () => {
     const knowledge = new SquadKnowledge();
     knowledge.reportSeen(1, at(0, 0));
-    knowledge.advance(ENEMY_KNOWLEDGE_OVERRIDE_AGE + 0.5);
+    knowledge.advance(ENEMY_KNOWLEDGE_OVERRIDE_AGE + 1);
+    knowledge.reportGunshot(at(20, 20));
+    expect(knowledge.belief?.source).toBe('seen');
+  });
+
+  it('once nobody sees the player, fresh evidence replaces even a sighting a moment old', () => {
+    const knowledge = new SquadKnowledge();
+    knowledge.reportSeen(1, at(0, 0));
+    knowledge.reportLost(1);
+    knowledge.advance(0.5);
     knowledge.reportGunshot(at(20, 20));
     expect(knowledge.belief?.source).toBe('gunshot');
     expect(knowledge.belief?.position.x).toBe(20);
+    expect(knowledge.belief?.at).toBe(knowledge.now);
+  });
+
+  it('between two rumours close together, keeps the more confident one', () => {
+    const knowledge = new SquadKnowledge();
+    knowledge.reportDamage(at(5, 5));
+    knowledge.advance(ENEMY_KNOWLEDGE_OVERRIDE_AGE / 2);
+    knowledge.reportGunshot(at(9, 9));
+    expect(knowledge.belief?.source).toBe('damage');
+    knowledge.advance(ENEMY_KNOWLEDGE_OVERRIDE_AGE);
+    knowledge.reportGunshot(at(9, 9));
+    expect(knowledge.belief?.source).toBe('gunshot');
   });
 
   it('damage and comrade deaths count as stronger evidence than a gunshot', () => {

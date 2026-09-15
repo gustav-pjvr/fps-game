@@ -50,6 +50,42 @@ import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
 import { PerfLogger, type PerfContext } from './perfStats.ts';
 import { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
+import { GlintMarkers } from '../combat/GlintMarkers.ts';
+import { PacingDirector, type DirectorOptions, type WaveBias } from '../entities/enemies/director/pacingDirector.ts';
+import { pickReinforcementSpawns, type SpawnOptions } from '../entities/enemies/director/reinforcementSpawner.ts';
+import { archetypeNamed, type EnemyArchetype } from '../entities/enemies/archetypes.ts';
+import { ENEMY_HEAD_OFFSET_Y } from '../entities/enemies/EnemyBody.ts';
+import { mulberry32 } from '../utils/rng.ts';
+import {
+  ENEMY_DIRECTOR_DECAY_PER_SECOND,
+  ENEMY_DIRECTOR_FADE_EXIT,
+  ENEMY_DIRECTOR_INITIAL_COUNT,
+  ENEMY_DIRECTOR_INTENSITY_PER_DAMAGE,
+  ENEMY_DIRECTOR_INTENSITY_PER_KILL,
+  ENEMY_DIRECTOR_KILL_RADIUS,
+  ENEMY_DIRECTOR_MAX_ALIVE,
+  ENEMY_DIRECTOR_PEAK_MAX,
+  ENEMY_DIRECTOR_PEAK_MIN,
+  ENEMY_DIRECTOR_PEAK_THRESHOLD,
+  ENEMY_DIRECTOR_RELAX_MAX,
+  ENEMY_DIRECTOR_RELAX_MIN,
+  ENEMY_DIRECTOR_RETRY_DELAY,
+  ENEMY_DIRECTOR_RUSHER_WAVE_SHARE,
+  ENEMY_DIRECTOR_SNIPER_WAVE_SHARE,
+  ENEMY_DIRECTOR_SPAWN_BEHIND_HALF_ANGLE_DEG,
+  ENEMY_DIRECTOR_SPAWN_CANDIDATES,
+  ENEMY_DIRECTOR_SPAWN_MAX_RADIUS,
+  ENEMY_DIRECTOR_SPAWN_MIN_RADIUS,
+  ENEMY_DIRECTOR_SPAWN_MIN_SPACING,
+  ENEMY_DIRECTOR_SPAWN_RAYS,
+  ENEMY_DIRECTOR_SPAWN_VIEW_MARGIN_DEG,
+  ENEMY_DIRECTOR_WAVE_INTERVAL,
+  ENEMY_DIRECTOR_WAVE_SIZE,
+  ENEMY_GLINT_LEAD_TIME,
+  ENEMY_HEIGHT,
+  WORLD_EDGE_RAMP_START,
+  ZONE_EDGE_MARGIN,
+} from './config.ts';
 import { computeStereoPan, enemyGunshotVolume } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
@@ -120,6 +156,55 @@ import { KingOfTheHillController } from './modeControllers/KingOfTheHillControll
 import { GunGameController } from './modeControllers/GunGameController.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
+
+/** The pacing director's own seeded stream (enemy AI v2 step 6), at the offset the design reserved
+ * for it: clear of every other world-seed offset (see EntityManager's COORDINATOR_SEED_OFFSET). It
+ * drives both the director's rolls and where its reinforcements are drawn. */
+const DIRECTOR_SEED_OFFSET = 419;
+/** Reinforcements stay inside the same bound every other spawn keeps (zones, towers, the encounter
+ * ring): short of the world's edge ramp, never on the edge mountain or past the last chunk. */
+const DIRECTOR_SPAWN_MAX_WORLD_RADIUS = WORLD_EDGE_RAMP_START - ZONE_EDGE_MARGIN;
+const DIRECTOR_OPTIONS: DirectorOptions = {
+  intensityPerDamage: ENEMY_DIRECTOR_INTENSITY_PER_DAMAGE,
+  intensityPerKill: ENEMY_DIRECTOR_INTENSITY_PER_KILL,
+  decayPerSecond: ENEMY_DIRECTOR_DECAY_PER_SECOND,
+  peakThreshold: ENEMY_DIRECTOR_PEAK_THRESHOLD,
+  peakMin: ENEMY_DIRECTOR_PEAK_MIN,
+  peakMax: ENEMY_DIRECTOR_PEAK_MAX,
+  fadeExit: ENEMY_DIRECTOR_FADE_EXIT,
+  relaxMin: ENEMY_DIRECTOR_RELAX_MIN,
+  relaxMax: ENEMY_DIRECTOR_RELAX_MAX,
+  maxAlive: ENEMY_DIRECTOR_MAX_ALIVE,
+  waveSize: ENEMY_DIRECTOR_WAVE_SIZE,
+  waveInterval: ENEMY_DIRECTOR_WAVE_INTERVAL,
+  retryDelay: ENEMY_DIRECTOR_RETRY_DELAY,
+  rusherWaveShare: ENEMY_DIRECTOR_RUSHER_WAVE_SHARE,
+  sniperWaveShare: ENEMY_DIRECTOR_SNIPER_WAVE_SHARE,
+};
+const DIRECTOR_SPAWN_OPTIONS: SpawnOptions = {
+  minRadius: ENEMY_DIRECTOR_SPAWN_MIN_RADIUS,
+  maxRadius: ENEMY_DIRECTOR_SPAWN_MAX_RADIUS,
+  behindHalfAngleDeg: ENEMY_DIRECTOR_SPAWN_BEHIND_HALF_ANGLE_DEG,
+  candidates: ENEMY_DIRECTOR_SPAWN_CANDIDATES,
+  rays: ENEMY_DIRECTOR_SPAWN_RAYS,
+  // The sight check aims at an enemy's head: capsule centre above the ground, plus the head offset.
+  headHeight: ENEMY_HEIGHT / 2 + ENEMY_HEAD_OFFSET_Y,
+  minSpacing: ENEMY_DIRECTOR_SPAWN_MIN_SPACING,
+};
+
+/** One reinforcement as getDirectorDebug reports it. */
+interface DirectorSpawnRecord {
+  readonly x: number;
+  readonly z: number;
+  readonly playerX: number;
+  readonly playerZ: number;
+  readonly forwardX: number;
+  readonly forwardZ: number;
+  /** The spawner's verdict: no clear line from the player's eye when it was checked. */
+  readonly hidden: boolean;
+  /** Fresh check once placed: inside the player's view and with a clear line to its real head. */
+  readonly onScreen: boolean;
+}
 const TARGET_RING_BASE_RADIUS = 15;
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
 const RING_SPACING = 2.2;
@@ -139,6 +224,9 @@ export interface MatchConfig {
   /** Single-player only (see PlaySetupModal) - multiplayer's equivalent is gameMode==='gooseHorde'
    * instead (unused/false here for a multiplayer match, same as enemyCount/targetCount's zeros). */
   hordeMode: boolean;
+  /** Single-player only (see PlaySetupModal): the pacing director runs the enemies (enemy AI v2
+   * step 6). Never together with hordeMode; always false for a multiplayer match. */
+  directorMode: boolean;
 }
 
 function waitForNextFrame(): Promise<void> {
@@ -200,6 +288,14 @@ export class Game {
    * (entity count overshooting the configured match size), and returning to the lobby mid-spawn
    * had the surviving loop calling createRigidBody on an already-freed WASM world. */
   private spawnGeneration = 0;
+  /** Enemy AI v2 step 6: the pacing director and its seeded stream, in a Director match only (see
+   * updateDirector); null in every other match. */
+  private readonly director: PacingDirector | null;
+  private readonly directorRng: () => number;
+  /** Player health at the director's last look, so it can tell damage taken per tick. */
+  private directorLastHealth = 0;
+  /** The last wave's reinforcements, for getDirectorDebug. */
+  private directorLastSpawns: DirectorSpawnRecord[] = [];
   /** Damage requested via the debug API, applied inside the next update tick (see installDebugApi). */
   private pendingDebugDamage = 0;
   /** Damage from a network `damageEvent`, applied inside the next update tick rather than
@@ -317,6 +413,7 @@ export class Game {
     private readonly impactMarkers: ImpactMarkers,
     private readonly tracers: Tracers,
     private readonly muzzleFlash: MuzzleFlash,
+    private readonly glintMarkers: GlintMarkers,
     private readonly gooseManager: GooseManager,
     private readonly goldenGooseManager: GoldenGooseManager | null,
     private readonly hordeGooseManager: HordeGooseManager | null,
@@ -363,6 +460,9 @@ export class Game {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
     this.isSpawnBlocked = makeSpawnBlockedCheck(buildings);
+    this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
+    this.director = !multiplayer && matchConfig.directorMode && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
+    this.directorLastHealth = player.currentHealth;
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
@@ -442,6 +542,16 @@ export class Game {
       getSquadDebug: () => this.entityManager.getSquadDebug(),
       placeEnemy: (index, x, z) => this.entityManager.placeEnemy(index, x, z),
       getCoverNear: (x, z, radius) => this.entityManager.getCoverNear(x, z, radius),
+      damageEnemy: (index, amount) => this.entityManager.damageEnemy(index, amount),
+      getDirectorDebug: () =>
+        this.director
+          ? {
+              phase: this.director.phase,
+              intensity: this.director.intensity,
+              totalSpawned: this.director.totalSpawned,
+              lastSpawns: [...this.directorLastSpawns],
+            }
+          : null,
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -598,6 +708,8 @@ export class Game {
     const impactMarkers = new ImpactMarkers(renderer.scene);
     const tracers = new Tracers(renderer.scene);
     const muzzleFlash = new MuzzleFlash(renderer.scene);
+    // The Ridge Walker's long-shot warning (enemy AI v2 step 5).
+    const glintMarkers = new GlintMarkers(renderer.scene);
     const scopeOverlay = new ScopeOverlay(hudRoot);
     const hitMarker = new HitMarker(hudRoot);
     const longShotCallout = new LongShotCallout(hudRoot);
@@ -731,6 +843,26 @@ export class Game {
             computeStereoPan(player.position, player.facingYaw, origin),
           );
         },
+        // Enemy AI v2 step 5: the squad's voiced callout for this tick, and visual cues - both
+        // attenuated and panned like enemy gunshots, so they read as coming from that enemy.
+        onCallout: (event) => {
+          if (event.kind === 'glint' || event.kind === 'staggered') return;
+          const origin = new THREE.Vector3(event.x, event.y, event.z);
+          sound.playCallout(
+            event.kind,
+            enemyGunshotVolume(origin.distanceTo(player.position)),
+            computeStereoPan(player.position, player.facingYaw, origin),
+          );
+        },
+        onCue: (event) => {
+          if (event.kind !== 'glint') return;
+          const origin = new THREE.Vector3(event.x, event.y, event.z);
+          glintMarkers.spawn(origin, ENEMY_GLINT_LEAD_TIME);
+          sound.playGlint(
+            enemyGunshotVolume(origin.distanceTo(player.position)),
+            computeStereoPan(player.position, player.facingYaw, origin),
+          );
+        },
       },
       // Enemies may not pick a spot inside a house or a watch tower - the same check spawns use.
       { obstacles, isBlocked: makeSpawnBlockedCheck(buildings) },
@@ -741,7 +873,8 @@ export class Game {
     // Goose Horde also skips this (single-player's own hordeMode toggle) - the horde flock below
     // is the only thing attacking the player in that mode, not the regular enemy roster.
     if (!multiplayer && !matchConfig.hordeMode) {
-      await Game.spawnEncountersAsync(entityManager, matchConfig.targetCount, matchConfig.enemyCount, (status, spawnRatio) => {
+      const counts = Game.encounterCounts(matchConfig);
+      await Game.spawnEncountersAsync(entityManager, counts.targets, counts.enemies, (status, spawnRatio) => {
         onProgress?.(status, 0.15 + spawnRatio * 0.85);
       });
     }
@@ -1011,6 +1144,7 @@ export class Game {
       impactMarkers,
       tracers,
       muzzleFlash,
+      glintMarkers,
       gooseManager,
       goldenGooseManager,
       hordeGooseManager,
@@ -1304,6 +1438,7 @@ export class Game {
     this.modeExplanationScreen?.dispose();
     this.loadoutScreen?.dispose();
     this.explosionEffect.dispose();
+    this.glintMarkers.dispose();
     this.gooseManager.dispose();
     this.goldenGooseManager?.dispose();
     this.hordeGooseManager?.dispose();
@@ -1370,6 +1505,9 @@ export class Game {
     this.deathHandled = false;
     this.weaponManager.resetAllAmmo();
     this.entityManager.clearAll();
+    this.director?.reset();
+    this.directorLastHealth = this.player.currentHealth;
+    this.directorLastSpawns = [];
     if (this.hordeGooseManager) {
       this.hordeGooseManager.recenter(spawnPoint.x, spawnPoint.y);
       this.hordeGooseManager.resetToWaveOne();
@@ -1377,10 +1515,11 @@ export class Game {
       this.gooseManager.clearAll();
       this.gooseManager.spawnInitialBatch(SPAWN_X, SPAWN_Z);
       const generation = ++this.spawnGeneration;
+      const counts = Game.encounterCounts(this.matchConfig);
       void Game.spawnEncountersAsync(
         this.entityManager,
-        this.matchConfig.targetCount,
-        this.matchConfig.enemyCount,
+        counts.targets,
+        counts.enemies,
         undefined,
         () => this.spawnGeneration !== generation,
       );
@@ -1482,6 +1621,93 @@ export class Game {
     if (count <= 1) return baseRadius;
     const spacingRadius = (count * RING_SPACING) / (Math.PI * 2);
     return Math.max(baseRadius, spacingRadius);
+  }
+
+  /** What a match spawns at the start: its chosen counts, or in a Director match (enemy AI v2 step 6)
+   * just ENEMY_DIRECTOR_INITIAL_COUNT enemies and no targets, the director sending the rest. */
+  private static encounterCounts(config: MatchConfig): { targets: number; enemies: number } {
+    return config.directorMode ? { targets: 0, enemies: ENEMY_DIRECTOR_INITIAL_COUNT } : { targets: config.targetCount, enemies: config.enemyCount };
+  }
+
+  /** Enemy AI v2 step 6: feeds the pacing director this tick's damage taken, close kills and enemy
+   * counts, and brings in any wave it calls for. Runs after the entity update, so a spawn never
+   * changes the entity list mid-loop. */
+  private updateDirector(dt: number): void {
+    const director = this.director;
+    if (!director) return;
+    const health = this.player.currentHealth;
+    const damageTaken = Math.max(0, this.directorLastHealth - health);
+    this.directorLastHealth = health;
+    const position = this.player.position;
+    const nearbyKills = this.entityManager.killsThisTick.filter(
+      (kill) => Math.hypot(kill.x - position.x, kill.z - position.z) <= ENEMY_DIRECTOR_KILL_RADIUS,
+    ).length;
+    const counts = this.entityManager.enemyCounts();
+    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive });
+    if (command.kind === 'spawnWave') director.confirmSpawned(this.spawnDirectorWave(command.count, command.bias));
+  }
+
+  /** Places up to `count` reinforcements behind the player and off their screen, hidden ones first
+   * (see reinforcementSpawner.ts), returning how many it placed. Each is recorded for
+   * getDirectorDebug with a fresh on-screen check against its real head, which guards this wiring;
+   * the spawner's own rules are unit-tested. */
+  private spawnDirectorWave(count: number, bias: WaveBias): number {
+    const player = this.player;
+    const forwardX = -Math.sin(player.facingYaw);
+    const forwardZ = -Math.cos(player.facingYaw);
+    const viewHalfAngleDeg = this.viewHalfAngleDeg();
+    const { points } = pickReinforcementSpawns(
+      {
+        player: { x: player.position.x, z: player.position.z, forwardX, forwardZ },
+        viewHalfAngleDeg,
+        isBlocked: (x, z) => this.isSpawnBlocked(x, z) || Math.hypot(x, z) > DIRECTOR_SPAWN_MAX_WORLD_RADIUS,
+        heightAt: sampleHeight,
+        canPlayerSee: (x, y, z) => this.entityManager.playerCanSee(player, x, y, z),
+        rng: this.directorRng,
+      },
+      count,
+      bias === 'sniper',
+      DIRECTOR_SPAWN_OPTIONS,
+    );
+    this.directorLastSpawns = points.map((point, index) => {
+      const enemy = this.entityManager.spawnEnemy(new THREE.Vector3(point.x, point.y + 1, point.z), Game.waveArchetype(bias, index));
+      // A reinforcement is sent, not scattered: it comes looking for the player, already suspicious,
+      // rather than patrolling behind them unnoticed through a quiet build-up (final review).
+      enemy.dispatchToward(player.position);
+      const head = enemy.mesh.position;
+      const dx = head.x - player.position.x;
+      const dz = head.z - player.position.z;
+      const inView = (dx * forwardX + dz * forwardZ) / Math.hypot(dx, dz) > Math.cos((viewHalfAngleDeg * Math.PI) / 180);
+      const lineClear = this.entityManager.playerCanSee(player, head.x, head.y + ENEMY_HEAD_OFFSET_Y, head.z, enemy.excludeRigidBody);
+      return {
+        x: point.x,
+        z: point.z,
+        playerX: player.position.x,
+        playerZ: player.position.z,
+        forwardX,
+        forwardZ,
+        hidden: point.hidden,
+        onScreen: inView && lineClear,
+      };
+    });
+    return points.length;
+  }
+
+  /** Half the camera's horizontal field of view plus ENEMY_DIRECTOR_SPAWN_VIEW_MARGIN_DEG, in
+   * degrees: the director treats anything inside it as on screen. */
+  private viewHalfAngleDeg(): number {
+    const camera = this.renderer.camera;
+    const halfVertical = (camera.fov * Math.PI) / 360;
+    const halfHorizontal = Math.atan(Math.tan(halfVertical) * camera.aspect);
+    return (halfHorizontal * 180) / Math.PI + ENEMY_DIRECTOR_SPAWN_VIEW_MARGIN_DEG;
+  }
+
+  /** A Rush Job wave is all Rush Jobs and a sniper wave leads with a Ridge Walker (on the highest
+   * hidden ground drawn); anything else is the usual seeded mix. */
+  private static waveArchetype(bias: WaveBias, index: number): EnemyArchetype | undefined {
+    if (bias === 'rusher') return archetypeNamed('Rush Job');
+    if (bias === 'sniper' && index === 0) return archetypeNamed('Ridge Walker');
+    return undefined;
   }
 
   /** Spawns the chosen number of targets/enemies in batches, yielding a frame between batches so
@@ -1651,6 +1877,7 @@ export class Game {
       this.chunkManager.update(this.player.position.x, this.player.position.z);
       sectionStart = this.perfLogger.endSection('world', sectionStart);
       this.entityManager.update(dt, this.player);
+      this.updateDirector(dt);
       this.perfLogger.endSection('ai', sectionStart);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
@@ -1714,6 +1941,7 @@ export class Game {
     this.impactMarkers.update(dt);
     this.tracers.update(dt);
     this.muzzleFlash.update(dt);
+    this.glintMarkers.update(dt);
     this.hitMarker.update(dt);
     this.damageVignette.update(dt);
     this.weaponCaption.update(dt);

@@ -320,15 +320,25 @@ test('pressing T resets ammo, entities, and score to a fresh state', async ({ pa
   await lockPointer(page);
   await equipPistol(page);
 
+  // This is a reset test, not a fight. At roughly 2 FPS it spends far more game time at spawn than
+  // on a real GPU, and a death there releases pointer lock, so T never reaches InputManager. Once a
+  // wandering enemy killed the player between the kill and the T press; since enemy AI v2 the pistol
+  // shots bring the squad looking for the shooter, and at checkpoint D they killed the player while
+  // it was still shooting targets. So the player is invulnerable until it has stepped well clear.
+  await page.evaluate(() => window.__gameDebug?.setPlayerInvulnerable(true));
+
   // Kill one target to move score/entity-count off their initial values; the rounds spent doing so
   // move the pistol's magazine off full as well.
   await killReachableTarget(page);
-  // Then step well clear of the enemy spawn ring, same as the auto-reload test. At roughly 2 FPS this
-  // test spends far more game time at spawn than it does on a real GPU, and in one run a wandering
-  // enemy killed the player between the kill and the T press: death releases pointer lock, a key
-  // pressed while unlocked never reaches InputManager, so T did nothing and the refill wait timed
-  // out. The reset under test puts the player back at spawn regardless.
+  // Then step well clear of the enemy spawn ring, same as the auto-reload test. The reset under test
+  // puts the player back at spawn regardless.
   await page.evaluate(() => window.__gameDebug?.teleport(250, 30, 250));
+  // Real damage once clear, so restoring health stays part of what the reset is checked for.
+  await page.evaluate(() => {
+    window.__gameDebug?.setPlayerInvulnerable(false);
+    window.__gameDebug?.damagePlayer(30);
+  });
+  await page.waitForFunction(() => (window.__gameDebug?.getPlayerHealth() ?? 100) <= 70, undefined, { timeout: SLOW_POLL_TIMEOUT });
   expect(
     await page.evaluate(() => window.__gameDebug?.getPlayerHealth()),
     'the player must still be alive for the T key to reach the game',
@@ -388,9 +398,10 @@ test('firing an empty magazine auto-reloads without pressing R', async ({ page }
 });
 
 test('dying releases pointer lock and Respawn resets the match without leaving it', async ({ page }) => {
-  // killPlayerByEnemy allows up to 90 GAME seconds (a kiting archetype), which is up to about 180 s
-  // in the half-speed sandbox, plus a slow load.
-  test.setTimeout(240000);
+  // killPlayerByEnemy allows up to 90 GAME seconds (a kiting archetype); that deadline is the real
+  // check. This wall-clock budget only has to outlast it: about 180 s in the half-speed sandbox, but
+  // at checkpoint E a loaded machine ran slower still and 240 s ran out first, plus a slow load.
+  test.setTimeout(400000);
   await useLoadout(page, STANDARD_LOADOUT);
   await page.goto('/');
   await waitForGameReady(page);

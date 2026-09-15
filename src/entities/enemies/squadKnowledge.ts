@@ -161,13 +161,22 @@ export class SquadKnowledge {
     this.shots.length = 0;
   }
 
-  /** Indirect evidence replaces the belief only when there is none, when the current one has
-   * decayed below the new evidence's confidence, or when it is older than
-   * ENEMY_KNOWLEDGE_OVERRIDE_AGE. A sighting refreshed every few ticks therefore always wins over
-   * a gunshot, but a stale sighting gives way to fresh evidence. */
+  /** Indirect evidence (a gunshot, a hit, a comrade's death) replaces the belief unless someone
+   * can see the player right now - a live sighting beats any rumour - or the current belief is
+   * itself indirect, at least as confident, and newer than ENEMY_KNOWLEDGE_OVERRIDE_AGE (two
+   * rumours close together: keep the better one). Once nobody sees the player, the newest
+   * evidence wins even over a sighting a second old, because it says where the player is now.
+   * (The first rule rejected any evidence weaker than a sighting under 2 s old; a step 4 check
+   * found a shot fired just after being seen was ignored, so a spent search never restarted.) */
   private offer(position: THREE.Vector3, source: KnowledgeSource, confidence: number): void {
+    if (this.visibleBy.size > 0) return;
     const current = this.stored;
-    if (current && this.confidenceOf(current) >= confidence && this.clock - current.at <= ENEMY_KNOWLEDGE_OVERRIDE_AGE) {
+    if (
+      current &&
+      current.source !== 'seen' &&
+      this.confidenceOf(current) >= confidence &&
+      this.clock - current.at <= ENEMY_KNOWLEDGE_OVERRIDE_AGE
+    ) {
       return;
     }
     this.setBelief(position, source, confidence);

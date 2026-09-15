@@ -27,7 +27,7 @@ async function startSoloMatch(page: Page, enemyCount: number): Promise<void> {
   await counts.nth(0).fill(String(enemyCount));
   await counts.nth(1).fill('0');
   await page.getByRole('button', { name: 'Start Match', exact: true }).click();
-  await page.waitForFunction(() => window.__gameDebug !== undefined, { timeout: 60000 });
+  await page.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 60000 });
   await lockPointer(page);
   await page.evaluate(() => window.__gameDebug?.setPlayerInvulnerable(true));
 }
@@ -102,7 +102,9 @@ test('an enemy facing the player fills its awareness and engages', async ({ page
 });
 
 test('a player standing behind an enemy stays unnoticed', async ({ page }) => {
-  test.setTimeout(180000);
+  // Twelve attempts, most voided by patrol turns in a bad run, need more than the 180 s that six
+  // did: at checkpoint E the doubled attempts ran out of it. The check itself is in game seconds.
+  test.setTimeout(360000);
   await startSoloMatch(page, 1);
   // Open ground: the enemy goes to the clearing around the player's spawn, where there are no trees
   // for its whiskers to swerve round, so its heading holds; the player waits 40 m away. Among trees
@@ -113,26 +115,29 @@ test('a player standing behind an enemy stays unnoticed', async ({ page }) => {
   await waitForGameTime(page, 1);
 
   // Only attempts where the enemy kept its heading count: a patrol that turns round mid-check is
-  // allowed to notice the player.
+  // allowed to notice the player. Twelve attempts, not six: at checkpoint E all six caught the
+  // patrol mid-turn, so each attempt's largest turn is reported if none counts.
   let checked = false;
-  for (let attempt = 0; attempt < 6 && !checked; attempt++) {
+  const turnsInDegrees: number[] = [];
+  for (let attempt = 0; attempt < 12 && !checked; attempt++) {
     const [enemy] = await readEnemies(page);
     if (!enemy) throw new Error('expected one live enemy');
     await standRelativeToFacing(page, enemy, -8);
     let maxAwareness = 0;
-    let turned = false;
+    let maxTurn = 0;
     for (let sample = 0; sample < 5; sample++) {
       await waitForGameTime(page, 0.25);
       const now = (await readEnemies(page)).find((record) => record.index === enemy.index);
       if (!now) break;
-      if (Math.abs(Math.atan2(Math.sin(now.yaw - enemy.yaw), Math.cos(now.yaw - enemy.yaw))) > Math.PI / 3) turned = true;
+      maxTurn = Math.max(maxTurn, Math.abs(Math.atan2(Math.sin(now.yaw - enemy.yaw), Math.cos(now.yaw - enemy.yaw))));
       maxAwareness = Math.max(maxAwareness, now.awareness);
     }
-    if (turned) continue;
+    turnsInDegrees.push(Math.round((maxTurn * 180) / Math.PI));
+    if (maxTurn > Math.PI / 3) continue;
     checked = true;
     expect(maxAwareness).toBe(0);
   }
-  expect(checked, 'at least one attempt with the enemy keeping its heading').toBe(true);
+  expect(checked, `at least one attempt with the enemy keeping its heading (largest turn per attempt, degrees: ${turnsInDegrees.join(', ')})`).toBe(true);
 });
 
 test('a sighting is shared with a comrade too far away to see the player', async ({ page }) => {
@@ -207,11 +212,14 @@ test('the coordinator never lets more than two shoot at once and sends one round
   const bearingFromPlayer = (enemy: EnemyRecord): number => Math.atan2(enemy.x - player.x, enemy.z - player.z);
   const angleChange = (a: number, b: number): number => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 
+  // Each flank stint is measured from where that enemy stood when it took the role, and only while
+  // it holds it. The role rotates (a flank has a time limit, then a cooldown), and an earlier
+  // version followed only the first flanker, even after it stopped flanking, so it scored one
+  // short stint (one checkpoint D run read 16 degrees).
   let maxShooters = 0;
   let sawChase = false;
-  let flankerIndex: number | null = null;
-  let flankerStartBearing = 0;
-  let flankerMaxTurn = 0;
+  const openStints = new Map<number, { startBearing: number; maxTurn: number }>();
+  const stintTurns: number[] = [];
   const timeline: string[] = [];
   for (let sample = 0; sample < 40; sample++) {
     await waitForGameTime(page, 0.5);
@@ -221,20 +229,25 @@ test('the coordinator never lets more than two shoot at once and sends one round
     const shooters = enemies.filter((enemy) => enemy.role === 'shooter').length;
     maxShooters = Math.max(maxShooters, shooters);
     if (enemies.some((enemy) => enemy.state === 'chase')) sawChase = true;
-    const flanker = enemies.find((enemy) => enemy.role === 'flanker');
-    if (flankerIndex === null && flanker) {
-      flankerIndex = flanker.index;
-      flankerStartBearing = bearingFromPlayer(flanker);
+    for (const enemy of enemies) {
+      const stint = openStints.get(enemy.index);
+      if (enemy.role === 'flanker') {
+        if (stint) stint.maxTurn = Math.max(stint.maxTurn, angleChange(bearingFromPlayer(enemy), stint.startBearing));
+        else openStints.set(enemy.index, { startBearing: bearingFromPlayer(enemy), maxTurn: 0 });
+      } else if (stint) {
+        stintTurns.push(stint.maxTurn);
+        openStints.delete(enemy.index);
+      }
     }
-    const tracked = enemies.find((enemy) => enemy.index === flankerIndex);
-    if (tracked) flankerMaxTurn = Math.max(flankerMaxTurn, angleChange(bearingFromPlayer(tracked), flankerStartBearing));
   }
+  for (const stint of openStints.values()) stintTurns.push(stint.maxTurn);
+  const turnsInDegrees = stintTurns.map((turn) => Math.round((turn * 180) / Math.PI));
 
   const story = `\n${timeline.slice(-12).join('\n')}`;
   expect(sawChase, `the enemies should engage after the shot${story}`).toBe(true);
   expect(maxShooters, `at most two shooter tokens at any sample${story}`).toBeLessThanOrEqual(2);
-  expect(flankerIndex, `one enemy should be sent to flank${story}`).not.toBeNull();
-  expect((flankerMaxTurn * 180) / Math.PI, `the flanker should work round the player${story}`).toBeGreaterThanOrEqual(20);
+  expect(stintTurns.length, `one enemy should be sent to flank${story}`).toBeGreaterThan(0);
+  expect(Math.max(...turnsInDegrees), `a flanker should work round the player (degrees per stint: ${turnsInDegrees.join(', ')})${story}`).toBeGreaterThanOrEqual(20);
 });
 
 /** One compact line per sample for failure messages: each enemy as state/role/spot, e.g.
@@ -266,7 +279,9 @@ async function findWoods(page: Page, minTrunks: number): Promise<{ x: number; y:
 }
 
 test('enemies in a wood pick covered spots behind the trees and fight from them', async ({ page }) => {
-  test.setTimeout(300000);
+  // The check itself is timed in game seconds; this wall-clock budget only has to outlast them. At
+  // checkpoint E a loaded machine ran the game slow enough that 300 s ran out mid-sampling.
+  test.setTimeout(480000);
   await startSoloMatch(page, 6);
   const spot = await findWoods(page, 8);
   expect(spot, 'a wooded spot should load within 130 m of spawn').not.toBeNull();
@@ -310,12 +325,163 @@ test('enemies in a wood pick covered spots behind the trees and fight from them'
   expect(maxShooters, `still never more than two shooters${story}`).toBeLessThanOrEqual(2);
 });
 
+test('after a shot from hiding, searchers split up and sweep the likeliest ground', async ({ page }) => {
+  test.setTimeout(240000);
+  await startSoloMatch(page, 4);
+
+  // Four enemies 22 to 28 m east of the player: close enough to hear a rifle (40 m), too far to see
+  // the player (detection is at most 20 m). Placed straight away - a first version waited a second
+  // first, and a patrolling enemy spotted the player before the shot, a different scenario. The
+  // player fires, then slips 30 m west before anyone arrives, so the squad has only the shot.
+  const player = await playerPosition(page);
+  for (let index = 0; index < 4; index++) {
+    await page.evaluate(
+      ({ index, x, z }) => window.__gameDebug?.placeEnemy(index, x, z),
+      { index, x: player.x + 22 + index * 2, z: player.z + (index - 1.5) * 4 },
+    );
+  }
+  await fireIntoAir(page);
+  const shotClock = (await page.evaluate(() => window.__gameDebug?.getSquadDebug()))?.clock ?? 0;
+  await page.evaluate(({ x, y, z }) => window.__gameDebug?.teleport(x - 30, y + 1, z), player);
+
+  // Timed on the squad clock (game time): each debug call lets the slow sandbox run on, so the
+  // test's own waits undercount game time several times over.
+  let sawSearch = false;
+  let sawGrid = false;
+  let lowestTotal = 1;
+  let mostDistinctTargets = 0;
+  let searchingAtEightSeconds: number | null = null;
+  const timeline: string[] = [];
+  for (let sample = 0; sample < 40; sample++) {
+    await waitForGameTime(page, 0.5);
+    const enemies = await readEnemies(page);
+    const squad = await page.evaluate(() => window.__gameDebug?.getSquadDebug());
+    const sinceShot = (squad?.clock ?? shotClock) - shotClock;
+    if (enemies.some((enemy) => enemy.state === 'search')) sawSearch = true;
+    if (squad?.searchGrid) {
+      sawGrid = true;
+      lowestTotal = Math.min(lowestTotal, squad.searchGrid.total);
+    }
+    const targets = new Set(
+      enemies
+        .filter((enemy) => enemy.state === 'search' && enemy.searchTarget)
+        .map((enemy) => `${Math.round(enemy.searchTarget!.x)},${Math.round(enemy.searchTarget!.z)}`),
+    );
+    mostDistinctTargets = Math.max(mostDistinctTargets, targets.size);
+    if (searchingAtEightSeconds === null && sinceShot >= 8) {
+      searchingAtEightSeconds = enemies.filter((enemy) => enemy.state === 'search').length;
+    }
+    const grid = squad?.searchGrid ? `[grid ${squad.searchGrid.total.toFixed(2)} age ${squad.searchGrid.age.toFixed(1)}]` : '[no grid]';
+    const belief = squad?.belief ? `belief ${squad.belief.source} age ${squad.belief.age.toFixed(1)}` : 'no belief';
+    // Samples land seconds of game time apart here, so the grid's own record says what happened
+    // between them: how many were built and why the last one ended.
+    const end = squad?.lastSearchEnd;
+    const lifecycle = `built ${squad?.searchGridsBuilt ?? 0}${end ? `, last ended ${end.reason} at ${end.age.toFixed(1)}s with ${end.total.toFixed(2)} left` : ''}`;
+    timeline.push(`+${sinceShot.toFixed(1)}s ${grid} (${lifecycle}) ${belief} | ${enemies.map((enemy) => enemy.state).join(' ')}`);
+    if (sinceShot > 16) break;
+  }
+
+  // The whole run, not just the tail: a search that never starts or ends early is only visible at
+  // the beginning.
+  const story = `\n${timeline.join('\n')}`;
+  expect(sawSearch, `the shot should send the enemies searching${story}`).toBe(true);
+  expect(sawGrid, `the squad should start a search grid around the shot${story}`).toBe(true);
+  expect(mostDistinctTargets, `searchers should be sent to at least two different cells${story}`).toBeGreaterThanOrEqual(2);
+  expect(lowestTotal, `searchers should clear some of the likely ground${story}`).toBeLessThan(0.95);
+  expect(searchingAtEightSeconds ?? 0, `still searching 8 s after the shot, past the old 6 s stand${story}`).toBeGreaterThanOrEqual(1);
+});
+
+async function squadDebug(page: Page) {
+  const squad = await page.evaluate(() => window.__gameDebug?.getSquadDebug());
+  if (!squad) throw new Error('no squad debug');
+  return squad;
+}
+
+test('enemies call out what they are doing, rationed like a squad', async ({ page }) => {
+  test.setTimeout(240000);
+  await startSoloMatch(page, 4);
+  const player = await playerPosition(page);
+  // Four enemies on a 10 m ring, then a shot: they come, see the player, and call it.
+  for (let index = 0; index < 4; index++) {
+    const angle = (index * 90 * Math.PI) / 180;
+    await page.evaluate(
+      ({ index, x, z }) => window.__gameDebug?.placeEnemy(index, x, z),
+      { index, x: player.x + Math.sin(angle) * 10, z: player.z + Math.cos(angle) * 10 },
+    );
+  }
+  await fireIntoAir(page);
+  const start = (await squadDebug(page)).clock;
+  let squad = await squadDebug(page);
+  while (squad.clock - start < 15) {
+    await waitForGameTime(page, 0.5);
+    squad = await squadDebug(page);
+  }
+  const voiced = (squad.callouts.spotted ?? 0) + (squad.callouts.flanking ?? 0) + (squad.callouts.lostThem ?? 0);
+  const span = squad.clock - start;
+  const summary = JSON.stringify({ callouts: squad.callouts, span });
+  expect(squad.callouts.spotted ?? 0, `someone should call out spotting the player: ${summary}`).toBeGreaterThanOrEqual(1);
+  // Never more often than the global cooldown allows (1.2 s apart), so never a chorus.
+  expect(voiced, `callouts stay rationed: ${summary}`).toBeLessThanOrEqual(Math.ceil(span / 1.2) + 1);
+});
+
+test('a heavy hit staggers an enemy, a light one does not', async ({ page }) => {
+  test.setTimeout(180000);
+  await startSoloMatch(page, 1);
+  await waitForGameTime(page, 1);
+  // Light hit first (10) then heavy (26, over the 25 threshold): even the 40 HP Ridge Walker lives.
+  await page.evaluate(() => window.__gameDebug?.damageEnemy(0, 10));
+  await waitForGameTime(page, 0.3);
+  expect((await squadDebug(page)).callouts.staggered ?? 0, 'a light hit does not stagger').toBe(0);
+  await page.evaluate(() => window.__gameDebug?.damageEnemy(0, 26));
+  await waitForGameTime(page, 0.3);
+  expect((await squadDebug(page)).callouts.staggered ?? 0, 'a heavy hit staggers').toBe(1);
+  const [enemy] = await readEnemies(page);
+  expect(enemy, 'the enemy survives both hits').toBeDefined();
+});
+
+test('a Ridge Walker lining up a long shot shows a glint first', async ({ page }) => {
+  test.setTimeout(360000);
+  // Re-roll until the squad has a Ridge Walker (20 percent of spawns).
+  let sniper: EnemyRecord | undefined;
+  for (let attempt = 0; attempt < 6 && !sniper; attempt++) {
+    await startSoloMatch(page, 5);
+    sniper = (await readEnemies(page)).find((enemy) => enemy.archetype === 'Ridge Walker');
+  }
+  expect(sniper, 'a match with a Ridge Walker').toBeDefined();
+
+  // The Ridge Walker 18 m out (over the 15 m telegraph distance, inside its 20 m detection); every
+  // other enemy far off, so it gets a shooter token of its own.
+  const player = await playerPosition(page);
+  const enemies = await readEnemies(page);
+  for (const enemy of enemies) {
+    const far = enemy.index === sniper!.index ? 18 : 80;
+    const angle = enemy.index === sniper!.index ? 0 : ((enemy.index * 70 + 90) * Math.PI) / 180;
+    await page.evaluate(
+      ({ index, x, z }) => window.__gameDebug?.placeEnemy(index, x, z),
+      { index: enemy.index, x: player.x + Math.sin(angle) * far, z: player.z + Math.cos(angle) * far },
+    );
+  }
+  await fireIntoAir(page);
+  const start = (await squadDebug(page)).clock;
+  let squad = await squadDebug(page);
+  // Two glints, not one: the telegraph must re-arm for each long shot. Its first version glinted
+  // before a Ridge Walker's first shot only (found by the final review), and a check that stopped
+  // at one glint could not see that.
+  while (squad.clock - start < 25 && (squad.callouts.glint ?? 0) < 2) {
+    await waitForGameTime(page, 0.5);
+    squad = await squadDebug(page);
+  }
+  expect(squad.callouts.glint ?? 0, `the Ridge Walker should glint before each long shot: ${JSON.stringify(squad.callouts)}`).toBeGreaterThanOrEqual(2);
+});
+
 test('a rifle shot carries farther than a pistol shot', async ({ page }) => {
   test.setTimeout(180000);
   await startSoloMatch(page, 2);
   await equipPistol(page);
 
-  // Pistol (heard to 30 m): an enemy 36 m away must not react.
+  // Pistol (heard to 30 m): an enemy 36 m away must not react. placeEnemy re-homes it there: before
+  // it did, the enemy could walk back toward its spawn near the player and see them, which read as
+  // "heard the pistol" (the intermittent failure from checkpoint C to E, solved by its own dump).
   const player = await playerPosition(page);
   await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(0, x + 36, z), player);
   await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(1, x, z - 70), player);
@@ -336,7 +502,7 @@ test('a rifle shot carries farther than a pistol shot', async ({ page }) => {
 
   // Rifle (heard to 40 m): an enemy 34 m away must react.
   await page.keyboard.press('Digit1');
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() !== 'Kestrel P9', { timeout: 5000 });
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() !== 'Kestrel P9', undefined, { timeout: 5000 });
   await waitForGameTime(page, 0.5);
   await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(1, x, z + 34), player);
   await waitForGameTime(page, 0.3);

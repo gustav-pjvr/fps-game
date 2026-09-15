@@ -25,7 +25,10 @@ export async function lockPointer(page: Page): Promise<void> {
     }
     await page.waitForTimeout(100);
   }
-  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, { timeout: 5000 });
+  // The options are waitForFunction's third argument: passed second (as this was until enemy AI v2
+  // checkpoint E) they became the page function's argument, the 5 s limit never applied, and a lock
+  // that never came waited out the whole test.
+  await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, undefined, { timeout: 5000 });
 }
 
 /** Switches to the Kestrel P9 pistol (slot 2 of the default rifle/pistol/knife loadout, v3.8.0) and
@@ -146,6 +149,15 @@ export async function killPlayerByEnemy(page: Page): Promise<void> {
   // KILL_PLAYER_GAME_SECONDS is the original 90 s budget as it plays on real hardware.
   await startGameClock(page);
 
+  // A straight sprint has no way round a tree or rock on its line: one enemy AI v2 checkpoint D run
+  // spent its whole budget 23 m from the enemy it was sprinting at, every enemy idle and unaware.
+  // So three steps without moving trigger a sideways step (alternating sides), and pointer lock is
+  // re-taken if it was lost, since keys pressed while unlocked never reach the game.
+  let lastPosition: { x: number; z: number } | null = null;
+  let stepsWithoutMoving = 0;
+  let strafeLeft = true;
+  let strafes = 0;
+
   while (true) {
     const health = await page.evaluate(() => window.__gameDebug?.getPlayerHealth());
     if ((health ?? 100) <= 0) return;
@@ -154,10 +166,24 @@ export async function killPlayerByEnemy(page: Page): Promise<void> {
       // carries its own snapshot: every enemy's state, role and awareness, and the squad's belief.
       const snapshot = await page.evaluate(() => ({
         player: window.__gameDebug?.getPlayerPosition(),
+        pointerLocked: window.__gameDebug?.isPointerLocked(),
         enemies: window.__gameDebug?.getLiveEnemyDebug(),
         squad: window.__gameDebug?.getSquadDebug(),
       }));
-      throw new Error(`killPlayerByEnemy timed out without the player dying (health ${health}): ${JSON.stringify(snapshot)}`);
+      throw new Error(
+        `killPlayerByEnemy timed out without the player dying (health ${health}, ${strafes} strafes round obstacles): ${JSON.stringify(snapshot)}`,
+      );
+    }
+    if (!(await page.evaluate(() => window.__gameDebug?.isPointerLocked() === true))) {
+      // Death releases pointer lock too, and death is what this loop is waiting for, so this never
+      // waits for the lock itself: it clicks Resume if the pause menu is up and goes back round,
+      // where the health check catches a death. The first version called lockPointer here, which
+      // waited on a death screen for a lock that could not come until the test timed out
+      // (checkpoint E).
+      const resume = page.getByRole('button', { name: 'Resume', exact: true });
+      if (await resume.isVisible().catch(() => false)) await resume.click();
+      await page.waitForTimeout(300);
+      continue;
     }
 
     // Re-found each iteration (cheap) so a mid-fight entity-list change can't leave a stale index.
@@ -169,10 +195,21 @@ export async function killPlayerByEnemy(page: Page): Promise<void> {
     const dx = enemyPos.x - playerPos.x;
     const dz = enemyPos.z - playerPos.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
+    const moved = lastPosition ? Math.hypot(playerPos.x - lastPosition.x, playerPos.z - lastPosition.z) : Infinity;
+    lastPosition = { x: playerPos.x, z: playerPos.z };
+    stepsWithoutMoving = distance > 2.5 && moved < 0.3 ? stepsWithoutMoving + 1 : 0;
 
     await page.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), enemyPos);
 
-    if (distance > 2.5) {
+    if (distance > 2.5 && stepsWithoutMoving >= 3) {
+      const side = strafeLeft ? 'KeyA' : 'KeyD';
+      strafeLeft = !strafeLeft;
+      stepsWithoutMoving = 0;
+      strafes++;
+      await page.keyboard.down(side);
+      await page.waitForTimeout(500);
+      await page.keyboard.up(side);
+    } else if (distance > 2.5) {
       // Sprinting is safe here specifically because this loop re-aims and re-issues a short
       // (<=400ms) burst every iteration rather than holding one heading for a long stretch - the
       // "blows straight past" failure mode from the comment above only bites a single long,

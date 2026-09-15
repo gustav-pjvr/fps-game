@@ -147,3 +147,11 @@ export function createArchetypePicker(seed: number): () => EnemyArchetype {
     return ENEMY_ARCHETYPES[ENEMY_ARCHETYPES.length - 1]!;
   };
 }
+
+/** The archetype with this name: the pacing director (enemy AI v2 step 6) asks for Rush Jobs and
+ * Ridge Walkers by name. */
+export function archetypeNamed(name: string): EnemyArchetype {
+  const archetype = ENEMY_ARCHETYPES.find((candidate) => candidate.name === name);
+  if (!archetype) throw new Error(`No enemy archetype named "${name}"`);
+  return archetype;
+}

@@ -9,6 +9,9 @@ export interface MatchSetupConfig {
    * enemyCount/targetCount are ignored (no regular AI encounters spawn) and a HordeGooseManager
    * runs instead, see Game.ts's create(). */
   hordeMode: boolean;
+  /** Enemy AI v2 step 6: the pacing director runs the enemies (see Game.ts's director), so
+   * enemyCount/targetCount are ignored here too. Never together with hordeMode. */
+  directorMode: boolean;
 }
 
 /** Shown after clicking Play: lets the player choose how many enemies/targets spawn this match,
@@ -21,6 +24,7 @@ export class PlaySetupModal {
   private readonly targetInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly hordeModeCheckbox: HTMLInputElement;
+  private readonly directorModeCheckbox: HTMLInputElement;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
@@ -41,15 +45,19 @@ export class PlaySetupModal {
     this.targetInput = this.buildCountRow(panel, 'Targets', defaults.targetCount, maxCount);
     this.gooseDifficultySelect = this.buildDifficultyRow(panel, defaults.gooseDifficulty);
 
-    const hordeRow = document.createElement('label');
-    hordeRow.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer; margin-bottom:8px;';
-    this.hordeModeCheckbox = document.createElement('input');
-    this.hordeModeCheckbox.type = 'checkbox';
-    this.hordeModeCheckbox.checked = defaults.hordeMode;
-    const hordeText = document.createElement('span');
-    hordeText.textContent = 'Goose Horde (10-wave survival, ignores enemy/target counts above)';
-    hordeRow.append(this.hordeModeCheckbox, hordeText);
-    panel.appendChild(hordeRow);
+    this.hordeModeCheckbox = this.buildCheckboxRow(panel, 'Goose Horde (10-wave survival, ignores enemy/target counts above)', defaults.hordeMode);
+    this.directorModeCheckbox = this.buildCheckboxRow(
+      panel,
+      'Director (enemies arrive in waves paced to the fight, ignores enemy/target counts above)',
+      defaults.directorMode,
+    );
+    // Two different ways to run the match, so at most one of them.
+    this.hordeModeCheckbox.addEventListener('change', () => {
+      if (this.hordeModeCheckbox.checked) this.directorModeCheckbox.checked = false;
+    });
+    this.directorModeCheckbox.addEventListener('change', () => {
+      if (this.directorModeCheckbox.checked) this.hordeModeCheckbox.checked = false;
+    });
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';
@@ -64,6 +72,7 @@ export class PlaySetupModal {
         targetCount: this.clampInput(this.targetInput, maxCount),
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         hordeMode: this.hordeModeCheckbox.checked,
+        directorMode: this.directorModeCheckbox.checked,
       });
     });
 
@@ -86,6 +95,19 @@ export class PlaySetupModal {
       }
     };
     document.addEventListener('keydown', this.onKeyDown);
+  }
+
+  private buildCheckboxRow(panel: HTMLDivElement, text: string, checked: boolean): HTMLInputElement {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer; margin-bottom:8px;';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = checked;
+    const label = document.createElement('span');
+    label.textContent = text;
+    row.append(checkbox, label);
+    panel.appendChild(row);
+    return checkbox;
   }
 
   private buildDifficultyRow(panel: HTMLDivElement, defaultValue: GooseExplosionDifficulty): HTMLSelectElement {

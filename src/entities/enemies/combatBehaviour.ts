@@ -17,6 +17,8 @@ import type { CombatCoordinator, CombatRole } from './combatCoordinator.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import type { PlanarPoint } from './perception.ts';
 import { StuckDetector } from './stuckDetector.ts';
+import { GlintTelegraph, StaggerState } from './readability.ts';
+import type { IntentKind, IntentSink } from './calloutDirector.ts';
 import { findPick, revalidatePick, type PickPlan, type TacticalContext } from './tactics/planner.ts';
 import type { CoverSource } from './tactics/coverPoints.ts';
 import type { TacticalPick } from './tactics/tacticalQuery.ts';
@@ -28,10 +30,15 @@ import {
   ENEMY_FLANK_RADIUS_FRACTION,
   ENEMY_FLANK_RADIUS_MAX,
   ENEMY_FLANK_RADIUS_MIN,
+  ENEMY_GLINT_LEAD_TIME,
+  ENEMY_GLINT_MIN_DISTANCE,
   ENEMY_PEEK_EXPOSE_TIME,
   ENEMY_PEEK_HIDE_TIME,
   ENEMY_PEEK_STEP_TOLERANCE,
+  ENEMY_STAGGER_DAMAGE_THRESHOLD,
+  ENEMY_STAGGER_DURATION,
   ENEMY_TACTICAL_ARRIVE_DISTANCE,
+  ENEMY_TACTICAL_BAND_NEAR_FRACTION,
   ENEMY_TACTICAL_AVOID_TIME,
   ENEMY_TACTICAL_PICK_TTL,
   ENEMY_TACTICAL_UNREACHABLE_GRACE,
@@ -97,12 +104,18 @@ export class CombatBehaviour {
   private active: ActivePick | null = null;
   private avoided: AvoidedSpot[] = [];
   private readonly stuck: StuckDetector;
+  /** Step 5: the long-shot glint and the heavy-hit stagger (readability.ts). */
+  private readonly glint = new GlintTelegraph();
+  private readonly stagger = new StaggerState(ENEMY_STAGGER_DAMAGE_THRESHOLD, ENEMY_STAGGER_DURATION);
+  /** Last tick's role, so becoming a flanker is announced once, not every tick. */
+  private lastRole: CombatRole | null = null;
 
   constructor(
     private readonly body: EnemyBody,
     private readonly physics: PhysicsWorld,
     private readonly coordinator: CombatCoordinator,
     private readonly knowledge: SquadKnowledge,
+    private readonly intents: IntentSink,
     private readonly hooks: EnemyCombatHooks,
     private readonly rng: () => number,
     spawnPosition: EnemyPosition,
@@ -145,6 +158,28 @@ export class CombatBehaviour {
 
   tickCooldowns(dt: number): void {
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
+    this.stagger.update(dt);
+  }
+
+  /** Knocked off balance by a heavy hit (step 5): neither moves nor fires until it recovers. */
+  get isStaggered(): boolean {
+    return this.stagger.active;
+  }
+
+  /** 0 to 1, how far off balance - the shell tips the model back by this much. */
+  get staggerLurch(): number {
+    return this.stagger.lurch;
+  }
+
+  /** A hit landed (any state). A heavy one staggers: the aim resets, the next burst starts fresh, and
+   * the stagger is shown. Returns whether it staggered. */
+  onHeavyHit(amount: number): boolean {
+    if (!this.stagger.onHit(amount)) return false;
+    dropFiringToken(this.combat);
+    this.combat.aimHoldTimer = 0;
+    this.glint.reset();
+    this.announce('staggered');
+    return true;
   }
 
   /** "Flinch" (phase B): a hit while engaged resets the aim-settle timer. */
@@ -157,6 +192,8 @@ export class CombatBehaviour {
     dropFiringToken(this.combat);
     this.isKiting = false;
     this.active = null;
+    this.lastRole = null;
+    this.glint.reset();
   }
 
   dispose(): void {
@@ -187,6 +224,11 @@ export class CombatBehaviour {
     const now = context.now;
     this.avoided = this.avoided.filter((spot) => spot.until > now);
     const current = this.body.position;
+    // Too close for any spot the picker offers: it fights where it stands (see update).
+    if (this.isInsideBand(horizontalDistance(current, context.threat))) {
+      this.active = null;
+      return 0;
+    }
     const plan: PickPlan = {
       from: { x: current.x, z: current.z },
       threat: context.threat,
@@ -260,11 +302,20 @@ export class CombatBehaviour {
     }
 
     const role = this.role;
+    if (role === 'flanker' && this.lastRole !== 'flanker') this.announce('flanking');
+    this.lastRole = role;
     if (role === 'flanker') {
       this.active = null;
       this.updateFlank(dt, player, current);
       return;
     }
+
+    // Inside the near edge of its fighting band with the player in sight, cover is the wrong move:
+    // every spot the picker offers is farther out, so a gunner would keep walking away instead of
+    // shooting. It drops the spot and stands and fights (the branch below). An A/B at checkpoint E
+    // found this: Stragglers took 75 and 124 game seconds to kill a player who walked up to them,
+    // against 15 to 23 on v3.9.4.
+    if (hasLineOfSight && this.isInsideBand(distanceToPlayer)) this.active = null;
 
     if (this.active && (role === 'shooter' || role === 'reserve')) {
       this.updateFromPick(dt, player, current, distanceToPlayer, hasLineOfSight, role, now);
@@ -284,6 +335,12 @@ export class CombatBehaviour {
       // through trunks.
       this.body.moveToward(player.position.x, player.position.z, archetype.moveSpeed, dt);
     }
+  }
+
+  /** Closer to the player than the near edge of this enemy's fighting band, where no cover spot is
+   * offered (the planner's ENEMY_TACTICAL_BAND_NEAR_FRACTION of its ranged range). */
+  private isInsideBand(distanceToThreat: number): boolean {
+    return distanceToThreat < this.body.archetype.rangedRange * ENEMY_TACTICAL_BAND_NEAR_FRACTION;
   }
 
   private updateFromPick(
@@ -365,13 +422,34 @@ export class CombatBehaviour {
     this.active = null;
   }
 
-  /** Fires on the shooter token only, with a sightline, inside ranged range. */
+  /** Fires on the shooter token only, with a sightline, inside ranged range. A kiter's long shot
+   * (ENEMY_GLINT_MIN_DISTANCE or more) is telegraphed: before the first shot of each burst it shows
+   * a glint and holds that shot for ENEMY_GLINT_LEAD_TIME (step 5). */
   private fire(dt: number, player: Player, current: EnemyPosition, distanceToPlayer: number, hasLineOfSight: boolean, isStationary: boolean): void {
     const archetype = this.body.archetype;
     const canShoot = this.role === 'shooter' && hasLineOfSight && distanceToPlayer <= archetype.rangedRange;
-    stepRangedFiring(this.combat, dt, isStationary, archetype, canShoot, () =>
-      fireRangedShot(this.combat, this.physics, headOf(current), player, archetype, this.body.excludeRigidBody, this.hooks),
-    );
+    if (canShoot) {
+      const telegraphed = archetype.movementStyle === 'kite' && distanceToPlayer >= ENEMY_GLINT_MIN_DISTANCE;
+      const gate = this.glint.beforeFiring(telegraphed, this.combat.burstShotsFired, this.combat.burstCooldown, ENEMY_GLINT_LEAD_TIME);
+      if (gate.showGlint) {
+        this.combat.burstCooldown = Math.max(this.combat.burstCooldown, gate.holdCooldown);
+        this.announce('glint');
+      }
+    } else {
+      this.glint.reset();
+    }
+    let fired = false;
+    stepRangedFiring(this.combat, dt, isStationary, archetype, canShoot, () => {
+      fired = true;
+      fireRangedShot(this.combat, this.physics, headOf(current), player, archetype, this.body.excludeRigidBody, this.hooks);
+    });
+    // A shot that ended its burst (the counter wrapped back to 0) readies the next burst's glint.
+    if (fired && this.combat.burstShotsFired === 0) this.glint.onBurstEnded();
+  }
+
+  private announce(kind: IntentKind): void {
+    const position = this.body.position;
+    this.intents.emit({ kind, enemyId: this.body.id, x: position.x, y: position.y + ENEMY_HEAD_OFFSET_Y, z: position.z });
   }
 
   /** The flanker's move (step 2): to a point ninety degrees round from the squad's front (the

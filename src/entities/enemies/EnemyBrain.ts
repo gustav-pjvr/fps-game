@@ -8,6 +8,7 @@ import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoord
 import { CombatBehaviour, type PickDebug } from './combatBehaviour.ts';
 import { awarenessLevel, hearingRangeFor, isInViewCone, stepAwareness, visibilityFactor, type PlanarPoint } from './perception.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
+import type { IntentKind, IntentSink } from './calloutDirector.ts';
 import { StuckDetector } from './stuckDetector.ts';
 import type { TacticalContext } from './tactics/planner.ts';
 import {
@@ -38,6 +39,10 @@ export interface EnemyBrainDebug {
   readonly role: CombatRole | null;
   /** The spot it is fighting from, if any (step 3). */
   readonly pick: PickDebug | null;
+  /** The search-grid cell it has been sent to, while searching (step 4). */
+  readonly searchTarget: PlanarPoint | null;
+  /** Knocked off balance by a heavy hit right now (step 5). */
+  readonly staggered: boolean;
 }
 
 function headOf(position: EnemyPosition): THREE.Vector3 {
@@ -78,6 +83,8 @@ export class EnemyBrain {
   private readonly patrolStuck: StuckDetector;
   private searchTimer = 0;
   private readonly searchDestination: THREE.Vector3;
+  /** The squad search grid's latest cell for this enemy (step 4), or null for a plain search. */
+  private searchTarget: PlanarPoint | null = null;
   /** Where this enemy itself last had the player in sight - what an 'alert' enemy stares at. */
   private readonly lastSeenPosition: THREE.Vector3;
   /** Throttled (ENEMY_LOS_CHECK_INTERVAL), not recomputed every frame - a raycast per enemy per
@@ -99,6 +106,7 @@ export class EnemyBrain {
     private readonly physics: PhysicsWorld,
     private readonly coordinator: CombatCoordinator,
     private readonly knowledge: SquadKnowledge,
+    private readonly intents: IntentSink,
     combatHooks: EnemyCombatHooks,
     private readonly patrolRng: () => number,
     tacticsRng: () => number,
@@ -109,7 +117,7 @@ export class EnemyBrain {
     this.searchDestination = spawnPosition.clone();
     this.lastSeenPosition = spawnPosition.clone();
     this.patrolStuck = new StuckDetector(spawnPosition);
-    this.combat = new CombatBehaviour(body, physics, coordinator, knowledge, combatHooks, tacticsRng, spawnPosition);
+    this.combat = new CombatBehaviour(body, physics, coordinator, knowledge, intents, combatHooks, tacticsRng, spawnPosition);
     this.losCheckTimer = this.patrolRng() * ENEMY_LOS_CHECK_INTERVAL;
   }
 
@@ -125,7 +133,30 @@ export class EnemyBrain {
       hasLineOfSight: this.hasLineOfSightToPlayer,
       role: inCombat ? this.combat.role : null,
       pick: inCombat ? this.combat.pickDebug : null,
+      searchTarget: this.state === 'search' ? this.searchTarget : null,
+      staggered: this.combat.isStaggered,
     };
+  }
+
+  /** 0 to 1, how far a heavy hit has knocked it off balance (the shell tips the model back). */
+  get lurch(): number {
+    return this.combat.staggerLurch;
+  }
+
+  /** For the squad's search grid (step 4): this enemy, if it is searching. */
+  searchCandidate(): { id: number; x: number; z: number; yaw: number } | null {
+    if (this.state !== 'search') return null;
+    const position = this.body.position;
+    return { id: this.body.id, x: position.x, z: position.z, yaw: this.body.facingYaw };
+  }
+
+  /** The squad's search grid sends this searcher to a cell. It keeps searching for as long as it
+   * keeps getting cells, instead of giving up after ENEMY_SEARCH_DURATION at one spot. */
+  assignSearchTarget(x: number, z: number): void {
+    if (this.state !== 'search') return;
+    this.searchDestination.set(x, this.searchDestination.y, z);
+    this.searchTarget = { x, z };
+    this.searchTimer = ENEMY_SEARCH_DURATION;
   }
 
   /** What the coordinator needs to know about this enemy, or null when it is not in combat. Read
@@ -175,7 +206,8 @@ export class EnemyBrain {
    * searching enemy immediately searches toward roughly where the shot came from, and that rough
    * guess becomes squad knowledge. A chasing enemy already knows where the player is; the hit
    * resets its aim instead ("flinch"). */
-  onDamaged(sourcePosition?: THREE.Vector3): void {
+  onDamaged(sourcePosition?: THREE.Vector3, amount = 0): void {
+    this.combat.onHeavyHit(amount);
     if (sourcePosition && this.state !== 'chase') {
       this.enterSearchToward(sourcePosition, true);
       this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
@@ -193,6 +225,14 @@ export class EnemyBrain {
     if (this.state !== 'idle' && this.state !== 'search') return;
     if (horizontalDistance(this.body.position, origin) > hearingRangeFor(weaponId)) return;
     this.enterSearchToward(origin, true);
+    this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
+  }
+
+  /** Sent in by the pacing director (step 6): a reinforcement comes looking for the player, roughly
+   * toward where they are and already suspicious, instead of patrolling where it arrived. */
+  dispatchToward(position: THREE.Vector3): void {
+    if (this.state !== 'idle' && this.state !== 'search') return;
+    this.enterSearchToward(position, true);
     this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
   }
 
@@ -227,6 +267,9 @@ export class EnemyBrain {
     }
 
     this.updateAggroState(dt, current, player, distanceToPlayer);
+
+    // A staggered enemy stays where it is until it recovers (step 5); perception carries on.
+    if (this.combat.isStaggered) return;
 
     switch (this.state) {
       case 'chase':
@@ -268,6 +311,7 @@ export class EnemyBrain {
     }
     this.state = 'search';
     this.searchTimer = ENEMY_SEARCH_DURATION;
+    this.searchTarget = null;
   }
 
   /** An oblivious enemy only spends a sight ray on a player inside its view cone; once it is
@@ -290,6 +334,12 @@ export class EnemyBrain {
     const detectionRange = this.body.archetype.detectionRange;
     if (!isInViewCone(current, this.body.facingYaw, player.position, detectionRange)) return 0;
     return visibilityFactor(distanceToPlayer, detectionRange, player.movementBobStrength);
+  }
+
+  /** Tells the squad's callout director what this enemy just did (step 5). */
+  private announce(kind: IntentKind): void {
+    const position = this.body.position;
+    this.intents.emit({ kind, enemyId: this.body.id, x: position.x, y: position.y + ENEMY_HEAD_OFFSET_Y, z: position.z });
   }
 
   /** A chasing enemy's view of the player is the squad's. */
@@ -321,6 +371,7 @@ export class EnemyBrain {
         if (level === 'detected') {
           this.state = 'chase';
           this.reportSighting(player);
+          this.announce('spotted');
         } else if (level === 'oblivious') {
           this.state = 'idle';
         }
@@ -341,6 +392,7 @@ export class EnemyBrain {
           this.state = 'chase';
           this.awareness = 1;
           this.reportSighting(player);
+          this.announce('spotted');
           break;
         }
         this.awareness = stepAwareness(this.awareness, 0, dt);
@@ -403,6 +455,14 @@ export class EnemyBrain {
     if (horizontalDistance(current, this.searchDestination) > ENEMY_SEARCH_STOP_DISTANCE) {
       this.body.moveToward(this.searchDestination.x, this.searchDestination.z, ENEMY_PATROL_SPEED, dt);
     }
+  }
+
+  /** Test-only (via Enemy.debugPlace): makes (x, z) this enemy's patrol home, as if it had spawned
+   * there, so a staged layout stays staged instead of the enemy walking back to where it spawned. */
+  rehome(x: number, z: number): void {
+    this.spawnPosition.set(x, this.spawnPosition.y, z);
+    this.patrolStuck.reset(this.body.position);
+    this.repath();
   }
 
   private repath(): void {

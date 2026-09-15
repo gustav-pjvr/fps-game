@@ -27,6 +27,28 @@ async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, Au
   return buffers;
 }
 
+/** The enemy callouts (enemy AI v2 step 5) - see SoundEngine.playCallout. */
+export type CalloutSound = 'spotted' | 'flanking' | 'lostThem';
+
+/** Each callout is a radio click then a short chirp whose shape says what it means: rising for
+ * "spotted", three quick for "flanking", falling for "lost them". Frequency (Hz) and start offset
+ * (s) per note. */
+const CALLOUT_PATTERNS: Readonly<Record<CalloutSound, readonly (readonly [number, number])[]>> = {
+  spotted: [
+    [660, 0],
+    [990, 0.09],
+  ],
+  flanking: [
+    [520, 0],
+    [520, 0.07],
+    [780, 0.14],
+  ],
+  lostThem: [
+    [740, 0],
+    [440, 0.11],
+  ],
+};
+
 /**
  * Weapon shot/reload sounds play real recorded samples (see weaponSounds.ts) with a procedural
  * Web Audio synthesis fallback if a sample fails to load. Footstep/hit-confirm/player-hurt stay
@@ -153,6 +175,24 @@ export class SoundEngine {
     this.tone(70, 0.4, 0.6 * volumeScale, 'sawtooth', pan);
   }
 
+  /** An enemy callout (enemy AI v2 step 5) - fully procedural like every non-weapon sound here: a
+   * short radio click, then a chirp whose shape carries the meaning (CALLOUT_PATTERNS). Quieter
+   * than a gunshot on purpose - it informs, it should not startle. `volumeScale`/`pan` follow the
+   * same convention as playGunshot. */
+  playCallout(kind: CalloutSound, volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.04, 1800, 'bandpass', 0.1 * volumeScale, pan);
+    for (const [frequency, offset] of CALLOUT_PATTERNS[kind]) {
+      this.tone(frequency, 0.08, 0.16 * volumeScale, 'square', pan, 0.04 + offset);
+    }
+  }
+
+  /** The Ridge Walker's scope glint (step 5): a faint, high "ting" to go with the visual flash, so a
+   * player looking elsewhere still gets the warning. */
+  playGlint(volumeScale = 1, pan = 0): void {
+    this.tone(2600, 0.12, 0.07 * volumeScale, 'sine', pan);
+    this.tone(3900, 0.08, 0.035 * volumeScale, 'sine', pan, 0.02);
+  }
+
   /** Returns `this.master` unchanged when centered (pan===0) - the common case (player's own
    * shots, every non-positional sound) skips creating a StereoPannerNode it doesn't need. */
   private outputNode(pan: number): AudioNode {
@@ -204,17 +244,19 @@ export class SoundEngine {
     source.stop(this.ctx.currentTime + duration);
   }
 
-  private tone(frequency: number, duration: number, gain: number, type: OscillatorType, pan = 0): void {
+  /** `delay` (seconds) schedules the tone after now - used to string notes into a callout. */
+  private tone(frequency: number, duration: number, gain: number, type: OscillatorType, pan = 0, delay = 0): void {
     const oscillator = this.ctx.createOscillator();
     oscillator.type = type;
     oscillator.frequency.value = frequency;
 
+    const start = this.ctx.currentTime + delay;
     const envelope = this.ctx.createGain();
-    envelope.gain.setValueAtTime(gain, this.ctx.currentTime);
-    envelope.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+    envelope.gain.setValueAtTime(gain, start);
+    envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
 
     oscillator.connect(envelope).connect(this.outputNode(pan));
-    oscillator.start();
-    oscillator.stop(this.ctx.currentTime + duration);
+    oscillator.start(start);
+    oscillator.stop(start + duration);
   }
 }
