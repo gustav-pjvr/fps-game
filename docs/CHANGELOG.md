@@ -10,7 +10,34 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.9.4 (current)
+## v3.10.0 (current)
+
+Enemy AI v2 for solo play, built at Gustav's request on 2026-09-15. The full record (plan,
+decisions, measurements, and what each step changed) is in `docs/enemy-ai-v2.md`.
+
+- **Enemies take a moment to notice you.** An awareness meter fills while an enemy can see you in
+  its view cone: about 0.6 s up close, about 1.5 s at the edge of its range, faster if you sprint.
+  They do not see behind them, so you can stand behind one unnoticed.
+- **They share what they know.** A sighting, a gunshot, a hit or a comrade's death is shared with
+  the squad, and louder weapons carry farther (pistol 30 m up to sniper 60 m).
+- **They fight as a squad.** At most two shoot at you at once, one works round your side for a
+  crossfire, and the rest hold back and take over when a shooter drops.
+- **They use cover.** Enemies pick spots behind tree trunks and house corners within their weapon's
+  range, hide there and step out to fire, instead of standing in the open. Rush one and it stands
+  and fights instead of backing off to cover.
+- **They hunt for you when they lose you.** A search grid tracks where you could have gone, and
+  searchers pair up and sweep the likeliest ground for up to 30 s instead of walking to one point
+  and waiting.
+- **You can read them.** Short radio chirps from the enemy's direction call out "spotted",
+  "flanking" and "lost them"; a Ridge Walker lining up a long shot shows a glint and a faint ting
+  first; a hit of 25 damage or more staggers an enemy for half a second.
+- **New solo mode: Director.** A Match Setup checkbox, off by default. The match starts with two
+  enemies and a pacing director sends waves in from behind you and out of sight, reads how hot the
+  fight is, and gives you a breather after each peak.
+- **Performance:** the AI costs about 0.3 ms per tick at 20 enemies and 0.4 ms at 30. A
+  once-a-second performance log is built in (F4, or `?perflog` in the address).
+
+## v3.9.4
 
 Five fixes Gustav asked for on 2026-09-14:
 

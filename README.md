@@ -7,7 +7,8 @@ Live at **[hunter-n-goose.pages.dev](https://hunter-n-goose.pages.dev/)**.
 ## Features
 
 - **Procedural open world** — seeded terrain, zones (towns/forests), roads, vegetation, and 4 fixed watch towers, all generated client-side from a single world seed so every player in a multiplayer match sees the identical map.
-- **Enemy AI** — patrol, aggro, line-of-sight, and ranged/melee combat behavior across several enemy archetypes with distinct loadouts.
+- **Enemy AI (solo)**: several archetypes with distinct loadouts that notice you gradually, share what they know as a squad, limit themselves to two shooters at once while others flank, fight from cover, search for you in pairs when they lose you, and call out what they are doing. See `docs/enemy-ai-v2.md`.
+- **Director mode (solo)**: an opt-in Match Setup option where a pacing director sends waves of enemies in from out of sight and gives you a breather between peaks.
 - **Full weapon set** — pistol, rifle, shotgun, sniper, and knife, each with real ballistics (hitscan, spread, damage falloff), ADS, reload, and per-weapon sounds.
 - **Goose Dash Buster mini-game** — a wandering goose that takes exactly 2 hits to kill, then explodes with distance-based falloff damage. Spawns at match start and again whenever a player dies. Multiplayer host picks an explosion difficulty (Easy/Normal/Extreme/Nuke).
 - **Multiplayer (up to 4 players)** — host-relay star topology over PeerJS/WebRTC (with a TURN fallback for cross-network play), room codes, live lobby rosters, mid-match rejoin, positional audio, a shared minimap, and a full podium/scoreboard flow.
