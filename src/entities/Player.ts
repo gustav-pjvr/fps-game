@@ -150,8 +150,12 @@ export class Player implements Entity {
     return this.health <= 0;
   }
 
+  /** Test-only (window.__gameDebug.setPlayerInvulnerable): lets the perf log spec watch a long
+   * fight without the player dying and freezing the simulation. Never set by gameplay code. */
+  debugInvulnerable = false;
+
   takeDamage(amount: number): void {
-    if (this.isDead) return;
+    if (this.isDead || this.debugInvulnerable) return;
     this.health = Math.max(0, this.health - amount);
     this.sounds.onDamaged();
   }

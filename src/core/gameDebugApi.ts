@@ -1,3 +1,5 @@
+import type { PerfLogEntry } from './perfStats.ts';
+
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
  * aiming, with one deliberate exception: damagePlayer, which exists so death-*UI-flow* tests don't
  * have to stage up to ~90s of real combat just to reach the death screen. One death-flow test
@@ -28,6 +30,11 @@ export interface GameDebugApi {
    * user's own hardware/browser instead of relying on this environment's software-rendered GPU,
    * which can't produce a meaningful number (see PERFORMANCE.md). */
   getFrameStats(): { fps: number; avgMs: number; p95Ms: number };
+  /** The once-a-second performance rows (see core/perfStats.ts), oldest first. */
+  getPerfLog(): PerfLogEntry[];
+  /** Test-only, like damagePlayer: the perf log spec uses it to watch a long fight without the
+   * player dying and freezing single-player simulation. */
+  setPlayerInvulnerable(invulnerable: boolean): void;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

@@ -48,6 +48,7 @@ import { computeExplosionDamage, computeKnockbackStrength } from '../combat/expl
 import { SoundEngine } from '../audio/SoundEngine.ts';
 import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
+import { PerfLogger, type PerfContext } from './perfStats.ts';
 import { computeStereoPan, enemyGunshotVolume } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
@@ -182,6 +183,11 @@ export class Game {
   private lastActiveWeaponIndex: number;
   private readonly fpsMeter = new FpsMeter();
   private lastRenderTime = performance.now();
+  /** Once-a-second performance rows (see perfStats.ts) - prints with `?perflog` in the URL or after
+   * F4, always readable via window.__gameDebug.getPerfLog(). */
+  private readonly perfLogger = new PerfLogger({
+    consoleEnabled: new URLSearchParams(window.location.search).has('perflog'),
+  });
   /** Stamped once, at this exact Game instance's construction - the match-end telemetry beacon's
    * durationMs (see sendMatchTelemetry) is just `performance.now() - matchStartedAt` at whichever
    * moment the match actually ends. A field default rather than a constructor parameter since
@@ -430,6 +436,10 @@ export class Game {
       getActiveBuildingCount: () => this.buildings.getActiveBuildingCount(),
       getActiveTowerPositions: () => this.watchTowers.getActiveTowerPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
+      getPerfLog: () => [...this.perfLogger.log],
+      setPlayerInvulnerable: (invulnerable) => {
+        this.player.debugInvulnerable = invulnerable;
+      },
       // e2e coverage predates 4-player support and only ever exercises 2-player matches - "the
       // opponent" there unambiguously means the one other player, i.e. the first (only) entry.
       getOpponentPosition: () => {
@@ -1623,9 +1633,14 @@ export class Game {
     // Single-player keeps the old full-freeze pause behavior (nothing else is "live" to notice in
     // solo play, and freezing on death already matches the existing death-screen/reset flow).
     if (this.multiplayer || !freezeLocalPlayer) {
+      this.perfLogger.recordTick();
+      let sectionStart = this.perfLogger.mark();
       this.physics.step(dt);
+      sectionStart = this.perfLogger.endSection('physics', sectionStart);
       this.chunkManager.update(this.player.position.x, this.player.position.z);
+      sectionStart = this.perfLogger.endSection('world', sectionStart);
       this.entityManager.update(dt, this.player);
+      this.perfLogger.endSection('ai', sectionStart);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
 
@@ -2409,7 +2424,9 @@ export class Game {
 
   private readonly render = (alpha: number): void => {
     const now = performance.now();
-    this.fpsMeter.recordFrame(now - this.lastRenderTime);
+    const frameMs = now - this.lastRenderTime;
+    this.fpsMeter.recordFrame(frameMs);
+    this.perfLogger.recordFrame(frameMs);
     this.lastRenderTime = now;
     this.perfOverlay.update(this.fpsMeter.getStats(), this.entityManager.count);
 
@@ -2420,13 +2437,25 @@ export class Game {
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
     this.updateSunFollow();
+    const renderStart = this.perfLogger.mark();
     this.renderer.render();
+    this.perfLogger.endSection('render', renderStart);
+    this.perfLogger.maybeEmit(this.perfContext);
   };
 
-  /** F3 toggles the perf overlay - a dev tool, not a rebindable gameplay action, so it
-   * deliberately bypasses the Action/InputManager system entirely (same reasoning as
-   * openPauseMenu's raw pointer-lock call in the e2e helpers - some things aren't player controls). */
+  /** Only evaluated once a second, when the perf logger actually emits a row. Read right after
+   * renderer.render(), so three's per-frame info counters describe the frame just drawn. */
+  private readonly perfContext = (): PerfContext => {
+    const info = this.renderer.webgl.info.render;
+    return { states: this.entityManager.getLiveEntityStates(), drawCalls: info.calls, triangles: info.triangles };
+  };
+
+  /** F3 toggles the perf overlay and F4 toggles printing the once-a-second perf log to the console -
+   * dev tools, not rebindable gameplay actions, so they deliberately bypass the Action/InputManager
+   * system entirely (same reasoning as openPauseMenu's raw pointer-lock call in the e2e helpers -
+   * some things aren't player controls). */
   private readonly onDebugKeyDown = (event: KeyboardEvent): void => {
     if (event.code === 'F3') this.perfOverlay.toggle();
+    else if (event.code === 'F4') this.perfLogger.toggleConsole();
   };
 }

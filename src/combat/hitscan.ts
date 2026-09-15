@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
+import { perfCounters } from '../core/perfStats.ts';
 
 export interface HitscanResult {
   point: THREE.Vector3;
@@ -20,6 +21,7 @@ export function castHitscan(
   excludeCollider?: RAPIER.Collider,
   excludeRigidBody?: RAPIER.RigidBody,
 ): HitscanResult | null {
+  perfCounters.raycasts += 1;
   const ray = new RAPIER.Ray(
     { x: origin.x, y: origin.y, z: origin.z },
     { x: direction.x, y: direction.y, z: direction.z },

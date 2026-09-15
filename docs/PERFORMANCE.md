@@ -79,6 +79,25 @@ because of). It has no pass/fail assertions - it can't break anything, it just p
 you to read and compare across changes over time (e.g. before/after adding a new enemy archetype or
 a bigger default match size).
 
+## Option 4: the once-a-second perf log (added for enemy AI v2)
+
+The game records one row of stats per second during every match (`src/core/perfStats.ts`): FPS
+and frame times, fixed-step ticks, average milliseconds per tick spent in physics, world streaming
+and entity AI (plus the worst AI tick), render submission time, raycasts per second, enemies by AI
+state, draw calls, triangles and JS heap.
+
+- Add `?perflog` to the URL (for example `http://localhost:5173/?perflog`), or press **F4** in a
+  match, and a line prints to the browser console every second. F4 again stops printing.
+- `window.__gameDebug.getPerfLog()` in the console returns every row recorded so far.
+- `npx playwright test e2e/perf-log.spec.ts` runs a 10 s baseline at spawn and then a sustained
+  fight (player invulnerable, firing into the air so every enemy in earshot reacts), and prints a
+  summary of both. Add `--headed` on a real GPU for meaningful frame rates. `PERF_ENEMIES` and
+  `PERF_SECONDS` override the enemy count (default 20) and the fight length (default 30 s).
+
+The per-tick AI, physics and world times and the raycast rate are CPU work, so unlike FPS they
+compare fairly between builds even in the SwiftShader sandbox. `docs/enemy-ai-v2.md` records the
+runs made during the enemy AI v2 work.
+
 ## What "good" looks like
 
 There's no universal target baked into this doc - your hardware, your monitor's refresh rate, and

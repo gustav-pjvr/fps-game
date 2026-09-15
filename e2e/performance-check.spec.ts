@@ -39,7 +39,8 @@ test('performance check across representative scenarios', async ({ page }) => {
   await page.getByRole('button', { name: 'PLAY', exact: true }).click();
   // A large-ish match so the "combat" scenario below has enough enemies to plausibly get several
   // engaging at once - adjust freely if you want to stress-test harder.
-  const inputs = page.locator('input[type="number"]');
+  // Visible only: a hidden number input elsewhere on the page comes first in DOM order.
+  const inputs = page.locator('input[type="number"]:visible');
   await inputs.nth(0).fill('20');
   await inputs.nth(1).fill('10');
   await page.getByRole('button', { name: 'Start Match', exact: true }).click();
