@@ -115,6 +115,8 @@ sandbox draws 2 to 4 frames a second, so the fixed-step loop hits its 0.25 s fra
 | Standing at spawn, 10 s | 0.32 (4.50, first frames) | 1.20 | 0.02 | 2,240 | 1.0 |
 | Fight v1, 30 s | 0.26 (1.50) | 1.22 | 0.01 | 3,288 | 0.3 |
 | Fight v2, 30 s (the reference for later checkpoints) | 0.26 (4.10) | 1.22 | 0.01 | 2,895 | 5.4 |
+| Commit 0, spawn | 0.34 (1.60) | 1.32 | 0.02 | 2,124 | 1.8 |
+| Commit 0, fight v2 | 0.25 (3.90) | 1.14 | 0.01 | 2,866 | 6.4 |
 
 Fight v2 is the scenario the checkpoints compare against: every 3 s the player steps 8 m from
 the nearest idle enemy and fires into the air, so the fight grows to 4 to 7 chasing enemies.
@@ -134,8 +136,60 @@ What it shows:
 
 ## Architecture
 
-To be written by the task 4 design pass.
+The full design (interfaces, scoring formulas, every tuning constant, the test plan per step) is
+in [enemy-ai-v2-design.md](enemy-ai-v2-design.md), from a Fable architect pass on 2026-09-15 and
+checked against the code before building. The shape of the new system in brief:
+
+- **Enemy is split into a shell and a brain.** `Enemy.ts` keeps the Rapier body, colliders, model,
+  animation and health, and implements a small `EnemyBody` interface. `EnemyBrain.ts` holds the
+  decision logic and `enemyCombat.ts` the firing and melee maths. Every later step lands on the
+  brain side, so no file nears the 800-line limit.
+- **Squad knowledge** (`squadKnowledge.ts`): one shared belief about where the player is, how it
+  was learned and how sure the squad is, decaying over 20 s, plus a memory of recent shot origins
+  for the direction fire comes from.
+- **Perception** (`perception.ts`): an awareness meter replaces the fixed 0.4 s alert beat. A
+  view cone narrows from 70 degrees near to 30 degrees at detection range, fill takes 0.6 s up
+  close and 1.5 s at range, sprinting players are seen faster, and a warned enemy starts
+  suspicious. Hearing range depends on the weapon fired.
+- **Combat coordinator** (`combatCoordinator.ts`, replacing `engagementSlots.ts`): role tokens
+  (Shooter cap 2, Flanker 1 or 2, Approacher 1, Investigator 2), stolen only by a clearly
+  better-placed enemy after a minimum hold.
+- **Skills** (`skills/`): a prioritised skill picks what each enemy does each tick (melee, kite,
+  peek and fire, hold and fire, flank, leapfrog, approach, take cover, search sweep, investigate,
+  face threat, patrol, stagger). The existing `idle | alert | chase | search` states survive as a
+  derived "mode", so every test and the perf log keep working.
+- **Position picking** (`tactics/`): candidates from rings around the enemy plus house corners,
+  tree trunks, rocks and tower bases, taken from an obstacle registry the world managers fill as
+  chunks load. Cheap scores multiply first, and only the best few candidates spend raycasts from a
+  shared budget of 16 per tick.
+- **Search grid** (`searchGrid.ts`), **callouts** (`calloutDirector.ts` and new procedural sounds)
+  and the **pacing director** (`director/`, a new opt-in mode) follow in steps 4 to 6.
+- **Determinism:** new seeded streams at offsets 401, 409, 419 and 431 plus spawn index.
+  `Math.random` stays only in combat spread.
+- **Navmesh trigger:** if more than 20 percent of position picks prove unreachable in the
+  checkpoint C run, step 7 goes ahead; under 10 percent it is skipped.
 
 ## Build log
 
-Filled in per step.
+### Commit 0: Enemy.ts split, no behaviour change (2026-09-15)
+
+`Enemy.ts` (711 lines) became three files plus an interface:
+
+| File | Lines | Holds |
+|------|-------|-------|
+| `Enemy.ts` | 297 | The shell: Rapier body, capsule and head colliders, model and animation, health, and the movement primitives (`moveToward`, `retreatFrom`, `faceToward`). |
+| `EnemyBody.ts` | 42 | The interface the brain drives, plus the head-collider constants both sides share. |
+| `EnemyBrain.ts` | 380 | The state machine (patrol, aggro and line of sight, chase, kiting, search, stuck detection), moved as-is. |
+| `enemyCombat.ts` | 178 | Aim error, burst cadence and the engagement-slot handshake, the ranged shot and the melee swing. |
+
+The pure firing rules are now pinned by `enemyCombat.test.ts` (8 tests): first shot after taking a
+slot uses the widest error, the error settles to the tightest over the archetype's settle time,
+full player speed adds 4 degrees, bursts fire `burstCount` shots `fireInterval` apart and then
+pause, an enemy without a slot holds fire and never settles its aim.
+
+Two small differences from the design: the head position is computed in the brain from the
+tick's position rather than exposed by the body, and the kiting retreat is one body call
+(`retreatFrom`) instead of a general "move along a direction".
+
+**Verified:** typecheck clean; unit suite 191 of 191; smoke suite 16 of 16; perf log matches the
+baseline (table below, "Commit 0").
