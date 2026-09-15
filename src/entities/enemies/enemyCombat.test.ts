@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { aimErrorDeg, createCombatState, releaseEngagementSlot, stepRangedFiring } from './enemyCombat.ts';
+import { aimErrorDeg, createCombatState, dropFiringToken, stepRangedFiring } from './enemyCombat.ts';
 import { ENEMY_ARCHETYPES, type EnemyArchetype } from './archetypes.ts';
-import { EngagementSlots } from './engagementSlots.ts';
 import { ENEMY_VELOCITY_AIM_PENALTY_MAX_DEG } from '../../core/config.ts';
 
 // Pins the firing behaviour the enemy AI v2 split (commit 0) moved out of Enemy.ts, so later steps
@@ -14,7 +13,7 @@ const straggler = ENEMY_ARCHETYPES[0]!;
 const exactCadence: EnemyArchetype = { ...straggler, burstCount: 3, fireInterval: 0.5, burstPause: 1 };
 
 describe('aimErrorDeg', () => {
-  it('uses the widest error for the first shot after acquiring a slot, whatever the hold time or movement', () => {
+  it('uses the widest error for the first shot after acquiring a token, whatever the hold time or movement', () => {
     expect(aimErrorDeg(straggler, 10, true, 1)).toBe(straggler.aimErrorMaxDeg);
   });
 
@@ -37,20 +36,18 @@ describe('aimErrorDeg', () => {
 describe('stepRangedFiring', () => {
   it('fires in bursts: burstCount shots fireInterval apart, then a burstPause', () => {
     const state = createCombatState();
-    const slots = new EngagementSlots(2);
     const fireTicks: number[] = [];
     for (let tick = 1; tick <= 14; tick++) {
-      stepRangedFiring(state, 0.25, true, exactCadence, slots, 1, () => fireTicks.push(tick));
+      stepRangedFiring(state, 0.25, true, exactCadence, true, () => fireTicks.push(tick));
     }
     expect(fireTicks).toEqual([1, 3, 5, 9, 11, 13]);
   });
 
-  it('flags only the first shot after acquiring a slot as the first shot', () => {
+  it('flags only the first shot after acquiring a token as the first shot', () => {
     const state = createCombatState();
-    const slots = new EngagementSlots(2);
     const flags: boolean[] = [];
     for (let tick = 0; tick < 6; tick++) {
-      stepRangedFiring(state, 0.25, true, exactCadence, slots, 1, () => {
+      stepRangedFiring(state, 0.25, true, exactCadence, true, () => {
         flags.push(state.nextShotIsFirstSinceAcquiring);
         state.nextShotIsFirstSinceAcquiring = false;
       });
@@ -58,41 +55,37 @@ describe('stepRangedFiring', () => {
     expect(flags).toEqual([true, false, false]);
   });
 
-  it('holds fire and keeps aim unsettled while every slot is taken, then fires once one frees up', () => {
-    const slots = new EngagementSlots(2);
-    slots.tryAcquire(101);
-    slots.tryAcquire(102);
+  it('holds fire and keeps aim unsettled without a shooter token, then fires with the grace once given one', () => {
     const state = createCombatState();
     let shots = 0;
-    for (let tick = 0; tick < 8; tick++) stepRangedFiring(state, 0.25, true, exactCadence, slots, 3, () => shots++);
+    for (let tick = 0; tick < 8; tick++) stepRangedFiring(state, 0.25, true, exactCadence, false, () => shots++);
     expect(shots).toBe(0);
     expect(state.aimHoldTimer).toBe(0);
-    expect(state.hasEngagementSlot).toBe(false);
+    expect(state.hasFiringToken).toBe(false);
 
-    slots.release(101);
-    stepRangedFiring(state, 0.25, true, exactCadence, slots, 3, () => shots++);
+    stepRangedFiring(state, 0.25, true, exactCadence, true, () => shots++);
     expect(shots).toBe(1);
-    expect(state.hasEngagementSlot).toBe(true);
+    expect(state.hasFiringToken).toBe(true);
     expect(state.nextShotIsFirstSinceAcquiring).toBe(true);
   });
 
   it('only builds aim hold time while stationary', () => {
     const state = createCombatState();
-    const slots = new EngagementSlots(2);
-    stepRangedFiring(state, 0.25, true, exactCadence, slots, 1, () => {});
-    stepRangedFiring(state, 0.25, true, exactCadence, slots, 1, () => {});
+    stepRangedFiring(state, 0.25, true, exactCadence, true, () => {});
+    stepRangedFiring(state, 0.25, true, exactCadence, true, () => {});
     expect(state.aimHoldTimer).toBe(0.5);
-    stepRangedFiring(state, 0.25, false, exactCadence, slots, 1, () => {});
+    stepRangedFiring(state, 0.25, false, exactCadence, true, () => {});
     expect(state.aimHoldTimer).toBe(0);
   });
 
-  it('releaseEngagementSlot frees the slot for another enemy', () => {
-    const slots = new EngagementSlots(1);
-    const first = createCombatState();
-    stepRangedFiring(first, 0.25, true, exactCadence, slots, 1, () => {});
-    expect(slots.tryAcquire(2)).toBe(false);
-    releaseEngagementSlot(first, slots, 1);
-    expect(first.hasEngagementSlot).toBe(false);
-    expect(slots.tryAcquire(2)).toBe(true);
+  it('dropping the token re-arms the first-shot grace for the next time it fires', () => {
+    const state = createCombatState();
+    stepRangedFiring(state, 0.25, true, exactCadence, true, () => {
+      state.nextShotIsFirstSinceAcquiring = false;
+    });
+    dropFiringToken(state);
+    expect(state.hasFiringToken).toBe(false);
+    stepRangedFiring(state, 0.25, true, exactCadence, true, () => {});
+    expect(state.nextShotIsFirstSinceAcquiring).toBe(true);
   });
 });

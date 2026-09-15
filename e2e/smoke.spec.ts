@@ -388,7 +388,9 @@ test('firing an empty magazine auto-reloads without pressing R', async ({ page }
 });
 
 test('dying releases pointer lock and Respawn resets the match without leaving it', async ({ page }) => {
-  test.setTimeout(150000); // killPlayerByEnemy alone can take up to 90s (a kiting archetype), plus a slow load
+  // killPlayerByEnemy allows up to 90 GAME seconds (a kiting archetype), which is up to about 180 s
+  // in the half-speed sandbox, plus a slow load.
+  test.setTimeout(240000);
   await useLoadout(page, STANDARD_LOADOUT);
   await page.goto('/');
   await waitForGameReady(page);

@@ -5,7 +5,7 @@ import type { Player } from './Player.ts';
 import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
 import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks, type EnemyDebugRecord } from './enemies/Enemy.ts';
 import { createArchetypePicker } from './enemies/archetypes.ts';
-import { EngagementSlots } from './enemies/engagementSlots.ts';
+import { CombatCoordinator, type CombatRole, type RoleCandidate } from './enemies/combatCoordinator.ts';
 import { SquadKnowledge } from './enemies/squadKnowledge.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
 import { computeExplosionDamage } from '../combat/explosion.ts';
@@ -24,6 +24,10 @@ import { mulberry32 } from '../utils/rng.ts';
  * +10..+13, guaranteed sites +40/+41, archetypes +101) so per-enemy patrol streams don't correlate
  * with anything else derived from the same world seed. */
 const PATROL_SEED_OFFSET = 211;
+/** The combat coordinator's own seeded stream (it only picks which side a flanker goes), clear of
+ * every other offset in the codebase (0 to 13, 40/41, 101, 211 plus spawn index, GooseManager's
+ * 311). See docs/enemy-ai-v2-design.md for the reserved v2 offsets. */
+const COORDINATOR_SEED_OFFSET = 401;
 
 const DEATH_TOTAL_DURATION = DEATH_FALL_DURATION + DEATH_HOLD_DURATION + DEATH_SINK_DURATION;
 
@@ -45,6 +49,8 @@ interface ManagedEntity {
   /** Enemy-only debug hooks (enemy AI v2 e2e checks). */
   debugRecord?(): EnemyDebugRecord;
   debugPlace?(x: number, z: number): void;
+  /** Enemy-only: its entry on the combat coordinator's roster, or null when not fighting. */
+  combatCandidate?(): RoleCandidate | null;
 }
 
 /** A corpse mid-death-sequence (see the DEATH_* comment in config.ts) - its physics presence is
@@ -68,15 +74,19 @@ export interface SquadDebug {
   readonly belief: { x: number; z: number; source: string; confidence: number; age: number } | null;
   readonly visibleCount: number;
   readonly secondsSinceSeen: number;
+  readonly roles: Readonly<Record<CombatRole, number>>;
 }
 
 /** Owns spawned targets/enemies: advances moving ones, and cleans up + reports kills once they die. */
 export class EntityManager {
   private readonly entities: ManagedEntity[] = [];
   private readonly dying: DyingEntity[] = [];
-  /** Shared across every enemy spawned by this manager (i.e. one per match) - see
-   * engagementSlots.ts for why this needs to be shared rather than per-enemy. */
-  private readonly engagementSlots = new EngagementSlots(ENEMY_MAX_CONCURRENT_ENGAGERS);
+  /** Hands out combat roles (shooter tokens, flanker, rusher, reserve) to every enemy in a fight
+   * (enemy AI v2 step 2, combatCoordinator.ts) - one per match, so the shooter cap is squad-wide. */
+  private readonly coordinator = new CombatCoordinator(
+    { shooter: ENEMY_MAX_CONCURRENT_ENGAGERS },
+    mulberry32(getWorldSeed() + COORDINATOR_SEED_OFFSET),
+  );
   /** What the whole squad knows about the player (enemy AI v2 step 1, squadKnowledge.ts) - one per
    * match, shared by every enemy, advanced once per tick before any enemy thinks. */
   private readonly knowledge = new SquadKnowledge();
@@ -126,7 +136,7 @@ export class EntityManager {
       position,
       this.enemyGltf,
       archetype,
-      this.engagementSlots,
+      this.coordinator,
       this.knowledge,
       this.enemyCombatHooks,
       patrolRng,
@@ -159,6 +169,7 @@ export class EntityManager {
 
   update(dt: number, player: Player): void {
     this.knowledge.advance(dt);
+    this.updateCoordinator();
 
     for (let i = this.entities.length - 1; i >= 0; i--) {
       const entity = this.entities[i];
@@ -190,6 +201,22 @@ export class EntityManager {
     }
 
     this.updateDying(dt);
+  }
+
+  /** The squad phase of the tick: every fighting enemy (as of the end of last tick) goes on the
+   * roster, and the coordinator re-deals roles before any enemy acts on them. */
+  private updateCoordinator(): void {
+    const roster: RoleCandidate[] = [];
+    for (const entity of this.entities) {
+      const candidate = entity.combatCandidate?.();
+      if (candidate) roster.push(candidate);
+    }
+    const belief = this.knowledge.belief;
+    this.coordinator.update(roster, {
+      now: this.knowledge.now,
+      threat: belief ? { x: belief.position.x, z: belief.position.z } : null,
+      isThreatVisible: this.knowledge.isThreatVisible,
+    });
   }
 
   private updateDying(dt: number): void {
@@ -234,6 +261,7 @@ export class EntityManager {
     }
     this.dying.length = 0;
     this.knowledge.reset();
+    this.coordinator.reset();
   }
 
   /** Debug/test helper - world positions of everything currently alive. */
@@ -280,6 +308,7 @@ export class EntityManager {
         : null,
       visibleCount: this.knowledge.visibleCount,
       secondsSinceSeen: this.knowledge.secondsSinceSeen(),
+      roles: this.coordinator.countRoles(),
     };
   }
 

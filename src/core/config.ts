@@ -312,10 +312,12 @@ export const ENEMY_LOS_CHECK_INTERVAL = 0.15;
  * burst cadence, aim-error min/max/settle) live in archetypes.ts - only the match-level pacing
  * knobs below stay global.
  */
-/** Global cap (shared across every enemy in the match, see engagementSlots.ts) on how many can be
- * actively firing at once - without it, every enemy that spots the player opens fire the instant
- * it's in range, which reads as an unfair dogpile rather than a fight fought piece by piece. An
- * enemy that can't get a slot still tracks/faces the player, it just doesn't shoot yet. */
+/** Global cap (shared across every enemy in the match) on how many can be actively firing at once -
+ * without it, every enemy that spots the player opens fire the instant it's in range, which reads
+ * as an unfair dogpile rather than a fight fought piece by piece. Since enemy AI v2 step 2 these
+ * are the combat coordinator's shooter tokens (entities/enemies/combatCoordinator.ts), dealt to the
+ * best-placed enemies rather than first come first served. An enemy without one still tracks/faces
+ * the player, it just doesn't shoot yet. */
 export const ENEMY_MAX_CONCURRENT_ENGAGERS = 2;
 
 /**
@@ -399,6 +401,42 @@ export const ENEMY_WEAPON_LOUDNESS_RANGE: Readonly<Record<string, number>> = {
   knife: 0,
   unarmed: 0,
 };
+
+/**
+ * Enemy AI v2, step 2 (docs/enemy-ai-v2.md): the combat coordinator
+ * (entities/enemies/combatCoordinator.ts) hands out roles to the enemies in a fight - shooters
+ * (capped by ENEMY_MAX_CONCURRENT_ENGAGERS), a flanker who works round to the player's side, rushers
+ * and reserves.
+ */
+/** A waiting enemy takes a shooter token only if it scores this much higher than the weakest holder
+ * (scores run 0 to about 1.3) - stops tokens ping-ponging between two similar spots. */
+export const ENEMY_TOKEN_STEAL_MARGIN = 0.25;
+/** Seconds a shooter keeps its token before it can be stolen - at least one burst. */
+export const ENEMY_TOKEN_MIN_HOLD = 1.5;
+/** A shooter is best placed at this fraction of its own ranged range (9.6 m for the Straggler's
+ * 16 m): close enough to hit, far enough to not be on top of the player. */
+export const ENEMY_SHOOTER_IDEAL_RANGE_FRACTION = 0.6;
+/** Extra shooter score for firing from well off the squad's main line - crossfire is what makes a
+ * flank dangerous, so an arrived flanker out-scores a second gun on the same line. */
+export const ENEMY_FLANK_SHOT_BONUS = 0.3;
+export const ENEMY_FLANK_SHOT_MIN_ANGLE_DEG = 60;
+/** One flanker at a time reads as a move; a squad this size or larger gets two. */
+export const ENEMY_FLANKER_CAP = 1;
+export const ENEMY_FLANKER_CAP_LARGE_SQUAD = 2;
+export const ENEMY_LARGE_SQUAD_SIZE = 6;
+/** A flank needs someone else doing the pinning. */
+export const ENEMY_FLANK_MIN_SQUAD = 2;
+/** Seconds before a flank that never paid off is abandoned (back to reserve), and before that
+ * enemy may be picked to flank again. */
+export const ENEMY_FLANK_MAX_DURATION = 10;
+export const ENEMY_FLANK_COOLDOWN = 8;
+/** How far from the player the flank point sits: this fraction of the flanker's ranged range,
+ * clamped to [ENEMY_FLANK_RADIUS_MIN, ENEMY_FLANK_RADIUS_MAX]. */
+export const ENEMY_FLANK_RADIUS_FRACTION = 0.6;
+export const ENEMY_FLANK_RADIUS_MIN = 8;
+export const ENEMY_FLANK_RADIUS_MAX = 16;
+/** Close enough to the flank point to stop moving and wait for a shooter token there. */
+export const ENEMY_FLANK_ARRIVE_DISTANCE = 2;
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
 /** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
  * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that

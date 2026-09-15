@@ -81,6 +81,33 @@ export async function openPauseMenu(page: Page): Promise<void> {
   await page.getByTestId('pause-menu').getByRole('button', { name: 'Resume', exact: true }).waitFor({ state: 'visible' });
 }
 
+const KILL_PLAYER_GAME_SECONDS = 90;
+
+type GameClockWindow = Window & { __e2eGameClock?: { elapsed: number } };
+
+/** Starts a fresh page-side game clock: each animation frame adds its real frame time clamped to
+ * MAX_FRAME_TIME (0.25 s), exactly as core/Loop.ts advances the game. Starting a new clock retires
+ * the previous one. */
+async function startGameClock(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const clockWindow = window as GameClockWindow;
+    const clock = { elapsed: 0 };
+    clockWindow.__e2eGameClock = clock;
+    let last: number | undefined;
+    const step = (now: number): void => {
+      if (clockWindow.__e2eGameClock !== clock) return;
+      if (last !== undefined) clock.elapsed += Math.min((now - last) / 1000, 0.25);
+      last = now;
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+async function readGameClock(page: Page): Promise<number> {
+  return page.evaluate(() => (window as GameClockWindow).__e2eGameClock?.elapsed ?? 0);
+}
+
 /** Index of the first live enemy, identified by archetype (enemies report one, targets don't) -
  * replaces the old hard-coded "index 5 is an enemy" assumption, which was only true for the
  * default 5-target/3-enemy match with the current spawn order and broke obscurely if either
@@ -113,12 +140,25 @@ export async function findFirstEnemyIndex(page: Page): Promise<number> {
  * out-walk sprint forever, and this loop's re-aim-and-approach eventually closes the gap), just no
  * longer bounded by a fixed combat cadence the way melee-only combat used to be. */
 export async function killPlayerByEnemy(page: Page): Promise<void> {
-  const deadline = Date.now() + 90000;
+  // The deadline is in GAME time, not wall-clock time: the sandbox renders at 2 to 4 frames a
+  // second, so the game runs at roughly half speed and the old 90 s wall-clock deadline was only
+  // about 45 s of play - thin enough that one run in ten timed out (enemy AI v2 checkpoint B).
+  // KILL_PLAYER_GAME_SECONDS is the original 90 s budget as it plays on real hardware.
+  await startGameClock(page);
 
   while (true) {
     const health = await page.evaluate(() => window.__gameDebug?.getPlayerHealth());
     if ((health ?? 100) <= 0) return;
-    if (Date.now() > deadline) throw new Error('killPlayerByEnemy timed out without the player dying');
+    if ((await readGameClock(page)) > KILL_PLAYER_GAME_SECONDS) {
+      // A timeout is otherwise undiagnosable once the trace is overwritten by a later run, so it
+      // carries its own snapshot: every enemy's state, role and awareness, and the squad's belief.
+      const snapshot = await page.evaluate(() => ({
+        player: window.__gameDebug?.getPlayerPosition(),
+        enemies: window.__gameDebug?.getLiveEnemyDebug(),
+        squad: window.__gameDebug?.getSquadDebug(),
+      }));
+      throw new Error(`killPlayerByEnemy timed out without the player dying (health ${health}): ${JSON.stringify(snapshot)}`);
+    }
 
     // Re-found each iteration (cheap) so a mid-fight entity-list change can't leave a stale index.
     const enemyIndex = await findFirstEnemyIndex(page);

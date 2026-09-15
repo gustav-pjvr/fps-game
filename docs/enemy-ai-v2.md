@@ -52,7 +52,7 @@ Status key: done, in progress, next, later, conditional.
 | 0 | Behaviour-preserving split of `Enemy.ts` | done (`92f2767`) |
 | 5 | Branch `feature/enemy-ai` | done |
 | 6 to 9 | Step 1: squad knowledge, awareness meter, event routing, tests (checkpoint A) | done, checkpoint A passed |
-| 10 to 12 | Step 2: combat coordinator and roles (checkpoint B) | later |
+| 10 to 12 | Step 2: combat coordinator and roles (checkpoint B) | done, checkpoint B passed |
 | 13 to 17 | Step 3: position picking, ray budget, combat skills (checkpoint C) | later |
 | 18 to 19 | Step 4: search grid and paired sweeps | later |
 | 20 to 22 | Step 5: callouts, telegraph, stagger (checkpoint D) | later |
@@ -120,6 +120,8 @@ sandbox draws 2 to 4 frames a second, so the fixed-step loop hits its 0.25 s fra
 | Commit 0, fight v2 | 0.25 (3.90) | 1.14 | 0.01 | 2,866 | 6.4 |
 | Checkpoint A, spawn | 0.31 (1.80) | 1.20 | 0.02 | 2,235 | 1.2 |
 | Checkpoint A, fight v2 | 0.25 (1.50) | 1.21 | 0.01 | 2,761 | 2.8 |
+| Checkpoint B, spawn | 0.35 (2.70) | 1.20 | 0.02 | 2,111 | 0.9 |
+| Checkpoint B, fight v2 | 0.29 (3.40) | 1.16 | 0.01 | 2,950 | 4.9 |
 
 Checkpoint A reading: the AI cost per tick is unchanged (0.25 ms in the fight, 0.31 ms at
 spawn) and raycasts fell slightly (2,761 against 2,895 a second in the fight). The cone prefilter
@@ -273,3 +275,71 @@ watcher sees the player; an enemy 36 m away ignores a pistol shot while one 34 m
 rifle shot); smoke suite 16 of 16, including the real enemy-kills-player death flow and the
 match-start "no enemy senses a passive player" invariant; perf log within noise of the baseline
 (measurements table).
+
+### Step 2: the combat coordinator (2026-09-15)
+
+What the player sees:
+
+- **At most two enemies shoot at you at once, and they are the best-placed ones.** The old cap
+  went to whoever asked first. Now shooter tokens go to the enemies with a clear sightline nearest
+  the ideal distance for their weapon (60 percent of their range), and a clearly better-placed
+  enemy can take a token from one that has fired for at least 1.5 s.
+- **While two pin you, one works round your side.** With two or more enemies fighting and at
+  least one of them seeing you, the coordinator sends the nearest waiting enemy to a point ninety
+  degrees round from the squad's front (on a side it picks), about 10 m out for a Straggler. It
+  does not fire on the way and keeps going round cover while a comrade still sees you. Once there
+  it waits, facing you, and its crossfire position earns it a shooter token. A squad of six or
+  more sends two. A flank that has not paid off in 10 s is dropped.
+- **Everyone else waits their turn.** Reserves hold their ground facing you; Rush Jobs keep
+  rushing.
+
+How it is built:
+
+- `combatCoordinator.ts` (pure, replaces `engagementSlots.ts`): roles `shooter`, `flanker`,
+  `rusher`, `reserve`; `shooterScore` (sightline, range fit, crossfire bonus of 0.3 at 60 degrees
+  or more off the squad's line); steal margin 0.25 after a 1.5 s minimum hold; flank duration 10 s
+  and cooldown 8 s. Seeded at offset 401, used only to pick the flank side.
+- `EntityManager` builds the roster (every chasing enemy) once per tick before any enemy moves,
+  and the coordinator re-deals roles.
+- `EnemyBrain` fights by role: only a shooter fires; a flanker runs `updateFlank`; melee inside
+  3 m and the Ridge Walker's retreat still come first. `enemyCombat.stepRangedFiring` now takes a
+  "has shooter token" flag instead of acquiring a slot itself.
+
+Departures from the design, decided on the main thread:
+
+- **Roles, not a general skill system.** The design replaces the chase and search logic with a
+  prioritised skill selector across about eight skill files. Step 2 instead keeps the tested
+  perception state machine (idle, alert, chase, search) as the outer layer and lets the
+  coordinator's role pick the behaviour inside chase. It is far less code and keeps every existing
+  test meaningful. Switch condition: if steps 3 to 5 (cover, peeking, stagger, search sweeps) make
+  the role dispatch in `updateChase` sprawl, introduce the design's skill selector then.
+- **The Approacher role moves to step 3.** Its job in The Last of Us is to break a stalemate
+  where everyone holds cover while the player has slipped away. Until step 3 gives enemies cover to
+  hold, every searching enemy already walks to the last known position, so an Approacher would
+  change nothing.
+
+A test-harness fix found at checkpoint B: the smoke suite's real enemy-kills-player test timed out
+once in ten runs under step 2 (9 of 10 passed: 1 of 1 in the suite, then 3 of 3 and 6 of 6
+repeated). The cause was the helper, not the AI: `killPlayerByEnemy` had a 90 s wall-clock
+deadline, but the sandbox game runs at roughly half speed (2 to 4 frames a second against a
+0.25 s frame cap), so it only allowed about 45 s of play, and steps 1 and 2 legitimately make an
+engagement take a little longer (noticing the player takes a moment; a flanker does not shoot on
+the way). The deadline now counts 90 s of game time with a page-side clock that advances exactly
+as `core/Loop.ts` does, which is the original budget as it plays on real hardware, and the test's
+own time limit rose from 150 s to 240 s to cover the half-speed sandbox. On a timeout the helper
+now reports every enemy's state, role and awareness and the squad's belief, so a future failure is
+diagnosable even after later runs overwrite the trace.
+
+**Checkpoint B (2026-09-15), all passed:** typecheck clean; unit suite 231 of 231 (16 new in
+`combatCoordinator.test.ts`, `enemyCombat.test.ts` rewritten for tokens); `e2e/enemy-ai.spec.ts`
+5 of 5, including the new check (five enemies placed in an arc and alerted by a shot: over 20 game
+seconds no sample shows more than two shooters, a flanker is assigned, and it works at least 20
+degrees round the player); smoke suite 16 of 16 on the re-run with the game-time deadline; the real
+enemy-kills-player death flow 10 of 11 across all runs, the one miss being the harness timeout
+above; perf log within noise of the baseline (0.29 ms of AI per tick in the fight against 0.26 ms,
+raycasts flat).
+
+File sizes after step 2: `EnemyBrain.ts` 545 lines (limit 800), `Enemy.ts` 343,
+`combatCoordinator.ts` 252, `EntityManager.ts` 319. Step 3 opens by moving the chase behaviours
+(shooter, flanker, kiter, reserve) out of `EnemyBrain.ts` into their own module before cover logic
+is added, so the brain does not approach the limit.

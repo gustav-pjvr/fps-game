@@ -5,7 +5,6 @@ import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { castHitscan } from '../../combat/hitscan.ts';
 import { applySpreadCone } from '../../combat/spread.ts';
 import type { EnemyArchetype } from './archetypes.ts';
-import type { EngagementSlots } from './engagementSlots.ts';
 import {
   ENEMY_ATTACK_RANGE,
   ENEMY_MELEE_SWING_COUNT,
@@ -22,7 +21,9 @@ export interface EnemyCombatHooks {
 
 /** Per-enemy firing state, moved out of Enemy.ts by the enemy AI v2 split (commit 0). */
 export interface CombatState {
-  hasEngagementSlot: boolean;
+  /** Whether this enemy was firing on a shooter token last tick - the edge from false to true is
+   * what arms the first-shot grace below. */
+  hasFiringToken: boolean;
   aimHoldTimer: number;
   burstShotsFired: number;
   burstCooldown: number;
@@ -32,7 +33,7 @@ export interface CombatState {
 
 export function createCombatState(): CombatState {
   return {
-    hasEngagementSlot: false,
+    hasFiringToken: false,
     aimHoldTimer: 0,
     burstShotsFired: 0,
     burstCooldown: 0,
@@ -70,32 +71,33 @@ export function aimErrorDeg(
 }
 
 /**
- * Burst-then-pause firing cadence, gated by `engagementSlots` (ENEMY_MAX_CONCURRENT_ENGAGERS) so
- * not every enemy that spots the player opens fire simultaneously - one that can't get a slot
- * still tracks/faces the player, it just holds fire until one frees up. `fire` is called once per
- * shot this tick decides to take. Movement/facing is the caller's job (stand-and-fire vs.
- * kite-and-fire look different) - this only ever decides when to fire.
+ * Burst-then-pause firing cadence, allowed only while the enemy holds a shooter token from the
+ * combat coordinator (combatCoordinator.ts, capped by ENEMY_MAX_CONCURRENT_ENGAGERS) so not every
+ * enemy that spots the player opens fire simultaneously - one without a token still tracks/faces
+ * the player, it just holds fire. `fire` is called once per shot this tick decides to take.
+ * Movement/facing is the caller's job (stand-and-fire vs. kite-and-fire look different) - this
+ * only ever decides when to fire.
  */
 export function stepRangedFiring(
   state: CombatState,
   dt: number,
   isStationary: boolean,
   archetype: EnemyArchetype,
-  engagementSlots: EngagementSlots,
-  enemyId: number,
+  hasShooterToken: boolean,
   fire: () => void,
 ): void {
-  if (!state.hasEngagementSlot) {
-    state.hasEngagementSlot = engagementSlots.tryAcquire(enemyId);
+  if (!hasShooterToken) {
+    state.hasFiringToken = false;
+    state.aimHoldTimer = 0;
+    return;
+  }
+  if (!state.hasFiringToken) {
+    state.hasFiringToken = true;
     // First-shot grace (phase D): just went from "couldn't fire" to "can fire" - the very next
     // shot always uses the archetype's widest aim error regardless of how long it's actually held
     // the sightline, so getting spotted never one-taps the player before the tracer's own warning
     // has had a chance to register. Cleared the instant that shot actually fires.
-    if (state.hasEngagementSlot) state.nextShotIsFirstSinceAcquiring = true;
-  }
-  if (!state.hasEngagementSlot) {
-    state.aimHoldTimer = 0;
-    return;
+    state.nextShotIsFirstSinceAcquiring = true;
   }
 
   state.aimHoldTimer = isStationary ? state.aimHoldTimer + dt : 0;
@@ -112,10 +114,10 @@ export function stepRangedFiring(
   }
 }
 
-export function releaseEngagementSlot(state: CombatState, engagementSlots: EngagementSlots, enemyId: number): void {
-  if (!state.hasEngagementSlot) return;
-  engagementSlots.release(enemyId);
-  state.hasEngagementSlot = false;
+/** The enemy stopped ranged firing (melee, moving, lost sight): the next time it fires on a token
+ * counts as a fresh acquisition, with the first-shot grace. */
+export function dropFiringToken(state: CombatState): void {
+  state.hasFiringToken = false;
 }
 
 /** One real hitscan shot from `origin` (the enemy's head) at the player's eye, through the aim-error

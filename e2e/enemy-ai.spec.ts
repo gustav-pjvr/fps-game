@@ -159,6 +159,59 @@ test('a sighting is shared with a comrade too far away to see the player', async
   expect(watcherEngaged, 'the watcher should spot the player in one of the attempts').toBe(true);
 });
 
+test('the coordinator never lets more than two shoot at once and sends one round the side', async ({ page }) => {
+  test.setTimeout(240000);
+  await startSoloMatch(page, 5);
+  await waitForGameTime(page, 1);
+
+  // Five enemies in an arc 12 to 14 m in front of the player (the open clearing around spawn), then
+  // one shot into the air so they all come looking and engage.
+  const player = await playerPosition(page);
+  const arc = [
+    { angle: -40, radius: 12 },
+    { angle: -20, radius: 13 },
+    { angle: 0, radius: 14 },
+    { angle: 20, radius: 13 },
+    { angle: 40, radius: 12 },
+  ];
+  for (const [index, spot] of arc.entries()) {
+    const radians = (spot.angle * Math.PI) / 180;
+    await page.evaluate(
+      ({ index, x, z }) => window.__gameDebug?.placeEnemy(index, x, z),
+      { index, x: player.x + Math.sin(radians) * spot.radius, z: player.z + Math.cos(radians) * spot.radius },
+    );
+  }
+  await fireIntoAir(page);
+
+  const bearingFromPlayer = (enemy: EnemyRecord): number => Math.atan2(enemy.x - player.x, enemy.z - player.z);
+  const angleChange = (a: number, b: number): number => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+
+  let maxShooters = 0;
+  let sawChase = false;
+  let flankerIndex: number | null = null;
+  let flankerStartBearing = 0;
+  let flankerMaxTurn = 0;
+  for (let sample = 0; sample < 40; sample++) {
+    await waitForGameTime(page, 0.5);
+    const enemies = await readEnemies(page);
+    const shooters = enemies.filter((enemy) => enemy.role === 'shooter').length;
+    maxShooters = Math.max(maxShooters, shooters);
+    if (enemies.some((enemy) => enemy.state === 'chase')) sawChase = true;
+    const flanker = enemies.find((enemy) => enemy.role === 'flanker');
+    if (flankerIndex === null && flanker) {
+      flankerIndex = flanker.index;
+      flankerStartBearing = bearingFromPlayer(flanker);
+    }
+    const tracked = enemies.find((enemy) => enemy.index === flankerIndex);
+    if (tracked) flankerMaxTurn = Math.max(flankerMaxTurn, angleChange(bearingFromPlayer(tracked), flankerStartBearing));
+  }
+
+  expect(sawChase, 'the enemies should engage after the shot').toBe(true);
+  expect(maxShooters, 'at most two shooter tokens at any sample').toBeLessThanOrEqual(2);
+  expect(flankerIndex, 'one enemy should be sent to flank').not.toBeNull();
+  expect((flankerMaxTurn * 180) / Math.PI, 'the flanker should work round the player').toBeGreaterThanOrEqual(20);
+});
+
 test('a rifle shot carries farther than a pistol shot', async ({ page }) => {
   test.setTimeout(180000);
   await startSoloMatch(page, 2);

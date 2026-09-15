@@ -2,17 +2,17 @@ import * as THREE from 'three';
 import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { hasLineOfSight, horizontalDistance, pickPatrolDestination } from './enemySteering.ts';
-import type { EngagementSlots } from './engagementSlots.ts';
 import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
 import {
   createCombatState,
+  dropFiringToken,
   fireRangedShot,
-  releaseEngagementSlot,
   stepRangedFiring,
   swingMelee,
   type CombatState,
   type EnemyCombatHooks,
 } from './enemyCombat.ts';
+import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { awarenessLevel, hearingRangeFor, isInViewCone, stepAwareness, visibilityFactor } from './perception.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import {
@@ -20,6 +20,10 @@ import {
   ENEMY_ATTACK_RANGE,
   ENEMY_AWARENESS_SUSPICIOUS,
   ENEMY_DEATH_ALERT_RADIUS,
+  ENEMY_FLANK_ARRIVE_DISTANCE,
+  ENEMY_FLANK_RADIUS_FRACTION,
+  ENEMY_FLANK_RADIUS_MAX,
+  ENEMY_FLANK_RADIUS_MIN,
   ENEMY_KNOWLEDGE_SHARE_MAX_AGE,
   ENEMY_KNOWLEDGE_SHARE_RADIUS,
   ENEMY_LOS_CHECK_INTERVAL,
@@ -42,6 +46,8 @@ export interface EnemyBrainDebug {
   readonly state: EnemyState;
   readonly awareness: number;
   readonly hasLineOfSight: boolean;
+  /** The coordinator's role while in combat ('chase'), else null. */
+  readonly role: CombatRole | null;
 }
 
 function headOf(position: EnemyPosition): THREE.Vector3 {
@@ -59,24 +65,25 @@ function headOf(position: EnemyPosition): THREE.Vector3 {
  * Spotting (enemy AI v2 step 1, perception.ts): an awareness meter fills while the enemy has a
  * clear sightline to a player inside its view cone and detection range (faster up close and for a
  * moving player) and drains otherwise. Suspicious (ENEMY_AWARENESS_SUSPICIOUS) is the 'alert'
- * state - stop and face where the player was last seen; a full meter is 'chase'. This replaced the
- * old "one clear ray, then a fixed 0.4 s beat". Sight lines are still throttled to one ray per
- * ENEMY_LOS_CHECK_INTERVAL, and an oblivious enemy that is not facing the player skips the ray.
+ * state - stop and face where the player was last seen; a full meter is 'chase'. Sight lines are
+ * throttled to one ray per ENEMY_LOS_CHECK_INTERVAL, and an oblivious enemy that is not facing the
+ * player skips the ray.
  *
  * Squad knowledge (step 1, squadKnowledge.ts): a chasing enemy reports what it sees to the whole
  * squad. An idle enemy within ENEMY_KNOWLEDGE_SHARE_RADIUS of a fresh sighting goes to search
- * there, and a searching one keeps following the latest sighting - so one enemy spotting the
- * player pulls nearby comrades in, instead of every enemy fighting alone.
+ * there, and a searching one keeps following the latest sighting.
  *
- * Losing sight mid-chase drops to search - beelines the last-seen position for
- * ENEMY_SEARCH_DURATION before giving up back to idle. Getting further than the archetype's
- * leashRange away from any of alert/chase/search always drops straight back to idle.
+ * Roles (step 2, combatCoordinator.ts): in combat ('chase') the coordinator decides what each
+ * enemy does. Only a shooter fires (at most ENEMY_MAX_CONCURRENT_ENGAGERS at once, best-placed
+ * first). A flanker works round to a point ninety degrees from the squad's front and keeps going
+ * even without its own sightline while a comrade still sees the player; once there it waits,
+ * facing the player, for the coordinator to hand it a shooter token (arriving earns a crossfire
+ * bonus). Rushers (melee-only archetypes) close in; reserves track the player and wait. Melee
+ * inside ENEMY_ATTACK_RANGE and the kiter's retreat still come first, whatever the role.
  *
- * Chase itself (Phase C): beyond ENEMY_ATTACK_RANGE, closes distance until within the archetype's
- * rangedRange with a clear sightline, then stands (or, for a 'kite' archetype, backs away - see
- * updateKiteRetreat) and fires real hitscan shots with a visible tracer and a narrowing angular
- * aim-error cone (enemyCombat.ts). Within ENEMY_ATTACK_RANGE, melee always wins regardless of
- * archetype (the "universal fallback") - a real fan-raycast swing (Phase D).
+ * Losing sight mid-chase (without a flank to finish) drops to search - beelines the last-seen
+ * position for ENEMY_SEARCH_DURATION before giving up back to idle. Getting further than the
+ * archetype's leashRange away from any of alert/chase always drops straight back to idle.
  */
 export class EnemyBrain {
   private state: EnemyState = 'idle';
@@ -110,7 +117,7 @@ export class EnemyBrain {
   constructor(
     private readonly body: EnemyBody,
     private readonly physics: PhysicsWorld,
-    private readonly engagementSlots: EngagementSlots,
+    private readonly coordinator: CombatCoordinator,
     private readonly knowledge: SquadKnowledge,
     private readonly combatHooks: EnemyCombatHooks,
     private readonly patrolRng: () => number,
@@ -129,7 +136,28 @@ export class EnemyBrain {
   }
 
   get debug(): EnemyBrainDebug {
-    return { state: this.state, awareness: this.awareness, hasLineOfSight: this.hasLineOfSightToPlayer };
+    return {
+      state: this.state,
+      awareness: this.awareness,
+      hasLineOfSight: this.hasLineOfSightToPlayer,
+      role: this.state === 'chase' ? this.role : null,
+    };
+  }
+
+  /** What the coordinator needs to know about this enemy, or null when it is not in combat. Read
+   * once per tick, before any enemy moves, so the roster reflects last tick's positions. */
+  combatCandidate(): RoleCandidate | null {
+    if (this.state !== 'chase') return null;
+    const position = this.body.position;
+    const rangedRange = this.body.archetype.rangedRange;
+    return {
+      id: this.body.id,
+      x: position.x,
+      z: position.z,
+      canShoot: rangedRange > 0,
+      rangedRange,
+      hasLineOfSight: this.hasLineOfSightToPlayer,
+    };
   }
 
   /** A non-lethal hit - the shell has already applied the damage.
@@ -211,11 +239,18 @@ export class EnemyBrain {
     }
   }
 
-  /** Releases this enemy's firing slot and its place among the squad's watchers - called from the
-   * shell's dispose. */
+  /** Gives up this enemy's role and its place among the squad's watchers - called from the shell's
+   * dispose. */
   dispose(): void {
-    this.releaseSlot();
+    this.dropToken();
+    this.coordinator.release(this.body.id);
     this.knowledge.forget(this.body.id);
+  }
+
+  /** This enemy's role from the combat coordinator. An enemy that has only just entered combat is
+   * not on the roster until next tick; it waits as a reserve (or rushes, if melee-only). */
+  private get role(): CombatRole {
+    return this.coordinator.roleOf(this.body.id) ?? (this.body.archetype.rangedRange > 0 ? 'reserve' : 'rusher');
   }
 
   /** Shared by onDamaged/onHeardGunshot (a fuzzy estimate, `withError=true`) and onNearbyDeath or a
@@ -262,6 +297,12 @@ export class EnemyBrain {
     else this.knowledge.reportLost(this.body.id);
   }
 
+  /** A flanker keeps flanking without its own sightline while a comrade still sees the player -
+   * working round a house is the whole point of a flank. */
+  private isFlankingBlind(): boolean {
+    return this.role === 'flanker' && this.knowledge.isThreatVisible;
+  }
+
   /** State transitions - no movement here, so the switch in update() always sees this frame's
    * already-resolved state. */
   private updateAggroState(dt: number, current: EnemyPosition, player: Player, distanceToPlayer: number): void {
@@ -293,10 +334,10 @@ export class EnemyBrain {
       case 'chase':
         if (distanceToPlayer > archetype.leashRange) {
           this.giveUp();
-        } else if (!this.hasLineOfSightToPlayer) {
+        } else if (!this.hasLineOfSightToPlayer && !this.isFlankingBlind()) {
           this.state = 'search';
           this.searchTimer = ENEMY_SEARCH_DURATION;
-          this.releaseSlot();
+          this.dropToken();
           this.isKiting = false;
           this.knowledge.reportLost(this.body.id);
         }
@@ -321,7 +362,7 @@ export class EnemyBrain {
   private giveUp(): void {
     this.state = 'idle';
     this.awareness = 0;
-    this.releaseSlot();
+    this.dropToken();
     this.isKiting = false;
     this.knowledge.reportLost(this.body.id);
   }
@@ -351,9 +392,9 @@ export class EnemyBrain {
     const archetype = this.body.archetype;
 
     if (distanceToPlayer <= ENEMY_ATTACK_RANGE) {
-      // Melee always wins at close range regardless of archetype (Phase D's "universal fallback"),
-      // so ranged combat/kiting stand aside entirely here rather than also acting at point-blank.
-      this.releaseSlot();
+      // Melee always wins at close range regardless of archetype or role (Phase D's "universal
+      // fallback"), so ranged combat/kiting/flanking stand aside entirely at point-blank.
+      this.dropToken();
       this.combat.aimHoldTimer = 0;
       this.isKiting = false;
       this.body.faceToward(player.position.x, player.position.z);
@@ -373,11 +414,18 @@ export class EnemyBrain {
       }
     }
 
+    if (this.role === 'flanker') {
+      this.updateFlank(dt, player, current);
+      return;
+    }
+
     if (distanceToPlayer <= archetype.rangedRange && this.hasLineOfSightToPlayer) {
+      // Shooters fire; reserves in range hold their ground facing the player until the
+      // coordinator gives them a token.
       this.body.faceToward(player.position.x, player.position.z);
       this.updateRangedFiring(dt, player, current, true);
     } else {
-      this.releaseSlot();
+      this.dropToken();
       this.combat.aimHoldTimer = 0;
       // Whisker avoidance during chase too (this used to deliberately beeline): a head-height LOS
       // ray can clear past a tree trunk or boulder whose collider still blocks the ground path, so
@@ -386,11 +434,37 @@ export class EnemyBrain {
     }
   }
 
+  /** The flanker's move: to a point ninety degrees round from the squad's front (the coordinator's
+   * combat bearing), on the side the coordinator picked, at a distance set by its own ranged range.
+   * It does not fire on the way; once there it faces the player and waits for a shooter token. The
+   * target is built from the squad's belief, not the player's true position. */
+  private updateFlank(dt: number, player: Player, current: EnemyPosition): void {
+    this.dropToken();
+    this.combat.aimHoldTimer = 0;
+    const target = this.flankPoint(player, current);
+    if (horizontalDistance(current, target) > ENEMY_FLANK_ARRIVE_DISTANCE) {
+      this.body.moveToward(target.x, target.z, this.body.archetype.moveSpeed, dt);
+    } else {
+      this.body.faceToward(player.position.x, player.position.z);
+    }
+  }
+
+  private flankPoint(player: Player, current: EnemyPosition): { x: number; z: number } {
+    const threat = this.knowledge.belief?.position ?? player.position;
+    const front = this.coordinator.combatBearing ?? Math.atan2(current.x - threat.x, current.z - threat.z);
+    const angle = front + (this.coordinator.flankSideOf(this.body.id) * Math.PI) / 2;
+    const radius = Math.min(
+      ENEMY_FLANK_RADIUS_MAX,
+      Math.max(ENEMY_FLANK_RADIUS_MIN, this.body.archetype.rangedRange * ENEMY_FLANK_RADIUS_FRACTION),
+    );
+    return { x: threat.x + Math.sin(angle) * radius, z: threat.z + Math.cos(angle) * radius };
+  }
+
   /** 'kite' archetypes only (e.g. Ridge Walker) - backs away from the player while continuing to
-   * fire, instead of just standing and shooting. Reuses the patrol/search stuck-detection pattern
-   * (same timer/pos fields, since patrol and chase never run in the same frame) to abandon a wedged
-   * retreat rather than freeze. Aim-error intentionally stays wide the whole time it's moving (see
-   * stepRangedFiring's `isStationary` param). Fires from `current` (this tick's pre-move position). */
+   * fire (if it holds a shooter token), instead of just standing and shooting. Reuses the
+   * patrol/search stuck-detection pattern to abandon a wedged retreat rather than freeze. Aim-error
+   * intentionally stays wide the whole time it's moving (see stepRangedFiring's `isStationary`
+   * param). Fires from `current` (this tick's pre-move position). */
   private updateKiteRetreat(dt: number, player: Player, current: EnemyPosition): void {
     const next = this.body.retreatFrom(player.position.x, player.position.z, this.body.archetype.moveSpeed, dt);
     if (next) {
@@ -403,13 +477,13 @@ export class EnemyBrain {
 
   private updateRangedFiring(dt: number, player: Player, current: EnemyPosition, isStationary: boolean): void {
     const archetype = this.body.archetype;
-    stepRangedFiring(this.combat, dt, isStationary, archetype, this.engagementSlots, this.body.id, () =>
+    stepRangedFiring(this.combat, dt, isStationary, archetype, this.role === 'shooter', () =>
       fireRangedShot(this.combat, this.physics, headOf(current), player, archetype, this.body.excludeRigidBody, this.combatHooks),
     );
   }
 
-  private releaseSlot(): void {
-    releaseEngagementSlot(this.combat, this.engagementSlots, this.body.id);
+  private dropToken(): void {
+    dropFiringToken(this.combat);
   }
 
   /** Requires an actual line of sight rather than the flat auto-hit-if-in-range tick melee used to

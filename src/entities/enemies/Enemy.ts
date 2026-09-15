@@ -9,7 +9,7 @@ import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import type { EnemyArchetype } from './archetypes.ts';
 import { steerWithAvoidance } from './enemySteering.ts';
-import type { EngagementSlots } from './engagementSlots.ts';
+import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import { ENEMY_HEAD_OFFSET_Y, ENEMY_HEAD_RADIUS, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
@@ -27,6 +27,8 @@ export interface EnemyDebugRecord {
   readonly awareness: number;
   readonly hasLineOfSight: boolean;
   readonly yaw: number;
+  /** The combat coordinator's role while in combat, else null. */
+  readonly role: CombatRole | null;
 }
 
 /** How far an enemy must move horizontally before its ground height is resampled. sampleHeight is
@@ -81,7 +83,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     position: THREE.Vector3,
     gltf: GLTF,
     readonly archetype: EnemyArchetype,
-    engagementSlots: EngagementSlots,
+    coordinator: CombatCoordinator,
     knowledge: SquadKnowledge,
     combatHooks: EnemyCombatHooks,
     patrolRng: () => number,
@@ -135,7 +137,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     );
     physics.registerCollider(this.headCollider, this);
 
-    this.brain = new EnemyBrain(this, physics, engagementSlots, knowledge, combatHooks, patrolRng, position);
+    this.brain = new EnemyBrain(this, physics, coordinator, knowledge, combatHooks, patrolRng, position);
   }
 
   get isDead(): boolean {
@@ -178,7 +180,13 @@ export class Enemy implements Entity, Damageable, EnemyBody {
       awareness: brain.awareness,
       hasLineOfSight: brain.hasLineOfSight,
       yaw: this.mesh.rotation.y,
+      role: brain.role,
     };
+  }
+
+  /** This enemy's entry on the combat coordinator's roster, or null when it is not fighting. */
+  combatCandidate(): RoleCandidate | null {
+    return this.dead ? null : this.brain.combatCandidate();
   }
 
   /** Test-only (window.__gameDebug.placeEnemy): moves the enemy instantly, like the player's own

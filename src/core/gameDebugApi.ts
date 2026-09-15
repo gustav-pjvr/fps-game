@@ -44,6 +44,8 @@ export interface GameDebugApi {
     awareness: number;
     hasLineOfSight: boolean;
     yaw: number;
+    /** Combat role (step 2): 'shooter' | 'flanker' | 'rusher' | 'reserve' while chasing, else null. */
+    role: string | null;
     x: number;
     y: number;
     z: number;
@@ -53,6 +55,8 @@ export interface GameDebugApi {
     belief: { x: number; z: number; source: string; confidence: number; age: number } | null;
     visibleCount: number;
     secondsSinceSeen: number;
+    /** How many enemies hold each combat role right now. */
+    roles: Record<string, number>;
   };
   /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground, so
    * a behaviour test can stage a known layout. */
