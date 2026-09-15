@@ -53,7 +53,7 @@ Status key: done, in progress, next, later, conditional.
 | 5 | Branch `feature/enemy-ai` | done |
 | 6 to 9 | Step 1: squad knowledge, awareness meter, event routing, tests (checkpoint A) | done, checkpoint A passed |
 | 10 to 12 | Step 2: combat coordinator and roles (checkpoint B) | done, checkpoint B passed |
-| 13 to 17 | Step 3: position picking, ray budget, combat skills (checkpoint C) | later |
+| 13 to 17 | Step 3: position picking, ray budget, combat skills (checkpoint C) | done, checkpoint C passed |
 | 18 to 19 | Step 4: search grid and paired sweeps | later |
 | 20 to 22 | Step 5: callouts, telegraph, stagger (checkpoint D) | later |
 | 23 to 25 | Step 6: pacing director as a new opt-in solo mode (checkpoint E) | later |
@@ -122,6 +122,10 @@ sandbox draws 2 to 4 frames a second, so the fixed-step loop hits its 0.25 s fra
 | Checkpoint A, fight v2 | 0.25 (1.50) | 1.21 | 0.01 | 2,761 | 2.8 |
 | Checkpoint B, spawn | 0.35 (2.70) | 1.20 | 0.02 | 2,111 | 0.9 |
 | Checkpoint B, fight v2 | 0.29 (3.40) | 1.16 | 0.01 | 2,950 | 4.9 |
+| Checkpoint C first run, fight v2 | 0.28 (3.00) | 1.13 | 0.01 | 3,298 | 2.7 |
+| Checkpoint C first run, 30 enemies, 60 s fight | 0.38 (4.00) | 1.12 | 0.01 | 4,546 | 5.6 |
+| Checkpoint C re-run, fight v2 | 0.29 (3.10) | 1.18 | 0.02 | 2,418 | 4.6 |
+| Checkpoint C re-run, 30 enemies, 60 s fight | 0.41 (3.40) | 1.21 | 0.01 | 4,079 | 6.7 |
 
 Checkpoint A reading: the AI cost per tick is unchanged (0.25 ms in the fight, 0.31 ms at
 spawn) and raycasts fell slightly (2,761 against 2,895 a second in the fight). The cone prefilter
@@ -343,3 +347,157 @@ File sizes after step 2: `EnemyBrain.ts` 545 lines (limit 800), `Enemy.ts` 343,
 `combatCoordinator.ts` 252, `EntityManager.ts` 319. Step 3 opens by moving the chase behaviours
 (shooter, flanker, kiter, reserve) out of `EnemyBrain.ts` into their own module before cover logic
 is added, so the brain does not approach the limit.
+
+### Step 3: position picking, cover and peeking (2026-09-15)
+
+What the player sees:
+
+- **Enemies in a fight use cover.** Each shooter and reserve picks a spot behind a tree trunk, a
+  house corner or a watch tower, on the side away from you, and walks there. Reserves hide and
+  wait. Shooters alternate: 1.5 s hidden, then a step out to the side for 1.4 s of fire, then back.
+  Each peek's first shot is the wide first-shot-grace shot, as with any new sightline.
+- **They spread out and stay out of each other's line of fire.** No two enemies pick spots within
+  2.5 m of each other, nobody stands within 1.5 m of another shooter's line to you, and no path to
+  a spot passes nearer you than 4 m.
+- **Ridge Walkers prefer higher ground.** A gentle bonus for spots up to 4 m above you.
+- **When there is no cover,** a shooter picks an open firing spot at a good distance and fights
+  from there; a reserve that finds no cover holds its ground as before.
+- **Hiding never turns into a stalemate.** An enemy in cover or on a flank stays in the fight
+  without its own sightline only while the squad has seen you in the last 3 s. After that everyone
+  goes to search your last known position.
+
+How it is built (all under `src/entities/enemies/`):
+
+- `tactics/obstacleRegistry.ts`: the cover map. `VegetationManager` registers every tree trunk and
+  `BuildingManager` every house footprint per chunk as chunks load, and drops them on unload.
+  Rocks are left out on purpose: at about 0.9 m tall they sit below an enemy's 1.1 m chest. Watch
+  towers come straight from `getWatchTowerPositions`, treated as one round obstacle of the shaft
+  plus its stairs (5.4 m).
+- `tactics/coverPoints.ts`: each obstacle yields pairs of spots, a covered spot on its far side and
+  a peek spot a step out to the side. House corners use the wall faces that point away from you.
+  Open ground yields rings of plain firing spots (4, 8 and 12 m around the enemy).
+- `tactics/tacticalQuery.ts`: every candidate is scored by multiplying 0 to 1 factors (distance band
+  for its weapon, walking distance, cover over open ground, high ground for Ridge Walkers), with
+  hard rejections for blocked, claimed, in-a-line-of-fire and past-the-player spots. Then the best
+  are confirmed with rays in order: one from your eye to the covered spot's chest height (must be
+  blocked), one from the peek spot's head height to your eye (must be clear, shooters only).
+- `tactics/rayBudget.ts`: those rays come from one shared budget of 16 per tick, handed out
+  stalest-first so nobody starves; at 50 enemies each simply refreshes its spot less often.
+- `tactics/planner.ts` glues it together; `tactics/terrainHeightCache.ts` memoises terrain height
+  for candidate spots.
+- `combatBehaviour.ts` (new): the fighting half of the old `EnemyBrain.ts`, plus the hide and peek
+  cycle, re-checking a held spot every refresh, and giving up on spots it cannot reach.
+  `stuckDetector.ts` is shared by patrol and combat. `EnemyBrain.ts` keeps perception, the state
+  machine, patrol and search.
+- `EntityManager` owns the budget and scheduler and builds the context once per tick; its rays
+  skip your own capsule (your eye sits inside it) and the asking enemy's own body.
+- The perf log gained tactical rays per second, the share of ticks the budget ran short, spots
+  picked, and the percent of spots found unreachable - the step 7 navmesh trigger.
+
+Departures from the design:
+
+- **Two spots per candidate, not one.** The design's peek spot was a single point hidden at chest
+  height but clear at head height. The enemies cannot crouch and trunks and walls block both
+  heights equally, so such spots would almost never exist. A covered spot plus a peek spot a step
+  to the side always exists where there is cover.
+- **Rocks are not cover** (too low), and towers are read from the pure tower list rather than a
+  registry.
+- **The Approacher role is not needed** and was dropped: the 3 s blind grace does its job (nobody
+  sits in cover forever after losing you).
+- **Leapfrog advancing was not built.** The design listed it as the first thing to cut; shooters
+  pinning from cover while a flanker works round already reads as the move it describes.
+- **Rush Jobs do not look for covered routes.** Without pathfinding a "covered route" cannot be
+  planned; they rush as before. Revisit with step 7 if the navmesh goes ahead.
+
+Findings from the first checkpoint C run:
+
+- **Enemies became easier.** Smoke 16 of 16 and the death flow 3 of 3 passed, but the death flow
+  took 2.3 to 2.9 min against 1.2 to 2.0 before cover: at 1.4 s out and 1.5 s hidden, a shooter was
+  firing under half the time. A smarter enemy should not be an easier one, so the cycle was
+  retuned to 2.0 s out and 1.0 s hidden (exposed two thirds of the time, a full burst plus the start
+  of the next).
+- **The tower cover check never reached the behaviour.** Its first shot did not fire (ammo stayed
+  at 30): the long tower search had lost pointer lock, and the game ignores the mouse while
+  unlocked. The test's shot helper now takes pointer lock first.
+- **The "unnoticed from behind" check found no usable attempt.** It only counts attempts where the
+  enemy keeps its heading, and on that run's map the enemy was patrolling among trees, where
+  whisker steering can swing its heading 80 degrees in a tick. Patrol did not change in step 3 (it
+  passed at checkpoints A and B). The test now moves the enemy to the open clearing around spawn
+  first.
+- **Position picking is cheap and reachable so far.** The standard fight cost 0.28 ms of AI per
+  tick (baseline 0.26). The 30-enemy, 60 s run cost 0.38 ms per tick with the budget never short;
+  enemies committed to 37 spots and found none unreachable. That is under the 10 percent threshold
+  for skipping the navmesh (step 7), on a small sample; the re-run adds to it.
+
+Second checkpoint C run, after the retune and the two test fixes:
+
+- **The retune worked.** The death flow passed 3 of 3 in 1.8, 0.8 and 1.0 min, back in the range
+  it ran before cover (1.2 to 2.0 min). Smoke suite 16 of 16.
+- **Perf unchanged:** 0.29 ms of AI per tick in the standard fight, 0.41 ms at 30 enemies, the ray
+  budget never short. Across all checkpoint C runs enemies committed to 81 spots and found none
+  unreachable, so the step 7 navmesh trigger (above 20 percent) is nowhere near.
+- **Two behaviour checks still failed, one on its own assertion.** The tower check reached the
+  fight, but a later shot's "did it fire" check saw ammo go from 12 to 30: the button stayed down
+  long enough to empty the magazine and auto-reload. It now checks that ammo changed, not that it
+  fell. The hearing check reported the enemy 36 m away as chasing, which should be impossible past
+  every archetype's leash (26 to 32 m drops it to idle within a tick) and passed at checkpoints A
+  and B. Its artifacts were overwritten by later runs, so it now reports every enemy's record, the
+  player position and the squad belief in its failure message; a targeted re-run follows.
+
+Targeted re-run (the tower and hearing checks, twice each):
+
+- **The hearing check passed both times.** The "chasing at 36 m" reading did not come back. Its
+  cause is not found: by the code an enemy that far out is dropped to idle by the leash within a
+  tick, so it is recorded here as an open, intermittent test failure (1 in 5 runs of that check
+  across checkpoints A to C), with the failure message now carrying every enemy's full record so
+  the next occurrence can be diagnosed from the log alone.
+- **The tower check failed once and passed once.** The failing run saw no covered spots at all,
+  and its screenshot showed the player looking up at tower structure overhead - standing at the
+  tower's base, not 24 m out. Towers sit near the world's edge ramp, and the test always placed the
+  player 24 m in +z, which on that map was out past the playable area. From the tower's base every
+  enemy closed straight to melee range, where melee always wins and no spot is picked. The test now
+  stands the player on the side of the tower facing spawn and the enemies on the far side, so the
+  layout is the intended one on any map.
+
+Third run: the tower check still failed 3 of 3 (0, 0 and 1 covered spots), and the flank check
+failed once (no flanker seen) after passing in both earlier checkpoint C runs. The tower failures
+were the test asking for something the design rightly refuses:
+
+- **A watch tower is poor cover for most enemies, by geometry.** Counting its stairs it is about
+  5.4 m in radius, so the spot hidden behind it is at least 6 m past its centre on the far side
+  from the player. With the player 24 m from the tower that spot is about 30 m away, outside every
+  archetype's fighting band (a Straggler fights from 5.6 to 14.4 m, a Ridge Walker from 10.5 to
+  27 m), and the scoring correctly rejects it: an enemy should not hide where it cannot shoot back.
+  Towers only serve as cover when the player is close to them, and then mainly for Ridge Walkers.
+  Tree trunks and house corners are the cover that matters. This is left as is, and noted.
+- **The check now fights in a wood.** A new debug hook, `getCoverNear(x, z, radius)`, reads the
+  cover registry; the test finds a spot with at least 8 trunks within 15 m and rings six enemies
+  12 m around the player, inside a Straggler's band.
+- **The flank check now reports a timeline** (every enemy's state, role and spot, and how many
+  enemies see the player, for the last 12 samples) if it fails, to tell a flaky sample apart from
+  hiding enemies leaving fewer moments when anyone sees the player - which is what a flank needs.
+
+Fourth run: the full behaviour spec passed 6 of 6, and the woods check passed all 3 times it ran.
+The flank check failed 1 of 3, and its timeline answered the question: every sample read "seen by
+5" with four Rush Jobs (role `rusher`) and one gunner holding the only shooter token. A flank needs
+a second gun-carrying enemy waiting for a token, and that match had none - the coordinator was
+right not to send anyone. Rush Jobs are 30 percent of spawns, so about 3 squads in 100 roll one gun
+or none among five. The check now re-rolls the match (up to four times) until at least three of
+its enemies carry guns, so it tests flanking rather than the archetype dice. Hiding in cover is
+not starving the flank of sightings: the player stayed in view of the whole squad throughout.
+
+**Checkpoint C (2026-09-15), passed:** typecheck clean; unit suite 278 of 278; `e2e/enemy-ai.spec.ts`
+6 of 6 in one clean full run, with the woods cover check (at least two enemies pick covered spots
+behind trees, at least one reaches its spot and hides or peeks, never more than two shooters)
+passing 3 of 3 and the corrected flank check 3 of 3; smoke suite 16 of 16; the real
+enemy-kills-player death flow 3 of 3 in 0.8 to 1.8 min after the peek retune; perf within noise
+of the baseline (0.29 ms of AI per tick in the standard fight, 0.41 ms at 30 enemies, the ray
+budget never short). Navmesh decision input: 81 spots committed to across the checkpoint runs, 0
+unreachable, far under the 20 percent trigger, so step 7 stays unbuilt unless later steps change
+that picture. One item stays open: the hearing check's single "chasing at 36 m" reading, not
+reproduced in 5 runs since, with its failure message now carrying the full diagnosis.
+
+File sizes after step 3 (limit 800): `EntityManager.ts` 432, `combatBehaviour.ts` 420,
+`EnemyBrain.ts` 412 (down from 545 once fighting moved out), `Enemy.ts` 367, `combatCoordinator.ts`
+252; every file in `tactics/` is under 175. Unit suite 278 of 278 (47 new across the tactics
+modules, the planner and the hide-and-peek cycle).

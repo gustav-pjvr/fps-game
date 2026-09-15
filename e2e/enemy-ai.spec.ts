@@ -62,8 +62,11 @@ async function playerPosition(page: Page): Promise<{ x: number; y: number; z: nu
   return position;
 }
 
-/** Fires the current weapon straight up, so every enemy in earshot hears it and nothing is hit. */
+/** Fires the current weapon straight up, so every enemy in earshot hears it and nothing is hit.
+ * Takes pointer lock first: a long run (the tower search) can lose it, and the game ignores the
+ * mouse while unlocked. */
 async function fireIntoAir(page: Page): Promise<void> {
+  await lockPointer(page);
   const player = await playerPosition(page);
   await page.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y + 100, z), player);
   const ammoBefore = await page.evaluate(() => window.__gameDebug?.getAmmo() ?? 0);
@@ -72,7 +75,9 @@ async function fireIntoAir(page: Page): Promise<void> {
   await page.mouse.up();
   await waitForGameTime(page, 0.2);
   const ammoAfter = await page.evaluate(() => window.__gameDebug?.getAmmo() ?? 0);
-  expect(ammoAfter, 'the shot must actually fire').toBeLessThan(ammoBefore);
+  // Changed, not lower: in the slow sandbox the button can stay down long enough to empty the
+  // magazine and auto-reload, which leaves more rounds than before (a checkpoint C run saw 12 -> 30).
+  expect(ammoAfter, 'the shot must actually fire').not.toBe(ammoBefore);
 }
 
 test('an enemy facing the player fills its awareness and engages', async ({ page }) => {
@@ -99,12 +104,18 @@ test('an enemy facing the player fills its awareness and engages', async ({ page
 test('a player standing behind an enemy stays unnoticed', async ({ page }) => {
   test.setTimeout(180000);
   await startSoloMatch(page, 1);
+  // Open ground: the enemy goes to the clearing around the player's spawn, where there are no trees
+  // for its whiskers to swerve round, so its heading holds; the player waits 40 m away. Among trees
+  // the heading can swing 80 degrees in a tick and no attempt counts (checkpoint C's first run).
+  const spawn = await playerPosition(page);
+  await page.evaluate(({ x, y, z }) => window.__gameDebug?.teleport(x + 40, y + 1, z), spawn);
+  await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(0, x, z), spawn);
   await waitForGameTime(page, 1);
 
   // Only attempts where the enemy kept its heading count: a patrol that turns round mid-check is
   // allowed to notice the player.
   let checked = false;
-  for (let attempt = 0; attempt < 4 && !checked; attempt++) {
+  for (let attempt = 0; attempt < 6 && !checked; attempt++) {
     const [enemy] = await readEnemies(page);
     if (!enemy) throw new Error('expected one live enemy');
     await standRelativeToFacing(page, enemy, -8);
@@ -160,8 +171,18 @@ test('a sighting is shared with a comrade too far away to see the player', async
 });
 
 test('the coordinator never lets more than two shoot at once and sends one round the side', async ({ page }) => {
-  test.setTimeout(240000);
-  await startSoloMatch(page, 5);
+  test.setTimeout(360000);
+  // A flank needs a second enemy with a gun waiting for a shooter token. Rush Jobs (30 percent of
+  // spawns) are melee-only, so about 3 matches in 100 roll a squad with one gun or none - one such
+  // match (4 Rush Jobs of 5) failed this check at checkpoint C with the coordinator behaving
+  // correctly. Re-roll the match until at least three enemies carry guns, so the check tests
+  // flanking and not the archetype dice.
+  let gunners = 0;
+  for (let attempt = 0; attempt < 4 && gunners < 3; attempt++) {
+    await startSoloMatch(page, 5);
+    gunners = (await readEnemies(page)).filter((enemy) => enemy.archetype !== 'Rush Job').length;
+  }
+  expect(gunners, 'a squad with at least three gun-carrying enemies').toBeGreaterThanOrEqual(3);
   await waitForGameTime(page, 1);
 
   // Five enemies in an arc 12 to 14 m in front of the player (the open clearing around spawn), then
@@ -191,9 +212,12 @@ test('the coordinator never lets more than two shoot at once and sends one round
   let flankerIndex: number | null = null;
   let flankerStartBearing = 0;
   let flankerMaxTurn = 0;
+  const timeline: string[] = [];
   for (let sample = 0; sample < 40; sample++) {
     await waitForGameTime(page, 0.5);
     const enemies = await readEnemies(page);
+    const squad = await page.evaluate(() => window.__gameDebug?.getSquadDebug());
+    timeline.push(timelineEntry(enemies, squad?.visibleCount));
     const shooters = enemies.filter((enemy) => enemy.role === 'shooter').length;
     maxShooters = Math.max(maxShooters, shooters);
     if (enemies.some((enemy) => enemy.state === 'chase')) sawChase = true;
@@ -206,10 +230,84 @@ test('the coordinator never lets more than two shoot at once and sends one round
     if (tracked) flankerMaxTurn = Math.max(flankerMaxTurn, angleChange(bearingFromPlayer(tracked), flankerStartBearing));
   }
 
-  expect(sawChase, 'the enemies should engage after the shot').toBe(true);
-  expect(maxShooters, 'at most two shooter tokens at any sample').toBeLessThanOrEqual(2);
-  expect(flankerIndex, 'one enemy should be sent to flank').not.toBeNull();
-  expect((flankerMaxTurn * 180) / Math.PI, 'the flanker should work round the player').toBeGreaterThanOrEqual(20);
+  const story = `\n${timeline.slice(-12).join('\n')}`;
+  expect(sawChase, `the enemies should engage after the shot${story}`).toBe(true);
+  expect(maxShooters, `at most two shooter tokens at any sample${story}`).toBeLessThanOrEqual(2);
+  expect(flankerIndex, `one enemy should be sent to flank${story}`).not.toBeNull();
+  expect((flankerMaxTurn * 180) / Math.PI, `the flanker should work round the player${story}`).toBeGreaterThanOrEqual(20);
+});
+
+/** One compact line per sample for failure messages: each enemy as state/role/spot, e.g.
+ * "c:shooter:trunk/hiding", plus how many enemies see the player. */
+function timelineEntry(enemies: EnemyRecord[], visibleCount: number | undefined): string {
+  const parts = enemies.map((enemy) => `${enemy.state}:${enemy.role ?? '-'}${enemy.pick ? `:${enemy.pick.source}/${enemy.pick.phase}` : ''}`);
+  return `[seen by ${visibleCount ?? '?'}] ${parts.join(' ')}`;
+}
+
+/** Moves the player outward from spawn until at least `minTrunks` tree trunks are registered as
+ * cover within 15 m, lands there, and returns the spot. */
+async function findWoods(page: Page, minTrunks: number): Promise<{ x: number; y: number; z: number } | null> {
+  const origin = await playerPosition(page);
+  for (const radius of [40, 70, 100, 130]) {
+    for (let step = 0; step < 8; step++) {
+      const angle = (step / 8) * Math.PI * 2;
+      const x = origin.x + Math.sin(angle) * radius;
+      const z = origin.z + Math.cos(angle) * radius;
+      await page.evaluate(({ x, z }) => window.__gameDebug?.teleport(x, 80, z), { x, z });
+      await waitForGameTime(page, 0.5);
+      const cover = await page.evaluate(({ x, z }) => window.__gameDebug?.getCoverNear(x, z, 15) ?? [], { x, z });
+      if (cover.filter((entry) => entry.kind === 'trunk').length >= minTrunks) {
+        await waitForGameTime(page, 4);
+        return playerPosition(page);
+      }
+    }
+  }
+  return null;
+}
+
+test('enemies in a wood pick covered spots behind the trees and fight from them', async ({ page }) => {
+  test.setTimeout(300000);
+  await startSoloMatch(page, 6);
+  const spot = await findWoods(page, 8);
+  expect(spot, 'a wooded spot should load within 130 m of spawn').not.toBeNull();
+
+  // Six enemies on a 12 m ring around the player: inside every shooting archetype's cover band
+  // (a Straggler fights from 5.6 to 14.4 m). Big obstacles are not used here on purpose - a watch
+  // tower's hidden side is at least 6 m past its centre, out of a Straggler's band unless the
+  // player hugs the tower (an earlier version of this check, see docs/enemy-ai-v2.md).
+  for (let index = 0; index < 6; index++) {
+    const angle = (index * 60 * Math.PI) / 180;
+    await page.evaluate(
+      ({ index, x, z }) => window.__gameDebug?.placeEnemy(index, x, z),
+      { index, x: spot!.x + Math.sin(angle) * 12, z: spot!.z + Math.cos(angle) * 12 },
+    );
+  }
+  await fireIntoAir(page);
+
+  const coveredSpots = new Set<number>();
+  const settledOnSpot = new Set<number>();
+  const timeline: string[] = [];
+  let maxShooters = 0;
+  let sawChase = false;
+  for (let sample = 0; sample < 50; sample++) {
+    await waitForGameTime(page, 0.5);
+    if (sample % 10 === 9) await fireIntoAir(page);
+    const enemies = await readEnemies(page);
+    const squad = await page.evaluate(() => window.__gameDebug?.getSquadDebug());
+    timeline.push(timelineEntry(enemies, squad?.visibleCount));
+    maxShooters = Math.max(maxShooters, enemies.filter((enemy) => enemy.role === 'shooter').length);
+    for (const enemy of enemies) {
+      if (enemy.state === 'chase') sawChase = true;
+      if (enemy.pick?.covered && enemy.pick.source !== 'open') coveredSpots.add(enemy.index);
+      if (enemy.pick && enemy.pick.phase !== 'moving') settledOnSpot.add(enemy.index);
+    }
+  }
+
+  const story = `\n${timeline.slice(-12).join('\n')}`;
+  expect(sawChase, `the enemies should engage${story}`).toBe(true);
+  expect(coveredSpots.size, `at least two enemies should pick a covered spot${story}`).toBeGreaterThanOrEqual(2);
+  expect(settledOnSpot.size, `at least one enemy should reach its spot and hide or peek${story}`).toBeGreaterThanOrEqual(1);
+  expect(maxShooters, `still never more than two shooters${story}`).toBeLessThanOrEqual(2);
 });
 
 test('a rifle shot carries farther than a pistol shot', async ({ page }) => {
@@ -222,10 +320,19 @@ test('a rifle shot carries farther than a pistol shot', async ({ page }) => {
   await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(0, x + 36, z), player);
   await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(1, x, z - 70), player);
   await waitForGameTime(page, 0.3);
+  const beforePistol = await readEnemies(page);
   await fireIntoAir(page);
   await waitForGameTime(page, 1);
   const afterPistol = await readEnemies(page);
-  expect(afterPistol.find((record) => record.index === 0)?.state).toBe('idle');
+  const farEnemy = afterPistol.find((record) => record.index === 0);
+  // The message carries the whole picture, so a failure is diagnosable without the trace.
+  const diagnosis = JSON.stringify({
+    player,
+    beforePistol,
+    afterPistol,
+    squad: await page.evaluate(() => window.__gameDebug?.getSquadDebug()),
+  });
+  expect(farEnemy?.state, `the enemy 36 m away should not react to a pistol: ${diagnosis}`).toBe('idle');
 
   // Rifle (heard to 40 m): an enemy 34 m away must react.
   await page.keyboard.press('Digit1');

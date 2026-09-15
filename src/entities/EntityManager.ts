@@ -1,3 +1,4 @@
+import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
@@ -7,8 +8,18 @@ import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks, type EnemyDebugRecord }
 import { createArchetypePicker } from './enemies/archetypes.ts';
 import { CombatCoordinator, type CombatRole, type RoleCandidate } from './enemies/combatCoordinator.ts';
 import { SquadKnowledge } from './enemies/squadKnowledge.ts';
+import type { PlanarPoint } from './enemies/perception.ts';
+import { obstacleCentre, type ObstacleQuery } from './enemies/tactics/obstacleRegistry.ts';
+import type { TacticalContext } from './enemies/tactics/planner.ts';
+import { RayBudget, TacticalScheduler } from './enemies/tactics/rayBudget.ts';
+import type { LosProbe } from './enemies/tactics/tacticalQuery.ts';
+import { TerrainHeightCache } from './enemies/tactics/terrainHeightCache.ts';
+import { castHitscan } from '../combat/hitscan.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
 import { computeExplosionDamage } from '../combat/explosion.ts';
+import { perfCounters } from '../core/perfStats.ts';
+import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { getWatchTowerPositions } from '../world/WatchTowerManager.ts';
 import {
   DEATH_FALL_ANGLE,
   DEATH_FALL_DURATION,
@@ -16,6 +27,12 @@ import {
   DEATH_SINK_DISTANCE,
   DEATH_SINK_DURATION,
   ENEMY_MAX_CONCURRENT_ENGAGERS,
+  ENEMY_TACTICAL_MAX_RAYS_PER_JOB,
+  ENEMY_TACTICAL_RAY_BUDGET_PER_TICK,
+  ENEMY_TACTICAL_REFRESH_INTERVAL,
+  ENEMY_TERRAIN_HEIGHT_CACHE_MAX,
+  ENEMY_TERRAIN_HEIGHT_CACHE_QUANTUM,
+  EYE_OFFSET,
 } from '../core/config.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
@@ -28,10 +45,16 @@ const PATROL_SEED_OFFSET = 211;
  * every other offset in the codebase (0 to 13, 40/41, 101, 211 plus spawn index, GooseManager's
  * 311). See docs/enemy-ai-v2-design.md for the reserved v2 offsets. */
 const COORDINATOR_SEED_OFFSET = 401;
+/** Per-enemy position-picking streams (step 3): 431 plus spawn index, like patrol's 211 plus
+ * spawn index; at most MAX_MATCH_ENTITY_COUNT (50) enemies keeps them clear of everything else. */
+const TACTICS_SEED_OFFSET = 431;
 
 const DEATH_TOTAL_DURATION = DEATH_FALL_DURATION + DEATH_HOLD_DURATION + DEATH_SINK_DURATION;
 
 interface ManagedEntity {
+  /** Every Entity has one; optional here only so the interface stays honest about what
+   * EntityManager relies on. */
+  readonly id?: number;
   readonly mesh: THREE.Object3D;
   readonly isDead: boolean;
   readonly killFeedLabel: string;
@@ -51,6 +74,12 @@ interface ManagedEntity {
   debugPlace?(x: number, z: number): void;
   /** Enemy-only: its entry on the combat coordinator's roster, or null when not fighting. */
   combatCandidate?(): RoleCandidate | null;
+  /** Enemy-only: position picking (step 3). */
+  readonly excludeRigidBody?: RAPIER.RigidBody;
+  wantsTacticalPick?(): boolean;
+  refreshTacticalPick?(context: TacticalContext, rayAllowance: number): number;
+  tacticalClaims?(): PlanarPoint[];
+  fireLineStart?(): PlanarPoint | null;
 }
 
 /** A corpse mid-death-sequence (see the DEATH_* comment in config.ts) - its physics presence is
@@ -77,6 +106,13 @@ export interface SquadDebug {
   readonly roles: Readonly<Record<CombatRole, number>>;
 }
 
+/** The world as position picking needs it (step 3): where the cover is, and where an enemy may
+ * not stand (inside houses and watch towers - Game's spawn-blocked check). */
+export interface TacticalWorldSource {
+  readonly obstacles: ObstacleQuery;
+  readonly isBlocked: (x: number, z: number) => boolean;
+}
+
 /** Owns spawned targets/enemies: advances moving ones, and cleans up + reports kills once they die. */
 export class EntityManager {
   private readonly entities: ManagedEntity[] = [];
@@ -90,6 +126,11 @@ export class EntityManager {
   /** What the whole squad knows about the player (enemy AI v2 step 1, squadKnowledge.ts) - one per
    * match, shared by every enemy, advanced once per tick before any enemy thinks. */
   private readonly knowledge = new SquadKnowledge();
+  /** Position picking's shared per-tick raycast budget and the round robin that spends it (step 3,
+   * tactics/rayBudget.ts), and a memo of terrain heights for candidate spots. */
+  private readonly rayBudget = new RayBudget(ENEMY_TACTICAL_RAY_BUDGET_PER_TICK);
+  private readonly scheduler = new TacticalScheduler(ENEMY_TACTICAL_REFRESH_INTERVAL, ENEMY_TACTICAL_MAX_RAYS_PER_JOB);
+  private readonly heightCache = new TerrainHeightCache(sampleHeight, ENEMY_TERRAIN_HEIGHT_CACHE_QUANTUM, ENEMY_TERRAIN_HEIGHT_CACHE_MAX);
   /** Seeded once per match (getWorldSeed()) so a given world's enemy loadout composition is
    * reproducible - each spawnEnemy call advances the same stream, so spawn order matters too. */
   private readonly pickArchetype = createArchetypePicker(getWorldSeed());
@@ -106,6 +147,7 @@ export class EntityManager {
     private readonly targetGltf: GLTF,
     private readonly enemyGltf: GLTF,
     private readonly enemyCombatHooks: EnemyCombatHooks,
+    private readonly tacticalWorld: TacticalWorldSource,
   ) {}
 
   static async create(
@@ -113,13 +155,14 @@ export class EntityManager {
     physics: PhysicsWorld,
     onKilled: (label: string) => void,
     enemyCombatHooks: EnemyCombatHooks,
+    tacticalWorld: TacticalWorldSource,
   ): Promise<EntityManager> {
     const models = await preloadGLTFs([TARGET_MODEL_PATH, ENEMY_MODEL_PATH]);
     const targetGltf = models.get(TARGET_MODEL_PATH);
     const enemyGltf = models.get(ENEMY_MODEL_PATH);
     if (!targetGltf || !enemyGltf) throw new Error('Failed to preload target/enemy models');
 
-    return new EntityManager(scene, physics, onKilled, targetGltf, enemyGltf, enemyCombatHooks);
+    return new EntityManager(scene, physics, onKilled, targetGltf, enemyGltf, enemyCombatHooks, tacticalWorld);
   }
 
   spawnTarget(position: THREE.Vector3, facePoint: THREE.Vector3): void {
@@ -130,7 +173,9 @@ export class EntityManager {
 
   spawnEnemy(position: THREE.Vector3): void {
     const archetype = this.pickArchetype();
-    const patrolRng = mulberry32(getWorldSeed() + PATROL_SEED_OFFSET + this.enemiesSpawned++);
+    const spawnIndex = this.enemiesSpawned++;
+    const patrolRng = mulberry32(getWorldSeed() + PATROL_SEED_OFFSET + spawnIndex);
+    const tacticsRng = mulberry32(getWorldSeed() + TACTICS_SEED_OFFSET + spawnIndex);
     const enemy = new Enemy(
       this.physics,
       position,
@@ -140,6 +185,7 @@ export class EntityManager {
       this.knowledge,
       this.enemyCombatHooks,
       patrolRng,
+      tacticsRng,
     );
     this.scene.add(enemy.mesh);
     this.entities.push(enemy);
@@ -170,6 +216,7 @@ export class EntityManager {
   update(dt: number, player: Player): void {
     this.knowledge.advance(dt);
     this.updateCoordinator();
+    this.updateTactics(player);
 
     for (let i = this.entities.length - 1; i >= 0; i--) {
       const entity = this.entities[i];
@@ -219,6 +266,70 @@ export class EntityManager {
     });
   }
 
+  /** Position picking (step 3): the enemies that want a spot this tick share one ray budget, in
+   * stalest-first order (TacticalScheduler). The context is built lazily - claims and fire lines
+   * are only gathered if some enemy's refresh actually comes up. */
+  private updateTactics(player: Player): void {
+    this.rayBudget.beginTick();
+    const fighters = this.entities.filter((entity) => entity.id !== undefined && entity.wantsTacticalPick?.() === true);
+    this.scheduler.sync(fighters.map((entity) => entity.id!));
+    if (fighters.length === 0) return;
+
+    const belief = this.knowledge.belief;
+    const threat = belief ? { x: belief.position.x, z: belief.position.z } : null;
+    const byId = new Map<number, ManagedEntity>();
+    for (const entity of this.entities) {
+      if (entity.id !== undefined) byId.set(entity.id, entity);
+    }
+
+    let claims: { id: number; points: PlanarPoint[] }[] | null = null;
+    const allClaims = (): { id: number; points: PlanarPoint[] }[] =>
+      (claims ??= this.entities.flatMap((entity) =>
+        entity.id !== undefined && entity.tacticalClaims ? [{ id: entity.id, points: entity.tacticalClaims() }] : [],
+      ));
+    let fireLines: { id: number; line: { from: PlanarPoint; to: PlanarPoint } }[] | null = null;
+    const allFireLines = (): { id: number; line: { from: PlanarPoint; to: PlanarPoint } }[] =>
+      (fireLines ??= threat
+        ? this.entities.flatMap((entity) => {
+            const start = entity.id !== undefined ? entity.fireLineStart?.() : null;
+            return start && entity.id !== undefined ? [{ id: entity.id, line: { from: start, to: threat } }] : [];
+          })
+        : []);
+
+    const context: TacticalContext = {
+      now: this.knowledge.now,
+      threat,
+      threatEyeY: belief ? belief.position.y + EYE_OFFSET : 0,
+      world: {
+        obstacles: this.tacticalWorld.obstacles,
+        towers: getWatchTowerPositions(),
+        isBlocked: this.tacticalWorld.isBlocked,
+        heightAt: this.heightAt,
+      },
+      probeFor: (id) => this.probeExcluding(byId.get(id)?.excludeRigidBody, player),
+      claimsFor: (id) => allClaims().flatMap((claim) => (claim.id === id ? [] : claim.points)),
+      fireLinesFor: (id) => allFireLines().flatMap((entry) => (entry.id === id ? [] : [entry.line])),
+    };
+
+    this.scheduler.update(this.knowledge.now, this.rayBudget, (id, allowance) => byId.get(id)?.refreshTacticalPick?.(context, allowance) ?? 0);
+    if (this.rayBudget.exhaustedThisTick) perfCounters.rayBudgetExhaustedTicks += 1;
+  }
+
+  private readonly heightAt = (x: number, z: number): number => this.heightCache.heightAt(x, z);
+
+  /** A sight line for position picking that ignores the player's own capsule (the threat's eye sits
+   * inside it, so every ray would otherwise start "blocked") and the asking enemy's own body. */
+  private probeExcluding(body: RAPIER.RigidBody | undefined, player: Player): LosProbe {
+    return (from, to) => {
+      const direction = new THREE.Vector3(to.x - from.x, to.y - from.y, to.z - from.z);
+      const length = direction.length();
+      if (length < 1e-4) return true;
+      direction.divideScalar(length);
+      perfCounters.tacticalRaycasts += 1;
+      return castHitscan(this.physics, new THREE.Vector3(from.x, from.y, from.z), direction, length, player.ownCollider, body) === null;
+    };
+  }
+
   private updateDying(dt: number): void {
     for (let i = this.dying.length - 1; i >= 0; i--) {
       const dying = this.dying[i];
@@ -262,6 +373,7 @@ export class EntityManager {
     this.dying.length = 0;
     this.knowledge.reset();
     this.coordinator.reset();
+    this.scheduler.clear();
   }
 
   /** Debug/test helper - world positions of everything currently alive. */
@@ -281,7 +393,8 @@ export class EntityManager {
     return this.entities.map((entity) => entity.debugArchetype);
   }
 
-  /** Debug/test helper (enemy AI v2) - state, awareness, sightline and facing of every live enemy. */
+  /** Debug/test helper (enemy AI v2) - state, awareness, sightline, facing, role and spot of every
+   * live enemy. */
   getLiveEnemyDebug(): LiveEnemyDebug[] {
     const records: LiveEnemyDebug[] = [];
     this.entities.forEach((entity, index) => {
@@ -310,6 +423,12 @@ export class EntityManager {
       secondsSinceSeen: this.knowledge.secondsSinceSeen(),
       roles: this.coordinator.countRoles(),
     };
+  }
+
+  /** Debug/test helper (enemy AI v2) - the registered cover within `radius` of (x, z): tree trunks
+   * and house footprints, by centre. Lets a behaviour test find a wood or a town to fight in. */
+  getCoverNear(x: number, z: number, radius: number): { kind: string; x: number; z: number }[] {
+    return this.tacticalWorld.obstacles.near(x, z, radius).map((obstacle) => ({ kind: obstacle.kind, ...obstacleCentre(obstacle) }));
   }
 
   /** Test-only - instantly moves the live entity at `index` (an enemy) to (x, z) on the ground. */

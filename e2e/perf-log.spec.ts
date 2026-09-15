@@ -29,6 +29,10 @@ interface Row {
   aiMs: number;
   aiMsMax: number;
   raycastsPerSec: number;
+  tacticalRaysPerSec: number;
+  budgetExhaustedPercent: number;
+  tacticalPicks: number;
+  unreachablePercent: number;
   enemies: number;
   states: Record<string, number>;
 }
@@ -41,8 +45,9 @@ function summarize(label: string, rows: Row[]): void {
   const avg = (pick: (row: Row) => number): string => (rows.reduce((sum, row) => sum + pick(row), 0) / rows.length).toFixed(2);
   const worstAi = Math.max(...rows.map((row) => row.aiMsMax)).toFixed(2);
   const engaged = rows.reduce((sum, row) => sum + (row.states.chase ?? 0) + (row.states.alert ?? 0), 0) / rows.length;
+  const last = rows[rows.length - 1]!;
   console.log(
-    `[summary] ${label}: ${rows.length} rows | fps ${avg((r) => r.fps)} | ticks/s ${avg((r) => r.ticks)} | per tick: ai ${avg((r) => r.aiMs)}ms (worst ${worstAi}) physics ${avg((r) => r.physicsMs)}ms world ${avg((r) => r.worldMs)}ms | rays ${avg((r) => r.raycastsPerSec)}/s | enemies alerted or chasing ${engaged.toFixed(1)} on average`,
+    `[summary] ${label}: ${rows.length} rows | fps ${avg((r) => r.fps)} | ticks/s ${avg((r) => r.ticks)} | per tick: ai ${avg((r) => r.aiMs)}ms (worst ${worstAi}) physics ${avg((r) => r.physicsMs)}ms world ${avg((r) => r.worldMs)}ms | rays ${avg((r) => r.raycastsPerSec)}/s (tactical ${avg((r) => r.tacticalRaysPerSec ?? 0)}/s, budget out ${avg((r) => r.budgetExhaustedPercent ?? 0)}% of ticks) | spots picked ${last.tacticalPicks ?? 0}, ${last.unreachablePercent ?? 0}% unreachable | enemies alerted or chasing ${engaged.toFixed(1)} on average`,
   );
 }
 

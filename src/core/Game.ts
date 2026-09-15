@@ -49,6 +49,7 @@ import { SoundEngine } from '../audio/SoundEngine.ts';
 import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
 import { PerfLogger, type PerfContext } from './perfStats.ts';
+import { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 import { computeStereoPan, enemyGunshotVolume } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
@@ -440,6 +441,7 @@ export class Game {
       getLiveEnemyDebug: () => this.entityManager.getLiveEnemyDebug(),
       getSquadDebug: () => this.entityManager.getSquadDebug(),
       placeEnemy: (index, x, z) => this.entityManager.placeEnemy(index, x, z),
+      getCoverNear: (x, z, radius) => this.entityManager.getCoverNear(x, z, radius),
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -514,9 +516,12 @@ export class Game {
     }
 
     onProgress?.('Growing vegetation…', 0.02);
-    const vegetation = await VegetationManager.create(renderer.scene, physics);
+    // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
+    // here as their chunks load, and EntityManager's enemies read it.
+    const obstacles = new ObstacleRegistry();
+    const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
     onProgress?.('Constructing buildings…', 0.04);
-    const buildings = await BuildingManager.create(renderer.scene, physics);
+    const buildings = await BuildingManager.create(renderer.scene, physics, obstacles);
     const roads = RoadManager.create(renderer.scene, buildings);
     const watchTowers = WatchTowerManager.create(renderer.scene, physics);
 
@@ -727,6 +732,8 @@ export class Game {
           );
         },
       },
+      // Enemies may not pick a spot inside a house or a watch tower - the same check spawns use.
+      { obstacles, isBlocked: makeSpawnBlockedCheck(buildings) },
     );
 
     // Multiplayer matches are pure PvP (MULTIPLAYER_PLAN.md's premise: the bot/enemy system is

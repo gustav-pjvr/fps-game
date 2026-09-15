@@ -437,6 +437,82 @@ export const ENEMY_FLANK_RADIUS_MIN = 8;
 export const ENEMY_FLANK_RADIUS_MAX = 16;
 /** Close enough to the flank point to stop moving and wait for a shooter token there. */
 export const ENEMY_FLANK_ARRIVE_DISTANCE = 2;
+
+/**
+ * Enemy AI v2, step 3 (docs/enemy-ai-v2.md): position picking. Enemies in a fight pick a spot
+ * behind a trunk, a house corner or a watch tower (entities/enemies/tactics/), confirm it with
+ * rays from a shared per-tick budget, and fight from it: shooters hide, then step out to fire;
+ * reserves hide and wait.
+ */
+/** Rays per tick shared by every enemy's position picking (960 a second at 60 ticks). About a
+ * third of what twenty patrolling enemies' whiskers already cost; at 50 engaged enemies the refresh
+ * cadence stretches instead of the cost growing. */
+export const ENEMY_TACTICAL_RAY_BUDGET_PER_TICK = 16;
+/** Seconds between one enemy's spot refreshes, when the budget allows. */
+export const ENEMY_TACTICAL_REFRESH_INTERVAL = 0.5;
+/** Most rays one refresh may spend (two per candidate, so up to four candidates checked). */
+export const ENEMY_TACTICAL_MAX_RAYS_PER_JOB = 8;
+/** Only obstacles this close to the enemy are considered - farther cover is not reachable in one
+ * refresh anyway. */
+export const ENEMY_TACTICAL_OBSTACLE_RADIUS = 14;
+/** Longest walk to a spot (spots beyond it are not considered), and how much a long walk counts
+ * against a spot (a near spot scores up to 60 percent higher than one at the limit). */
+export const ENEMY_TACTICAL_MAX_TRAVEL = 14;
+export const ENEMY_TACTICAL_TRAVEL_WEIGHT = 0.6;
+/** A path to a spot may not pass nearer the player than this. */
+export const ENEMY_TACTICAL_THREAT_CLEARANCE = 4;
+/** Two enemies never pick spots closer than this - it spreads the squad out. */
+export const ENEMY_TACTICAL_CLAIM_RADIUS = 2.5;
+/** Nobody stands within this of another shooter's line of fire (capsule width plus margin). */
+export const ENEMY_TACTICAL_FIRE_LINE_CLEARANCE = 1.5;
+/** An open spot (no obstacle) counts this much against a covered one, so real cover wins before
+ * rays are spent but open ground is still used when there is no cover. */
+export const ENEMY_TACTICAL_OPEN_PRIOR = 0.55;
+/** Rings of open spots around the enemy, and spots per ring. */
+export const ENEMY_TACTICAL_OPEN_RADII: readonly number[] = [4, 8, 12];
+export const ENEMY_TACTICAL_OPEN_SAMPLES = 8;
+/** Ridge Walkers: height above the player (m) at which a spot's high-ground bonus is full. */
+export const ENEMY_TACTICAL_HIGH_GROUND_DELTA = 4;
+/** Seconds a confirmed spot stays trusted without a fresh check. */
+export const ENEMY_TACTICAL_PICK_TTL = 3;
+/** Close enough to a spot to count as there. */
+export const ENEMY_TACTICAL_ARRIVE_DISTANCE = 1;
+/** A spot is logged unreachable (the navmesh trigger, see docs/enemy-ai-v2.md) when the walk takes
+ * longer than factor x straight-line time + grace, or stuck detection fires on the way. */
+export const ENEMY_TACTICAL_UNREACHABLE_TIME_FACTOR = 2;
+export const ENEMY_TACTICAL_UNREACHABLE_GRACE = 1.5;
+/** Gap between an enemy's capsule and the obstacle it hides behind. */
+export const ENEMY_COVER_MARGIN = 0.3;
+/** House cover sits this far along the hidden wall from the corner. */
+export const ENEMY_COVER_FACE_INSET = 1.5;
+/** A house wall counts as hidden from the player when it faces at least this much away (cosine). */
+export const ENEMY_COVER_FACE_MIN_DOT = 0.3;
+/** A shooter in cover alternates: this long stepped out firing, then this long hidden. Exposed two
+ * thirds of the time, long enough for a Straggler burst, its pause, and the start of the next.
+ * First tuned 1.4 s out and 1.5 s hidden, which left shooters firing under half the time - the
+ * checkpoint C death-flow runs took 2.3 to 2.9 min against 1.2 to 2.0 before cover - and a smarter
+ * enemy should not be an easier one. */
+export const ENEMY_PEEK_EXPOSE_TIME = 2;
+export const ENEMY_PEEK_HIDE_TIME = 1;
+/** An enemy in cover (or flanking) stays in the fight without its own sightline for this long after
+ * the squad last saw the player; after that everyone goes to search, so hiding never turns into a
+ * stalemate (The Last of Us needed an Approacher role for this). */
+export const ENEMY_COMBAT_BLIND_GRACE = 3;
+/** Chest height above the capsule centre, for the "is this spot covered" ray. */
+export const ENEMY_CHEST_OFFSET_Y = 0.25;
+/** Terrain-height memo for candidate spots: 1 m quantisation, bounded. */
+export const ENEMY_TERRAIN_HEIGHT_CACHE_QUANTUM = 1;
+export const ENEMY_TERRAIN_HEIGHT_CACHE_MAX = 4096;
+/** The firing spot must sit between these fractions of the enemy's own ranged range from the
+ * player (Straggler 5.6 to 14.4 m, Ridge Walker 10.5 to 27 m), and never nearer than
+ * ENEMY_TACTICAL_MIN_RANGE. */
+export const ENEMY_TACTICAL_BAND_NEAR_FRACTION = 0.35;
+export const ENEMY_TACTICAL_BAND_FAR_FRACTION = 0.9;
+export const ENEMY_TACTICAL_MIN_RANGE = 4;
+/** Seconds an enemy avoids a spot it found it could not reach. */
+export const ENEMY_TACTICAL_AVOID_TIME = 10;
+/** Close enough to the peek or cover spot to stop shuffling and act. */
+export const ENEMY_PEEK_STEP_TOLERANCE = 0.3;
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
 /** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
  * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that

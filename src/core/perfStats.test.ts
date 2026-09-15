@@ -73,6 +73,22 @@ describe('PerfLogger', () => {
     expect(logger.maybeEmit(context)!.raycastsPerSec).toBe(150);
   });
 
+  it('reports position-picking rays, budget shortfalls and the unreachable share', () => {
+    const { logger, advance } = makeLogger();
+    for (let tick = 0; tick < 4; tick++) logger.recordTick();
+    perfCounters.tacticalRaycasts += 50;
+    perfCounters.rayBudgetExhaustedTicks += 1;
+    perfCounters.tacticalPicks = 10;
+    perfCounters.tacticalPicksUnreachable = 2;
+    advance(1000);
+    const entry = logger.maybeEmit(context)!;
+    expect(entry.tacticalRaysPerSec).toBe(50);
+    expect(entry.budgetExhaustedPercent).toBe(25);
+    expect(entry.tacticalPicks).toBe(10);
+    expect(entry.unreachablePercent).toBe(20);
+    expect(formatPerfLine(entry)).toContain('spots 10 (20% unreachable)');
+  });
+
   it('counts enemies by AI state and skips targets, which have no state', () => {
     const { logger, advance } = makeLogger();
     advance(1000);

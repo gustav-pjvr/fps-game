@@ -14,6 +14,9 @@ import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import { ENEMY_HEAD_OFFSET_Y, ENEMY_HEAD_RADIUS, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
+import type { PickDebug } from './combatBehaviour.ts';
+import type { PlanarPoint } from './perception.ts';
+import type { TacticalContext } from './tactics/planner.ts';
 import { ENEMY_HEIGHT, ENEMY_RADIUS, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
@@ -29,6 +32,8 @@ export interface EnemyDebugRecord {
   readonly yaw: number;
   /** The combat coordinator's role while in combat, else null. */
   readonly role: CombatRole | null;
+  /** The spot it is fighting from (step 3), else null. */
+  readonly pick: PickDebug | null;
 }
 
 /** How far an enemy must move horizontally before its ground height is resampled. sampleHeight is
@@ -87,6 +92,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     knowledge: SquadKnowledge,
     combatHooks: EnemyCombatHooks,
     patrolRng: () => number,
+    tacticsRng: () => number,
   ) {
     this.health = archetype.health;
     this.killFeedLabel = `${archetype.name} eliminated`;
@@ -137,7 +143,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     );
     physics.registerCollider(this.headCollider, this);
 
-    this.brain = new EnemyBrain(this, physics, coordinator, knowledge, combatHooks, patrolRng, position);
+    this.brain = new EnemyBrain(this, physics, coordinator, knowledge, combatHooks, patrolRng, tacticsRng, position);
   }
 
   get isDead(): boolean {
@@ -181,12 +187,30 @@ export class Enemy implements Entity, Damageable, EnemyBody {
       hasLineOfSight: brain.hasLineOfSight,
       yaw: this.mesh.rotation.y,
       role: brain.role,
+      pick: brain.pick,
     };
   }
 
   /** This enemy's entry on the combat coordinator's roster, or null when it is not fighting. */
   combatCandidate(): RoleCandidate | null {
     return this.dead ? null : this.brain.combatCandidate();
+  }
+
+  /** Position picking (step 3) - see EnemyBrain.wantsTacticalPick and friends. */
+  wantsTacticalPick(): boolean {
+    return !this.dead && this.brain.wantsTacticalPick();
+  }
+
+  refreshTacticalPick(context: TacticalContext, rayAllowance: number): number {
+    return this.dead ? 0 : this.brain.refreshTacticalPick(context, rayAllowance);
+  }
+
+  tacticalClaims(): PlanarPoint[] {
+    return this.dead ? [] : this.brain.tacticalClaims();
+  }
+
+  fireLineStart(): PlanarPoint | null {
+    return this.dead ? null : this.brain.fireLineStart();
   }
 
   /** Test-only (window.__gameDebug.placeEnemy): moves the enemy instantly, like the player's own

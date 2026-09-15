@@ -46,6 +46,9 @@ export interface GameDebugApi {
     yaw: number;
     /** Combat role (step 2): 'shooter' | 'flanker' | 'rusher' | 'reserve' while chasing, else null. */
     role: string | null;
+    /** The spot it is fighting from (step 3): 'trunk' | 'tower' | 'houseCorner' | 'open', its phase
+     * ('moving' | 'hiding' | 'peeking') and whether it is covered; null when it has none. */
+    pick: { x: number; z: number; source: string; phase: string; covered: boolean } | null;
     x: number;
     y: number;
     z: number;
@@ -61,6 +64,8 @@ export interface GameDebugApi {
   /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground, so
    * a behaviour test can stage a known layout. */
   placeEnemy(index: number, x: number, z: number): void;
+  /** Enemy AI v2: registered cover (tree trunks, houses) within `radius` of (x, z), by centre. */
+  getCoverNear(x: number, z: number, radius: number): { kind: string; x: number; z: number }[];
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

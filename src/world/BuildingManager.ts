@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
+import type { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { computeBuildingColliderShapes, isPointNearFootprint, type BuildingColliderShapes } from './buildingColliders.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
@@ -140,15 +141,18 @@ export class BuildingManager {
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
     private readonly presets: BuildingPreset[],
+    /** Where enemies look for cover (enemy AI v2 step 3): each placed house's footprint is
+     * registered per chunk and dropped when the chunk unloads. */
+    private readonly obstacles?: ObstacleRegistry,
   ) {}
 
-  static async create(scene: THREE.Scene, physics: PhysicsWorld): Promise<BuildingManager> {
+  static async create(scene: THREE.Scene, physics: PhysicsWorld, obstacles?: ObstacleRegistry): Promise<BuildingManager> {
     const presets: BuildingPreset[] = [];
     for (const def of BUILDING_PRESET_DEFS) {
       const gltf = await loadGLTF(def.modelPath);
       presets.push(measurePreset(gltf.scene, def.targetHeight));
     }
-    return new BuildingManager(scene, physics, presets);
+    return new BuildingManager(scene, physics, presets, obstacles);
   }
 
   /** Called by ChunkManager's onChunkLoaded hook. */
@@ -179,6 +183,18 @@ export class BuildingManager {
           const placed = this.createBuilding(worldX, worldZ, placement.rotationY, preset);
           this.activeBuildings.set(id, placed);
           ownedIds.push(id);
+          this.obstacles?.add(chunkKey(cx, cz), {
+            kind: 'house',
+            footprint: {
+              originX: worldX,
+              originZ: worldZ,
+              offsetX: preset.footprintOffsetX,
+              offsetZ: preset.footprintOffsetZ,
+              halfWidth: preset.footprintWidth / 2,
+              halfDepth: preset.footprintDepth / 2,
+              rotationY: placement.rotationY,
+            },
+          });
         });
       }
     }
@@ -211,6 +227,7 @@ export class BuildingManager {
     }
 
     this.chunkOwnedBuildingIds.delete(key);
+    this.obstacles?.removeChunk(key);
   }
 
   /** World-space building positions for a town cell, reusing the exact same memoized layout that

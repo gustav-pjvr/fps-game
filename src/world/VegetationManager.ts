@@ -35,6 +35,7 @@ import {
 } from '../core/config.ts';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
+import type { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 
 type VegetationTypeId = 'treeDefault' | 'treePine' | 'bush' | 'rock';
 type ColliderShape = 'cylinder' | 'box' | 'none';
@@ -147,6 +148,10 @@ export class VegetationManager {
   private constructor(
     private readonly physics: PhysicsWorld,
     pools: Map<VegetationTypeId, VegetationPool>,
+    /** Where enemies look for cover (enemy AI v2 step 3): tree trunks are registered per chunk as
+     * they are placed and dropped when the chunk unloads. Rocks are not: at about 0.9 m they sit
+     * below an enemy's chest and hide nothing. */
+    private readonly obstacles?: ObstacleRegistry,
   ) {
     this.pools = pools;
     this.densityNoise2D = createNoise2D(mulberry32(getWorldSeed() + 2));
@@ -155,7 +160,7 @@ export class VegetationManager {
     this.forestTextureNoise2D = createNoise2D(mulberry32(getWorldSeed() + 13));
   }
 
-  static async create(scene: THREE.Scene, physics: PhysicsWorld): Promise<VegetationManager> {
+  static async create(scene: THREE.Scene, physics: PhysicsWorld, obstacles?: ObstacleRegistry): Promise<VegetationManager> {
     const pools = new Map<VegetationTypeId, VegetationPool>();
 
     for (const def of VEGETATION_TYPES) {
@@ -180,7 +185,7 @@ export class VegetationManager {
       pools.set(def.id, { instancedMeshes, scaleFactor, rawFootprintWidth, rawFootprintDepth, freeIndices: [], nextFreeIndex: 0 });
     }
 
-    return new VegetationManager(physics, pools);
+    return new VegetationManager(physics, pools, obstacles);
   }
 
   /** Called by ChunkManager's onChunkLoaded hook - scatters vegetation across the newly loaded chunk. */
@@ -249,6 +254,9 @@ export class VegetationManager {
 
       const instance = this.placeInstance(type, worldX, worldZ, rng);
       if (instance) placed.push(instance);
+      if (instance?.colliderHandle !== undefined && TREE_TYPES.includes(type)) {
+        this.obstacles?.add(chunkKey(cx, cz), { kind: 'trunk', x: worldX, z: worldZ, radius: VEGETATION_TRUNK_RADIUS });
+      }
     }
 
     this.chunkInstances.set(chunkKey(cx, cz), placed);
@@ -286,6 +294,7 @@ export class VegetationManager {
     }
 
     this.chunkInstances.delete(key);
+    this.obstacles?.removeChunk(key);
     this.markPoolsDirty();
   }
 

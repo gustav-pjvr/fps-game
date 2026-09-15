@@ -16,7 +16,17 @@
 
 /** Incremented by castHitscan (combat/hitscan.ts) - every raycast in the game goes through it, so
  * this is the total for player shots, enemy line-of-sight, enemy shots and steering whiskers. */
-export const perfCounters = { raycasts: 0 };
+export const perfCounters = {
+  raycasts: 0,
+  /** The part of `raycasts` spent on enemy position picking (EntityManager's tactical probe). */
+  tacticalRaycasts: 0,
+  /** Ticks on which some enemy wanted more position-picking rays than the shared budget had left. */
+  rayBudgetExhaustedTicks: 0,
+  /** Spots enemies committed to, and how many of those they then found they could not reach - the
+   * step 7 navmesh trigger (docs/enemy-ai-v2.md). Cumulative for the page, like `raycasts`. */
+  tacticalPicks: 0,
+  tacticalPicksUnreachable: 0,
+};
 
 export type PerfSection = 'physics' | 'world' | 'ai' | 'render';
 
@@ -45,6 +55,13 @@ export interface PerfLogEntry {
   /** Average milliseconds per frame spent submitting the scene to WebGL (CPU side only). */
   readonly renderMs: number;
   readonly raycastsPerSec: number;
+  /** Position-picking rays per second (already included in raycastsPerSec). */
+  readonly tacticalRaysPerSec: number;
+  /** Percent of this window's ticks on which the position-picking ray budget ran short. */
+  readonly budgetExhaustedPercent: number;
+  /** Spots picked so far, and the percent of those found unreachable (cumulative). */
+  readonly tacticalPicks: number;
+  readonly unreachablePercent: number;
   readonly enemies: number;
   readonly states: Readonly<Record<string, number>>;
   readonly drawCalls: number;
@@ -80,7 +97,8 @@ export function formatPerfLine(entry: PerfLogEntry): string {
   return (
     `[perf] t=${entry.t.toFixed(0)}s | fps ${entry.fps.toFixed(0)} | frame ${entry.frameMsAvg.toFixed(1)}/${entry.frameMsP95.toFixed(1)}/${entry.frameMsMax.toFixed(1)}ms avg/p95/max` +
     ` | ticks ${entry.ticks} | per tick: physics ${entry.physicsMs.toFixed(2)} world ${entry.worldMs.toFixed(2)} ai ${entry.aiMs.toFixed(2)} (max ${entry.aiMsMax.toFixed(2)})ms` +
-    ` | render ${entry.renderMs.toFixed(1)}ms | rays ${entry.raycastsPerSec}/s | enemies ${entry.enemies}${states ? ` (${states})` : ''}` +
+    ` | render ${entry.renderMs.toFixed(1)}ms | rays ${entry.raycastsPerSec}/s (tactical ${entry.tacticalRaysPerSec}/s, budget out ${entry.budgetExhaustedPercent.toFixed(0)}% of ticks)` +
+    ` | spots ${entry.tacticalPicks} (${entry.unreachablePercent.toFixed(0)}% unreachable) | enemies ${entry.enemies}${states ? ` (${states})` : ''}` +
     ` | draws ${entry.drawCalls} tris ${entry.triangles}${heap}`
   );
 }
@@ -101,6 +119,8 @@ export class PerfLogger {
   private aiMax = 0;
   private renderTotal = 0;
   private raycastsAtWindowStart: number;
+  private tacticalRaysAtWindowStart: number;
+  private exhaustedTicksAtWindowStart: number;
 
   constructor(options: PerfLoggerOptions) {
     this.now = options.now ?? (() => performance.now());
@@ -109,6 +129,8 @@ export class PerfLogger {
     this.startTime = this.now();
     this.windowStart = this.startTime;
     this.raycastsAtWindowStart = perfCounters.raycasts;
+    this.tacticalRaysAtWindowStart = perfCounters.tacticalRaycasts;
+    this.exhaustedTicksAtWindowStart = perfCounters.rayBudgetExhaustedTicks;
   }
 
   get log(): readonly PerfLogEntry[] {
@@ -204,6 +226,12 @@ export class PerfLogger {
       aiMsMax: round2(this.aiMax),
       renderMs: frames > 0 ? round2(this.renderTotal / frames) : 0,
       raycastsPerSec: Math.round((perfCounters.raycasts - this.raycastsAtWindowStart) / (elapsedMs / 1000)),
+      tacticalRaysPerSec: Math.round((perfCounters.tacticalRaycasts - this.tacticalRaysAtWindowStart) / (elapsedMs / 1000)),
+      budgetExhaustedPercent:
+        this.ticks > 0 ? round2(((perfCounters.rayBudgetExhaustedTicks - this.exhaustedTicksAtWindowStart) / this.ticks) * 100) : 0,
+      tacticalPicks: perfCounters.tacticalPicks,
+      unreachablePercent:
+        perfCounters.tacticalPicks > 0 ? round2((perfCounters.tacticalPicksUnreachable / perfCounters.tacticalPicks) * 100) : 0,
       enemies,
       states,
       drawCalls: context.drawCalls,
@@ -222,5 +250,7 @@ export class PerfLogger {
     this.aiMax = 0;
     this.renderTotal = 0;
     this.raycastsAtWindowStart = perfCounters.raycasts;
+    this.tacticalRaysAtWindowStart = perfCounters.tacticalRaycasts;
+    this.exhaustedTicksAtWindowStart = perfCounters.rayBudgetExhaustedTicks;
   }
 }
