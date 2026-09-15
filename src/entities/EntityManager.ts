@@ -3,9 +3,10 @@ import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Player } from './Player.ts';
 import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
-import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks } from './enemies/Enemy.ts';
+import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks, type EnemyDebugRecord } from './enemies/Enemy.ts';
 import { createArchetypePicker } from './enemies/archetypes.ts';
 import { EngagementSlots } from './enemies/engagementSlots.ts';
+import { SquadKnowledge } from './enemies/squadKnowledge.ts';
 import { preloadGLTFs } from '../core/AssetLoader.ts';
 import { computeExplosionDamage } from '../combat/explosion.ts';
 import {
@@ -39,8 +40,11 @@ interface ManagedEntity {
   takeDamage?(amount: number, hitColliderHandle: number, sourcePosition?: THREE.Vector3): void;
   /** Enemy-only (see Enemy.ts's own threat-perception methods) - undefined for Target, which has
    * no AI to alert. */
-  onHeardGunshot?(origin: THREE.Vector3): void;
+  onHeardGunshot?(origin: THREE.Vector3, weaponId?: string): void;
   onNearbyDeath?(deathPosition: THREE.Vector3, killerPosition: THREE.Vector3): void;
+  /** Enemy-only debug hooks (enemy AI v2 e2e checks). */
+  debugRecord?(): EnemyDebugRecord;
+  debugPlace?(x: number, z: number): void;
 }
 
 /** A corpse mid-death-sequence (see the DEATH_* comment in config.ts) - its physics presence is
@@ -52,6 +56,20 @@ interface DyingEntity {
   readonly startRotationX: number;
 }
 
+export interface LiveEnemyDebug extends EnemyDebugRecord {
+  /** Index into getLiveEntityPositions/States (targets included), so e2e checks can cross-reference. */
+  readonly index: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface SquadDebug {
+  readonly belief: { x: number; z: number; source: string; confidence: number; age: number } | null;
+  readonly visibleCount: number;
+  readonly secondsSinceSeen: number;
+}
+
 /** Owns spawned targets/enemies: advances moving ones, and cleans up + reports kills once they die. */
 export class EntityManager {
   private readonly entities: ManagedEntity[] = [];
@@ -59,6 +77,9 @@ export class EntityManager {
   /** Shared across every enemy spawned by this manager (i.e. one per match) - see
    * engagementSlots.ts for why this needs to be shared rather than per-enemy. */
   private readonly engagementSlots = new EngagementSlots(ENEMY_MAX_CONCURRENT_ENGAGERS);
+  /** What the whole squad knows about the player (enemy AI v2 step 1, squadKnowledge.ts) - one per
+   * match, shared by every enemy, advanced once per tick before any enemy thinks. */
+  private readonly knowledge = new SquadKnowledge();
   /** Seeded once per match (getWorldSeed()) so a given world's enemy loadout composition is
    * reproducible - each spawnEnemy call advances the same stream, so spawn order matters too. */
   private readonly pickArchetype = createArchetypePicker(getWorldSeed());
@@ -100,16 +121,27 @@ export class EntityManager {
   spawnEnemy(position: THREE.Vector3): void {
     const archetype = this.pickArchetype();
     const patrolRng = mulberry32(getWorldSeed() + PATROL_SEED_OFFSET + this.enemiesSpawned++);
-    const enemy = new Enemy(this.physics, position, this.enemyGltf, archetype, this.engagementSlots, this.enemyCombatHooks, patrolRng);
+    const enemy = new Enemy(
+      this.physics,
+      position,
+      this.enemyGltf,
+      archetype,
+      this.engagementSlots,
+      this.knowledge,
+      this.enemyCombatHooks,
+      patrolRng,
+    );
     this.scene.add(enemy.mesh);
     this.entities.push(enemy);
   }
 
-  /** A player gunshot just fired - alerts every currently-oblivious enemy within hearing range
-   * toward its origin (see Enemy.onHeardGunshot's own gating). Cheap no-op when `entities` holds no
-   * enemies (multiplayer, or a match with enemyCount 0) - Target simply doesn't implement this. */
-  notifyGunshot(origin: THREE.Vector3): void {
-    for (const entity of this.entities) entity.onHeardGunshot?.(origin);
+  /** A player gunshot just fired - remembered by the squad (for which way the fire comes from) and
+   * heard by every enemy within that weapon's range (see Enemy.onHeardGunshot's own gating). Cheap
+   * no-op when `entities` holds no enemies (multiplayer, or a match with enemyCount 0) - Target
+   * simply doesn't implement onHeardGunshot. */
+  notifyGunshot(origin: THREE.Vector3, weaponId?: string): void {
+    this.knowledge.reportGunshot(origin);
+    for (const entity of this.entities) entity.onHeardGunshot?.(origin, weaponId);
   }
 
   /** Splash damage from a Goose Launcher shot or thrown goose, with the same linear falloff players
@@ -126,6 +158,8 @@ export class EntityManager {
   }
 
   update(dt: number, player: Player): void {
+    this.knowledge.advance(dt);
+
     for (let i = this.entities.length - 1; i >= 0; i--) {
       const entity = this.entities[i];
       if (!entity) continue;
@@ -149,7 +183,8 @@ export class EntityManager {
         // Threat perception (phase A): a comrade dying alerts nearby oblivious enemies - the
         // player is this match's only real killer (single-player has no other combat source that
         // kills enemies), so their current position doubles as "the direction the threat came
-        // from" for the ones that react.
+        // from" for the ones that react. Targets have no comrades to warn.
+        if (entity.onNearbyDeath) this.knowledge.reportComradeDeath(player.position);
         for (const other of this.entities) other.onNearbyDeath?.(deathPosition, player.position);
       }
     }
@@ -187,7 +222,7 @@ export class EntityManager {
 
   /** Despawns everything regardless of alive/dead state - practice-reset feature, not a kill.
    * Includes mid-death-sequence corpses: a reset should give a clean slate, not leave sinking
-   * bodies from the previous life behind. */
+   * bodies from the previous life behind. The squad forgets everything it knew, too. */
   clearAll(): void {
     for (const entity of this.entities) {
       this.scene.remove(entity.mesh);
@@ -198,6 +233,7 @@ export class EntityManager {
       this.scene.remove(dying.mesh);
     }
     this.dying.length = 0;
+    this.knowledge.reset();
   }
 
   /** Debug/test helper - world positions of everything currently alive. */
@@ -215,5 +251,40 @@ export class EntityManager {
    * assigned (undefined for non-enemy entities like targets). */
   getLiveEntityArchetypes(): (string | undefined)[] {
     return this.entities.map((entity) => entity.debugArchetype);
+  }
+
+  /** Debug/test helper (enemy AI v2) - state, awareness, sightline and facing of every live enemy. */
+  getLiveEnemyDebug(): LiveEnemyDebug[] {
+    const records: LiveEnemyDebug[] = [];
+    this.entities.forEach((entity, index) => {
+      const record = entity.debugRecord?.();
+      if (!record) return;
+      const p = entity.mesh.position;
+      records.push({ ...record, index, x: p.x, y: p.y, z: p.z });
+    });
+    return records;
+  }
+
+  /** Debug/test helper (enemy AI v2) - what the squad currently believes about the player. */
+  getSquadDebug(): SquadDebug {
+    const belief = this.knowledge.belief;
+    return {
+      belief: belief
+        ? {
+            x: belief.position.x,
+            z: belief.position.z,
+            source: belief.source,
+            confidence: belief.confidence,
+            age: this.knowledge.now - belief.at,
+          }
+        : null,
+      visibleCount: this.knowledge.visibleCount,
+      secondsSinceSeen: this.knowledge.secondsSinceSeen(),
+    };
+  }
+
+  /** Test-only - instantly moves the live entity at `index` (an enemy) to (x, z) on the ground. */
+  placeEnemy(index: number, x: number, z: number): void {
+    this.entities[index]?.debugPlace?.(x, z);
   }
 }

@@ -47,10 +47,11 @@ Status key: done, in progress, next, later, conditional.
 |---|------|--------|
 | 1 | Research: re-read the enemy code and the world APIs position picking needs | done |
 | 2 | Research: measure raycast cost | folded into task 3 (see decisions) |
-| 3 | Once-a-second perf logger, plus a runnable perf spec | built and unit-tested; baseline run in progress |
-| 4 | Design: architecture pass by a Fable subagent | in progress |
+| 3 | Once-a-second perf logger, plus a runnable perf spec | done (`aac3bab`) |
+| 4 | Design: architecture pass by a Fable subagent | done, checked against the code ([design](enemy-ai-v2-design.md)) |
+| 0 | Behaviour-preserving split of `Enemy.ts` | done (`92f2767`) |
 | 5 | Branch `feature/enemy-ai` | done |
-| 6 to 9 | Step 1: squad knowledge, awareness meter, event routing, tests (checkpoint A) | later |
+| 6 to 9 | Step 1: squad knowledge, awareness meter, event routing, tests (checkpoint A) | done, checkpoint A passed |
 | 10 to 12 | Step 2: combat coordinator and roles (checkpoint B) | later |
 | 13 to 17 | Step 3: position picking, ray budget, combat skills (checkpoint C) | later |
 | 18 to 19 | Step 4: search grid and paired sweeps | later |
@@ -117,6 +118,16 @@ sandbox draws 2 to 4 frames a second, so the fixed-step loop hits its 0.25 s fra
 | Fight v2, 30 s (the reference for later checkpoints) | 0.26 (4.10) | 1.22 | 0.01 | 2,895 | 5.4 |
 | Commit 0, spawn | 0.34 (1.60) | 1.32 | 0.02 | 2,124 | 1.8 |
 | Commit 0, fight v2 | 0.25 (3.90) | 1.14 | 0.01 | 2,866 | 6.4 |
+| Checkpoint A, spawn | 0.31 (1.80) | 1.20 | 0.02 | 2,235 | 1.2 |
+| Checkpoint A, fight v2 | 0.25 (1.50) | 1.21 | 0.01 | 2,761 | 2.8 |
+
+Checkpoint A reading: the AI cost per tick is unchanged (0.25 ms in the fight, 0.31 ms at
+spawn) and raycasts fell slightly (2,761 against 2,895 a second in the fight). The cone prefilter
+saves less than the design hoped at spawn (2,235 against 2,279 a second, about 2 percent) because
+patrol whiskers, not sight lines, dominate the count. Fewer enemies count as alerted or chasing in
+the same fight (2.8 against 5.4): that is the new perception, not a cost. The spec steps the
+player 8 m to the side of an idle enemy, which is often outside its view cone now, and a gunshot
+sends enemies to 'search', which this column does not count.
 
 Fight v2 is the scenario the checkpoints compare against: every 3 s the player steps 8 m from
 the nearest idle enemy and fires into the air, so the fight grows to 4 to 7 chasing enemies.
@@ -193,3 +204,72 @@ tick's position rather than exposed by the body, and the kiting retreat is one b
 
 **Verified:** typecheck clean; unit suite 191 of 191; smoke suite 16 of 16; perf log matches the
 baseline (table below, "Commit 0").
+
+### Step 1: shared knowledge and awareness (2026-09-15)
+
+What the player sees:
+
+- **Enemies take a moment to notice you, and it depends on how.** A sightline no longer means
+  instant detection. An awareness meter fills while an enemy can see you inside its view cone:
+  about 0.6 s up close, about 1.5 s at the edge of its detection range, 50 percent faster if you
+  sprint. At 0.35 it stops and stares at where it saw you (the old 'alert'); full, it engages.
+  Break line of sight early and the meter drains over 3 s, and it goes back to its patrol.
+- **Enemies do not see behind them.** The view cone is 70 degrees each side up close, narrowing
+  to 30 degrees at detection range; inside 3 m it is a full circle. An oblivious enemy facing away
+  does not even cast a sight ray.
+- **One enemy spotting you pulls in the others nearby.** A chasing enemy's view of you is shared
+  with the squad. Any idle enemy within 30 m of where you were just seen comes to search there,
+  already suspicious, and keeps following the latest sighting while a comrade still has eyes on
+  you.
+- **Louder weapons carry farther.** Hearing range is per weapon: pistol 30 m, rifle 40 m (as
+  before), Goose Launcher 45 m, shotgun 50 m, sniper 60 m. A searching enemy now reacts to fresh
+  shots, hits and comrade deaths too; before, only idle ones did.
+
+How it is built:
+
+- `perception.ts` (pure): view cone, visibility factor, awareness fill and drain, levels, and
+  hearing range by weapon.
+- `squadKnowledge.ts` (pure): one belief per match (position, source, confidence decaying over
+  20 s), who can currently see the player, and a memory of recent shot origins that gives the
+  direction fire is coming from (used from step 2 on). Indirect evidence (gunshot 0.6, hit or
+  comrade death 0.8) only replaces a belief that is weaker or more than 2 s old, so a live
+  sighting always wins.
+- `EnemyBrain.ts`: the idle and alert transitions run on the meter; chase reports sightings; idle
+  joins and search follows a fresh shared sighting. `EntityManager` owns the knowledge, advances
+  it before any enemy thinks, and reports comrade deaths. The weapon id now travels with every
+  gunshot (`WeaponManager.onMuzzleFlash(point, weaponId)`).
+- New debug hooks: `getLiveEnemyDebug()` (state, awareness, sightline, facing, position),
+  `getSquadDebug()` (the belief), and a test-only `placeEnemy(index, x, z)`.
+
+Departures from the design: hearing lives in `perception.ts` rather than a separate
+`threatEvents.ts`; sharing is limited to enemies within 30 m of the sighting and to direct
+sightings only (gunshots stay per-enemy hearing), so a map-wide squad does not all converge at
+once and the gunshot behaviour the smoke tests rely on does not widen; the damage error still uses
+`Math.random` like before rather than a seeded stream.
+
+Fixes from reviewing the first build, before checkpoint A:
+
+- A searching enemy briefly had a new range cutoff (leash plus 30 m) that the original code never
+  had. It was redundant (the 6 s search timer already ends a search that no fresh sighting
+  refreshes) and wrong at the edges (a Straggler 56 to 60 m away could hear a sniper shot and then
+  give up on the spot), so it was removed.
+- A suspicious ('alert') enemy that got shot used to ignore it, which was harmless when 'alert'
+  lasted a fixed 0.4 s. Now that suspicion can last seconds, any enemy that is not already chasing
+  goes after the shooter when hit.
+- The first e2e run of the sharing check failed on its own setup, not on the feature: the watcher
+  spotted the player and shared the sighting within one debug round trip, so the comrade was
+  already searching when the test checked it was still idle. The test now places the comrade
+  before the player steps into view.
+
+Tests: `perception.test.ts` (12) and `squadKnowledge.test.ts` (12), including the match-start
+invariant that no archetype can notice a player on the 25 m spawn ring; `e2e/enemy-ai.spec.ts`
+(new, not part of the smoke suite) checks the meter, the cone, sharing and hearing by weapon in the
+running game.
+
+**Checkpoint A (2026-09-15), all passed:** typecheck clean; unit suite 215 of 215 (24 new);
+`e2e/enemy-ai.spec.ts` 4 of 4 (an enemy facing the player fills its meter to 1 and chases; a
+player 8 m behind an enemy leaves its meter at 0; a comrade 26 m away joins the search once the
+watcher sees the player; an enemy 36 m away ignores a pistol shot while one 34 m away reacts to a
+rifle shot); smoke suite 16 of 16, including the real enemy-kills-player death flow and the
+match-start "no enemy senses a passive player" invariant; perf log within noise of the baseline
+(measurements table).

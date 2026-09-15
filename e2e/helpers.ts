@@ -40,6 +40,28 @@ export async function equipPistol(page: Page): Promise<void> {
   await page.waitForTimeout(500);
 }
 
+/** Resolves once at least `seconds` of GAME time has elapsed, measured the way core/Loop.ts advances
+ * it: each animation frame contributes its real frame time clamped to MAX_FRAME_TIME (0.25 s). The
+ * same helper smoke.spec.ts keeps locally; a fixed waitForTimeout silently shrinks every in-game
+ * interval in the slow sandbox. */
+export async function waitForGameTime(page: Page, seconds: number): Promise<void> {
+  await page.evaluate(
+    (target) =>
+      new Promise<void>((resolve) => {
+        let elapsed = 0;
+        let last: number | undefined;
+        const step = (now: number): void => {
+          if (last !== undefined) elapsed += Math.min((now - last) / 1000, 0.25);
+          last = now;
+          if (elapsed >= target) resolve();
+          else requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }),
+    seconds,
+  );
+}
+
 export async function holdKey(page: Page, key: string, durationMs: number): Promise<void> {
   await page.keyboard.down(key);
   await page.waitForTimeout(durationMs);

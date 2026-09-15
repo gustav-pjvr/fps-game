@@ -13,11 +13,21 @@ import type { EngagementSlots } from './engagementSlots.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import { ENEMY_HEAD_OFFSET_Y, ENEMY_HEAD_RADIUS, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
+import type { SquadKnowledge } from './squadKnowledge.ts';
 import { ENEMY_HEIGHT, ENEMY_RADIUS, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
 
 export const ENEMY_MODEL_PATH = '/assets/models/enemies/character-male-a.glb';
+
+/** Debug-only view of one enemy for the e2e suite and the perf work (window.__gameDebug). */
+export interface EnemyDebugRecord {
+  readonly archetype: string;
+  readonly state: EnemyState;
+  readonly awareness: number;
+  readonly hasLineOfSight: boolean;
+  readonly yaw: number;
+}
 
 /** How far an enemy must move horizontally before its ground height is resampled. sampleHeight is
  * the enemy hot path's dominant cost (4-octave fBm + a 9-cell Worley scan per call, per enemy, per
@@ -72,6 +82,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     gltf: GLTF,
     readonly archetype: EnemyArchetype,
     engagementSlots: EngagementSlots,
+    knowledge: SquadKnowledge,
     combatHooks: EnemyCombatHooks,
     patrolRng: () => number,
   ) {
@@ -124,7 +135,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     );
     physics.registerCollider(this.headCollider, this);
 
-    this.brain = new EnemyBrain(this, physics, engagementSlots, combatHooks, patrolRng, position);
+    this.brain = new EnemyBrain(this, physics, engagementSlots, knowledge, combatHooks, patrolRng, position);
   }
 
   get isDead(): boolean {
@@ -154,6 +165,33 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     return this.moving;
   }
 
+  get facingYaw(): number {
+    return this.mesh.rotation.y;
+  }
+
+  /** Debug-only (enemy AI v2 e2e checks): state, awareness, sightline and facing. */
+  debugRecord(): EnemyDebugRecord {
+    const brain = this.brain.debug;
+    return {
+      archetype: this.archetype.name,
+      state: brain.state,
+      awareness: brain.awareness,
+      hasLineOfSight: brain.hasLineOfSight,
+      yaw: this.mesh.rotation.y,
+    };
+  }
+
+  /** Test-only (window.__gameDebug.placeEnemy): moves the enemy instantly, like the player's own
+   * debugTeleport, so a behaviour test can stage a known layout. Never called by gameplay code. */
+  debugPlace(x: number, z: number): void {
+    this.heightSampleX = Number.NaN;
+    this.heightSampleZ = Number.NaN;
+    const y = this.groundHeightAt(x, z) + ENEMY_HEIGHT / 2;
+    this.rigidBody.setTranslation({ x, y, z }, true);
+    this.rigidBody.setNextKinematicTranslation({ x, y, z });
+    this.mesh.position.set(x, y, z);
+  }
+
   takeDamage(amount: number, hitColliderHandle: number, sourcePosition?: THREE.Vector3): void {
     if (this.dead) return;
     const isHeadshot = hitColliderHandle === this.headCollider.handle;
@@ -165,10 +203,10 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.brain.onDamaged(sourcePosition);
   }
 
-  /** A player gunshot within hearing range (see EnemyBrain.onHeardGunshot). */
-  onHeardGunshot(origin: THREE.Vector3): void {
+  /** A player gunshot - heard only within that weapon's range (see EnemyBrain.onHeardGunshot). */
+  onHeardGunshot(origin: THREE.Vector3, weaponId?: string): void {
     if (this.dead) return;
-    this.brain.onHeardGunshot(origin);
+    this.brain.onHeardGunshot(origin, weaponId);
   }
 
   /** A comrade died nearby (see EnemyBrain.onNearbyDeath). */

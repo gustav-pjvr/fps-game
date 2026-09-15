@@ -437,6 +437,9 @@ export class Game {
       getActiveTowerPositions: () => this.watchTowers.getActiveTowerPositions(),
       getFrameStats: () => this.fpsMeter.getStats(),
       getPerfLog: () => [...this.perfLogger.log],
+      getLiveEnemyDebug: () => this.entityManager.getLiveEnemyDebug(),
+      getSquadDebug: () => this.entityManager.getSquadDebug(),
+      placeEnemy: (index, x, z) => this.entityManager.placeEnemy(index, x, z),
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -657,13 +660,14 @@ export class Game {
         (weaponId) => sound.playGunshot(weaponId),
         (weaponId) => sound.playReloadClick(weaponId),
         (distance) => longShotCallout.show(distance),
-        (point) => {
+        (point, weaponId) => {
           muzzleFlash.spawn(point);
           // Threat perception (2026-07-10 review, enemy AI phase A): a real gunshot alerts nearby
           // idle enemies toward roughly where it came from, same as a real firefight - previously
           // enemies had no hearing at all, only reacting once the player walked inside their much
-          // shorter detection bubble. Harmless no-op in multiplayer (no Enemy instances exist there).
-          entityManager.notifyGunshot(point);
+          // shorter detection bubble. The weapon id sets how far it carries (enemy AI v2 step 1).
+          // Harmless no-op in multiplayer (no Enemy instances exist there).
+          entityManager.notifyGunshot(point, weaponId);
         },
         // Goose Launcher's isProjectile firing path (see WeaponManager.fireShot) - spawns a real
         // ballistic ThrownGoose instead of instant hitscan, reusing the exact same thrownGeese map/

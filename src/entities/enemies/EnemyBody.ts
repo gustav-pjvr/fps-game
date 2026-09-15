@@ -32,6 +32,9 @@ export interface EnemyBody {
   readonly excludeRigidBody: RAPIER.RigidBody;
   /** True once any move call has run this tick - the shell clears it at the start of each tick. */
   readonly isMoving: boolean;
+  /** Which way the enemy faces, in the mesh's convention (rotation.y = atan2(dx, dz), so forward is
+   * (sin, cos)) - the centre of its view cone. */
+  readonly facingYaw: number;
   /** Steps toward the target with whisker avoidance, facing the direction of travel. */
   moveToward(targetX: number, targetZ: number, speed: number, dt: number): void;
   /** Steps directly away from the threat with whisker avoidance while facing it (the kiting

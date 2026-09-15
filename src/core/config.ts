@@ -295,7 +295,8 @@ export const ENEMY_MELEE_SWING_SPREAD_DEG = 10;
  * reads as "I saw you go around that corner" instead of instantly forgetting the player the moment
  * a wall gets between them.
  */
-export const ENEMY_ALERT_REACTION_TIME = 0.4;
+// ENEMY_ALERT_REACTION_TIME (a fixed 0.4 s beat between spotting and chasing) was replaced by the
+// awareness meter in enemy AI v2 step 1 - see ENEMY_AWARENESS_FILL_TIME below.
 export const ENEMY_SEARCH_DURATION = 6;
 export const ENEMY_SEARCH_STOP_DISTANCE = 1.5;
 /** Re-checking LOS every frame is wasted raycasts once several enemies are chasing at once -
@@ -339,6 +340,65 @@ export const ENEMY_DEATH_ALERT_RADIUS = 20;
  * target is harder to hit, same logic that already makes a *kiting enemy's own movement* widen its
  * aim (see updateRangedFiring's isStationary param), just applied to the player's motion too. */
 export const ENEMY_VELOCITY_AIM_PENALTY_MAX_DEG = 4;
+
+/**
+ * Enemy AI v2, step 1 (docs/enemy-ai-v2.md): perception and shared squad knowledge. Spotting is an
+ * awareness meter (entities/enemies/perception.ts) instead of "one clear ray means spotted, then a
+ * fixed ENEMY_ALERT_REACTION_TIME beat": sight fills it, losing sight drains it, and how fast
+ * depends on distance, the enemy's view cone and the player's speed. Suspicious reads as the old
+ * 'alert' state, detected as 'chase'.
+ */
+/** Half-angle of the view cone up close: a player 5 m away is hard to miss. */
+export const ENEMY_VIEW_HALF_ANGLE_NEAR_DEG = 70;
+/** Half-angle at full detection range: only a player near the enemy's gaze line registers. */
+export const ENEMY_VIEW_HALF_ANGLE_FAR_DEG = 30;
+/** Inside this the cone is a full circle, so nobody walks past an enemy's shoulder unseen. */
+export const ENEMY_PERIPHERAL_RANGE = 3;
+/** Seconds of full-strength sight to go from oblivious to detected. Kept close to the old 0.4 s
+ * alert beat plus one line-of-sight check, so close-range detection is not slower than before. */
+export const ENEMY_AWARENESS_FILL_TIME = 0.6;
+/** Seconds for a full meter to drain once the player is out of sight - a glimpse fades, not
+ * instantly. */
+export const ENEMY_AWARENESS_DRAIN_TIME = 3;
+/** Fill strength at the very edge of detection range (full strength inside half of it): about
+ * 1.5 s of sight at range, rewarding distance. */
+export const ENEMY_AWARENESS_FAR_FACTOR = 0.4;
+/** Extra fill at full sprint (Player.movementBobStrength 1): a sprinting player is seen 50 percent
+ * faster than a still one. */
+export const ENEMY_AWARENESS_MOVEMENT_BONUS = 0.5;
+/** Meter level that counts as suspicious (the 'alert' state: stop and face the threat). */
+export const ENEMY_AWARENESS_SUSPICIOUS = 0.35;
+/** Seconds without new evidence before the squad's belief about the player's position is dropped;
+ * confidence falls linearly to zero over this time. */
+export const ENEMY_KNOWLEDGE_DECAY_TIME = 20;
+/** Indirect evidence (a gunshot, a hit, a comrade's death) only replaces a belief this much older
+ * (or one that has decayed below the new evidence's confidence). A sighting refreshed every line of
+ * sight check therefore always wins. */
+export const ENEMY_KNOWLEDGE_OVERRIDE_AGE = 2;
+export const ENEMY_KNOWLEDGE_GUNSHOT_CONFIDENCE = 0.6;
+/** Being hit or seeing a comrade die is a better fix on the player than hearing a shot. */
+export const ENEMY_KNOWLEDGE_EVIDENCE_CONFIDENCE = 0.8;
+/** Half-life, in seconds, of a player shot's weight in the "fire is coming from over there"
+ * estimate, so recent shots dominate. */
+export const ENEMY_FIRE_MEMORY_HALF_LIFE = 3;
+export const ENEMY_FIRE_MEMORY_SIZE = 8;
+/** A comrade's fresh sighting reaches enemies whose distance to the sighted player is within this -
+ * "near enough to hear the shout". Keeps a map-wide squad from converging all at once. */
+export const ENEMY_KNOWLEDGE_SHARE_RADIUS = 30;
+/** How old (seconds) a sighting may be and still be passed on - only live information is relayed. */
+export const ENEMY_KNOWLEDGE_SHARE_MAX_AGE = 1;
+/** Hearing range per weapon id (see weapons/definitions.ts). The rifle keeps the old single
+ * ENEMY_HEARING_RANGE of 40; quieter and louder weapons scale around it. An id missing here falls
+ * back to ENEMY_HEARING_RANGE (perception.ts's hearingRangeFor). */
+export const ENEMY_WEAPON_LOUDNESS_RANGE: Readonly<Record<string, number>> = {
+  pistol: 30,
+  rifle: 40,
+  shotgun: 50,
+  sniper: 60,
+  gooseLauncher: 45,
+  knife: 0,
+  unarmed: 0,
+};
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
 /** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
  * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that

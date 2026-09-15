@@ -95,7 +95,7 @@ export class WeaponManager {
     private readonly onFire: (weaponId: string) => void,
     private readonly onReloadStart: (weaponId: string) => void,
     private readonly onLongShot: (distance: number) => void,
-    private readonly onMuzzleFlash: (point: THREE.Vector3) => void,
+    private readonly onMuzzleFlash: (point: THREE.Vector3, weaponId: string) => void,
     /** Fires instead of the normal per-pellet hitscan loop for a weapon with isProjectile set (see
      * definitions.ts's WeaponDefinition.isProjectile) - currently only the Goose Launcher. */
     private readonly onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
@@ -115,7 +115,8 @@ export class WeaponManager {
     onFire: (weaponId: string) => void,
     onReloadStart: (weaponId: string) => void,
     onLongShot: (distance: number) => void,
-    onMuzzleFlash: (point: THREE.Vector3) => void,
+    /** `weaponId` lets enemies hear louder weapons from farther away (enemy AI v2 step 1). */
+    onMuzzleFlash: (point: THREE.Vector3, weaponId: string) => void,
     onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
     /** Per-match damage overrides keyed by weapon id (see core/gameModes.ts) - e.g. Sniper Duel's
      * sniper or 1 Shot 1 Kill's pistol guaranteeing a 1-hit kill. Absent/undefined for the default
@@ -544,7 +545,7 @@ export class WeaponManager {
 
     this.onFire(this.active.weapon.definition.id);
     // Melee has no muzzle - a flash there would be a light spawning out of a knife blade.
-    if (kind === 'ranged') this.onMuzzleFlash(muzzleWorld);
+    if (kind === 'ranged') this.onMuzzleFlash(muzzleWorld, this.active.weapon.definition.id);
     player.addRecoil(recoilKick);
   }
 

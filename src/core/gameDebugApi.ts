@@ -35,6 +35,28 @@ export interface GameDebugApi {
   /** Test-only, like damagePlayer: the perf log spec uses it to watch a long fight without the
    * player dying and freezing single-player simulation. */
   setPlayerInvulnerable(invulnerable: boolean): void;
+  /** Enemy AI v2: every live enemy's state, awareness (0 to 1), sightline and facing, with its
+   * index into getLiveEntityPositions and its position. Targets are left out. */
+  getLiveEnemyDebug(): {
+    index: number;
+    archetype: string;
+    state: string;
+    awareness: number;
+    hasLineOfSight: boolean;
+    yaw: number;
+    x: number;
+    y: number;
+    z: number;
+  }[];
+  /** Enemy AI v2: what the squad believes about the player right now. */
+  getSquadDebug(): {
+    belief: { x: number; z: number; source: string; confidence: number; age: number } | null;
+    visibleCount: number;
+    secondsSinceSeen: number;
+  };
+  /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground, so
+   * a behaviour test can stage a known layout. */
+  placeEnemy(index: number, x: number, z: number): void;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */
