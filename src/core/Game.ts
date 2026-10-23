@@ -2196,6 +2196,13 @@ export class Game {
       }
     }
     this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
+    // Phase 6 sound: the director drives the music, low health the heartbeat. Both fade out while
+    // paused, dead or behind the mission's end screen.
+    this.sound.updateAmbience({
+      healthRatio: this.player.currentHealth / this.player.maxHealth,
+      director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
+      active: this.input.isLocked && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
+    });
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
 

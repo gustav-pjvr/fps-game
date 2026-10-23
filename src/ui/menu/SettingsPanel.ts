@@ -63,6 +63,7 @@ export class SettingsPanel {
       Settings.setMasterVolume(value);
       onVolumeChange?.(value);
     }));
+    panel.appendChild(this.buildSliderRow('Music Volume', Settings.getMusicVolume(), 0, 1, 0.01, (value) => Settings.setMusicVolume(value)));
     panel.appendChild(this.buildSliderRow('Mouse Sensitivity', Settings.getMouseSensitivity(), 0.1, 3, 0.05, (value) =>
       Settings.setMouseSensitivity(value),
     ));

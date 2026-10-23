@@ -123,13 +123,17 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 
 - Title screen (`84f538a`): `lobby/LobbyScene.ts` drifts a camera over a terrain patch, a tower and vegetation from the live seed under the match look; `MainMenu.ts` is the AFTERLIGHT-style column with the valley seed and the sun's bearing on the label line.
 - Menus (`6af6105`, Codex job `ui-menus`): every menu screen on the `ui/theme.ts` tokens, Manrope and Martian Mono, weapon descriptions rewritten as plain competitive lines.
-- HUD: Codex job `ui-hud` running in the `fps-game-ui` worktree at the time of writing.
+- HUD (`226b569`, Codex job `ui-hud`, merged): objective panel, compass with the sun's bearing and contact ticks, damage arcs, vitals and weapon readout, world markers, every HUD piece on the theme tokens. Codex reported PARTIAL: the crosshair stays INK (no aim-at-enemy signal exists) and the reload shows text (no progress value exposed). The byte-order marks it left in eight files were stripped.
+- Main-thread additions: an interaction prompt under the crosshair, pips that only rebuild when they change, markers kept clear of the compass strip.
+- `/web-design-guidelines` findings fixed (`21c4d95`): `color-scheme: dark`, labels tied to the setup fields with ids, names and numeric input mode, spoken announcements and prompt (`aria-live`), the death title as a heading, no per-frame layout reads in the world markers.
+- `site-qa` (`e2e/ui-qa.spec.ts`, axe 4.10.1): every menu screen at 1440 and 390 px fails on console errors, uncaught errors, 5xx, axe violations and anything off screen; plus a keyboard-only flow (F01-H1) and an out-of-range count (F01-E1). The first run found three real issues, all fixed: no landmarks (`<main>` for menus, a labelled region for the HUD, canvases hidden from assistive tech), unlabelled settings sliders, and the loadout list unreachable by keyboard. 12 of 12 pass.
+- Screenshots at 1920x1080 and 1280x640: title, setup, HUD at start, the uplink prompt, uploading, and the mission end screen.
 
 ### Phase 5: procedural detail (in progress)
 
 - Terrain AO (`a732c69`): `world/terrainShading.ts` bakes horizon AO and seamless central-difference normals into each chunk's vertex colour, sampled past the chunk edge so borders match.
 - Lit windows (`043d6a3`): the building grade masks the glass in the Kenney atlas and lights it from the look's `windowGlow` (faint at dusk, warm at night).
-- Contact shadows: `render/contactShadows.ts` puts a multiply-blended soft patch under every tree, bush and rock (a disc tilted to the slope, in the same instanced slots as the vegetation), every house (a soft rectangle past the walls) and every tower. They fade out past 150 m so they never leave dark spots in the haze. The first strengths (about 0.4) did not read in screenshots and were raised to about 0.6.
+- Contact shadows: `render/contactShadows.ts` puts a multiply-blended soft patch under every tree, bush and rock (a disc tilted to the slope, in the same instanced slots as the vegetation), every house (a soft rectangle past the walls) and every tower. They fade out past 150 m so they never leave dark spots in the haze. The first strengths (about 0.4) did not read in screenshots and were raised to about 0.6. Verified with an A/B toggle in the page on a fixed view: 38 shadow meshes, and 24k to 59k pixels change when they are switched off (`a9dfe84`).
 
 ### Phase 4: Uplink mission (in progress)
 
@@ -137,4 +141,14 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 - `world/UplinkBeacons.ts`: beams over the uplinks (amber, pulsing while uploading, cyan online) and the extraction beam and ring.
 - `ui/deathScreen.ts`: `showMission` variant with time, uplinks, kills and damage taken.
 - Setup modal: a third exclusive mode beside Director and Goose Horde.
-- Game wiring waits for the HUD merge, since both change `Game.ts`.
+- Game wiring (`ac30e86`): the mission turns the director on, sends its waves through `spawnDirectorWave`, announces each uplink, adds compass and world markers, freezes the world behind the win screen, and restarts on Respawn. `getMissionDebug` exposes it to tests.
+- `e2e/mission.spec.ts`: tower selection under the director, E starting an upload at uplink A with progress and the HUD text, death showing `Signal lost`, Respawn restarting. Passes with the director spec (5 of 5).
+- Fixes from the screenshots (`34da034`): the beams washed out to cream under ACES (intensity lowered so they stay amber and cyan), and the end screen missed the killing blow in damage taken.
+- Bug found on the way: towers were placed by checking only their centre against town pads, so 472 of 1200 towers across a 300-seed sweep hung their stairs into a town and cut into houses. Placement now checks the whole footprint plus 2 m and falls back to the least bad candidate (town overlap worst, then crowding, then forest). Result: 0 of 1200 touch a town; 29 of 1200 stand in a forest core and 318 on a forest rim, which the test now allows (vegetation is cleared around towers anyway).
+
+### Phase 6: sound depth (2026-10-23)
+
+- `audio/ambience.ts` holds the rules, unit tested (10 tests): `musicMix` (quiet: a dark pad only; build-up: the pulse rises with intensity; peak: the bass joins; fade: the pulse drains with intensity), `heartbeatFor` (none above 35% health, then 72 to 118 beats a minute and louder as health falls, silent when dead), `valleyImpulse` (a stereo impulse with an 18 ms gap, four early reflections off the slopes and a 2.4 s tail that darkens as it decays) and `reverbSendFor` (distant sounds are mostly reverb).
+- `SoundEngine`: a convolution reverb send that every gunshot and explosion feeds; a music bus (an open-fifth sawtooth pad through a lowpass that opens with intensity, high-passed ticks on eighth notes at 104 beats a minute, an A, A, C, G bass ostinato) that follows the director with a 1.4 s smoothing; the heartbeat as a lub and a softer dub. Ticks and beats are booked 0.2 s ahead on the audio clock so frame hitches never make them stutter.
+- Music runs only in Director and Uplink matches, and music and heartbeat fade out while paused, dead or behind an end screen. A Music Volume slider sits under Master Volume.
+- Checked in the sandbox browser: a Director match taken to 15 HP for 19 s ran with no errors and about 200 audio nodes created, so the scheduler is bounded. How it sounds needs Gustav's ears on his own machine.

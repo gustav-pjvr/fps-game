@@ -1,5 +1,6 @@
 import { Settings } from '../settings/Settings.ts';
 import { WEAPON_SOUND_PATHS } from './weaponSounds.ts';
+import { heartbeatFor, MUSIC_SILENT, musicMix, reverbSendFor, valleyImpulse, type MusicMix, type PacingPhase } from './ambience.ts';
 
 async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, AudioBuffer>> {
   const buffers = new Map<string, AudioBuffer>();
@@ -54,11 +55,50 @@ const CALLOUT_PATTERNS: Readonly<Record<CalloutSound, readonly (readonly [number
  * Web Audio synthesis fallback if a sample fails to load. Footstep/hit-confirm/player-hurt stay
  * fully procedural - no recorded assets for those.
  */
+/** Overall level of the music bus before the music volume setting: music sits under the fight. */
+const MUSIC_LEVEL = 0.2;
+/** Seconds the music mix takes to follow the director (a time constant, about a third of a fade). */
+const MUSIC_SMOOTHING = 1.4;
+/** Eighth notes at 104 beats a minute for the pulse and the bass. */
+const PULSE_STEP = 60 / 104 / 2;
+/** The bass ostinato, one note per quarter: A1, A1, C2, G1. */
+const BASS_NOTES = [55, 55, 65.41, 49];
+/** How far ahead (s) the scheduler books pulse ticks and heartbeats. */
+const SCHEDULE_AHEAD = 0.2;
+
+/** What Game reports to the ambience layers each tick. */
+export interface AmbienceState {
+  /** 0 to 1. */
+  readonly healthRatio: number;
+  /** The pacing director's state in a Director or Uplink match, null otherwise (no music). */
+  readonly director: { readonly phase: PacingPhase; readonly intensity: number } | null;
+  /** False while paused, dead or behind an end screen: music and heartbeat fade out. */
+  readonly active: boolean;
+}
+
+interface MusicNodes {
+  readonly oscillators: OscillatorNode[];
+  readonly padGain: GainNode;
+  readonly padFilter: BiquadFilterNode;
+  readonly pulseGain: GainNode;
+  /** Bass notes go into this filter; bassGain sets the layer's level after it. */
+  readonly bassInput: AudioNode;
+  readonly bassGain: GainNode;
+}
+
 export class SoundEngine {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
   private readonly buffers: Map<string, AudioBuffer>;
   private keepAliveOscillator: OscillatorNode | null = null;
+  /** The valley reverb (phase 6): sounds send into this, it returns into master. */
+  private readonly reverbSend: GainNode;
+  private readonly musicBus: GainNode;
+  private music: MusicNodes | null = null;
+  private mix: MusicMix = MUSIC_SILENT;
+  private nextPulseTime = 0;
+  private pulseStep = 0;
+  private nextBeatTime = 0;
 
   private constructor(ctx: AudioContext, buffers: Map<string, AudioBuffer>) {
     this.ctx = ctx;
@@ -67,6 +107,19 @@ export class SoundEngine {
     this.master.gain.value = Settings.getMasterVolume();
     this.master.connect(this.ctx.destination);
     this.startKeepAlive();
+
+    this.reverbSend = ctx.createGain();
+    const convolver = ctx.createConvolver();
+    const [left, right] = valleyImpulse(ctx.sampleRate, 2.4, Math.random);
+    const impulse = ctx.createBuffer(2, left.length, ctx.sampleRate);
+    impulse.copyToChannel(left, 0);
+    impulse.copyToChannel(right, 1);
+    convolver.buffer = impulse;
+    this.reverbSend.connect(convolver).connect(this.master);
+
+    this.musicBus = ctx.createGain();
+    this.musicBus.gain.value = 0;
+    this.musicBus.connect(this.master);
   }
 
   static async create(): Promise<SoundEngine> {
@@ -99,6 +152,8 @@ export class SoundEngine {
   dispose(): void {
     this.keepAliveOscillator?.stop();
     this.keepAliveOscillator = null;
+    for (const oscillator of this.music?.oscillators ?? []) oscillator.stop();
+    this.music = null;
     void this.ctx.close();
   }
 
@@ -120,27 +175,29 @@ export class SoundEngine {
    * louder/quieter with distance. The player's own shots always pass pan=0 - a shot fired from your
    * own gun has no meaningful direction relative to yourself. */
   playGunshot(weaponId: string, volumeScale = 1, pan = 0): void {
-    if (this.playBuffer(`${weaponId}_shot`, volumeScale, pan)) return;
+    // Every shot rings off the valley; a distant one is mostly that ring (phase 6).
+    const wet = reverbSendFor(volumeScale, 0.22);
+    if (this.playBuffer(`${weaponId}_shot`, volumeScale, pan, wet)) return;
 
     switch (weaponId) {
       case 'pistol':
-        this.noiseBurst(0.09, 2200, 'lowpass', 0.5 * volumeScale, pan);
-        this.tone(180, 0.05, 0.3 * volumeScale, 'square', pan);
+        this.noiseBurst(0.09, 2200, 'lowpass', 0.5 * volumeScale, pan, wet);
+        this.tone(180, 0.05, 0.3 * volumeScale, 'square', pan, 0, wet);
         break;
       case 'rifle':
-        this.noiseBurst(0.06, 2600, 'lowpass', 0.4 * volumeScale, pan);
-        this.tone(220, 0.04, 0.22 * volumeScale, 'square', pan);
+        this.noiseBurst(0.06, 2600, 'lowpass', 0.4 * volumeScale, pan, wet);
+        this.tone(220, 0.04, 0.22 * volumeScale, 'square', pan, 0, wet);
         break;
       case 'shotgun':
-        this.noiseBurst(0.18, 700, 'lowpass', 0.7 * volumeScale, pan);
-        this.tone(100, 0.12, 0.4 * volumeScale, 'sawtooth', pan);
+        this.noiseBurst(0.18, 700, 'lowpass', 0.7 * volumeScale, pan, wet);
+        this.tone(100, 0.12, 0.4 * volumeScale, 'sawtooth', pan, 0, wet);
         break;
       case 'sniper':
-        this.noiseBurst(0.22, 900, 'lowpass', 0.8 * volumeScale, pan);
-        this.tone(90, 0.18, 0.5 * volumeScale, 'sawtooth', pan);
+        this.noiseBurst(0.22, 900, 'lowpass', 0.8 * volumeScale, pan, wet);
+        this.tone(90, 0.18, 0.5 * volumeScale, 'sawtooth', pan, 0, wet);
         break;
       default:
-        this.noiseBurst(0.1, 2000, 'lowpass', 0.5 * volumeScale, pan);
+        this.noiseBurst(0.1, 2000, 'lowpass', 0.5 * volumeScale, pan, wet);
     }
   }
 
@@ -171,8 +228,132 @@ export class SoundEngine {
    * gunshot (reads as a real detonation, not another shot) plus a low sawtooth thump for body.
    * `volumeScale`/`pan` follow the same convention as playGunshot. */
   playExplosion(volumeScale = 1, pan = 0): void {
-    this.noiseBurst(0.5, 350, 'lowpass', 0.9 * volumeScale, pan);
-    this.tone(70, 0.4, 0.6 * volumeScale, 'sawtooth', pan);
+    const wet = reverbSendFor(volumeScale, 0.45);
+    this.noiseBurst(0.5, 350, 'lowpass', 0.9 * volumeScale, pan, wet);
+    this.tone(70, 0.4, 0.6 * volumeScale, 'sawtooth', pan, 0, wet);
+  }
+
+  /**
+   * The phase 6 layers, called every simulation tick: the combat music follows the pacing
+   * director's phase and intensity (ambience.ts musicMix), and a heartbeat comes in at low health.
+   * Both fade out while the game is paused, the player is dead or an end screen is up. Ticks and
+   * beats are booked slightly ahead on the audio clock, so frame hitches never make them stutter.
+   */
+  updateAmbience(state: AmbienceState): void {
+    const now = this.ctx.currentTime;
+    const target = state.active && state.director ? musicMix(state.director.phase, state.director.intensity) : MUSIC_SILENT;
+    if (!this.music && target.pad > 0) this.music = this.buildMusic();
+    const music = this.music;
+    if (music) {
+      this.musicBus.gain.setTargetAtTime(MUSIC_LEVEL * Settings.getMusicVolume(), now, 0.3);
+      music.padGain.gain.setTargetAtTime(target.pad * 0.5, now, MUSIC_SMOOTHING);
+      music.padFilter.frequency.setTargetAtTime(target.padCutoff, now, MUSIC_SMOOTHING);
+      music.pulseGain.gain.setTargetAtTime(target.pulse, now, MUSIC_SMOOTHING);
+      music.bassGain.gain.setTargetAtTime(target.bass, now, MUSIC_SMOOTHING);
+      this.mix = target;
+      this.schedulePulse(music, now);
+    }
+
+    const beat = state.active ? heartbeatFor(state.healthRatio) : null;
+    if (!beat) {
+      this.nextBeatTime = 0;
+      return;
+    }
+    if (this.nextBeatTime < now) this.nextBeatTime = now + 0.05;
+    while (this.nextBeatTime < now + SCHEDULE_AHEAD) {
+      const at = this.nextBeatTime;
+      // Lub, then a softer, lower dub.
+      this.scheduledTone(58, at, 0.12, 0.55 * beat.gain, 'sine', this.master);
+      this.scheduledTone(49, at + 0.17, 0.11, 0.38 * beat.gain, 'sine', this.master);
+      this.nextBeatTime += 60 / beat.bpm;
+    }
+  }
+
+  private buildMusic(): MusicNodes {
+    const ctx = this.ctx;
+    const padFilter = ctx.createBiquadFilter();
+    padFilter.type = 'lowpass';
+    padFilter.frequency.value = 420;
+    padFilter.Q.value = 0.7;
+    const padGain = ctx.createGain();
+    padGain.gain.value = 0;
+    padFilter.connect(padGain).connect(this.musicBus);
+    // A, slightly detuned A and E: an open fifth, neither major nor minor, so it reads as tension.
+    const oscillators = [110, 110.8, 164.8].map((frequency) => {
+      const oscillator = ctx.createOscillator();
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.value = frequency;
+      oscillator.connect(padFilter);
+      oscillator.start();
+      return oscillator;
+    });
+    // The pad sends a little into the valley too, so it sits in the same space as the shots.
+    const padSend = ctx.createGain();
+    padSend.gain.value = 0.35;
+    padGain.connect(padSend).connect(this.reverbSend);
+
+    const pulseGain = ctx.createGain();
+    pulseGain.gain.value = 0;
+    pulseGain.connect(this.musicBus);
+    const bassFilter = ctx.createBiquadFilter();
+    bassFilter.type = 'lowpass';
+    bassFilter.frequency.value = 260;
+    const bassGain = ctx.createGain();
+    bassGain.gain.value = 0;
+    bassFilter.connect(bassGain).connect(this.musicBus);
+    this.nextPulseTime = ctx.currentTime + 0.1;
+    this.pulseStep = 0;
+    return { oscillators, padGain, padFilter, pulseGain, bassInput: bassFilter, bassGain };
+  }
+
+  private schedulePulse(music: MusicNodes, now: number): void {
+    if (this.mix.pulse <= 0.01 && this.mix.bass <= 0.01) {
+      this.nextPulseTime = now + 0.1;
+      return;
+    }
+    if (this.nextPulseTime < now) this.nextPulseTime = now + 0.05;
+    while (this.nextPulseTime < now + SCHEDULE_AHEAD) {
+      const at = this.nextPulseTime;
+      const downbeat = this.pulseStep % 2 === 0;
+      this.scheduledNoise(at, 0.035, 5200, downbeat ? 0.32 : 0.18, music.pulseGain);
+      if (downbeat) {
+        const note = BASS_NOTES[(this.pulseStep / 2) % BASS_NOTES.length]!;
+        this.scheduledTone(note, at, PULSE_STEP * 1.8, 0.7, 'square', music.bassInput);
+      }
+      this.pulseStep++;
+      this.nextPulseTime += PULSE_STEP;
+    }
+  }
+
+  private scheduledTone(frequency: number, start: number, duration: number, gain: number, type: OscillatorType, destination: AudioNode): void {
+    const oscillator = this.ctx.createOscillator();
+    oscillator.type = type;
+    oscillator.frequency.value = frequency;
+    const envelope = this.ctx.createGain();
+    envelope.gain.setValueAtTime(0.0001, start);
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), start + 0.012);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(envelope).connect(destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.02);
+  }
+
+  private scheduledNoise(start: number, duration: number, cutoff: number, gain: number, destination: AudioNode): void {
+    const length = Math.floor(this.ctx.sampleRate * duration);
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.value = cutoff;
+    const envelope = this.ctx.createGain();
+    envelope.gain.setValueAtTime(gain, start);
+    envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
+    source.connect(filter).connect(envelope).connect(destination);
+    source.start(start);
+    source.stop(start + duration);
   }
 
   /** An enemy callout (enemy AI v2 step 5) - fully procedural like every non-weapon sound here: a
@@ -195,22 +376,32 @@ export class SoundEngine {
 
   /** Returns `this.master` unchanged when centered (pan===0) - the common case (player's own
    * shots, every non-positional sound) skips creating a StereoPannerNode it doesn't need. */
-  private outputNode(pan: number): AudioNode {
-    if (pan === 0) return this.master;
-    const panner = this.ctx.createStereoPanner();
-    panner.pan.value = Math.max(-1, Math.min(1, pan));
-    panner.connect(this.master);
-    return panner;
+  private outputNode(pan: number, wet = 0): AudioNode {
+    let dry: AudioNode = this.master;
+    if (pan !== 0) {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = Math.max(-1, Math.min(1, pan));
+      panner.connect(this.master);
+      dry = panner;
+    }
+    if (wet <= 0) return dry;
+    // Splits into the dry path and a send to the valley reverb (unpanned: the valley is all round).
+    const split = this.ctx.createGain();
+    split.connect(dry);
+    const send = this.ctx.createGain();
+    send.gain.value = wet;
+    split.connect(send).connect(this.reverbSend);
+    return split;
   }
 
   /** Plays a preloaded recorded sample by key - returns false (does nothing) if it never loaded. */
-  private playBuffer(key: string, volumeScale = 1, pan = 0): boolean {
+  private playBuffer(key: string, volumeScale = 1, pan = 0, wet = 0): boolean {
     const buffer = this.buffers.get(key);
     if (!buffer) return false;
 
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    const output = this.outputNode(pan);
+    const output = this.outputNode(pan, wet);
     if (volumeScale !== 1) {
       const gain = this.ctx.createGain();
       gain.gain.value = Math.max(0, Math.min(1, volumeScale));
@@ -222,7 +413,7 @@ export class SoundEngine {
     return true;
   }
 
-  private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number, pan = 0): void {
+  private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number, pan = 0, wet = 0): void {
     const bufferSize = Math.floor(this.ctx.sampleRate * duration);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -239,13 +430,13 @@ export class SoundEngine {
     envelope.gain.setValueAtTime(gain, this.ctx.currentTime);
     envelope.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
 
-    source.connect(filter).connect(envelope).connect(this.outputNode(pan));
+    source.connect(filter).connect(envelope).connect(this.outputNode(pan, wet));
     source.start();
     source.stop(this.ctx.currentTime + duration);
   }
 
   /** `delay` (seconds) schedules the tone after now - used to string notes into a callout. */
-  private tone(frequency: number, duration: number, gain: number, type: OscillatorType, pan = 0, delay = 0): void {
+  private tone(frequency: number, duration: number, gain: number, type: OscillatorType, pan = 0, delay = 0, wet = 0): void {
     const oscillator = this.ctx.createOscillator();
     oscillator.type = type;
     oscillator.frequency.value = frequency;
@@ -255,7 +446,7 @@ export class SoundEngine {
     envelope.gain.setValueAtTime(gain, start);
     envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
 
-    oscillator.connect(envelope).connect(this.outputNode(pan));
+    oscillator.connect(envelope).connect(this.outputNode(pan, wet));
     oscillator.start(start);
     oscillator.stop(start + duration);
   }

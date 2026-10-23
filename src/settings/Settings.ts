@@ -6,6 +6,7 @@ const STORAGE_KEY = 'fps-game-settings-v1';
 
 interface StoredSettings {
   masterVolume: number;
+  musicVolume: number;
   mouseSensitivity: number;
   keyBindings: Record<string, Action>;
   graphicsQuality: GraphicsQuality;
@@ -15,6 +16,7 @@ interface StoredSettings {
 function defaults(): StoredSettings {
   return {
     masterVolume: 0.5,
+    musicVolume: 0.6,
     mouseSensitivity: 1,
     keyBindings: { ...DEFAULT_KEY_BINDINGS },
     // Matches what this project's own e2e suite is verified against - see the comment on
@@ -33,6 +35,7 @@ function loadFromStorage(): StoredSettings {
     const base = defaults();
     return {
       masterVolume: typeof parsed.masterVolume === 'number' ? parsed.masterVolume : base.masterVolume,
+      musicVolume: typeof parsed.musicVolume === 'number' ? Math.max(0, Math.min(1, parsed.musicVolume)) : base.musicVolume,
       mouseSensitivity: typeof parsed.mouseSensitivity === 'number' ? parsed.mouseSensitivity : base.mouseSensitivity,
       keyBindings:
         parsed.keyBindings && typeof parsed.keyBindings === 'object'
@@ -64,6 +67,16 @@ export const Settings = {
   },
   setMasterVolume(value: number): void {
     state.masterVolume = Math.max(0, Math.min(1, value));
+    persist();
+  },
+
+  /** The combat music's level (docs/visual-overhaul.md, phase 6), under the master volume. Read
+   * live by SoundEngine every tick, so a change applies at once in a running match. */
+  getMusicVolume(): number {
+    return state.musicVolume;
+  },
+  setMusicVolume(value: number): void {
+    state.musicVolume = Math.max(0, Math.min(1, value));
     persist();
   },
 
