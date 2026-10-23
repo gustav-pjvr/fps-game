@@ -1,3 +1,4 @@
+import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
 import { NETWORK_BLOCKED_MESSAGE, PeerConnection } from '../../network/PeerConnection.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
@@ -77,7 +78,7 @@ export class JoinRoomScreen {
 
     const usernameLabel = document.createElement('div');
     usernameLabel.textContent = 'Your name:';
-    usernameLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    usernameLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     panel.appendChild(usernameLabel);
 
     this.usernameInput = createTextInput('Player name', 16);
@@ -87,7 +88,7 @@ export class JoinRoomScreen {
 
     const label = document.createElement('div');
     label.textContent = 'Enter the room code the other player gave you:';
-    label.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:10px;';
+    label.style.cssText = `${LABEL_CSS} margin-bottom:10px;`;
     panel.appendChild(label);
 
     this.codeInput = document.createElement('input');
@@ -95,9 +96,9 @@ export class JoinRoomScreen {
     this.codeInput.maxLength = 6;
     this.codeInput.placeholder = 'ABCDEF';
     this.codeInput.style.cssText =
-      `width:100%; box-sizing:border-box; padding:14px; font-size:1.6rem; font-weight:700;` +
+      `width:100%; box-sizing:border-box; padding:14px; font-family:${MONO_FONT}; font-size:1.6rem; font-weight:300;` +
       ` letter-spacing:0.3em; text-align:center; text-transform:uppercase; color:${ACCENT};` +
-      ' border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.05);' +
+      ` border-radius:2px; border:1px solid ${HAIRLINE}; background:${SURFACE_RAISED};` +
       ' margin-bottom:14px;';
     // Codes are generated uppercase-only (see generateRoomCode) - normalizing keystrokes as they
     // land means a pasted or shift-less lowercase code still works without the player noticing.
@@ -122,10 +123,10 @@ export class JoinRoomScreen {
     this.lobbyView.style.cssText = 'display:none; margin-top:14px;';
     const lobbyLabel = document.createElement('div');
     lobbyLabel.textContent = 'Players in this room:';
-    lobbyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    lobbyLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     this.playerList = document.createElement('div');
     this.playerList.style.cssText =
-      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px;`;
+      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; padding:10px 14px;`;
     this.lobbyView.append(lobbyLabel, this.playerList);
 
     // "Start Match" only unlocks once every connected slot (this guest included) has clicked

@@ -1,4 +1,5 @@
 import { createNoise2D } from 'simplex-noise';
+import { gradeMaterial, type SurfaceKind } from '../render/materialGrade.ts';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
@@ -37,17 +38,17 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 
-type VegetationTypeId = 'treeDefault' | 'treePine' | 'bush' | 'rock';
+export type VegetationTypeId = 'treeDefault' | 'treePine' | 'bush' | 'rock';
 type ColliderShape = 'cylinder' | 'box' | 'none';
 
-interface VegetationTypeDef {
+export interface VegetationTypeDef {
   id: VegetationTypeId;
   modelPath: string;
   targetHeight: number;
   colliderShape: ColliderShape;
 }
 
-const VEGETATION_TYPES: VegetationTypeDef[] = [
+export const VEGETATION_TYPES: VegetationTypeDef[] = [
   { id: 'treeDefault', modelPath: '/assets/models/vegetation/tree_default.glb', targetHeight: 6.0, colliderShape: 'cylinder' },
   { id: 'treePine', modelPath: '/assets/models/vegetation/tree_pineRoundA.glb', targetHeight: 4.5, colliderShape: 'cylinder' },
   { id: 'bush', modelPath: '/assets/models/vegetation/plant_bushLarge.glb', targetHeight: 1.0, colliderShape: 'none' },
@@ -84,7 +85,14 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  * offsets, e.g. Kenney's tree models nest a small translation under a "tmpParent" node) and returns
  * one {geometry, material} pair per mesh primitive, normalized so the combined bounding box's
  * lowest point sits at local Y=0 - regardless of what offset the source file actually used. */
-function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferGeometry; material: THREE.Material }[] {
+/** Nature Kit material names: woodBark/woodBarkDark, leafsGreen/leafsDark, grass, dirt. */
+function vegetationSurfaceKind(materialName: string): SurfaceKind {
+  if (materialName.startsWith('wood')) return 'bark';
+  if (materialName === 'dirt') return 'rock';
+  return 'foliage';
+}
+
+export function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferGeometry; material: THREE.Material }[] {
   root.updateMatrixWorld(true);
   const primitives: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = [];
 
@@ -99,6 +107,7 @@ function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferG
     // reflectance and renders almost black except at grazing specular angles - confirmed by
     // screenshotting distant vs. close vegetation before this fix (see NOTES.md).
     if (material instanceof THREE.MeshStandardMaterial) material.metalness = 0;
+    gradeMaterial(material, vegetationSurfaceKind(material.name));
     primitives.push({ geometry, material });
   });
 

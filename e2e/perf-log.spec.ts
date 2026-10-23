@@ -1,5 +1,8 @@
 import { test } from '@playwright/test';
-import { lockPointer } from './helpers.ts';
+import { lockPointer, SHIPPED_GRAPHICS } from './helpers.ts';
+
+// Frame times are only meaningful at the quality players run by default.
+test.use({ storageState: SHIPPED_GRAPHICS });
 
 /**
  * Enemy AI v2 performance log run (docs/enemy-ai-v2.md, task 3) - NOT part of the smoke suite.

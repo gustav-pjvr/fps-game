@@ -84,16 +84,32 @@ describe('computeWatchTowerPositions', () => {
     expect(computeWatchTowerPositions()).toEqual(first);
   });
 
-  it('avoids landing inside an existing town or forest zone, in all but a rare few seeds', () => {
-    let failures = 0;
+  it('never lets any part of a tower, stairs included, reach a town pad', () => {
+    // 472 of 1200 towers did before the footprint check (v4.0): stairs cut into houses.
+    const ringRadius = FOOTPRINT_HALF_DIAGONAL + 1;
     for (let seed = 1; seed <= SEED_SWEEP; seed++) {
       setWorldSeedForTesting(seed);
-      const positions = computeWatchTowerPositions();
-
-      for (const { x, z } of positions) {
-        if (sampleFlatZone(x, z).membership > 0 || sampleForestZone(x, z).membership > 0) failures++;
+      for (const { x, z } of computeWatchTowerPositions()) {
+        expect(sampleFlatZone(x, z).membership, `seed ${seed} centre`).toBe(0);
+        for (let i = 0; i < 32; i++) {
+          const angle = (i / 32) * Math.PI * 2;
+          expect(sampleFlatZone(x + Math.cos(angle) * ringRadius, z + Math.sin(angle) * ringRadius).membership, `seed ${seed} at ${i}`).toBe(0);
+        }
       }
     }
-    expect(failures / SEED_SWEEP).toBeLessThanOrEqual(MAX_ACCEPTABLE_FAILURE_RATE);
+  });
+
+  it('keeps towers out of a forest core in all but a rare few placements (a thinning rim is allowed)', () => {
+    let inCore = 0;
+    let total = 0;
+    for (let seed = 1; seed <= SEED_SWEEP; seed++) {
+      setWorldSeedForTesting(seed);
+      for (const { x, z } of computeWatchTowerPositions()) {
+        total++;
+        if (sampleForestZone(x, z).membership > 0.5) inCore++;
+      }
+    }
+    // Measured 29 of 1200 when the town check became strict; forests take the crowded seeds' slack.
+    expect(inCore / total).toBeLessThanOrEqual(0.04);
   });
 });

@@ -3,16 +3,15 @@ import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
 import {
-  createProceduralMeleeViewModel,
-  createWeaponViewModel,
   WEAPON_ADS_POSITION,
   WEAPON_HIP_POSITION,
-  WEAPON_MODEL_SPECS,
+  type WeaponViewModel,
 } from './viewModel.ts';
+import { buildWeaponViewModel } from './models/arsenal.ts';
+import { WEAPON_GLOW_INTENSITY } from './models/weaponMaterials.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { applySpreadCone } from '../combat/spread.ts';
-import { loadGLTF } from '../core/AssetLoader.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import type { Action } from '../input/actions.ts';
@@ -39,11 +38,17 @@ const HITSCAN_RANGE = 500;
 
 const SLOT_ACTIONS: Action[] = ['weaponSlot1', 'weaponSlot2', 'weaponSlot3', 'weaponSlot4', 'weaponSlot5'];
 
-interface WeaponSlot {
+interface WeaponSlot extends Omit<WeaponViewModel, 'group'> {
   weapon: Weapon;
   viewModel: THREE.Object3D;
-  muzzleLocalOffset: THREE.Vector3;
+  previousAmmo: number;
+  shotFlash: number[];
 }
+
+/** How fast the view model blends into and out of the sprint tuck. */
+const SPRINT_POSE_DAMP = 8;
+/** Peak roll (radians) at the middle of a reload, while the magazine is out. */
+const RELOAD_ROLL_ANGLE = 0.35;
 
 export class WeaponManager {
   private readonly slots: WeaponSlot[];
@@ -84,6 +89,8 @@ export class WeaponManager {
   private previousCameraPitch = 0;
   private swayYaw = 0;
   private swayPitch = 0;
+  /** 0 to 1 blend into the sprint tuck (see updateAim). */
+  private sprintPose = 0;
 
   private constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -159,15 +166,16 @@ export class WeaponManager {
     const definition = WEAPON_DEFINITIONS[id];
     if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
-    const spec = WEAPON_MODEL_SPECS[id];
-    // No sourced model for melee weapons (Phase D) - a procedural placeholder stands in rather
-    // than blocking on a new asset (see createProceduralMeleeViewModel).
-    const { group, muzzleLocalOffset } = spec
-      ? createWeaponViewModel(definition, await loadGLTF(spec.path))
-      : createProceduralMeleeViewModel(definition);
+    const { group, ...model } = buildWeaponViewModel(id);
     group.visible = false;
     camera.add(group);
-    return { weapon: new Weapon(definition, damageOverride, initialReserveAmmo), viewModel: group, muzzleLocalOffset };
+    return {
+      weapon: new Weapon(definition, damageOverride, initialReserveAmmo),
+      viewModel: group,
+      ...model,
+      previousAmmo: definition.magazineSize,
+      shotFlash: model.glowMaterials.map(() => 0),
+    };
   }
 
   /** Gun Game's kill-upgrade: replaces whatever's in the active slot with a fresh instance of
@@ -494,6 +502,41 @@ export class WeaponManager {
       // driving both.
       this.active.viewModel.position.y +=
         Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength;
+
+      // Sprint tuck and reload roll, after the Opus 5.5 viewmodel pose
+      // (reference/model-test/opus-5.5/game.js, renderViewmodel): the gun swings across the body
+      // while sprinting and rolls onto its side mid-reload while the magazine drops out.
+      const sprinting = this.aimAmount < 0.05 && input.isActionActive('sprint') && player.movementBobStrength > 0.5;
+      this.sprintPose = THREE.MathUtils.damp(this.sprintPose, sprinting ? 1 : 0, SPRINT_POSE_DAMP, dt);
+      const sp = this.sprintPose;
+      this.active.viewModel.position.x += 0.02 * sp;
+      this.active.viewModel.position.y -= 0.04 * sp;
+      this.active.viewModel.rotation.x -= 0.25 * sp;
+      this.active.viewModel.rotation.y += 0.55 * sp;
+      this.active.viewModel.rotation.z = 0.15 * sp + RELOAD_ROLL_ANGLE * reloadCurve;
+    }
+
+    const slot = this.active;
+    const { weapon, glowMaterials, magazine, magazineRestPosition } = slot;
+    const { magazineSize, kind, burstCount } = weapon.definition;
+    const ammoFrac = kind === 'melee' || !Number.isFinite(magazineSize) ? 1 : weapon.ammo / magazineSize;
+    const reloadCharge = weapon.isReloading ? weapon.reloadProgress : 1;
+    // Observe spent rounds in the pose pass, including the follow-up rounds of a burst.
+    const fired = weapon.ammo < slot.previousAmmo;
+    const burstRound = (magazineSize - weapon.ammo - 1) % (burstCount ?? 1);
+    for (let i = 0; i < glowMaterials.length; i++) {
+      const material = glowMaterials[i]!;
+      const flashThisPip = material.userData.burstPip === undefined || material.userData.burstPip === burstRound;
+      const shotFlash = fired && flashThisPip ? 6 : Math.max(0, slot.shotFlash[i]! - dt * 6 / 0.06);
+      slot.shotFlash[i] = shotFlash;
+      material.emissive.setHex(ammoFrac > 0.25 ? 0x6ff0dc : 0xe8a64a);
+      material.emissiveIntensity = WEAPON_GLOW_INTENSITY * (0.3 + 0.7 * ammoFrac) * reloadCharge + shotFlash;
+    }
+    slot.previousAmmo = weapon.ammo;
+    if (magazine) {
+      const drop = weapon.isReloading ? Math.min(1, Math.sin(weapon.reloadProgress * Math.PI) * 1.6) : 0;
+      magazine.position.copy(magazineRestPosition);
+      magazine.position.y -= 0.22 * drop;
     }
 
     const scopeShouldShow = hasScope && this.aimAmount >= SCOPE_REVEAL_THRESHOLD;

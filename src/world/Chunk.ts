@@ -1,7 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
-import { generateHeightfield } from './TerrainGenerator.ts';
+import { generateHeightfield, sampleHeight } from './TerrainGenerator.ts';
+import { shadeTerrain } from './terrainShading.ts';
 
 export interface ChunkOptions {
   originX: number;
@@ -20,7 +21,7 @@ export class Chunk {
     const verticesPerSide = resolution + 1;
     const heights = generateHeightfield(resolution, size, originX, originZ);
 
-    this.mesh = new THREE.Mesh(buildGeometry(heights, resolution, size), material);
+    this.mesh = new THREE.Mesh(buildGeometry(heights, resolution, size, originX, originZ), material);
     this.mesh.position.set(originX, 0, originZ);
     this.mesh.receiveShadow = true;
 
@@ -46,7 +47,7 @@ export class Chunk {
 }
 
 /** Vertices/UVs are in chunk-local space (0..size); the mesh's own position carries the world offset. */
-function buildGeometry(heights: Float32Array, resolution: number, size: number): THREE.BufferGeometry {
+function buildGeometry(heights: Float32Array, resolution: number, size: number, originX: number, originZ: number): THREE.BufferGeometry {
   const verticesPerSide = resolution + 1;
   const positions = new Float32Array(verticesPerSide * verticesPerSide * 3);
   const uvs = new Float32Array(verticesPerSide * verticesPerSide * 2);
@@ -83,7 +84,12 @@ function buildGeometry(heights: Float32Array, resolution: number, size: number):
   // the AO map is meant to tile with the rest of the terrain material, not use a unique unwrap.
   geometry.setAttribute('uv2', new THREE.BufferAttribute(uvs.slice(), 2));
   geometry.setIndex(indices);
-  geometry.computeVertexNormals();
+  // Normals from the terrain's own height function across the chunk border (so neighbouring chunks
+  // shade seamlessly, which computeVertexNormals could not), and baked horizon AO in the vertex
+  // colour that the ground material multiplies in (see terrainShading.ts).
+  const shading = shadeTerrain(sampleHeight, originX, originZ, resolution, size);
+  geometry.setAttribute('normal', new THREE.BufferAttribute(shading.normals, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(shading.colors, 3));
   return geometry;
 }
 

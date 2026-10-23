@@ -9,16 +9,22 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/e2e.mjs changed",
+    "test:e2e:quick": "node scripts/e2e.mjs quick",
+    "test:e2e:group": "node scripts/e2e.mjs",
+    "test:e2e:full": "node scripts/e2e.mjs full",
     "deploy": "npm run build && npx wrangler pages deploy dist --project-name hunter-n-goose"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
+    "n8ao": "2.0.1",
     "peerjs": "^1.5.5",
+    "postprocessing": "6.39.5",
     "simplex-noise": "^4.0.3",
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
     "@playwright/test": "^1.61.1",
     "@types/three": "^0.185.0",
     "typescript": "^6.0.3",

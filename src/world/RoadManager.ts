@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { gradeMaterial } from '../render/materialGrade.ts';
 import type { BuildingManager } from './BuildingManager.ts';
 import { chunkKey } from './chunkSeed.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
@@ -79,6 +80,7 @@ export class RoadManager {
     private readonly buildings: BuildingManager,
   ) {
     this.material = new THREE.MeshStandardMaterial({ color: ROAD_COLOR, roughness: 1 });
+    gradeMaterial(this.material, 'road');
   }
 
   static create(scene: THREE.Scene, buildings: BuildingManager): RoadManager {

@@ -150,7 +150,7 @@ export function fireRangedShot(
 
   const hitPlayer = hit?.colliderHandle === player.ownCollider.handle;
   if (hitPlayer && !player.isDead) {
-    player.takeDamage(archetype.rangedDamage);
+    player.takeDamage(archetype.rangedDamage, origin);
   }
 
   hooks.onRangedShotFired(origin, tracerEnd, hitPlayer);
@@ -178,7 +178,7 @@ export function swingMelee(
     const direction = applySpreadCone(baseDirection.clone(), spreadRad);
     const hit = castHitscan(physics, origin, direction, maxRange, undefined, excludeRigidBody);
     if (hit?.colliderHandle === player.ownCollider.handle) {
-      player.takeDamage(meleeDamage);
+      player.takeDamage(meleeDamage, origin);
       return;
     }
   }

@@ -1,3 +1,4 @@
+import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
 import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
 import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
@@ -110,7 +111,7 @@ export class CreateRoomScreen {
 
     const usernameLabel = document.createElement('div');
     usernameLabel.textContent = 'Your name:';
-    usernameLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    usernameLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     leftColumn.appendChild(usernameLabel);
 
     this.usernameInput = createTextInput('Player name', 16);
@@ -134,25 +135,25 @@ export class CreateRoomScreen {
 
     const label = document.createElement('div');
     label.textContent = 'Share this code - up to 3 other players can join:';
-    label.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:10px;';
+    label.style.cssText = `${LABEL_CSS} margin-bottom:10px;`;
     leftColumn.appendChild(label);
 
     this.codeDisplay = document.createElement('div');
     this.codeDisplay.style.cssText =
-      `font-size:2.2rem; font-weight:700; letter-spacing:0.3em; text-align:center; color:${ACCENT};` +
-      ' padding:18px 0; background:rgba(255,255,255,0.05); border-radius:8px; margin-bottom:14px;' +
-      ` font-variant-numeric:tabular-nums; box-shadow:0 0 0 rgba(62,207,95,0); transition:box-shadow 0.5s ${MOTION_EASE};`;
+      `font-family:${MONO_FONT}; font-size:2.2rem; font-weight:300; letter-spacing:0.3em; text-align:center; color:${ACCENT};` +
+      ` padding:18px 0; background:${SURFACE_RAISED}; border-radius:2px; margin-bottom:14px;` +
+      ` font-variant-numeric:tabular-nums; border:1px solid ${HAIRLINE}; transition:border-color 180ms ${MOTION_EASE};`;
     leftColumn.appendChild(this.codeDisplay);
 
     const copyButton = createButton('Copy Code');
     copyButton.style.width = '100%';
     copyButton.addEventListener('click', () => {
       void navigator.clipboard.writeText(this.codeDisplay.textContent ?? '');
-      // A quick glow confirms the copy actually happened - clicking a button that gives no
+      // A brief accent border confirms the copy action - clicking a button that gives no
       // feedback at all reads as broken, especially for an action with no other visible result.
-      this.codeDisplay.style.boxShadow = `0 0 24px 4px ${ACCENT}66`;
+      this.codeDisplay.style.borderColor = ACCENT;
       setTimeout(() => {
-        this.codeDisplay.style.boxShadow = '0 0 0 rgba(62,207,95,0)';
+        this.codeDisplay.style.borderColor = HAIRLINE;
       }, 350);
     });
     leftColumn.appendChild(copyButton);
@@ -172,7 +173,7 @@ export class CreateRoomScreen {
     // gooseDifficultyLabel below (1 line) both push their selects down by the same amount - without
     // it, this longer label wraps to 2 lines while the goose one stays on 1, leaving the two selects
     // misaligned.
-    killLimitLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px; min-height:2.2em;';
+    killLimitLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px; min-height:2.2em;`;
     // A free-typed number instead of a fixed preset list (per user request) - host isn't limited
     // to 10/15/25 kills anymore.
     this.killLimitInput = document.createElement('input');
@@ -183,14 +184,14 @@ export class CreateRoomScreen {
     this.killLimitInput.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
     this.killLimitInput.style.cssText =
       `width:100%; box-sizing:border-box; padding:12px; font-size:1rem; font-weight:600; color:${TEXT};` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; color-scheme:dark;`;
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; color-scheme:dark;`;
     killLimitColumn.append(killLimitLabel, this.killLimitInput);
 
     const gooseDifficultyColumn = document.createElement('div');
     gooseDifficultyColumn.style.cssText = 'flex:1;';
     const gooseDifficultyLabel = document.createElement('div');
     gooseDifficultyLabel.textContent = 'Goose explosions:';
-    gooseDifficultyLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px; min-height:2.2em;';
+    gooseDifficultyLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px; min-height:2.2em;`;
     this.gooseDifficultySelect = document.createElement('select');
     this.gooseDifficultySelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
@@ -211,7 +212,7 @@ export class CreateRoomScreen {
     // player never has a mode).
     const gameModeLabel = document.createElement('div');
     gameModeLabel.textContent = 'Game mode:';
-    gameModeLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
+    gameModeLabel.style.cssText = `${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
     leftColumn.appendChild(gameModeLabel);
     this.gameModeSelect = document.createElement('select');
     this.gameModeSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
@@ -227,7 +228,7 @@ export class CreateRoomScreen {
     // Purely cosmetic/atmospheric - mirrors gameModeSelect's own full-width layout above it.
     const weatherLabel = document.createElement('div');
     weatherLabel.textContent = 'Match weather:';
-    weatherLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-top:16px; margin-bottom:8px;';
+    weatherLabel.style.cssText = `${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
     leftColumn.appendChild(weatherLabel);
     this.weatherSelect = document.createElement('select');
     this.weatherSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
@@ -240,6 +241,8 @@ export class CreateRoomScreen {
     }
     leftColumn.appendChild(this.weatherSelect);
 
+    this.killLimitInput.style.fontFamily = MONO_FONT;
+
     // Live player list (per user request): a real render loop over the current roster now, not
     // two fixed DOM rows - up to MULTIPLAYER_MAX_PLAYERS entries, re-rendered on every join/leave.
     // Lives in rightColumn, beside the settings rather than stacked beneath them (per user request:
@@ -247,12 +250,12 @@ export class CreateRoomScreen {
     // the side keeps the whole screen visible without scrolling).
     const playerListLabel = document.createElement('div');
     playerListLabel.textContent = 'Players in this room:';
-    playerListLabel.style.cssText = 'font-size:0.85rem; opacity:0.8; margin-bottom:8px;';
+    playerListLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     rightColumn.appendChild(playerListLabel);
 
     this.playerList = document.createElement('div');
     this.playerList.style.cssText =
-      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px; padding:10px 14px; flex:1;`;
+      `background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; padding:10px 14px; flex:1;`;
     rightColumn.appendChild(this.playerList);
 
     mainRow.append(leftColumn, rightColumn);

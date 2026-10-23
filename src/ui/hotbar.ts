@@ -1,14 +1,6 @@
-import { ACCENT, DISPLAY_FONT, chamferClipPath } from './menu/menuStyles.ts';
+import { ACCENT, HAIRLINE, INK, INK_DIM, MONO_FONT, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
-const SLOT_CLIP = `clip-path:${chamferClipPath('top-right', 6)};`;
-const SLOT_STYLE =
-  `padding:6px 14px; background:rgba(0,0,0,0.45); border:2px solid rgba(255,255,255,0.25); ${SLOT_CLIP}` +
-  ` font-family:${DISPLAY_FONT}; font-size:0.8rem; color:#eee; text-shadow:0 1px 2px #000;` +
-  ' transition:background 0.1s, border-color 0.1s;';
-const SLOT_ACTIVE_STYLE =
-  `padding:6px 14px; background:rgba(62,207,95,0.22); border:2px solid ${ACCENT}; ${SLOT_CLIP}` +
-  ` font-family:${DISPLAY_FONT}; font-size:0.8rem; color:#fff; font-weight:600; text-shadow:0 1px 2px #000;` +
-  ' transition:background 0.1s, border-color 0.1s;';
+const SLOT_STYLE = `display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:2px solid transparent; font-family:${SANS_FONT}; font-size:11px; text-transform:uppercase; color:${INK_DIM};`;
 
 export class Hotbar {
   private readonly container: HTMLDivElement;
@@ -16,8 +8,7 @@ export class Hotbar {
 
   constructor(root: HTMLElement) {
     this.container = document.createElement('div');
-    this.container.style.cssText =
-      'position:absolute; bottom:0; left:50%; transform:translateX(-50%); display:flex; gap:8px;';
+    this.container.style.cssText = `position:absolute; bottom:32px; left:50%; transform:translateX(-50%); display:flex; gap:8px; max-width:calc(100% - 600px); pointer-events:none; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums;`;
     root.appendChild(this.container);
   }
 
@@ -26,7 +17,12 @@ export class Hotbar {
     this.slotElements = names.map((name, index) => {
       const el = document.createElement('div');
       el.style.cssText = SLOT_STYLE;
-      el.textContent = `${index + 1}  ${name}`;
+      const key = document.createElement('span');
+      key.style.cssText = `font-family:${MONO_FONT}; font-size:10px; border:1px solid ${HAIRLINE}; padding:3px 5px;`;
+      key.textContent = String(index + 1);
+      const label = document.createElement('span');
+      label.textContent = name;
+      el.append(key, label);
       this.container.appendChild(el);
       return el;
     });
@@ -34,7 +30,8 @@ export class Hotbar {
 
   setActive(index: number): void {
     this.slotElements.forEach((el, i) => {
-      el.style.cssText = i === index ? SLOT_ACTIVE_STYLE : SLOT_STYLE;
+      el.style.color = i === index ? INK : INK_DIM;
+      el.style.borderBottomColor = i === index ? ACCENT : 'transparent';
     });
   }
 

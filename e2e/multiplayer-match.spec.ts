@@ -22,7 +22,10 @@ test('starting a multiplayer match spawns both players with no AI and syncs move
   // Two full Game.create() loads (world gen, WASM physics init, asset loading) plus a real WebRTC
   // handshake, comfortably past the 30s default - matches this project's existing convention for
   // heavier e2e tests (see killPlayerByEnemy's test.setTimeout in helpers.ts).
-  test.setTimeout(90000);
+  // Measured 2026-10-23 on SwiftShader with the v4 characters: creating, joining and starting the
+  // match alone takes about 50 s here on Low graphics (a click 5 to 10 s, the second page's load
+  // 7 s), and a 90 s budget ran out with every step still advancing (docs/testing.md).
+  test.setTimeout(180000);
 
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();

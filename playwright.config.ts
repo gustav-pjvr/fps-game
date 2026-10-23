@@ -1,5 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
 
+/**
+ * Behaviour specs run on Low graphics (no shadows, post-processing or environment light), the
+ * lightest load for what they check. Measured 2026-10-23: a single page here runs at about 2.2 FPS
+ * on Low and on Medium alike (the CPU, not the renderer, is the limit), so the multiplayer specs'
+ * real fix was their budgets; Low stays because it costs nothing (docs/testing.md). Specs that judge the
+ * rendered look (ui-qa, perf, the console-errors load test) opt back into the shipped default with
+ * `test.use({ storageState: SHIPPED_GRAPHICS })`. E2E_GRAPHICS=medium or high runs everything at
+ * that quality instead.
+ */
+const graphics = process.env.E2E_GRAPHICS ?? 'low';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -15,6 +26,10 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: 'http://localhost:5173',
+    storageState: {
+      cookies: [],
+      origins: [{ origin: 'http://localhost:5173', localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: graphics }) }] }],
+    },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

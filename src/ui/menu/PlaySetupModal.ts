@@ -1,3 +1,4 @@
+import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED } from '../theme.ts';
 import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
 import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, type GooseExplosionDifficulty } from '../../core/config.ts';
 
@@ -12,6 +13,10 @@ export interface MatchSetupConfig {
   /** Enemy AI v2 step 6: the pacing director runs the enemies (see Game.ts's director), so
    * enemyCount/targetCount are ignored here too. Never together with hordeMode. */
   directorMode: boolean;
+  /** The Uplink mission (docs/visual-overhaul.md, phase 4): three watch-tower uplinks to bring
+   * online under Director pressure, then extraction. Runs the director itself, so the counts above
+   * are ignored. Never together with hordeMode or directorMode. */
+  missionMode: boolean;
 }
 
 /** Shown after clicking Play: lets the player choose how many enemies/targets spawn this match,
@@ -25,6 +30,7 @@ export class PlaySetupModal {
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly hordeModeCheckbox: HTMLInputElement;
   private readonly directorModeCheckbox: HTMLInputElement;
+  private readonly missionModeCheckbox: HTMLInputElement;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
@@ -51,13 +57,19 @@ export class PlaySetupModal {
       'Director (enemies arrive in waves paced to the fight, ignores enemy/target counts above)',
       defaults.directorMode,
     );
-    // Two different ways to run the match, so at most one of them.
-    this.hordeModeCheckbox.addEventListener('change', () => {
-      if (this.hordeModeCheckbox.checked) this.directorModeCheckbox.checked = false;
-    });
-    this.directorModeCheckbox.addEventListener('change', () => {
-      if (this.directorModeCheckbox.checked) this.hordeModeCheckbox.checked = false;
-    });
+    this.missionModeCheckbox = this.buildCheckboxRow(
+      panel,
+      'Uplink mission (bring three tower uplinks online under pressure, then extract; ignores enemy/target counts above)',
+      defaults.missionMode,
+    );
+    // Three different ways to run the match, so at most one of them.
+    const exclusiveModes = [this.hordeModeCheckbox, this.directorModeCheckbox, this.missionModeCheckbox];
+    for (const checkbox of exclusiveModes) {
+      checkbox.addEventListener('change', () => {
+        if (!checkbox.checked) return;
+        for (const other of exclusiveModes) if (other !== checkbox) other.checked = false;
+      });
+    }
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';
@@ -73,6 +85,7 @@ export class PlaySetupModal {
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         hordeMode: this.hordeModeCheckbox.checked,
         directorMode: this.directorModeCheckbox.checked,
+        missionMode: this.missionModeCheckbox.checked,
       });
     });
 
@@ -116,12 +129,15 @@ export class PlaySetupModal {
 
     const labelEl = document.createElement('label');
     labelEl.textContent = 'Goose explosions';
-    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    labelEl.htmlFor = 'match-setup-goose-difficulty';
+    labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const select = document.createElement('select');
+    select.id = 'match-setup-goose-difficulty';
+    select.name = 'gooseDifficulty';
     select.style.cssText =
       `width:100%; box-sizing:border-box; padding:8px 10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;` +
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; cursor:pointer;` +
       // See CreateRoomScreen.ts's identical select styling for why this is needed - without it the
       // native dropdown popup ignores the dark theme above and renders illegible light-on-light text.
       ' color-scheme:dark;';
@@ -143,17 +159,23 @@ export class PlaySetupModal {
     row.style.cssText = 'margin-bottom:16px;';
 
     const labelEl = document.createElement('label');
-    labelEl.textContent = `${label} (0-${max})`;
-    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    const id = `match-setup-${label.toLowerCase()}`;
+    labelEl.textContent = `${label} (0 to ${max})`;
+    labelEl.htmlFor = id;
+    labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const input = document.createElement('input');
     input.type = 'number';
+    input.id = id;
+    input.name = label.toLowerCase();
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
     input.min = '0';
     input.max = String(max);
     input.value = String(defaultValue);
     input.style.cssText =
-      'width:100%; box-sizing:border-box; padding:8px 10px; border-radius:6px; font-size:0.95rem;' +
-      ' border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06); color:#eee;';
+      `width:100%; box-sizing:border-box; padding:8px 10px; border-radius:2px; font-family:${MONO_FONT}; font-size:0.95rem;` +
+      ` border:1px solid ${HAIRLINE}; background:${SURFACE_RAISED}; color:${INK};`;
 
     row.append(labelEl, input);
     panel.appendChild(row);

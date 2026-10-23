@@ -4,20 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hunter 'n Goose</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#071518" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;600;700&family=Martian+Mono:wght@300;400;500&display=swap"
       rel="stylesheet"
     />
     <style>
+      html {
+        color-scheme: dark;
+      }
       html, body {
         margin: 0;
         padding: 0;
         overflow: hidden;
         width: 100%;
         height: 100%;
-        background: #000;
+        background: #071518;
+        color: #e9efe9;
+        font-family: 'Manrope', system-ui, sans-serif;
       }
       #lobby, #app {
         position: fixed;
@@ -28,8 +35,8 @@
         inset: 0;
         z-index: 15;
         pointer-events: none;
-        color: #eee;
-        font-family: system-ui, sans-serif;
+        color: #e9efe9;
+        font-family: 'Manrope', system-ui, sans-serif;
       }
       #overlay {
         position: fixed;
@@ -40,10 +47,11 @@
     </style>
   </head>
   <body>
-    <div id="lobby"></div>
-    <div id="app"></div>
-    <div id="hud"></div>
-    <div id="overlay"></div>
+    <!-- The canvases draw the world and carry no text; menus and the HUD sit in landmarks. -->
+    <div id="lobby" aria-hidden="true"></div>
+    <div id="app" aria-hidden="true"></div>
+    <div id="hud" role="region" aria-label="Match status"></div>
+    <main id="overlay"></main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

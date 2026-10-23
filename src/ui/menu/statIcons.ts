@@ -1,3 +1,4 @@
+import { MONO_FONT } from '../theme.ts';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export type StatIconKind = 'damage' | 'fireRate' | 'magazine' | 'reload' | 'scope';
@@ -69,7 +70,7 @@ function buildIcon(kind: StatIconKind): SVGSVGElement {
 /** Small icon + value pair, e.g. for a weapon's damage/fire-rate/magazine/reload/scope stats. */
 export function createStatBadge(kind: StatIconKind, label: string): HTMLSpanElement {
   const badge = document.createElement('span');
-  badge.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
+  badge.style.cssText = `display:inline-flex; align-items:center; gap:4px; font-family:${MONO_FONT}; font-weight:400;`;
   const icon = buildIcon(kind);
   icon.style.cssText = 'flex-shrink:0; opacity:0.85;';
   const text = document.createElement('span');

@@ -1,3 +1,4 @@
+import type { MissionView } from './mission/missionState.ts';
 import type { PerfLogEntry } from './perfStats.ts';
 
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
@@ -103,6 +104,8 @@ export interface GameDebugApi {
       onScreen: boolean;
     }[];
   } | null;
+  /** The Uplink mission's state (docs/visual-overhaul.md, phase 4), null outside a mission match. */
+  getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

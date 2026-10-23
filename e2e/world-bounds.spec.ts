@@ -13,6 +13,18 @@ test('player is held within the world boundary when sprinting straight at it', a
   await waitForGameReady(page);
   await lockPointer(page);
 
+  // Start 15 m inside the push zone's edge, facing outward. Sprinting from the spawn, as this test
+  // first did, ran into whatever the random world put on that heading: on 2026-10-23 two worlds in a
+  // row pinned the player in dense forest at 62 and 72 m for the whole budget, so the boundary was
+  // never reached and never tested. Dropped in from well above the valley rim, invulnerable for the
+  // fall, so the terrain height there does not matter.
+  await page.evaluate(() => window.__gameDebug?.setPlayerInvulnerable(true));
+  const startRadius = WORLD_SOFT_PUSH_START_RADIUS - 15;
+  await page.evaluate((r) => window.__gameDebug?.teleport(0, 200, -r), startRadius);
+  await page.waitForFunction(() => (window.__gameDebug?.getPlayerPosition().y ?? 999) < 150, undefined, { timeout: 60_000 });
+  await page.waitForTimeout(3000);
+  await page.evaluate((r) => window.__gameDebug?.lookAt(0, 0, -r * 4), startRadius);
+
   await page.keyboard.down('ShiftLeft');
   await page.keyboard.down('KeyW');
 

@@ -1,4 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { gradeObject } from '../render/materialGrade.ts';
+import { CONTACT_SHADOW_LIFT, createContactShadowGeometry, createContactShadowMaterial } from '../render/contactShadows.ts';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
@@ -132,6 +134,10 @@ function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPre
  * overlapping town whose position actually falls inside that chunk's bounds, so a town spanning
  * several chunks streams in/out correctly no matter the load order.
  */
+/** Metres the house contact shadow reaches past the walls on each side, and how dark its core is. */
+const HOUSE_CONTACT_SHADOW_MARGIN = 1.6;
+const HOUSE_CONTACT_SHADOW_STRENGTH = 0.6;
+
 export class BuildingManager {
   private readonly townLayoutCache = new Map<string, TownLayout>();
   private readonly activeBuildings = new Map<string, PlacedBuilding>();
@@ -150,6 +156,8 @@ export class BuildingManager {
     const presets: BuildingPreset[] = [];
     for (const def of BUILDING_PRESET_DEFS) {
       const gltf = await loadGLTF(def.modelPath);
+      // Clones share these materials, so grading the loaded prefab once covers every placement.
+      gradeObject(gltf.scene, 'building');
       presets.push(measurePreset(gltf.scene, def.targetHeight));
     }
     return new BuildingManager(scene, physics, presets, obstacles);
@@ -338,6 +346,10 @@ export class BuildingManager {
     return layout;
   }
 
+  /** One soft darkened rectangle under each house, a little wider than its walls, shared by all. */
+  private readonly contactShadowGeometry = createContactShadowGeometry();
+  private readonly contactShadowMaterial = createContactShadowMaterial('rect', HOUSE_CONTACT_SHADOW_STRENGTH);
+
   private createBuilding(worldX: number, worldZ: number, rotationY: number, preset: BuildingPreset): PlacedBuilding {
     const groundY = sampleHeight(worldX, worldZ);
 
@@ -351,6 +363,16 @@ export class BuildingManager {
         child.receiveShadow = true;
       }
     });
+    // The group is scaled, so the shadow is sized and offset in the model's unscaled frame.
+    const contactShadow = new THREE.Mesh(this.contactShadowGeometry, this.contactShadowMaterial);
+    contactShadow.scale.set(
+      (preset.footprintWidth + HOUSE_CONTACT_SHADOW_MARGIN * 2) / preset.scaleFactor,
+      1,
+      (preset.footprintDepth + HOUSE_CONTACT_SHADOW_MARGIN * 2) / preset.scaleFactor,
+    );
+    contactShadow.position.set(preset.footprintOffsetX / preset.scaleFactor, CONTACT_SHADOW_LIFT / preset.scaleFactor, preset.footprintOffsetZ / preset.scaleFactor);
+    contactShadow.renderOrder = -1;
+    group.add(contactShadow);
     this.scene.add(group);
 
     // The collider shapes live in the model's scaled local frame (see measurePreset), on a body

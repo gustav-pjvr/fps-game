@@ -1,11 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { allocateEntityId, type Entity } from './Entity.ts';
 import type { Damageable } from '../combat/damage.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
-import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../core/config.ts';
-import { ENEMY_MODEL_PATH } from './enemies/Enemy.ts';
+import { HEADSHOT_MULTIPLIER, PLAYER_HEIGHT } from '../core/config.ts';
+import { createHitColliders, PLAYER_HIT_SHAPE, yawRotation } from './characterHitbox.ts';
+import { instantiateCharacter, PLAYER_CHARACTER } from './characterModels.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
 
 /** How quickly the visual mesh catches up to the latest received snapshot (MathUtils.damp's rate
@@ -22,12 +22,6 @@ import { loadGLTF } from '../core/AssetLoader.ts';
 const POSITION_DAMP_RATE = 18;
 const ROTATION_DAMP_RATE = 18;
 
-/** Same model Enemy.ts uses (Kenney "Mini Characters", CC0) - the only downloaded character skin
- * this project has; there's no separate "player" model since the local player never sees their own
- * body (first-person). Reusing it means the opponent finally looks like an actual character
- * instead of the flat-red capsule placeholder this used to be. */
-const MODEL_BIND_HEIGHT = 0.671;
-const MODEL_SCALE = PLAYER_HEIGHT / MODEL_BIND_HEIGHT;
 
 /** Below this squared distance moved in a frame, treat the opponent as standing still rather than
  * walking - damping technically never reaches exactly zero, so a raw "moved at all" check would
@@ -52,7 +46,8 @@ export class RemotePlayer implements Entity, Damageable {
   readonly mesh: THREE.Group;
 
   private readonly rigidBody: RAPIER.RigidBody;
-  private readonly collider: RAPIER.Collider;
+  private readonly bodyCollider: RAPIER.Collider;
+  private readonly headCollider: RAPIER.Collider;
   private disposed = false;
 
   private readonly mixer: THREE.AnimationMixer;
@@ -88,52 +83,35 @@ export class RemotePlayer implements Entity, Damageable {
 
     // Kinematic, not simulated - this body only ever gets pushed to wherever the mesh already is
     // (see update()), it never falls, collides, or reacts to anything itself. It exists purely so
-    // other colliders (the local player's hitscan raycasts) have something real to hit. Sized to
-    // match the local player's own collision capsule (PLAYER_HEIGHT/PLAYER_RADIUS), not the visual
-    // model's own silhouette - the model is cosmetic only, same as Enemy's.
-    const cylinderHalfHeight = PLAYER_HEIGHT / 2 - PLAYER_RADIUS;
+    // other colliders (the local player's hitscan raycasts) have something real to hit. Its body and
+    // head shapes are fitted to the spacesuit character (characterHitbox.ts), the same way Enemy's
+    // are to the SWAT kit; it turns with the model so the head sits where the helmet is.
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       initialPosition.x,
       initialPosition.y,
       initialPosition.z,
     );
     this.rigidBody = physics.world.createRigidBody(bodyDesc);
-    const colliderDesc = RAPIER.ColliderDesc.capsule(cylinderHalfHeight, PLAYER_RADIUS);
-    this.collider = physics.world.createCollider(colliderDesc, this.rigidBody);
-    physics.registerCollider(this.collider, this);
+    const colliders = createHitColliders(physics.world, this.rigidBody, PLAYER_HIT_SHAPE);
+    this.bodyCollider = colliders.body;
+    this.headCollider = colliders.head;
+    physics.registerCollider(this.bodyCollider, this);
+    physics.registerCollider(this.headCollider, this);
   }
 
-  /** Async because the model has to be loaded (and cached - see AssetLoader.loadGLTF, shared with
-   * Enemy so a match only ever fetches character-male-a.glb once regardless of how many
-   * enemies/opponents end up using it). */
+  /** Async because the model has to be loaded (and cached - see AssetLoader.loadGLTF, so a match
+   * fetches the spacesuit character once however many opponents use it). Other players wear the
+   * spacesuit with a cyan visor, enemies the SWAT kit with a red one (characterModels.ts). */
   static async create(
     physics: PhysicsWorld,
     scene: THREE.Scene,
     initialPosition: THREE.Vector3,
     onHit: (amount: number) => void,
   ): Promise<RemotePlayer> {
-    const gltf = await loadGLTF(ENEMY_MODEL_PATH);
-
-    // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - see Enemy.ts's
-    // identical comment; a plain clone would leave this instance's bones pointing at Enemy's (or
-    // any other clone's) shared skeleton.
-    const model = cloneSkeleton(gltf.scene) as THREE.Group;
-    model.scale.setScalar(MODEL_SCALE);
-    model.position.y = -PLAYER_HEIGHT / 2; // model origin is at its feet; group origin is capsule-center
-    model.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    const mixer = new THREE.AnimationMixer(model);
-    const idleClip = gltf.animations.find((clip) => clip.name === 'idle');
-    const walkClip = gltf.animations.find((clip) => clip.name === 'walk');
-    const idleAction = idleClip ? mixer.clipAction(idleClip) : undefined;
-    const walkAction = walkClip ? mixer.clipAction(walkClip) : undefined;
-
-    return new RemotePlayer(physics, scene, initialPosition, model, mixer, idleAction, walkAction, onHit);
+    const gltf = await loadGLTF(PLAYER_CHARACTER.path);
+    const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
+    // A moving player is nearly always at a run (walk and sprint are 5 m/s and up).
+    return new RemotePlayer(physics, scene, initialPosition, model, mixer, actions.idle, actions.run, onHit);
   }
 
   /** Always false from this client's perspective - it has no authority over the opponent's health
@@ -143,8 +121,10 @@ export class RemotePlayer implements Entity, Damageable {
     return false;
   }
 
-  takeDamage(amount: number, _hitColliderHandle: number): void {
-    this.onHit(amount);
+  /** A hit on the helmet counts HEADSHOT_MULTIPLIER times, as on an enemy. The amount sent is
+   * the multiplied one: the victim's client applies whatever the damageEvent carries. */
+  takeDamage(amount: number, hitColliderHandle: number): void {
+    this.onHit(hitColliderHandle === this.headCollider.handle ? amount * HEADSHOT_MULTIPLIER : amount);
   }
 
   /** Called whenever a `playerSnapshot` message arrives - just records where the opponent should
@@ -179,6 +159,7 @@ export class RemotePlayer implements Entity, Damageable {
     this.mesh.position.z = THREE.MathUtils.damp(this.mesh.position.z, this.targetPosition.z, POSITION_DAMP_RATE, dt);
     this.mesh.rotation.y = THREE.MathUtils.damp(this.mesh.rotation.y, this.targetYaw, ROTATION_DAMP_RATE, dt);
     this.rigidBody.setNextKinematicTranslation(this.mesh.position);
+    this.rigidBody.setNextKinematicRotation(yawRotation(this.mesh.rotation.y));
 
     const dx = this.mesh.position.x - previousX;
     const dz = this.mesh.position.z - previousZ;
@@ -209,8 +190,10 @@ export class RemotePlayer implements Entity, Damageable {
   dispose(scene: THREE.Scene): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.physics.unregisterCollider(this.collider);
-    this.physics.world.removeCollider(this.collider, true);
+    this.physics.unregisterCollider(this.bodyCollider);
+    this.physics.unregisterCollider(this.headCollider);
+    this.physics.world.removeCollider(this.bodyCollider, true);
+    this.physics.world.removeCollider(this.headCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
     scene.remove(this.mesh);
     this.mesh.traverse((child) => {

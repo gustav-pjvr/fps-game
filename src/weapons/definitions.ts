@@ -52,7 +52,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   pistol: {
     id: 'pistol',
     name: 'Kestrel P9',
-    description: "Standard issue. Nobody's first choice, everybody's last one.",
+    description: 'Accurate semi-auto sidearm with a fast reload.',
     damage: 20,
     fireRate: 4,
     magazineSize: 12,
@@ -74,7 +74,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   mp5: {
     id: 'mp5',
     name: 'Sable MP-5',
-    description: 'Three at a time. Every time.',
+    description: 'Three-round bursts reward controlled aim at close to mid range.',
     damage: 17,
     fireRate: 2.6,
     magazineSize: 30,
@@ -94,7 +94,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   rifle: {
     id: 'rifle',
     name: 'VR-4 Fieldhand',
-    description: 'Feeds all day without complaint. Hence the name.',
+    description: 'Automatic fire for sustained pressure at mid range.',
     damage: 15,
     fireRate: 10,
     magazineSize: 30,
@@ -113,7 +113,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   shotgun: {
     id: 'shotgun',
     name: 'Hedgerow 12',
-    description: 'Eight opinions, delivered all at once, at conversational range.',
+    description: 'Eight pellets deliver lethal damage at close range.',
     // Per user request ("shotgun is not great") - bumped from 10/pellet (80 max/shot, never a
     // guaranteed kill even at point-blank with all 8 pellets landing) to 13 (104 max/shot, now
     // capable of a 1-shot kill at true point-blank range only, where the tight spreadRadians
@@ -141,7 +141,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   sniper: {
     id: 'sniper',
     name: 'Marchand Longview',
-    description: 'For settling arguments from a different postcode.',
+    description: 'High damage and precise scoped fire reward patient aim.',
     damage: 90,
     fireRate: 0.8,
     magazineSize: 5,
@@ -160,7 +160,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   knife: {
     id: 'knife',
     name: 'Bicknell Trench Knife',
-    description: 'The argument you make once every other argument has run out of ammo.',
+    description: 'Fast melee strikes for close-range engagements without ammo.',
     damage: 45,
     fireRate: 1.8,
     magazineSize: Infinity,
@@ -186,7 +186,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   unarmed: {
     id: 'unarmed',
     name: 'Empty-Handed',
-    description: 'No weapons here - just you, your arm, and a lot of geese.',
+    description: 'Throw explosive geese with no conventional weapon equipped.',
     damage: 0,
     fireRate: 1,
     magazineSize: Infinity,
@@ -213,7 +213,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   gooseLauncher: {
     id: 'gooseLauncher',
     name: 'Goose Launcher',
-    description: 'Four honks. Zero mercy.',
+    description: 'Four explosive projectiles with no reload.',
     damage: 0,
     fireRate: 1.4,
     magazineSize: 4,

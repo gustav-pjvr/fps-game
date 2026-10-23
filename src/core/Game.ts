@@ -14,7 +14,7 @@ import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
 import { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
-import { isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
+import { getWatchTowerPositions, isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
@@ -25,11 +25,16 @@ import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
 import { Tracers } from '../combat/Tracers.ts';
 import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
+import { DamageArcs } from '../ui/damageArcs.ts';
+import { WorldMarkers } from '../ui/worldMarkers.ts';
+import { MissionState, type MissionView } from './mission/missionState.ts';
+import { UplinkBeacons } from '../world/UplinkBeacons.ts';
+import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
 import { DamageVignette } from '../ui/damageVignette.ts';
-import { DeathScreen } from '../ui/deathScreen.ts';
+import { DeathScreen, type MissionResult } from '../ui/deathScreen.ts';
 import type { MultiplayerMatchEndResult } from '../ui/matchEndScreen.ts';
 import { WeaponCaption } from '../ui/weaponCaption.ts';
 import { LongShotCallout } from '../ui/longShotCallout.ts';
@@ -83,6 +88,7 @@ import {
   ENEMY_DIRECTOR_WAVE_SIZE,
   ENEMY_GLINT_LEAD_TIME,
   ENEMY_HEIGHT,
+  WATCH_TOWER_HEIGHT,
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
@@ -121,17 +127,12 @@ import {
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_RESPAWN_DELAY,
-  NIGHT_AMBIENT_INTENSITY,
-  NIGHT_SUN_COLOR,
-  NIGHT_SUN_INTENSITY,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_STRUCTURE_CLEARANCE,
   SPAWN_X,
   SPAWN_Z,
-  SUN_DIRECTION_X,
-  SUN_DIRECTION_Y,
-  SUN_DIRECTION_Z,
+  SUN_SHADOW_LIGHT_DISTANCE,
   SUN_SHADOW_BIAS,
   SUN_SHADOW_CAMERA_FAR,
   SUN_SHADOW_NORMAL_BIAS,
@@ -154,6 +155,7 @@ import { isHordeAllEliminated, MultiplayerMatchState } from '../network/Multipla
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
+import type { LookPreset } from '../render/look.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -210,9 +212,6 @@ const TARGET_RING_BASE_RADIUS = 15;
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
 const SPAWN_BATCH_SIZE = 4;
-/** Flat ambient fill used on Low/Medium graphics quality in place of image-based lighting (see
- * Game.addLighting/applyGraphicsQuality). */
-const AMBIENT_FILL_INTENSITY = 0.6;
 /** While this client has clicked Skip on the mode briefing and is still waiting on others, it
  * re-broadcasts its readiness this often (see resendModeExplanationReady). */
 const MODE_EXPLANATION_READY_RESEND_SECONDS = 1;
@@ -227,6 +226,9 @@ export interface MatchConfig {
   /** Single-player only (see PlaySetupModal): the pacing director runs the enemies (enemy AI v2
    * step 6). Never together with hordeMode; always false for a multiplayer match. */
   directorMode: boolean;
+  /** Single-player only (see PlaySetupModal): the Uplink mission (docs/visual-overhaul.md, phase 4),
+   * which runs the pacing director too. Never together with hordeMode or directorMode. */
+  missionMode: boolean;
 }
 
 function waitForNextFrame(): Promise<void> {
@@ -294,6 +296,19 @@ export class Game {
   private readonly directorRng: () => number;
   /** Player health at the director's last look, so it can tell damage taken per tick. */
   private directorLastHealth = 0;
+  /** The Uplink mission and its visuals, set up after construction by startMission; null in every
+   * other mode. */
+  private mission: MissionState | null = null;
+  private uplinkBeacons: UplinkBeacons | null = null;
+  private worldMarkers: WorldMarkers | null = null;
+  private missionKills = 0;
+  private missionDamageTaken = 0;
+  private missionLastHealth = 0;
+  private missionClock = 0;
+  /** True from the mission's win until Respawn restarts it: the world freezes behind the end screen. */
+  private missionWon = false;
+  private readonly missionMarkerPosition = new THREE.Vector3();
+  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   /** The last wave's reinforcements, for getDirectorDebug. */
   private directorLastSpawns: DirectorSpawnRecord[] = [];
   /** Damage requested via the debug API, applied inside the next update tick (see installDebugApi). */
@@ -321,6 +336,7 @@ export class Game {
   /** Set after construction (same forward-reference pattern as modeExplanationScreen); only needed
    * to build the mid-match Loadout page lazily, the first time the pause menu opens it. */
   private hudRoot: HTMLElement | null = null;
+  private readonly hudForward = new THREE.Vector3();
   private loadoutScreenLoading = false;
   private disposed = false;
   /** See makeSpawnBlockedCheck. Assigned in the constructor (it needs the BuildingManager). */
@@ -427,6 +443,7 @@ export class Game {
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
     private readonly damageVignette: DamageVignette,
+    private readonly damageArcs: DamageArcs,
     private readonly deathScreen: DeathScreen,
     private readonly weaponCaption: WeaponCaption,
     private readonly longShotCallout: LongShotCallout,
@@ -439,12 +456,7 @@ export class Game {
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
     private readonly sun: THREE.DirectionalLight,
-    private readonly ambientLight: THREE.AmbientLight,
-    /** Resolved once at match setup (multiplayer?.weather ?? DEFAULT_MATCH_WEATHER) - never
-     * changes live like graphics quality does. Kept as a field so applyGraphicsQuality's ambient
-     * calculation can still respect a 'night' override if the player changes graphics quality
-     * mid-match (see that method below). */
-    private readonly matchWeather: MatchWeather,
+    private readonly fillLight: THREE.HemisphereLight,
     private readonly multiplayer: ActiveMultiplayer | null,
     private readonly onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
     /** Fired when a matchStart message arrives *after* this Game already exists - the guest's
@@ -461,8 +473,10 @@ export class Game {
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
     this.isSpawnBlocked = makeSpawnBlockedCheck(buildings);
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
-    this.director = !multiplayer && matchConfig.directorMode && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
+    this.director = !multiplayer && (matchConfig.directorMode || matchConfig.missionMode) && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
     this.directorLastHealth = player.currentHealth;
+    hud.setObjective(this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', this.director || matchConfig.hordeMode ? 'Survive the waves' : 'Clear the valley');
+    hud.compass.setSunDirection(renderer.currentLook.sunDirection);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
@@ -479,7 +493,12 @@ export class Game {
     const snappedX = Math.round(playerPos.x / texelSize) * texelSize;
     const snappedZ = Math.round(playerPos.z / texelSize) * texelSize;
     this.sun.target.position.set(snappedX, playerPos.y, snappedZ);
-    this.sun.position.set(snappedX + SUN_DIRECTION_X, playerPos.y + SUN_DIRECTION_Y, snappedZ + SUN_DIRECTION_Z);
+    const toSun = this.renderer.currentLook.sunDirection;
+    this.sun.position.set(
+      snappedX + toSun.x * SUN_SHADOW_LIGHT_DISTANCE,
+      playerPos.y + toSun.y * SUN_SHADOW_LIGHT_DISTANCE,
+      snappedZ + toSun.z * SUN_SHADOW_LIGHT_DISTANCE,
+    );
     this.sun.target.updateMatrixWorld();
   }
 
@@ -552,6 +571,11 @@ export class Game {
               lastSpawns: [...this.directorLastSpawns],
             }
           : null,
+      getMissionDebug: () => {
+        if (!this.mission) return null;
+        const view = this.mission.view(this.player.position);
+        return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
+      },
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -612,18 +636,12 @@ export class Game {
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
-    const { sun, ambientLight } = Game.addLighting(renderer.scene, quality);
-
     // Multiplayer-only, host-chosen (see CreateRoomScreen); single-player always 'day'. Applied
-    // once here, not live-toggleable like graphics quality - see Renderer.setMatchWeather and the
-    // matchWeather field's own comment for why 'night' also touches sun/ambient directly.
+    // once here, before anything compiles, not live-toggleable like graphics quality - see
+    // Renderer.setMatchWeather. The lights then take the same look.
     const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
     renderer.setMatchWeather(matchWeather);
-    if (matchWeather === 'night') {
-      sun.color.setHex(NIGHT_SUN_COLOR);
-      sun.intensity = NIGHT_SUN_INTENSITY;
-      ambientLight.intensity = NIGHT_AMBIENT_INTENSITY;
-    }
+    const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
 
     onProgress?.('Growing vegetation…', 0.02);
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
@@ -679,11 +697,18 @@ export class Game {
     document.addEventListener('click', () => sound.resume(), { once: true });
 
     const damageVignette = new DamageVignette(hudRoot);
+    const damageArcs = new DamageArcs(hudRoot);
+    const hud = new Hud(hudRoot);
     const spawnY = sampleHeight(ownSpawn.x, ownSpawn.y) + SPAWN_HEIGHT_OFFSET;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(ownSpawn.x, spawnY, ownSpawn.y), {
-      onDamaged: () => {
+      onDamaged: (sourcePosition) => {
         sound.playPlayerHurt();
         damageVignette.trigger();
+        if (sourcePosition) {
+          const bearing = bearingDeg(sourcePosition.x - player.position.x, sourcePosition.z - player.position.z);
+          damageArcs.trigger(bearing);
+          hud.compass.addContact(bearing);
+        }
       },
       onFootstep: () => {
         sound.playFootstep();
@@ -1087,7 +1112,6 @@ export class Game {
       };
     }
 
-    const hud = new Hud(hudRoot);
     if (activeMultiplayer) {
       // MultiplayerHud (constructed above, alongside the rest of activeMultiplayer) shows both
       // players' health/score in different positions - the single-player-shaped elements here
@@ -1158,6 +1182,7 @@ export class Game {
       hotbar,
       hitMarker,
       damageVignette,
+      damageArcs,
       deathScreen,
       weaponCaption,
       longShotCallout,
@@ -1170,8 +1195,7 @@ export class Game {
       scoreState,
       matchConfig,
       sun,
-      ambientLight,
-      matchWeather,
+      fillLight,
       activeMultiplayer,
       onMultiplayerMatchEnd,
       onMultiplayerRematchReceived,
@@ -1187,6 +1211,7 @@ export class Game {
     // and each instance used to cost several WebGL contexts (thumbnails plus a live preview) on every
     // match start, restricted modes included.
     game.hudRoot = hudRoot;
+    if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
     // Per-mode controllers (see core/modeControllers/) - each mode gets at most one, matching its
     // own gameMode. Constructed here rather than earlier alongside their underlying managers
@@ -1428,6 +1453,9 @@ export class Game {
     this.hotbar.dispose();
     this.hitMarker.dispose();
     this.damageVignette.dispose();
+    this.damageArcs.dispose();
+    this.uplinkBeacons?.dispose();
+    this.worldMarkers?.dispose();
     this.deathScreen.dispose();
     this.weaponCaption.dispose();
     this.longShotCallout.dispose();
@@ -1508,6 +1536,7 @@ export class Game {
     this.director?.reset();
     this.directorLastHealth = this.player.currentHealth;
     this.directorLastSpawns = [];
+    if (this.mission) this.restartMission();
     if (this.hordeGooseManager) {
       this.hordeGooseManager.recenter(spawnPoint.x, spawnPoint.y);
       this.hordeGooseManager.resetToWaveOne();
@@ -1533,21 +1562,23 @@ export class Game {
     this.input.requestPointerLock();
   }
 
-  /** AmbientLight is always created (so applyGraphicsQuality can toggle its intensity live) but is
-   * only non-zero on Low/Medium - on High, Renderer assigns scene.environment (a PMREM of the sky)
-   * for plausible sky/ground-bounced fill instead (VISUAL_REALISM.md §5). Image-based lighting is
+  /** The hemisphere fill is always created (so applyGraphicsQuality can toggle its intensity live)
+   * but is only non-zero on Low/Medium - on High, Renderer assigns scene.environment (a PMREM of
+   * the sky) for sky/ground-bounced fill instead (VISUAL_REALISM.md §5). Image-based lighting is
    * disabled on Low/Medium (ruinous on the software-rendered e2e sandbox - see
-   * GraphicsQualityPreset.environmentLighting), so this flat fill stands in there, otherwise every
-   * surface facing away from the sun would render nearly black. */
+   * GraphicsQualityPreset.environmentLighting), so the hemisphere stands in there: sky-coloured
+   * from above, ground-coloured from below, so surfaces facing away from the low sun still read
+   * their shape instead of going flat. Colours and strengths come from the match's look. */
   private static addLighting(
     scene: THREE.Scene,
     quality: GraphicsQualityPreset,
-  ): { sun: THREE.DirectionalLight; ambientLight: THREE.AmbientLight } {
-    const ambientLight = new THREE.AmbientLight(0xffffff, quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY);
-    scene.add(ambientLight);
+    look: LookPreset,
+  ): { sun: THREE.DirectionalLight; fillLight: THREE.HemisphereLight } {
+    const fillLight = new THREE.HemisphereLight(look.hemiSkyColor, look.hemiGroundColor, quality.environmentLighting ? 0 : look.hemiIntensity);
+    scene.add(fillLight);
 
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z);
+    const sun = new THREE.DirectionalLight(look.sunColor, look.sunIntensity);
+    sun.position.copy(look.sunDirection).multiplyScalar(SUN_SHADOW_LIGHT_DISTANCE);
     // Renderer's shadowMap.enabled already gates the whole shadow pass on Low - this additionally
     // keeps the light itself from ever being asked to cast, rather than relying solely on the
     // renderer-level switch.
@@ -1562,7 +1593,7 @@ export class Game {
     sun.shadow.normalBias = SUN_SHADOW_NORMAL_BIAS;
     scene.add(sun);
     scene.add(sun.target);
-    return { sun, ambientLight };
+    return { sun, fillLight };
   }
 
   /** Everything a Graphics Quality change affects outside Renderer (see Renderer.applyQuality) -
@@ -1573,11 +1604,7 @@ export class Game {
    * a fresh one at the new size the next time the shadow pass runs. */
   private applyGraphicsQuality(quality: GraphicsQualityPreset): void {
     this.renderer.applyQuality(quality);
-    // 'night' always wins over the quality-tier ambient rule (see the matchWeather field's
-    // comment) - otherwise switching graphics quality mid-match would silently undo the night
-    // brightness floor and leave the match unplayably dark.
-    this.ambientLight.intensity =
-      this.matchWeather === 'night' ? NIGHT_AMBIENT_INTENSITY : quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY;
+    this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled;
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
@@ -1626,7 +1653,7 @@ export class Game {
   /** What a match spawns at the start: its chosen counts, or in a Director match (enemy AI v2 step 6)
    * just ENEMY_DIRECTOR_INITIAL_COUNT enemies and no targets, the director sending the rest. */
   private static encounterCounts(config: MatchConfig): { targets: number; enemies: number } {
-    return config.directorMode ? { targets: 0, enemies: ENEMY_DIRECTOR_INITIAL_COUNT } : { targets: config.targetCount, enemies: config.enemyCount };
+    return config.directorMode || config.missionMode ? { targets: 0, enemies: ENEMY_DIRECTOR_INITIAL_COUNT } : { targets: config.targetCount, enemies: config.enemyCount };
   }
 
   /** Enemy AI v2 step 6: feeds the pacing director this tick's damage taken, close kills and enemy
@@ -1645,6 +1672,134 @@ export class Game {
     const counts = this.entityManager.enemyCounts();
     const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive });
     if (command.kind === 'spawnWave') director.confirmSpawned(this.spawnDirectorWave(command.count, command.bias));
+  }
+
+  /** The Uplink mission (docs/visual-overhaul.md, phase 4): world markers live for the whole match,
+   * the mission itself restarts with each Respawn. */
+  private startMission(root: HTMLElement): void {
+    this.worldMarkers = new WorldMarkers(root);
+    this.restartMission();
+  }
+
+  private restartMission(): void {
+    this.uplinkBeacons?.dispose();
+    for (const uplink of this.mission?.view(this.player.position).uplinks ?? []) {
+      this.hud.compass.removeMarker(`uplink-${uplink.label}`);
+      this.worldMarkers?.remove(`uplink-${uplink.label}`);
+    }
+    this.hud.compass.removeMarker('extract');
+    this.worldMarkers?.remove('extract');
+
+    const position = this.player.position;
+    const mission = new MissionState(getWatchTowerPositions(), { x: position.x, z: position.z });
+    this.mission = mission;
+    const view = mission.view(position);
+    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view);
+    for (const uplink of view.uplinks) {
+      this.hud.compass.addMarker(`uplink-${uplink.label}`, () => bearingDeg(uplink.x - this.player.position.x, uplink.z - this.player.position.z));
+    }
+    this.missionKills = 0;
+    this.missionDamageTaken = 0;
+    this.missionLastHealth = this.player.currentHealth;
+    this.missionClock = 0;
+    this.missionWon = false;
+    this.hud.setPrompt('E', null);
+  }
+
+  /** Feeds the mission this tick's position and interact press, and acts on what it asks for: waves
+   * through the director's own reinforcement spawner, announcements, and the win screen. Runs right
+   * after updateDirector, while killsThisTick still describes this tick. */
+  private updateMission(dt: number): void {
+    const mission = this.mission;
+    if (!mission) return;
+    this.missionClock += dt;
+    const health = this.player.currentHealth;
+    this.missionDamageTaken += Math.max(0, this.missionLastHealth - health);
+    this.missionLastHealth = health;
+    this.missionKills += this.entityManager.killsThisTick.length;
+    const position = this.player.position;
+    const events = mission.update({
+      dt,
+      player: { x: position.x, z: position.z },
+      interactPressed: this.input.consumeJustPressed('interact'),
+      playerDead: false,
+    });
+    for (const event of events) {
+      if (event.kind === 'waveRequested') {
+        this.spawnDirectorWave(event.count, event.bias);
+      } else if (event.kind === 'uplinkOnline') {
+        this.bigAnnouncement.show(`UPLINK ${event.online} / ${event.total} ONLINE`);
+        this.hud.compass.removeMarker(`uplink-${event.label}`);
+        this.worldMarkers?.remove(`uplink-${event.label}`);
+      } else if (event.kind === 'extractionOpen') {
+        this.bigAnnouncement.show('EXTRACTION OPEN');
+        const { x, z } = mission.extraction;
+        this.hud.compass.addMarker('extract', () => bearingDeg(x - this.player.position.x, z - this.player.position.z));
+      } else if (event.kind === 'won') {
+        this.missionWon = true;
+        this.hud.setPrompt('E', null);
+        this.deathScreen.showMission(this.missionResult(true));
+        this.deathScreenVisible = true;
+        this.input.releasePointerLock();
+      }
+    }
+  }
+
+  private missionResult(won: boolean): MissionResult {
+    // The killing blow lands on a tick updateMission no longer runs on, so settle it here.
+    this.missionDamageTaken += Math.max(0, this.missionLastHealth - this.player.currentHealth);
+    this.missionLastHealth = this.player.currentHealth;
+    const view = this.mission?.view(this.player.position);
+    return {
+      won,
+      seconds: this.missionClock,
+      kills: this.missionKills,
+      damageTaken: this.missionDamageTaken,
+      online: view?.online ?? 0,
+      total: view?.uplinks.length ?? 0,
+    };
+  }
+
+  /** The death screen, or in the Uplink mission its "Signal lost" variant (death ends the mission;
+   * Respawn restarts it). */
+  private showDeathScreen(): void {
+    if (this.mission) {
+      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true });
+      this.deathScreen.showMission(this.missionResult(false));
+    } else {
+      this.deathScreen.show(this.scoreState.value);
+    }
+  }
+
+  /** The objective panel, the interaction prompt, the beams and the world markers for this tick. */
+  private updateMissionHud(view: MissionView): void {
+    const hud = this.hud;
+    if (view.phase === 'extract' || view.phase === 'won') {
+      hud.setObjective('UPLINK', 'Reach extraction');
+      if (view.extractionProgress > 0) hud.setScoreLine(`EXTRACTING  ${Math.round(view.extractionProgress * 100)}%`);
+      else hud.setObjectiveProgress(view.online, view.uplinks.length);
+    } else if (view.active) {
+      hud.setObjective('UPLINK', view.active.paused ? 'Upload paused, return to the tower' : 'Hold the tower');
+      hud.setScoreLine(`UPLINK ${view.active.label}  ${Math.floor(view.active.progress * 100)}%`);
+    } else {
+      hud.setObjective('UPLINK', 'Bring the uplinks online');
+      hud.setObjectiveProgress(view.online, view.uplinks.length);
+    }
+    hud.setPrompt('E', this.missionWon ? null : view.prompt);
+    this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
+
+    const markers = this.worldMarkers;
+    if (!markers) return;
+    for (const uplink of view.uplinks) {
+      if (uplink.status === 'online') continue;
+      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + WATCH_TOWER_HEIGHT + 3, uplink.z);
+      markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
+    }
+    if (view.phase === 'extract') {
+      const { x, z } = view.extraction;
+      this.missionMarkerPosition.set(x, sampleHeight(x, z) + 2, z);
+      markers.set('extract', this.missionMarkerPosition, 'EXTRACT');
+    }
   }
 
   /** Places up to `count` reinforcements behind the player and off their screen, hidden ones first
@@ -1794,7 +1949,7 @@ export class Game {
     // The deferred reveal from below - fires the first tick the pause menu is no longer open.
     if (this.pendingDeathScreenReveal && !isPaused) {
       this.pendingDeathScreenReveal = false;
-      this.deathScreen.show(this.scoreState.value);
+      this.showDeathScreen();
       this.deathScreenVisible = true;
       this.input.releasePointerLock();
     }
@@ -1840,7 +1995,7 @@ export class Game {
       for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.update(dt);
     }
 
-    const freezeLocalPlayer = this.player.isDead || isPaused;
+    const freezeLocalPlayer = this.player.isDead || isPaused || this.missionWon;
     if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause.
@@ -1878,6 +2033,7 @@ export class Game {
       sectionStart = this.perfLogger.endSection('world', sectionStart);
       this.entityManager.update(dt, this.player);
       this.updateDirector(dt);
+      this.updateMission(dt);
       this.perfLogger.endSection('ai', sectionStart);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
@@ -1979,7 +2135,7 @@ export class Game {
       if (isPaused) {
         this.pendingDeathScreenReveal = true;
       } else {
-        this.deathScreen.show(this.scoreState.value);
+        this.showDeathScreen();
         this.deathScreenVisible = true;
         this.input.releasePointerLock();
       }
@@ -2030,8 +2186,23 @@ export class Game {
     this.hud.setWeaponName(
       this.gooseTossController ? (this.gooseTossController.isHolding ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
     );
-    this.hud.setScore(this.scoreState.value);
+    if (this.mission) {
+      this.updateMissionHud(this.mission.view(this.player.position));
+    } else {
+      this.hud.setScore(this.scoreState.value);
+      if (this.director) {
+        const phase = { buildUp: 'BUILDING', peak: 'PEAK', fade: 'FADING', relax: 'QUIET' }[this.director.phase];
+        this.hud.setScoreLine(`SCORE ${this.scoreState.value}  ${phase}`);
+      }
+    }
     this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
+    // Phase 6 sound: the director drives the music, low health the heartbeat. Both fade out while
+    // paused, dead or behind the mission's end screen.
+    this.sound.updateAmbience({
+      healthRatio: this.player.currentHealth / this.player.maxHealth,
+      director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
+      active: this.input.isLocked && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
+    });
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
 
@@ -2675,6 +2846,13 @@ export class Game {
     // through, and unlike interpolating every enemy/target mesh, it needs no new per-entity
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
+    this.renderer.camera.getWorldDirection(this.hudForward);
+    const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
+    const hudDt = Math.max(0, frameMs / 1000);
+    this.hud.compass.setSunDirection(this.renderer.currentLook.sunDirection);
+    this.hud.update(hudDt, -heading * Math.PI / 180);
+    this.damageArcs.update(hudDt, heading);
+    this.worldMarkers?.update(this.renderer.camera);
     this.updateSunFollow();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();

@@ -27,7 +27,7 @@ import {
 } from '../core/config.ts';
 
 export interface PlayerSoundHooks {
-  onDamaged: () => void;
+  onDamaged: (sourcePosition?: THREE.Vector3) => void;
   onFootstep: () => void;
 }
 
@@ -154,10 +154,10 @@ export class Player implements Entity {
    * fight without the player dying and freezing the simulation. Never set by gameplay code. */
   debugInvulnerable = false;
 
-  takeDamage(amount: number): void {
+  takeDamage(amount: number, sourcePosition?: THREE.Vector3): void {
     if (this.isDead || this.debugInvulnerable) return;
     this.health = Math.max(0, this.health - amount);
-    this.sounds.onDamaged();
+    this.sounds.onDamaged(sourcePosition);
   }
 
   respawn(position: THREE.Vector3): void {

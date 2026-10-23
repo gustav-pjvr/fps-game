@@ -2,10 +2,10 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { EnemyArchetype } from './archetypes.ts';
 import { ENEMY_HEIGHT, ENEMY_RADIUS } from '../../core/config.ts';
 
-/** The head ball collider's radius and its centre's height above the capsule centre. Shared by the
- * shell (which builds the collider) and the brain (whose sight lines and shots start there). */
-export const ENEMY_HEAD_RADIUS = ENEMY_RADIUS * 0.55;
-export const ENEMY_HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - ENEMY_HEAD_RADIUS;
+/** Eye height above the capsule centre: where the brain's sight lines and shots start. It is the
+ * old head ball's centre, kept when the hit shapes were fitted to the SWAT character
+ * (characterHitbox.ts) so that no sight line moved. */
+export const ENEMY_HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - ENEMY_RADIUS * 0.55;
 
 export interface EnemyPosition {
   readonly x: number;
@@ -42,4 +42,6 @@ export interface EnemyBody {
   retreatFrom(threatX: number, threatZ: number, speed: number, dt: number): EnemyPosition | null;
   /** Turns to face the point and holds position (re-glues the kinematic body to the ground). */
   faceToward(x: number, z: number): void;
+  /** A ranged round was just fired: the body plays its shot (visual only, optional for test bodies). */
+  onFired?(): void;
 }

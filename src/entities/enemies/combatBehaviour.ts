@@ -442,6 +442,7 @@ export class CombatBehaviour {
     stepRangedFiring(this.combat, dt, isStationary, archetype, canShoot, () => {
       fired = true;
       fireRangedShot(this.combat, this.physics, headOf(current), player, archetype, this.body.excludeRigidBody, this.hooks);
+      this.body.onFired?.();
     });
     // A shot that ended its burst (the counter wrapped back to 0) readies the next burst's glint.
     if (fired && this.combat.burstShotsFired === 0) this.glint.onBurstEnded();

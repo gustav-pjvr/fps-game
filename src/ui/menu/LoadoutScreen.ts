@@ -1,10 +1,9 @@
-import { loadGLTF } from '../../core/AssetLoader.ts';
+import { AMBER, SURFACE, LABEL_CSS } from '../theme.ts';
 import { WEAPON_DEFINITIONS, type WeaponDefinition } from '../../weapons/definitions.ts';
-import { WEAPON_MODEL_SPECS, createProceduralMeleeViewModel } from '../../weapons/viewModel.ts';
+import { buildWeaponViewModel } from '../../weapons/models/arsenal.ts';
 import {
   createButton,
   createEyebrow,
-  chamferClipPath,
   attachScanSweep,
   ensureMotionKeyframesInjected,
   ACCENT,
@@ -22,7 +21,7 @@ import { WEAPON_CATEGORIES, LOADOUT_SLOT_DEFAULTS, type WeaponCategory, type Pla
 import { loadStoredLoadout, saveLoadout } from '../../core/loadout.ts';
 import { LoadoutCharacterPreview } from './loadoutCharacterPreview.ts';
 
-const REWARD_GOLD = '#ffd54a';
+const REWARD_GOLD = AMBER;
 
 type EquippableCategory = 'primary' | 'secondary' | 'melee';
 const EQUIPPABLE_CATEGORIES: readonly EquippableCategory[] = ['primary', 'secondary', 'melee'];
@@ -79,14 +78,13 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
   card.style.cssText =
     'display:flex; flex-direction:column; gap:10px; padding:14px 16px;' +
     ` background:${BG_RAISED}; border:1px solid ${isSpecial ? REWARD_GOLD : HAIRLINE};` +
-    ` clip-path:${chamferClipPath('top-right', 10)}; transition:border-color 0.15s ease-out, transform 0.12s ease-out;` +
-    (isSpecial ? ' opacity:0.75;' : ' cursor:pointer;') +
-    (isSpecial ? ` box-shadow:0 0 14px rgba(255,213,74,0.2);` : '');
+    ` border-radius:2px; transition:border-color 0.15s ease-out, transform 0.12s ease-out;` +
+    (isSpecial ? ' opacity:0.75;' : ' cursor:pointer;');
 
   if (isSpecial) {
     const badge = document.createElement('div');
     badge.textContent = 'REWARD ONLY - NOT EQUIPPABLE';
-    badge.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.65rem; font-weight:700; letter-spacing:0.1em; color:${REWARD_GOLD};`;
+    badge.style.cssText = `${LABEL_CSS} color:${REWARD_GOLD};`;
     card.appendChild(badge);
   }
 
@@ -95,7 +93,7 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
 
   const thumbnail = document.createElement('div');
   thumbnail.style.cssText =
-    'flex-shrink:0; width:92px; height:92px; background:rgba(0,0,0,0.3);' +
+    `flex-shrink:0; width:92px; height:92px; background:${SURFACE};` +
     ' display:flex; align-items:center; justify-content:center; overflow:hidden;';
   if (thumbnailDataUrl) {
     const img = document.createElement('img');
@@ -110,11 +108,11 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
 
   const name = document.createElement('div');
   name.textContent = weapon.name;
-  name.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.95rem; font-weight:700; margin-bottom:4px; color:${isSpecial ? REWARD_GOLD : TEXT};`;
+  name.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.95rem; font-weight:300; margin-bottom:4px; color:${isSpecial ? REWARD_GOLD : TEXT};`;
 
   const desc = document.createElement('div');
   desc.textContent = weapon.description;
-  desc.style.cssText = `font-family:${BODY_FONT}; font-size:0.8rem; opacity:0.75; font-style:italic; margin-bottom:6px;`;
+  desc.style.cssText = `font-family:${BODY_FONT}; font-size:0.8rem; color:${STEEL}; margin-bottom:6px;`;
 
   const stats = document.createElement('div');
   stats.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px 12px; font-size:0.72rem; opacity:0.75; font-variant-numeric:tabular-nums;';
@@ -155,6 +153,7 @@ export class LoadoutScreen {
 
     this.overlay = document.createElement('div');
     this.overlay.dataset.testid = 'loadout-screen';
+    this.overlay.className = 'menu-surface';
     this.overlay.style.cssText =
       `position:absolute; inset:0; display:none; flex-direction:column; background:${BG_VOID};` +
       ` color:${TEXT}; font-family:${BODY_FONT}; z-index:30; pointer-events:auto; padding:36px 48px; box-sizing:border-box;`;
@@ -165,7 +164,8 @@ export class LoadoutScreen {
     titleWrap.append(createEyebrow('Equip your fight'));
     const title = document.createElement('div');
     title.textContent = 'LOADOUT';
-    title.style.cssText = `font-family:${DISPLAY_FONT}; font-size:2.2rem; font-weight:700; letter-spacing:0.1em; margin-top:6px;`;
+    title.className = 'menu-panel-title';
+    title.style.cssText = `font-family:${DISPLAY_FONT}; font-size:2.2rem; font-weight:300; letter-spacing:-0.01em; margin-top:6px;`;
     titleWrap.appendChild(title);
     const closeButton = createButton('Close', 'primary');
     closeButton.addEventListener('click', onClose);
@@ -181,6 +181,10 @@ export class LoadoutScreen {
 
     const leftColumn = document.createElement('div');
     leftColumn.className = 'loadout-scroll-hide';
+    // It scrolls with its scrollbar hidden, so keyboard users need to be able to focus it.
+    leftColumn.tabIndex = 0;
+    leftColumn.setAttribute('role', 'region');
+    leftColumn.setAttribute('aria-label', 'Weapon catalog');
     leftColumn.style.cssText =
       'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:22px;' +
       ' scrollbar-width:none; -ms-overflow-style:none;';
@@ -233,9 +237,9 @@ export class LoadoutScreen {
     const rim = document.createElement('div');
     rim.className = 'loadout-rim';
     rim.style.cssText =
-      `width:min(100%, 420px); height:min(72vh, 620px); border:2px solid ${HAIRLINE};` +
-      ` clip-path:${chamferClipPath('top-left', 26)};` +
-      ` box-shadow:inset 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03); overflow:hidden;`;
+      `width:min(100%, 420px); height:min(72vh, 620px); border:1px solid ${HAIRLINE};` +
+      ` border-radius:2px;` +
+      ` background:${SURFACE}; backdrop-filter:blur(10px); overflow:hidden;`;
     const characterHost = document.createElement('div');
     characterHost.style.cssText = 'width:100%; height:100%;';
     rim.appendChild(characterHost);
@@ -269,11 +273,11 @@ export class LoadoutScreen {
     socket.dataset.testid = `loadout-slot-${category}`;
     socket.style.cssText =
       `padding:12px 16px; background:${BG_RAISED}; border:1px solid ${HAIRLINE};` +
-      ` clip-path:${chamferClipPath('top-right', 8)};`;
+      ` border-radius:2px;`;
 
     const label = document.createElement('div');
     label.textContent = CATEGORY_LABELS[category].toUpperCase();
-    label.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.65rem; font-weight:600; letter-spacing:0.18em; color:${STEEL}; margin-bottom:4px;`;
+    label.style.cssText = `${LABEL_CSS} margin-bottom:4px;`;
 
     const value = document.createElement('div');
     value.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.95rem; font-weight:600; color:${TEXT};`;
@@ -293,7 +297,6 @@ export class LoadoutScreen {
       if (category === 'special') continue;
       const equippedId = this.loadout[category as EquippableCategory] ?? LOADOUT_SLOT_DEFAULTS[category as EquippableCategory];
       card.element.style.borderColor = equippedId === card.weapon.id ? ACCENT : HAIRLINE;
-      card.element.style.boxShadow = equippedId === card.weapon.id ? `0 0 14px rgba(62,207,95,0.25)` : 'none';
     }
   }
 
@@ -313,17 +316,11 @@ export class LoadoutScreen {
         orderedWeaponIds.map(async (weaponId): Promise<WeaponCard> => {
           const weapon = WEAPON_DEFINITIONS[weaponId]!;
           const category = WEAPON_CATEGORIES[weaponId]!;
-          const spec = WEAPON_MODEL_SPECS[weapon.id];
           let thumbnailDataUrl = getCachedWeaponThumbnail(weapon.id);
           if (thumbnailDataUrl === null) {
             try {
-              if (spec) {
-                const gltf = await loadGLTF(spec.path);
-                thumbnailDataUrl = renderWeaponThumbnail(weapon.id, gltf.scene);
-              } else {
-                const { group } = createProceduralMeleeViewModel(weapon);
-                thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
-              }
+              const { group } = buildWeaponViewModel(weapon.id);
+              thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
             } catch (error) {
               console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
             }
