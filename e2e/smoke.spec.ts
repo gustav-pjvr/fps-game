@@ -128,7 +128,7 @@ async function killReachableTarget(page: Page): Promise<void> {
   throw new Error(`no live target died after being shot from ${JSON.stringify(player)}; is spawn blocked by a structure?`);
 }
 
-test('loads without console errors and renders a canvas', async ({ page }) => {
+test('loads without console errors and renders a canvas', { tag: '@quick' }, async ({ page }) => {
   const errors: string[] = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(msg.text());
@@ -145,7 +145,7 @@ test('loads without console errors and renders a canvas', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test('pointer lock engages on click', async ({ page }) => {
+test('pointer lock engages on click', { tag: '@quick' }, async ({ page }) => {
   await page.goto('/');
   await waitForGameReady(page);
 
@@ -154,7 +154,7 @@ test('pointer lock engages on click', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeHidden();
 });
 
-test('WASD movement changes player position', async ({ page }) => {
+test('WASD movement changes player position', { tag: '@quick' }, async ({ page }) => {
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
@@ -172,6 +172,9 @@ test('WASD movement changes player position', async ({ page }) => {
 });
 
 test('weapon switching changes the active weapon name', async ({ page }) => {
+  // A trace (2026-10-23) showed every step completing at about 2 s per action, the last landing at
+  // 30.1 s; it passed at 33.7 s the run before. Same slow-machine budget as its siblings.
+  test.setTimeout(60000);
   // Nothing stored: this test is the one that covers the per-slot default resolution itself.
   await page.addInitScript((key) => window.localStorage.removeItem(key), LOADOUT_STORAGE_KEY);
   await page.goto('/');
@@ -263,7 +266,7 @@ test('firing consumes ammo and reload refills it', async ({ page }) => {
   await page.waitForFunction((full) => window.__gameDebug?.getAmmo() === full, PISTOL_MAGAZINE, { timeout: SLOW_POLL_TIMEOUT });
 });
 
-test('aiming at a live target and firing kills it and increases score', async ({ page }) => {
+test('aiming at a live target and firing kills it and increases score', { tag: '@quick' }, async ({ page }) => {
   test.setTimeout(90000); // measured ~45s here: a slow load plus individually confirmed pistol rounds
   await useLoadout(page, STANDARD_LOADOUT);
   await page.goto('/');
@@ -455,7 +458,9 @@ test('Return to Lobby after death tears down the match and shows the lobby again
 test('Escape opens the pause menu and freezes the game; Resume continues it', async ({ page }) => {
   // Measured at ~34s here with every assertion passing (a trace showed no step hanging, just ~1s per
   // Playwright action at roughly 2 FPS and ~5s for the Resume click), so the 30s default cut it off.
-  test.setTimeout(60000);
+  // Then 56.4 s and a 60 s timeout on the next two runs (2026-10-23), with the full-size characters
+  // loading: raised again.
+  test.setTimeout(90000);
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
