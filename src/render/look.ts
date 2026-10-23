@@ -47,6 +47,8 @@ export interface LookPreset {
     readonly grain: number;
   };
   readonly bloom: { readonly intensity: number; readonly threshold: number };
+  /** Emissive strength of building windows (render/materialGrade.ts). */
+  readonly windowGlow: number;
 }
 
 function sunFrom(elevationDeg: number, azimuthDeg: number): THREE.Vector3 {
@@ -87,6 +89,7 @@ export const LOOK_PRESETS: Record<MatchWeather, LookPreset> = {
     exposure: 1.05,
     grade: { lift: 0.03, gain: 1.04, saturation: 0.88, contrast: 1.0, vignette: 0.3, grain: 0.035 },
     bloom: { intensity: 0.85, threshold: 0.9 },
+    windowGlow: 1.4,
   },
   night: {
     sunDirection: sunFrom(38, SUN_AZIMUTH_DEG + 150),
@@ -111,6 +114,7 @@ export const LOOK_PRESETS: Record<MatchWeather, LookPreset> = {
     exposure: 1.25,
     grade: { lift: 0.018, gain: 1.0, saturation: 0.8, contrast: 1.06, vignette: 0.4, grain: 0.045 },
     bloom: { intensity: 1.1, threshold: 0.75 },
+    windowGlow: 3.2,
   },
   fog: {
     sunDirection: sunFrom(24, SUN_AZIMUTH_DEG),
@@ -136,6 +140,7 @@ export const LOOK_PRESETS: Record<MatchWeather, LookPreset> = {
     exposure: 1.0,
     grade: { lift: 0.015, gain: 1.0, saturation: 0.8, contrast: 1.04, vignette: 0.34, grain: 0.04 },
     bloom: { intensity: 0.7, threshold: 0.95 },
+    windowGlow: 1.8,
   },
 };
 

@@ -38,6 +38,15 @@ function normalisedTint(hex: number): THREE.Vector3 {
 
 const graded = new WeakSet<THREE.Material>();
 
+/** Shared by every building material, so one call relights every window in the match. */
+const windowGlow = { value: 0 };
+
+/** How brightly building windows glow (docs/visual-overhaul.md, phase 5): set from the match look,
+ * a warm glow at dusk, stronger at night. 0 turns it off. */
+export function setWindowGlow(strength: number): void {
+  windowGlow.value = strength;
+}
+
 /** Patches a standard material's shader so its base colour (texture times vertex colour times
  * .color) is regraded toward the surface kind's palette colour. Idempotent per material instance,
  * and shared materials compile once per kind thanks to customProgramCacheKey. Works on any
@@ -53,17 +62,30 @@ export function gradeMaterial(material: THREE.Material, kind: SurfaceKind): void
     previous.call(material, shader, renderer);
     shader.uniforms.uGradeTint = { value: tint };
     shader.uniforms.uGradeParams = { value: new THREE.Vector3(grade.colorize, grade.saturation, grade.brightness) };
+    shader.uniforms.uWindowGlow = windowGlow;
+    // The Kenney building palette paints glass in its two blues (sRGB 103,148,217 and 208,232,255);
+    // nothing else in that palette is that much bluer than red with green above red.
+    const windowMask = kind === 'building' ? 'gradeWindowMask = smoothstep(0.3, 0.38, diffuseColor.b - diffuseColor.r) * step(diffuseColor.r, diffuseColor.g);' : '';
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uGradeTint;\nuniform vec3 uGradeParams;')
+      .replace('#include <common>', '#include <common>\nuniform vec3 uGradeTint;\nuniform vec3 uGradeParams;\nuniform float uWindowGlow;')
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
+  float gradeWindowMask = 0.0;
   {
+    ${windowMask}
     float gradeLuma = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
     vec3 graded = mix(vec3(gradeLuma), diffuseColor.rgb, uGradeParams.y);
     graded = mix(graded, gradeLuma * uGradeTint, uGradeParams.x);
     diffuseColor.rgb = graded * uGradeParams.z;
+    // A lit window reads as a dark pane with warm light behind it, not as blue paint.
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03, 0.03, 0.035), gradeWindowMask * min(uWindowGlow, 1.0));
   }`,
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+  totalEmissiveRadiance += vec3(1.0, 0.6, 0.28) * gradeWindowMask * uWindowGlow;`,
       );
   };
   const previousKey = material.customProgramCacheKey.bind(material);

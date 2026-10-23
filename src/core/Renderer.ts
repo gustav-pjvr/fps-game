@@ -6,6 +6,7 @@ import { lookFor, type LookPreset } from '../render/look.ts';
 import { installLookFog, StylizedSky } from '../render/StylizedSky.ts';
 import { PostStack } from '../render/PostStack.ts';
 import { setWeaponEnvironment } from '../weapons/models/weaponMaterials.ts';
+import { setWindowGlow } from '../render/materialGrade.ts';
 
 /** Layer the weapon view models (everything parented to the camera) render on, so the post stack
  * can draw them in their own depth-cleared pass (see PostStack). */
@@ -93,6 +94,7 @@ export class Renderer {
     this.sky.applyLook(look);
     this.scene.fog = new THREE.Fog(look.sky.haze, look.fog.near, look.fog.far);
     this.webgl.toneMappingExposure = look.exposure;
+    setWindowGlow(look.windowGlow);
 
     // Image-based lighting from the sky itself, rendered from a scene holding only a copy of the
     // sky so nothing already added to the match scene leaks into the environment.
