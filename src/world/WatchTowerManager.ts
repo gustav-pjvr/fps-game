@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { gradeMaterial } from '../render/materialGrade.ts';
+import { CONTACT_SHADOW_LIFT, createContactShadowGeometry, createContactShadowMaterial } from '../render/contactShadows.ts';
 import * as THREE from 'three';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
@@ -572,6 +573,14 @@ function createTowerVisual(towerMaterial: THREE.Material, stepMaterial: THREE.Ma
       child.receiveShadow = true;
     }
   });
+
+  // A soft dark square under the shaft and stairs, added after the shadow flags so it casts none.
+  const contactShadow = new THREE.Mesh(createContactShadowGeometry(), createContactShadowMaterial('rect', 0.6));
+  const contactSide = (STAIR_OFFSET + WATCH_TOWER_STAIR_WIDTH / 2) * 2 + 2.4;
+  contactShadow.scale.set(contactSide, 1, contactSide);
+  contactShadow.position.y = CONTACT_SHADOW_LIFT;
+  contactShadow.renderOrder = -1;
+  group.add(contactShadow);
 
   return group;
 }

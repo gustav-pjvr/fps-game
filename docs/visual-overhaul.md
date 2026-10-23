@@ -104,4 +104,37 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 
 ## Build log
 
-(Entries are added as each phase passes its checks.)
+### Phase 1: look foundation (2026-10-23, `d663c91`)
+
+- `render/look.ts` holds one preset per match weather ("Dusk", night, fog): sun, hemisphere fill, environment strength, sky colours, fog with a horizon-tinted haze, exposure, grade, bloom and window glow. Renderer applies the preset on `setMatchWeather` and rebuilds the sky PMREM for High.
+- `render/StylizedSky.ts` draws the gradient dome with a sun disc and stars at night; `installLookFog` rewrites three's fog chunks so fog takes the horizon colour toward the sun.
+- `render/materialGrade.ts` regrades the Kenney materials per surface kind (foliage, bark, rock, ground, building, road, concrete) in `onBeforeCompile`.
+- `render/PostStack.ts` runs on Medium and High: world pass, N8AO on High, the weapon in its own pass on layer 1, bloom plus the grade effect, then SMAA. Low skips it.
+- Fixes found in screenshots: shadows crushed to black (hemisphere fill raised, sun raised to 24 degrees, lift added), shadow acne on walls (bias -0.0006, normal bias 0.06), foliage too mint (deeper foliage grade).
+- Checks: typecheck, unit tests, screenshots at Low and Medium. High renders black in the sandbox's software renderer and waits for Gustav's machine.
+
+### Phase 2: weapons (2026-10-23, `2897b9d`, `dc6dedd`, `6a30eed`)
+
+- Codex job `weapons-arsenal` built `weapons/models/arsenal.ts` from the brief: every weapon procedural in the Opus language, the four Kenney blaster GLBs deleted.
+- Look pass in the main thread: cooler gunmetal albedo with lower metalness and a sky env map on every tier (the first port read as bronze), scale down to 0.92 and offset right (too big and central), glow that dims with the magazine and turns amber below a quarter, a sprint tuck and a reload roll, the magazine dropping during reloads.
+- Checks: `arsenal.test.ts`, gun gallery screenshots, in-match screenshots at Low and Medium.
+
+### Phase 3: HUD and menus (in progress)
+
+- Title screen (`84f538a`): `lobby/LobbyScene.ts` drifts a camera over a terrain patch, a tower and vegetation from the live seed under the match look; `MainMenu.ts` is the AFTERLIGHT-style column with the valley seed and the sun's bearing on the label line.
+- Menus (`6af6105`, Codex job `ui-menus`): every menu screen on the `ui/theme.ts` tokens, Manrope and Martian Mono, weapon descriptions rewritten as plain competitive lines.
+- HUD: Codex job `ui-hud` running in the `fps-game-ui` worktree at the time of writing.
+
+### Phase 5: procedural detail (in progress)
+
+- Terrain AO (`a732c69`): `world/terrainShading.ts` bakes horizon AO and seamless central-difference normals into each chunk's vertex colour, sampled past the chunk edge so borders match.
+- Lit windows (`043d6a3`): the building grade masks the glass in the Kenney atlas and lights it from the look's `windowGlow` (faint at dusk, warm at night).
+- Contact shadows: `render/contactShadows.ts` puts a multiply-blended soft patch under every tree, bush and rock (a disc tilted to the slope, in the same instanced slots as the vegetation), every house (a soft rectangle past the walls) and every tower. They fade out past 150 m so they never leave dark spots in the haze. The first strengths (about 0.4) did not read in screenshots and were raised to about 0.6.
+
+### Phase 4: Uplink mission (in progress)
+
+- `core/mission/missionState.ts`: the pure state machine with 8 unit tests (tower selection, prompt and start radius, waves at 10, 20 and 30 seconds with their biases, pausing and resuming, switching uplinks without resending waves, extraction with its last wave and the ring hold, death).
+- `world/UplinkBeacons.ts`: beams over the uplinks (amber, pulsing while uploading, cyan online) and the extraction beam and ring.
+- `ui/deathScreen.ts`: `showMission` variant with time, uplinks, kills and damage taken.
+- Setup modal: a third exclusive mode beside Director and Goose Horde.
+- Game wiring waits for the HUD merge, since both change `Game.ts`.

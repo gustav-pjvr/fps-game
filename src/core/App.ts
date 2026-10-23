@@ -106,6 +106,7 @@ export class App {
         gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
         hordeMode: false,
         directorMode: false,
+        missionMode: false,
       },
       MAX_MATCH_ENTITY_COUNT,
       (config) => void this.startMatch(config),

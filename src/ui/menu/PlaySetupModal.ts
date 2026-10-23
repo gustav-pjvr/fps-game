@@ -13,6 +13,10 @@ export interface MatchSetupConfig {
   /** Enemy AI v2 step 6: the pacing director runs the enemies (see Game.ts's director), so
    * enemyCount/targetCount are ignored here too. Never together with hordeMode. */
   directorMode: boolean;
+  /** The Uplink mission (docs/visual-overhaul.md, phase 4): three watch-tower uplinks to bring
+   * online under Director pressure, then extraction. Runs the director itself, so the counts above
+   * are ignored. Never together with hordeMode or directorMode. */
+  missionMode: boolean;
 }
 
 /** Shown after clicking Play: lets the player choose how many enemies/targets spawn this match,
@@ -26,6 +30,7 @@ export class PlaySetupModal {
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly hordeModeCheckbox: HTMLInputElement;
   private readonly directorModeCheckbox: HTMLInputElement;
+  private readonly missionModeCheckbox: HTMLInputElement;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
@@ -52,13 +57,19 @@ export class PlaySetupModal {
       'Director (enemies arrive in waves paced to the fight, ignores enemy/target counts above)',
       defaults.directorMode,
     );
-    // Two different ways to run the match, so at most one of them.
-    this.hordeModeCheckbox.addEventListener('change', () => {
-      if (this.hordeModeCheckbox.checked) this.directorModeCheckbox.checked = false;
-    });
-    this.directorModeCheckbox.addEventListener('change', () => {
-      if (this.directorModeCheckbox.checked) this.hordeModeCheckbox.checked = false;
-    });
+    this.missionModeCheckbox = this.buildCheckboxRow(
+      panel,
+      'Uplink mission (bring three tower uplinks online under pressure, then extract; ignores enemy/target counts above)',
+      defaults.missionMode,
+    );
+    // Three different ways to run the match, so at most one of them.
+    const exclusiveModes = [this.hordeModeCheckbox, this.directorModeCheckbox, this.missionModeCheckbox];
+    for (const checkbox of exclusiveModes) {
+      checkbox.addEventListener('change', () => {
+        if (!checkbox.checked) return;
+        for (const other of exclusiveModes) if (other !== checkbox) other.checked = false;
+      });
+    }
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';
@@ -74,6 +85,7 @@ export class PlaySetupModal {
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         hordeMode: this.hordeModeCheckbox.checked,
         directorMode: this.directorModeCheckbox.checked,
+        missionMode: this.missionModeCheckbox.checked,
       });
     });
 
