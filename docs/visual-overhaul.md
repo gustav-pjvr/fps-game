@@ -101,6 +101,7 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 - **pmndrs `postprocessing` 6.39.5 and `n8ao` 2.0.1** for the post stack (three 0.185 is inside postprocessing's peer range). Picked over three's own `EffectComposer` because it merges effects into one fullscreen pass, which matters for the low-end machines this browser game runs on.
 - **Weapon ids, stats and names unchanged**, so the network protocol and saved loadouts need no migration.
 - **Low quality skips the composer**: palette and ACES only.
+- **Houses and towers in the Opus station style (Gustav, 2026-10-23), after the current phases:** exteriors first, with colliders built from the same boxes; enterable buildings at a later stage. The watch towers are rebuilt in the same pass, stairs above all: the current flights were the weakest part of an earlier build. Not started yet.
 
 ## Build log
 
@@ -152,3 +153,10 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 - `SoundEngine`: a convolution reverb send that every gunshot and explosion feeds; a music bus (an open-fifth sawtooth pad through a lowpass that opens with intensity, high-passed ticks on eighth notes at 104 beats a minute, an A, A, C, G bass ostinato) that follows the director with a 1.4 s smoothing; the heartbeat as a lub and a softer dub. Ticks and beats are booked 0.2 s ahead on the audio clock so frame hitches never make them stutter.
 - Music runs only in Director and Uplink matches, and music and heartbeat fade out while paused, dead or behind an end screen. A Music Volume slider sits under Master Volume.
 - Checked in the sandbox browser: a Director match taken to 15 HP for 19 s ran with no errors and about 200 audio nodes created, so the scheduler is bounded. How it sounds needs Gustav's ears on his own machine.
+
+### Phase 7: characters (2026-10-23)
+
+- Source: Quaternius "Ultimate Modular Men" (February 2022), CC0, from the pack's public Drive folder; provenance and changes in `public/assets/models/characters/README.md`, the packing script in `reference/characters/pack-characters.mjs`. Considered first and set aside: the free Universal Base Characters kit (CC0, glTF, shares a skeleton with the Universal Animation Library) ships only bare base bodies, with outfits in the paid version.
+- Enemies wear the SWAT kit with a threat-red visor; other players and the loadout preview the spacesuit with its trim lit cyan, so friend and threat read by their light at dusk. Both are 1.85 m rigs scaled to the capsule height, about 8.8k triangles each, 1.4 and 1.6 MB as GLB with only the ten clips the game plays.
+- `entities/characterModels.ts` builds every character (skinned clone, scale, accent, clips). Enemies stand gun up, walk or run by speed (run above 2.6 m/s, a kiting retreat always walks), play `Gun_Shoot` on each round (`EnemyBody.onFired`, called by the combat behaviour) and fall by their `Death` clip instead of the rigid topple, then sink as before. Remote players run when moving.
+- The Kenney Mini character and its texture were removed.

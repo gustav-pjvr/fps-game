@@ -430,6 +430,9 @@ test('dying releases pointer lock and Respawn resets the match without leaving i
 });
 
 test('Return to Lobby after death tears down the match and shows the lobby again', async ({ page }) => {
+  // Measured 30.5 to 33.5 s here once the full-size characters (about 3 MB) joined the match load
+  // (v4.0 phase 7): the 30 s default no longer leaves room. Same budget as its pause-menu siblings.
+  test.setTimeout(60000);
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
@@ -512,6 +515,9 @@ test('Reset Play in the pause menu resets the match and resumes play', async ({ 
 });
 
 test('Return to Lobby in the pause menu tears down the match and shows the lobby again', async ({ page }) => {
+  // Measured 30.5 to 33.5 s here once the full-size characters (about 3 MB) joined the match load
+  // (v4.0 phase 7): the 30 s default no longer leaves room. Same budget as its pause-menu siblings.
+  test.setTimeout(60000);
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);

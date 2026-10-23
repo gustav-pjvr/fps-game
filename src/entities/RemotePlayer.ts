@@ -1,11 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { allocateEntityId, type Entity } from './Entity.ts';
 import type { Damageable } from '../combat/damage.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../core/config.ts';
-import { ENEMY_MODEL_PATH } from './enemies/Enemy.ts';
+import { instantiateCharacter, PLAYER_CHARACTER } from './characterModels.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
 
 /** How quickly the visual mesh catches up to the latest received snapshot (MathUtils.damp's rate
@@ -22,12 +21,6 @@ import { loadGLTF } from '../core/AssetLoader.ts';
 const POSITION_DAMP_RATE = 18;
 const ROTATION_DAMP_RATE = 18;
 
-/** Same model Enemy.ts uses (Kenney "Mini Characters", CC0) - the only downloaded character skin
- * this project has; there's no separate "player" model since the local player never sees their own
- * body (first-person). Reusing it means the opponent finally looks like an actual character
- * instead of the flat-red capsule placeholder this used to be. */
-const MODEL_BIND_HEIGHT = 0.671;
-const MODEL_SCALE = PLAYER_HEIGHT / MODEL_BIND_HEIGHT;
 
 /** Below this squared distance moved in a frame, treat the opponent as standing still rather than
  * walking - damping technically never reaches exactly zero, so a raw "moved at all" check would
@@ -103,37 +96,19 @@ export class RemotePlayer implements Entity, Damageable {
     physics.registerCollider(this.collider, this);
   }
 
-  /** Async because the model has to be loaded (and cached - see AssetLoader.loadGLTF, shared with
-   * Enemy so a match only ever fetches character-male-a.glb once regardless of how many
-   * enemies/opponents end up using it). */
+  /** Async because the model has to be loaded (and cached - see AssetLoader.loadGLTF, so a match
+   * fetches the spacesuit character once however many opponents use it). Other players wear the
+   * spacesuit with a cyan visor, enemies the SWAT kit with a red one (characterModels.ts). */
   static async create(
     physics: PhysicsWorld,
     scene: THREE.Scene,
     initialPosition: THREE.Vector3,
     onHit: (amount: number) => void,
   ): Promise<RemotePlayer> {
-    const gltf = await loadGLTF(ENEMY_MODEL_PATH);
-
-    // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - see Enemy.ts's
-    // identical comment; a plain clone would leave this instance's bones pointing at Enemy's (or
-    // any other clone's) shared skeleton.
-    const model = cloneSkeleton(gltf.scene) as THREE.Group;
-    model.scale.setScalar(MODEL_SCALE);
-    model.position.y = -PLAYER_HEIGHT / 2; // model origin is at its feet; group origin is capsule-center
-    model.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    const mixer = new THREE.AnimationMixer(model);
-    const idleClip = gltf.animations.find((clip) => clip.name === 'idle');
-    const walkClip = gltf.animations.find((clip) => clip.name === 'walk');
-    const idleAction = idleClip ? mixer.clipAction(idleClip) : undefined;
-    const walkAction = walkClip ? mixer.clipAction(walkClip) : undefined;
-
-    return new RemotePlayer(physics, scene, initialPosition, model, mixer, idleAction, walkAction, onHit);
+    const gltf = await loadGLTF(PLAYER_CHARACTER.path);
+    const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
+    // A moving player is nearly always at a run (walk and sprint are 5 m/s and up).
+    return new RemotePlayer(physics, scene, initialPosition, model, mixer, actions.idle, actions.run, onHit);
   }
 
   /** Always false from this client's perspective - it has no authority over the opponent's health

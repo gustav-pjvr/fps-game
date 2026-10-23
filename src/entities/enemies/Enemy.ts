@@ -1,7 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { allocateEntityId, type Entity } from '../Entity.ts';
 import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
@@ -18,11 +17,12 @@ import type { IntentSink } from './calloutDirector.ts';
 import type { PickDebug } from './combatBehaviour.ts';
 import type { PlanarPoint } from './perception.ts';
 import type { TacticalContext } from './tactics/planner.ts';
+import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHOLD, type CharacterClipRole, type CharacterInstance } from '../characterModels.ts';
 import { ENEMY_HEIGHT, ENEMY_RADIUS, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
 
-export const ENEMY_MODEL_PATH = '/assets/models/enemies/character-male-a.glb';
+export const ENEMY_MODEL_PATH = ENEMY_CHARACTER.path;
 
 /** Debug-only view of one enemy for the e2e suite and the perf work (window.__gameDebug). */
 export interface EnemyDebugRecord {
@@ -50,10 +50,6 @@ export interface EnemyDebugRecord {
  * the exact surface on the next resample. */
 const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
 
-/** Kenney's "Mini Characters" bind pose measures ~0.671 units tall, feet at local Y=0. */
-const MODEL_BIND_HEIGHT = 0.671;
-const MODEL_SCALE = ENEMY_HEIGHT / MODEL_BIND_HEIGHT;
-
 /**
  * The enemy's body: Rapier kinematic body with capsule + head colliders, the animated model,
  * health, and the movement primitives its brain drives through the EnemyBody interface. All
@@ -65,9 +61,10 @@ const MODEL_SCALE = ENEMY_HEIGHT / MODEL_BIND_HEIGHT;
  * archetypes.ts) carrying its own health/speed/range/damage/aim-error numbers and a movementStyle
  * ('direct' or 'kite').
  *
- * Visuals are the real character-male-a.glb (Kenney "Mini Characters", CC0), animated with its
- * bundled "idle"/"walk" clips. Hit detection still uses the same invisible capsule+ball
- * colliders as before - the model is cosmetic only.
+ * Visuals are the full-size SWAT character (characterModels.ts, phase 7 of the visual overhaul):
+ * it stands with its gun up, walks or runs by speed, plays a shot on each round fired and its death
+ * clip as it falls. Hit detection still uses the same invisible capsule+ball colliders as before -
+ * the model is cosmetic only.
  */
 export class Enemy implements Entity, Damageable, EnemyBody {
   readonly id = allocateEntityId();
@@ -85,8 +82,10 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   private readonly headCollider: RAPIER.Collider;
 
   private readonly mixer: THREE.AnimationMixer;
-  private readonly idleAction: THREE.AnimationAction | undefined;
-  private readonly walkAction: THREE.AnimationAction | undefined;
+  private readonly actions: CharacterInstance['actions'];
+  private baseClip: CharacterClipRole | null = null;
+  /** The speed of this tick's move, for choosing walk or run. */
+  private moveSpeed = 0;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -103,12 +102,8 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.health = archetype.health;
     this.killFeedLabel = `${archetype.name} eliminated`;
 
-    // SkeletonUtils.clone (not Object3D.clone) is required for skinned meshes - a plain clone
-    // duplicates the mesh but not the skeleton bindings, leaving bones pointing at the shared
-    // original skeleton and breaking every clone but the first.
-    const model = cloneSkeleton(gltf.scene) as THREE.Group;
-    model.scale.setScalar(MODEL_SCALE);
-    model.position.y = -ENEMY_HEIGHT / 2; // model origin is at its feet; group origin is capsule-center
+    const character = instantiateCharacter(gltf, ENEMY_CHARACTER, ENEMY_HEIGHT);
+    const model = character.model;
 
     this.mesh = new THREE.Group();
     this.mesh.add(model);
@@ -117,21 +112,9 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     // topple, which reads rotation.x) tips it back whichever way it faces. The default XYZ order
     // pitched about the world X axis: an enemy facing along X tipped sideways (final review).
     this.mesh.rotation.order = 'YXZ';
-    // castShadow on a Group doesn't propagate to its children (three.js only reads it on Mesh
-    // instances during the shadow pass), so it has to be set per-mesh via traverse.
-    model.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    this.mixer = new THREE.AnimationMixer(model);
-    const idleClip = gltf.animations.find((clip) => clip.name === 'idle');
-    const walkClip = gltf.animations.find((clip) => clip.name === 'walk');
-    this.idleAction = idleClip ? this.mixer.clipAction(idleClip) : undefined;
-    this.walkAction = walkClip ? this.mixer.clipAction(walkClip) : undefined;
-    this.idleAction?.play();
+    this.mixer = character.mixer;
+    this.actions = character.actions;
+    crossFadeBase(this.actions, null, 'idle', 0);
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       position.x,
@@ -256,6 +239,9 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.health -= applied;
     if (this.health <= 0) {
       this.dead = true;
+      // The death clip takes over from whatever it was doing (see animateDeath).
+      this.mixer.stopAllAction();
+      this.actions.death?.reset().play();
       return;
     }
     this.brain.onDamaged(sourcePosition, applied);
@@ -281,10 +267,10 @@ export class Enemy implements Entity, Damageable, EnemyBody {
 
   update(dt: number, player: Player): void {
     if (this.dead) return;
-    const wasMoving = this.moving;
     this.moving = false;
+    this.moveSpeed = 0;
     this.brain.update(dt, player);
-    if (this.moving !== wasMoving) this.setMovingAnimation(this.moving);
+    this.updateBaseAnimation();
     // A heavy hit tips the model back, easing upright as the stagger ends (step 5).
     this.mesh.rotation.x = -this.brain.lurch * ENEMY_STAGGER_LURCH_RAD;
     this.mixer.update(dt);
@@ -311,6 +297,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.applyPosition(nextX, nextZ);
     this.mesh.rotation.y = Math.atan2(steeredDir.x, steeredDir.z);
     this.moving = true;
+    this.moveSpeed = speed;
   }
 
   /** The kiting retreat: the same whisker avoidance as every other move, so retreating doesn't
@@ -340,6 +327,8 @@ export class Enemy implements Entity, Damageable, EnemyBody {
       this.mesh.rotation.y = Math.atan2(faceDx, faceDz);
     }
     this.moving = true;
+    // Backing away while aiming is a walk, however fast the archetype kites.
+    this.moveSpeed = Math.min(speed, RUN_SPEED_THRESHOLD);
     return { x: nextX, y: current.y, z: nextZ };
   }
 
@@ -353,11 +342,21 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.applyPosition(current.x, current.z);
   }
 
-  private setMovingAnimation(moving: boolean): void {
-    const next = moving ? this.walkAction : this.idleAction;
-    const previous = moving ? this.idleAction : this.walkAction;
-    previous?.fadeOut(0.2);
-    next?.reset().fadeIn(0.2).play();
+  /** A round left the muzzle (EnemyBody.onFired): the shot clip plays over the base pose. */
+  onFired(): void {
+    if (this.dead) return;
+    this.actions.fire?.reset().fadeIn(0.05).play();
+  }
+
+  /** Keeps the death clip playing while the corpse falls (EntityManager's dying sequence). */
+  animateDeath(dt: number): void {
+    this.mixer.update(dt);
+  }
+
+  private updateBaseAnimation(): void {
+    const next: CharacterClipRole = !this.moving ? 'idle' : this.moveSpeed > RUN_SPEED_THRESHOLD ? 'run' : 'walk';
+    crossFadeBase(this.actions, this.baseClip, next);
+    this.baseClip = next;
   }
 
   /** Initialized to NaN so the first groundHeightAt call always resamples (NaN distance compares

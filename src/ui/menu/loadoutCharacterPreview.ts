@@ -1,20 +1,12 @@
 import { INK, ACCENT } from '../theme.ts';
 import * as THREE from 'three';
-import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { loadGLTF } from '../../core/AssetLoader.ts';
-import { ENEMY_MODEL_PATH } from '../../entities/enemies/Enemy.ts';
+import { instantiateCharacter, PLAYER_CHARACTER } from '../../entities/characterModels.ts';
 import { PLAYER_HEIGHT } from '../../core/config.ts';
 
 /** Slow, continuous turntable spin - fast enough to read as alive, slow enough not to distract
  * from actually picking a loadout. */
 const ROTATION_RADIANS_PER_SECOND = 0.5;
-
-/** Same scale-to-real-world-height math RemotePlayer.ts already uses for this exact model (its own
- * `MODEL_BIND_HEIGHT` comment explains the raw export's bind-pose height) - keeps this preview's
- * proportions consistent with how the character actually looks in-match rather than whatever tiny
- * scale the .glb happens to export at. */
-const MODEL_BIND_HEIGHT = 0.671;
-const MODEL_SCALE = PLAYER_HEIGHT / MODEL_BIND_HEIGHT;
 
 /** The Loadout page's rotating character, standing inside the slotted rim (see LoadoutScreen.ts).
  * Unlike weaponThumbnail.ts's deliberate one-shot render, this keeps its own WebGL context and
@@ -22,9 +14,8 @@ const MODEL_SCALE = PLAYER_HEIGHT / MODEL_BIND_HEIGHT;
  * image. The context itself is only created on the first `start()` (the page's first show), not
  * at construction: Game.ts builds a LoadoutScreen every match and most are never opened, so an
  * eager context here was one more live context per match for nothing (see weaponThumbnail.ts's
- * sharedRenderer comment on Chrome's ~16-context cap). Reuses the same Kenney "Mini Characters"
- * model and idle-animation lookup RemotePlayer.ts already uses for opponents (the only downloaded
- * character skin this project has) - no in-hand weapon attachment (no bone-attachment precedent
+ * sharedRenderer comment on Chrome's ~16-context cap). Shows the same spacesuit character other players see
+ * you as in multiplayer (characterModels.ts), at the same scale and in the same gun-up idle - no in-hand weapon attachment (no bone-attachment precedent
  * exists anywhere in this codebase; equipped weapons are instead shown via the slot sockets' own
  * icons, a deliberate scope decision made when this was planned). */
 export class LoadoutCharacterPreview {
@@ -72,15 +63,10 @@ export class LoadoutCharacterPreview {
   }
 
   private async loadModel(): Promise<void> {
-    const gltf = await loadGLTF(ENEMY_MODEL_PATH);
-    const model = cloneSkeleton(gltf.scene) as THREE.Group;
-    model.scale.setScalar(MODEL_SCALE);
-    model.position.y = -PLAYER_HEIGHT / 2; // model origin is at its feet; group origin is capsule-center
+    const gltf = await loadGLTF(PLAYER_CHARACTER.path);
+    const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
     this.turntable.add(model);
-
-    const mixer = new THREE.AnimationMixer(model);
-    const idleClip = gltf.animations.find((clip) => clip.name === 'idle');
-    if (idleClip) mixer.clipAction(idleClip).play();
+    actions.idle?.play();
     this.mixer = mixer;
   }
 

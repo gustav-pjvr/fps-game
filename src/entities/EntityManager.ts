@@ -113,12 +113,16 @@ interface ManagedEntity {
   /** Enemy-only: the squad search grid (step 4). */
   searchCandidate?(): { id: number; x: number; z: number; yaw: number } | null;
   assignSearchTarget?(x: number, z: number): void;
+  /** Enemy-only: advances the death clip while the corpse lingers. Bodies with one fall by it
+   * instead of the rigid topple. */
+  animateDeath?(dt: number): void;
 }
 
 /** A corpse mid-death-sequence (see the DEATH_* comment in config.ts) - its physics presence is
  * already gone, but the mesh lingers to topple/hold/sink before actually leaving the scene. */
 interface DyingEntity {
   readonly mesh: THREE.Object3D;
+  readonly animate?: (dt: number) => void;
   elapsed: number;
   readonly startY: number;
   readonly startRotationX: number;
@@ -306,6 +310,7 @@ export class EntityManager {
         this.onKilled(entity.killFeedLabel);
         this.dying.push({
           mesh: entity.mesh,
+          animate: entity.animateDeath?.bind(entity),
           elapsed: 0,
           startY: entity.mesh.position.y,
           startRotationX: entity.mesh.rotation.x,
@@ -511,7 +516,14 @@ export class EntityManager {
       if (!dying) continue;
 
       dying.elapsed += dt;
-      if (dying.elapsed <= DEATH_FALL_DURATION) {
+      if (dying.animate) {
+        // A character with a death clip falls by it; it only sinks once the hold is over.
+        dying.animate(dt);
+        if (dying.elapsed > DEATH_FALL_DURATION + DEATH_HOLD_DURATION) {
+          const sinkElapsed = dying.elapsed - DEATH_FALL_DURATION - DEATH_HOLD_DURATION;
+          dying.mesh.position.y = dying.startY - DEATH_SINK_DISTANCE * THREE.MathUtils.smoothstep(sinkElapsed, 0, DEATH_SINK_DURATION);
+        }
+      } else if (dying.elapsed <= DEATH_FALL_DURATION) {
         const fallProgress = THREE.MathUtils.smoothstep(dying.elapsed, 0, DEATH_FALL_DURATION);
         dying.mesh.rotation.x = dying.startRotationX + DEATH_FALL_ANGLE * fallProgress;
       } else if (dying.elapsed <= DEATH_FALL_DURATION + DEATH_HOLD_DURATION) {

@@ -42,4 +42,6 @@ export interface EnemyBody {
   retreatFrom(threatX: number, threatZ: number, speed: number, dt: number): EnemyPosition | null;
   /** Turns to face the point and holds position (re-glues the kinematic body to the ground). */
   faceToward(x: number, z: number): void;
+  /** A ranged round was just fired: the body plays its shot (visual only, optional for test bodies). */
+  onFired?(): void;
 }
