@@ -121,17 +121,12 @@ import {
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_RESPAWN_DELAY,
-  NIGHT_AMBIENT_INTENSITY,
-  NIGHT_SUN_COLOR,
-  NIGHT_SUN_INTENSITY,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_STRUCTURE_CLEARANCE,
   SPAWN_X,
   SPAWN_Z,
-  SUN_DIRECTION_X,
-  SUN_DIRECTION_Y,
-  SUN_DIRECTION_Z,
+  SUN_SHADOW_LIGHT_DISTANCE,
   SUN_SHADOW_BIAS,
   SUN_SHADOW_CAMERA_FAR,
   SUN_SHADOW_NORMAL_BIAS,
@@ -154,6 +149,7 @@ import { isHordeAllEliminated, MultiplayerMatchState } from '../network/Multipla
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
+import type { LookPreset } from '../render/look.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -210,9 +206,6 @@ const TARGET_RING_BASE_RADIUS = 15;
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
 const SPAWN_BATCH_SIZE = 4;
-/** Flat ambient fill used on Low/Medium graphics quality in place of image-based lighting (see
- * Game.addLighting/applyGraphicsQuality). */
-const AMBIENT_FILL_INTENSITY = 0.6;
 /** While this client has clicked Skip on the mode briefing and is still waiting on others, it
  * re-broadcasts its readiness this often (see resendModeExplanationReady). */
 const MODE_EXPLANATION_READY_RESEND_SECONDS = 1;
@@ -439,12 +432,7 @@ export class Game {
     private readonly scoreState: ScoreState,
     private readonly matchConfig: MatchConfig,
     private readonly sun: THREE.DirectionalLight,
-    private readonly ambientLight: THREE.AmbientLight,
-    /** Resolved once at match setup (multiplayer?.weather ?? DEFAULT_MATCH_WEATHER) - never
-     * changes live like graphics quality does. Kept as a field so applyGraphicsQuality's ambient
-     * calculation can still respect a 'night' override if the player changes graphics quality
-     * mid-match (see that method below). */
-    private readonly matchWeather: MatchWeather,
+    private readonly fillLight: THREE.HemisphereLight,
     private readonly multiplayer: ActiveMultiplayer | null,
     private readonly onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
     /** Fired when a matchStart message arrives *after* this Game already exists - the guest's
@@ -479,7 +467,12 @@ export class Game {
     const snappedX = Math.round(playerPos.x / texelSize) * texelSize;
     const snappedZ = Math.round(playerPos.z / texelSize) * texelSize;
     this.sun.target.position.set(snappedX, playerPos.y, snappedZ);
-    this.sun.position.set(snappedX + SUN_DIRECTION_X, playerPos.y + SUN_DIRECTION_Y, snappedZ + SUN_DIRECTION_Z);
+    const toSun = this.renderer.currentLook.sunDirection;
+    this.sun.position.set(
+      snappedX + toSun.x * SUN_SHADOW_LIGHT_DISTANCE,
+      playerPos.y + toSun.y * SUN_SHADOW_LIGHT_DISTANCE,
+      snappedZ + toSun.z * SUN_SHADOW_LIGHT_DISTANCE,
+    );
     this.sun.target.updateMatrixWorld();
   }
 
@@ -612,18 +605,12 @@ export class Game {
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
-    const { sun, ambientLight } = Game.addLighting(renderer.scene, quality);
-
     // Multiplayer-only, host-chosen (see CreateRoomScreen); single-player always 'day'. Applied
-    // once here, not live-toggleable like graphics quality - see Renderer.setMatchWeather and the
-    // matchWeather field's own comment for why 'night' also touches sun/ambient directly.
+    // once here, before anything compiles, not live-toggleable like graphics quality - see
+    // Renderer.setMatchWeather. The lights then take the same look.
     const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
     renderer.setMatchWeather(matchWeather);
-    if (matchWeather === 'night') {
-      sun.color.setHex(NIGHT_SUN_COLOR);
-      sun.intensity = NIGHT_SUN_INTENSITY;
-      ambientLight.intensity = NIGHT_AMBIENT_INTENSITY;
-    }
+    const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
 
     onProgress?.('Growing vegetation…', 0.02);
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
@@ -1170,8 +1157,7 @@ export class Game {
       scoreState,
       matchConfig,
       sun,
-      ambientLight,
-      matchWeather,
+      fillLight,
       activeMultiplayer,
       onMultiplayerMatchEnd,
       onMultiplayerRematchReceived,
@@ -1533,21 +1519,23 @@ export class Game {
     this.input.requestPointerLock();
   }
 
-  /** AmbientLight is always created (so applyGraphicsQuality can toggle its intensity live) but is
-   * only non-zero on Low/Medium - on High, Renderer assigns scene.environment (a PMREM of the sky)
-   * for plausible sky/ground-bounced fill instead (VISUAL_REALISM.md §5). Image-based lighting is
+  /** The hemisphere fill is always created (so applyGraphicsQuality can toggle its intensity live)
+   * but is only non-zero on Low/Medium - on High, Renderer assigns scene.environment (a PMREM of
+   * the sky) for sky/ground-bounced fill instead (VISUAL_REALISM.md §5). Image-based lighting is
    * disabled on Low/Medium (ruinous on the software-rendered e2e sandbox - see
-   * GraphicsQualityPreset.environmentLighting), so this flat fill stands in there, otherwise every
-   * surface facing away from the sun would render nearly black. */
+   * GraphicsQualityPreset.environmentLighting), so the hemisphere stands in there: sky-coloured
+   * from above, ground-coloured from below, so surfaces facing away from the low sun still read
+   * their shape instead of going flat. Colours and strengths come from the match's look. */
   private static addLighting(
     scene: THREE.Scene,
     quality: GraphicsQualityPreset,
-  ): { sun: THREE.DirectionalLight; ambientLight: THREE.AmbientLight } {
-    const ambientLight = new THREE.AmbientLight(0xffffff, quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY);
-    scene.add(ambientLight);
+    look: LookPreset,
+  ): { sun: THREE.DirectionalLight; fillLight: THREE.HemisphereLight } {
+    const fillLight = new THREE.HemisphereLight(look.hemiSkyColor, look.hemiGroundColor, quality.environmentLighting ? 0 : look.hemiIntensity);
+    scene.add(fillLight);
 
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(SUN_DIRECTION_X, SUN_DIRECTION_Y, SUN_DIRECTION_Z);
+    const sun = new THREE.DirectionalLight(look.sunColor, look.sunIntensity);
+    sun.position.copy(look.sunDirection).multiplyScalar(SUN_SHADOW_LIGHT_DISTANCE);
     // Renderer's shadowMap.enabled already gates the whole shadow pass on Low - this additionally
     // keeps the light itself from ever being asked to cast, rather than relying solely on the
     // renderer-level switch.
@@ -1562,7 +1550,7 @@ export class Game {
     sun.shadow.normalBias = SUN_SHADOW_NORMAL_BIAS;
     scene.add(sun);
     scene.add(sun.target);
-    return { sun, ambientLight };
+    return { sun, fillLight };
   }
 
   /** Everything a Graphics Quality change affects outside Renderer (see Renderer.applyQuality) -
@@ -1573,11 +1561,7 @@ export class Game {
    * a fresh one at the new size the next time the shadow pass runs. */
   private applyGraphicsQuality(quality: GraphicsQualityPreset): void {
     this.renderer.applyQuality(quality);
-    // 'night' always wins over the quality-tier ambient rule (see the matchWeather field's
-    // comment) - otherwise switching graphics quality mid-match would silently undo the night
-    // brightness floor and leave the match unplayably dark.
-    this.ambientLight.intensity =
-      this.matchWeather === 'night' ? NIGHT_AMBIENT_INTENSITY : quality.environmentLighting ? 0 : AMBIENT_FILL_INTENSITY;
+    this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled;
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);

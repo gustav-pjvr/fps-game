@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { gradeMaterial } from '../render/materialGrade.ts';
 import * as THREE from 'three';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
@@ -226,6 +227,7 @@ export class WatchTowerManager {
     this.towerMaterial = new THREE.MeshStandardMaterial({ color: 0x8a8a86, roughness: 0.85 });
     this.stepMaterial = new THREE.MeshStandardMaterial({ color: 0x6e6e68, roughness: 0.9 });
     this.railingMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4a46, roughness: 0.7 });
+    for (const material of [this.towerMaterial, this.stepMaterial, this.railingMaterial]) gradeMaterial(material, 'concrete');
     this.positions = getWatchTowerPositions();
   }
 

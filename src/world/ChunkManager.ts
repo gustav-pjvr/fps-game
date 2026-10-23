@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { gradeMaterial } from '../render/materialGrade.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Chunk } from './Chunk.ts';
 import {
@@ -34,13 +35,15 @@ function loadTiledTexture(url: string, colorSpace?: THREE.ColorSpace): THREE.Tex
 }
 
 function createGroundMaterial(): THREE.Material {
-  return new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
     map: loadTiledTexture(GROUND_TEXTURE_URL, THREE.SRGBColorSpace),
     normalMap: loadTiledTexture(GROUND_NORMAL_TEXTURE_URL),
     roughnessMap: loadTiledTexture(GROUND_ROUGHNESS_TEXTURE_URL),
     aoMap: loadTiledTexture(GROUND_AO_TEXTURE_URL),
     roughness: 1,
   });
+  gradeMaterial(material, 'ground');
+  return material;
 }
 
 function isWithinWorldBounds(cx: number, cz: number): boolean {

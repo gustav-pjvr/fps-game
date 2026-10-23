@@ -1,4 +1,5 @@
 import { createNoise2D } from 'simplex-noise';
+import { gradeMaterial, type SurfaceKind } from '../render/materialGrade.ts';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
@@ -84,6 +85,13 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  * offsets, e.g. Kenney's tree models nest a small translation under a "tmpParent" node) and returns
  * one {geometry, material} pair per mesh primitive, normalized so the combined bounding box's
  * lowest point sits at local Y=0 - regardless of what offset the source file actually used. */
+/** Nature Kit material names: woodBark/woodBarkDark, leafsGreen/leafsDark, grass, dirt. */
+function vegetationSurfaceKind(materialName: string): SurfaceKind {
+  if (materialName.startsWith('wood')) return 'bark';
+  if (materialName === 'dirt') return 'rock';
+  return 'foliage';
+}
+
 function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferGeometry; material: THREE.Material }[] {
   root.updateMatrixWorld(true);
   const primitives: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = [];
@@ -99,6 +107,7 @@ function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferG
     // reflectance and renders almost black except at grazing specular angles - confirmed by
     // screenshotting distant vs. close vegetation before this fix (see NOTES.md).
     if (material instanceof THREE.MeshStandardMaterial) material.metalness = 0;
+    gradeMaterial(material, vegetationSurfaceKind(material.name));
     primitives.push({ geometry, material });
   });
 

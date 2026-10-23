@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { VIEW_MODEL_LAYER } from '../core/Renderer.ts';
 import { MUZZLE_FLASH_LIFETIME, MUZZLE_FLASH_LIGHT_INTENSITY, MUZZLE_FLASH_LIGHT_RANGE } from '../core/config.ts';
 
 const FLASH_COLOR = 0xffb04d;
@@ -46,6 +47,9 @@ export class MuzzleFlash {
     });
     this.sprite = new THREE.Sprite(material);
     this.sprite.scale.setScalar(0.3);
+    // Drawn with the weapon (Renderer's view-model pass when the post stack is on), so the gun
+    // itself, rendered after the world, can't cover the flash at its own muzzle.
+    this.sprite.layers.set(VIEW_MODEL_LAYER);
     scene.add(this.sprite);
   }
 

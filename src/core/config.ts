@@ -121,12 +121,6 @@ export const CAMERA_FOV_MAX = 110;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
 
-/** Shared between Game's shadow-casting DirectionalLight and Renderer's Sky shader, so the visible
- * bright spot in the sky and the direction shadows fall match instead of contradicting each other. */
-export const SUN_DIRECTION_X = 20;
-export const SUN_DIRECTION_Y = 30;
-export const SUN_DIRECTION_Z = 10;
-
 /** Directional-light shadow camera (VISUAL_REALISM.md §1) - an unconfigured Three.js shadow camera
  * defaults to a +/-5 unit ortho box centered on the origin, so in this ~800x800m world shadows only
  * ever rendered in a tiny patch near spawn. The camera is re-centered on the player every frame
@@ -145,12 +139,14 @@ export const SUN_SHADOW_MAP_SIZE_MEDIUM = 512;
 export const SUN_SHADOW_MAP_SIZE_HIGH = 2048;
 export const SUN_SHADOW_ORTHO_HALF_EXTENT = 60;
 export const SUN_SHADOW_CAMERA_FAR = 200;
-export const SUN_SHADOW_BIAS = -0.0002;
-export const SUN_SHADOW_NORMAL_BIAS = 0.02;
-
-/** ACES filmic tone mapping (VISUAL_REALISM.md §3) reads darker than the default NoToneMapping at
- * the same light intensities - this compensates without needing to retune every light. */
-export const TONE_MAPPING_EXPOSURE = 1.1;
+/** Raised from -0.0002 / 0.02 for the low dusk sun (render/look.ts): at a 24 degree elevation the
+ * old values striped every sunlit wall with shadow acne. */
+export const SUN_SHADOW_BIAS = -0.0006;
+export const SUN_SHADOW_NORMAL_BIAS = 0.06;
+/** How far along the look's sun direction (render/look.ts) the shadow-casting light sits from the
+ * player. The dusk sun is low, so the light has to stand well back for hills and towers between it
+ * and the player to land inside the shadow camera's depth range (SUN_SHADOW_CAMERA_FAR). */
+export const SUN_SHADOW_LIGHT_DISTANCE = 90;
 
 /** Muzzle flash (VISUAL_REALISM.md §7) - a brief PointLight + sprite at the muzzle on every
  * ranged shot. Lifetime is 2-3 frames at 60fps, long enough to read as a flash without lingering
@@ -197,40 +193,19 @@ export const WEAPON_SWAY_MAX = 0.06;
 export const WEAPON_SWAY_DAMP = 12;
 export const WEAPON_BOB_AMPLITUDE = 0.015;
 
-/** Retuned for the bounded world (WORLD_PLAN.md §2/§5): far sits just past WORLD_HARD_CLAMP_RADIUS
- * so the boundary is concealed by haze rather than visible as a sharp cutoff against clear sky. */
-export const FOG_NEAR = 35;
-export const FOG_FAR = 650;
-export const FOG_COLOR = 0xbfd3e0;
-
 /** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'day' in single-player - purely
  * cosmetic/atmospheric, mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
  * sites: MatchStartMessage, WelcomeMessage.activeMatch, MultiplayerSession,
- * MultiplayerMatchStartParams). 'day' is the game's existing baseline lighting/fog, unchanged. */
+ * MultiplayerMatchStartParams). Each has a look in render/look.ts (sky, fog, lights, grade); 'day'
+ * keeps its id for the network protocol but is the stylised dusk the art direction is built on. */
 export type MatchWeather = 'day' | 'night' | 'fog';
 export const DEFAULT_MATCH_WEATHER: MatchWeather = 'day';
 export const MATCH_WEATHERS: readonly MatchWeather[] = ['day', 'night', 'fog'];
 export const MATCH_WEATHER_LABELS: Record<MatchWeather, string> = {
-  day: 'Day',
+  day: 'Dusk',
   night: 'Night',
   fog: 'Fog',
 };
-/** 'night': dims/cools the sun and hides the procedural Sky mesh in favor of a flat dark
- * scene.background (the Sky shader has no day/night uniform to swap - hiding it is the cheap way
- * to fake it without new shaders/assets), while raising ambient fill so play stays readable - a
- * true pitch-black mode wouldn't be playable, and there's no moon light to add realism without new
- * assets. Deliberately independent of graphics-quality's own ambient rule (Game.ts's
- * applyGraphicsQuality) - night's ambient always wins regardless of quality tier. */
-export const NIGHT_SUN_COLOR = 0x6f8fd1;
-export const NIGHT_SUN_INTENSITY = 0.4;
-export const NIGHT_AMBIENT_INTENSITY = 0.5;
-export const NIGHT_BACKGROUND_COLOR = 0x0a1220;
-/** 'fog': a second, much denser FogExp2 swapped in only for this weather choice - deliberately NOT
- * a retune of FOG_NEAR/FOG_FAR/FOG_COLOR above, which are tuned for distance-culling the world
- * edge, not atmosphere (see Renderer.ts). Sun/ambient/background stay at their day defaults - this
- * mode is about visibility, not lighting. */
-export const MATCH_FOG_DENSITY = 0.035;
-export const MATCH_FOG_COLOR = 0x9aa5ab;
 
 export const MOUSE_SENSITIVITY = 0.0022;
 export const MAX_PITCH = Math.PI / 2 - 0.01;

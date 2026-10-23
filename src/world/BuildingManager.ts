@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { gradeObject } from '../render/materialGrade.ts';
 import * as THREE from 'three';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
@@ -150,6 +151,8 @@ export class BuildingManager {
     const presets: BuildingPreset[] = [];
     for (const def of BUILDING_PRESET_DEFS) {
       const gltf = await loadGLTF(def.modelPath);
+      // Clones share these materials, so grading the loaded prefab once covers every placement.
+      gradeObject(gltf.scene, 'building');
       presets.push(measurePreset(gltf.scene, def.targetHeight));
     }
     return new BuildingManager(scene, physics, presets, obstacles);
