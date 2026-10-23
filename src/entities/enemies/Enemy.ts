@@ -10,7 +10,8 @@ import type { EnemyArchetype } from './archetypes.ts';
 import { steerWithAvoidance } from './enemySteering.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
-import { ENEMY_HEAD_OFFSET_Y, ENEMY_HEAD_RADIUS, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
+import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
+import { createEnemyHitColliders, yawRotation } from './enemyHitbox.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import type { IntentSink } from './calloutDirector.ts';
@@ -18,7 +19,7 @@ import type { PickDebug } from './combatBehaviour.ts';
 import type { PlanarPoint } from './perception.ts';
 import type { TacticalContext } from './tactics/planner.ts';
 import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHOLD, type CharacterClipRole, type CharacterInstance } from '../characterModels.ts';
-import { ENEMY_HEIGHT, ENEMY_RADIUS, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
+import { ENEMY_HEIGHT, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
 
@@ -63,8 +64,8 @@ const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
  *
  * Visuals are the full-size SWAT character (characterModels.ts, phase 7 of the visual overhaul):
  * it stands with its gun up, walks or runs by speed, plays a shot on each round fired and its death
- * clip as it falls. Hit detection still uses the same invisible capsule+ball colliders as before -
- * the model is cosmetic only.
+ * clip as it falls. Hit detection uses invisible capsule and ball colliders fitted to that model
+ * (enemyHitbox.ts); the model itself is cosmetic only.
  */
 export class Enemy implements Entity, Damageable, EnemyBody {
   readonly id = allocateEntityId();
@@ -123,17 +124,10 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     );
     this.rigidBody = physics.world.createRigidBody(bodyDesc);
 
-    const cylinderHalfHeight = ENEMY_HEIGHT / 2 - ENEMY_RADIUS;
-    this.bodyCollider = physics.world.createCollider(
-      RAPIER.ColliderDesc.capsule(cylinderHalfHeight, ENEMY_RADIUS),
-      this.rigidBody,
-    );
+    const colliders = createEnemyHitColliders(physics.world, this.rigidBody);
+    this.bodyCollider = colliders.body;
+    this.headCollider = colliders.head;
     physics.registerCollider(this.bodyCollider, this);
-
-    this.headCollider = physics.world.createCollider(
-      RAPIER.ColliderDesc.ball(ENEMY_HEAD_RADIUS).setTranslation(0, ENEMY_HEAD_OFFSET_Y, 0),
-      this.rigidBody,
-    );
     physics.registerCollider(this.headCollider, this);
 
     this.brain = new EnemyBrain(this, physics, coordinator, knowledge, intents, combatHooks, patrolRng, tacticsRng, position);
@@ -271,6 +265,9 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.moveSpeed = 0;
     this.brain.update(dt, player);
     this.updateBaseAnimation();
+    // The hit shapes sit forward of the centre line where the model carries its head and chest,
+    // so the body turns with the model.
+    this.rigidBody.setNextKinematicRotation(yawRotation(this.mesh.rotation.y));
     // A heavy hit tips the model back, easing upright as the stagger ends (step 5).
     this.mesh.rotation.x = -this.brain.lurch * ENEMY_STAGGER_LURCH_RAD;
     this.mixer.update(dt);

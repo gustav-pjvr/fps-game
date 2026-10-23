@@ -5,6 +5,10 @@ import { test, expect } from '@playwright/test';
  * create-room -> generated code -> join-room -> code entry actually establishes a real WebRTC
  * connection via the public PeerJS broker and that messages flow both ways across it. */
 test('creating and joining a room establishes a working connection', async ({ browser }) => {
+  // Two pages render the lobby world at once here, so each step crawls: a trace showed the guest's
+  // load at 8.8 s and its MULTIPLAYER click at 10.7 s, and the 30 s default ran out with "Join Room"
+  // resolved but not yet clicked (v4.0 phase 7). Nothing hung; the budget was too small.
+  test.setTimeout(90000);
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();
   const hostPage = await hostContext.newPage();

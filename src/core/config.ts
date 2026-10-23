@@ -922,10 +922,14 @@ export const DAMAGE_VIGNETTE_DURATION = 0.4;
  * everything else on screen. */
 export const LONG_SHOT_DISTANCE = 50;
 
-/** Visual-only travel speed for tracers - the hit itself is already resolved instantly via raycast. */
-export const TRACER_SPEED = 150;
-export const TRACER_LENGTH = 0.6;
-export const TRACER_COLOR = 0xfff2a8;
+/** Visual-only travel speed for tracers - the hit itself is already resolved instantly via raycast.
+ * With TRACER_LENGTH it gives an unbroken streak at 60 fps (about 4.3 m a frame against a 4.5 m
+ * streak); the old 0.6 m at 150 m/s jumped 2.5 m a frame and read as dots. */
+export const TRACER_SPEED = 260;
+/** Streak length in metres, head to burnt-out tail (combat/Tracers.ts). */
+export const TRACER_LENGTH = 4.5;
+/** The player's own tracer glow: warm amber around a white core, the dusk palette's accent light. */
+export const TRACER_COLOR = 0xffb45a;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;
