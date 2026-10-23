@@ -1,3 +1,5 @@
+import { VOID } from './theme.ts';
+
 /**
  * Static vignette + reticle overlay standing in for a magnified scope, per the plan's v1 guidance
  * (a real magnified sight picture would need a second render-target camera - deferred as v1.1 polish).
@@ -9,13 +11,13 @@ export class ScopeOverlay {
     this.element = document.createElement('div');
     this.element.style.cssText =
       'position:absolute; inset:0; display:none;' +
-      ' background: radial-gradient(circle at center, transparent 0, transparent 38vh, #000 38.3vh);';
+      ` background: radial-gradient(circle at center, transparent 0, transparent 38vh, ${VOID} 38.3vh);`;
 
     const reticleV = document.createElement('div');
-    reticleV.style.cssText = 'position:absolute; left:50%; top:0; bottom:0; width:1px; background:#000;';
+    reticleV.style.cssText = `position:absolute; left:50%; top:0; bottom:0; width:1px; background:${VOID};`;
 
     const reticleH = document.createElement('div');
-    reticleH.style.cssText = 'position:absolute; top:50%; left:0; right:0; height:1px; background:#000;';
+    reticleH.style.cssText = `position:absolute; top:50%; left:0; right:0; height:1px; background:${VOID};`;
 
     this.element.appendChild(reticleV);
     this.element.appendChild(reticleH);

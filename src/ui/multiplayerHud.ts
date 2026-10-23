@@ -1,10 +1,10 @@
 import type { PlayerSlot } from '../network/protocol.ts';
-import { ACCENT, DISPLAY_FONT, HAIRLINE, MOTION_EASE, chamferClipPath, ensureMotionKeyframesInjected } from './menu/menuStyles.ts';
+import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, LABEL_CSS, MONO_FONT, SURFACE, TEXT_SHADOW, THREAT } from './theme.ts';
 
 const HEALTH_BAR_WIDTH = 140;
 
 function healthColor(ratio: number): string {
-  return ratio > 0.5 ? ACCENT : ratio > 0.25 ? '#e0a930' : '#e03b30';
+  return ratio < 0.25 ? THREAT : ratio < 0.5 ? AMBER : ACCENT;
 }
 
 const MAX_LABEL_LENGTH = 10;
@@ -25,30 +25,26 @@ interface HealthRow {
 }
 
 function createHealthRow(label: string): HealthRow {
-  ensureMotionKeyframesInjected();
   const row = document.createElement('div');
   row.style.cssText =
-    'display:flex; align-items:center; gap:8px; margin-bottom:6px; border-radius:3px;' +
-    ` animation:rowSlideIn 0.3s ${MOTION_EASE} both;`;
+    `display:flex; align-items:center; gap:8px; margin-bottom:10px; color:${INK};`;
 
   const labelElement = document.createElement('div');
   labelElement.textContent = label;
   labelElement.style.cssText =
-    `width:64px; font-family:${DISPLAY_FONT}; font-size:0.7rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;` +
-    ' text-shadow:0 1px 3px #000; opacity:0.85;';
+    `width:80px; ${LABEL_CSS} font-size:10px; letter-spacing:0.08em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`;
   row.appendChild(labelElement);
 
   const track = document.createElement('div');
   track.style.cssText =
-    `width:${HEALTH_BAR_WIDTH}px; height:12px; background:rgba(0,0,0,0.4);` +
-    ' border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;';
+    `width:${HEALTH_BAR_WIDTH}px; height:3px; background:${HAIRLINE}; overflow:hidden;`;
   const fill = document.createElement('div');
-  fill.style.cssText = `height:100%; width:100%; background:${ACCENT}; transition:width 0.15s, background 0.15s;`;
+  fill.style.cssText = `height:100%; width:100%; background:${ACCENT};`;
   track.appendChild(fill);
   row.appendChild(track);
 
   const text = document.createElement('div');
-  text.style.cssText = `width:34px; font-family:${DISPLAY_FONT}; font-size:0.75rem; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;`;
+  text.style.cssText = `width:34px; font-family:${MONO_FONT}; font-size:12px;`;
   row.appendChild(text);
 
   // -1 is a sentinel "no baseline yet" - health can't actually be negative, so the very first
@@ -78,7 +74,7 @@ export class MultiplayerHud {
     this.ownName = ownName;
 
     this.healthContainer = document.createElement('div');
-    this.healthContainer.style.cssText = 'position:absolute; top:24px; left:32px;';
+    this.healthContainer.style.cssText = `position:absolute; top:32px; left:32px; pointer-events:none; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums;`;
     root.appendChild(this.healthContainer);
 
     this.ownHealthRow = createHealthRow(truncateForLabel(ownName));
@@ -86,18 +82,17 @@ export class MultiplayerHud {
 
     this.scoreboard = document.createElement('div');
     this.scoreboard.style.cssText =
-      `position:absolute; top:16px; left:50%; transform:translateX(-50%); display:flex; font-family:${DISPLAY_FONT};` +
-      ` align-items:center; gap:14px; padding:6px 18px; background:rgba(10,10,10,0.55);` +
-      ` border:1px solid ${HAIRLINE}; clip-path:${chamferClipPath('top-right', 8)}; font-weight:700;` +
-      ' font-size:1.05rem; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums;';
+      `position:absolute; top:128px; left:50%; transform:translateX(-50%); display:flex; width:max-content; max-width:calc(100% - 64px); font-family:${MONO_FONT};` +
+      ` align-items:center; gap:14px; padding:6px 12px; background:${SURFACE}; backdrop-filter:blur(10px);` +
+      ` border:1px solid ${HAIRLINE}; border-radius:2px; font-weight:400;` +
+      ` font-size:11px; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;`;
     root.appendChild(this.scoreboard);
 
     this.roomCodeLabel = document.createElement('div');
     this.roomCodeLabel.textContent = `Room: ${roomCode}`;
     this.roomCodeLabel.style.cssText =
-      `position:absolute; top:16px; right:16px; padding:5px 12px; background:rgba(10,10,10,0.55); font-family:${DISPLAY_FONT};` +
-      ` border:1px solid ${HAIRLINE}; clip-path:${chamferClipPath('top-right', 6)}; font-size:0.8rem; font-weight:600;` +
-      ' letter-spacing:0.05em; text-shadow:0 1px 3px #000; font-variant-numeric:tabular-nums; opacity:0.85;';
+      `position:absolute; top:180px; right:24px; font-family:${MONO_FONT}; color:${INK_DIM};` +
+      ` font-size:10px; letter-spacing:0.05em; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;`;
     root.appendChild(this.roomCodeLabel);
   }
 
@@ -146,8 +141,8 @@ export class MultiplayerHud {
     this.scoreboard.replaceChildren(
       ...entries.map((entry) => {
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = `display:flex; align-items:center; gap:6px; font-family:${DISPLAY_FONT};`;
-        wrapper.style.color = entry.isYou ? ACCENT : '#e0625a';
+        wrapper.style.cssText = `display:flex; align-items:center; gap:6px; white-space:nowrap; font-family:${MONO_FONT};`;
+        wrapper.style.color = entry.isYou ? ACCENT : INK;
 
         // A text affix, not just color, marks "this row is you" (per accessibility review - a
         // colorblind player, or anyone glancing quickly, couldn't otherwise tell their own row
@@ -162,10 +157,10 @@ export class MultiplayerHud {
           wrapper.appendChild(label);
 
           const track = document.createElement('div');
-          track.style.cssText = 'width:60px; height:8px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;';
+          track.style.cssText = `width:60px; height:3px; background:${HAIRLINE}; overflow:hidden;`;
           const fill = document.createElement('div');
           const ratio = Math.max(0, Math.min(1, entry.score / kingOfTheHill.pointsToWin));
-          fill.style.cssText = `height:100%; width:${ratio * 100}%; background:currentColor; transition:width 0.2s;`;
+          fill.style.cssText = `height:100%; width:${ratio * 100}%; background:currentColor;`;
           track.appendChild(fill);
           wrapper.appendChild(track);
 
@@ -190,12 +185,8 @@ export class MultiplayerHud {
 
     // A brief red flash on a real health drop - a "hit landed" cue on the HUD itself, distinct
     // from the screen-edge DamageVignette (own player only) and legible for opponent rows too.
-    if (row.previousHealth >= 0 && current < row.previousHealth) {
-      row.row.style.animation = 'none';
-      // Reflow before re-adding the animation, or a second hit within the first one's duration
-      // wouldn't restart it (the browser sees "same animation, already running" and no-ops).
-      void row.row.offsetWidth;
-      row.row.style.animation = `hitFlash 0.35s ${MOTION_EASE}`;
+    if (row.previousHealth >= 0 && current < row.previousHealth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      row.row.animate([{ color: THREAT }, { color: INK }], { duration: 180 });
     }
     row.previousHealth = current;
   }

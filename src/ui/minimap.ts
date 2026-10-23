@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MINIMAP_WORLD_RADIUS } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
-import { ensureMotionKeyframesInjected } from './menu/menuStyles.ts';
+import { ACCENT, AMBER, HAIRLINE, SURFACE, THREAT } from './theme.ts';
 
 const MAP_DIAMETER_PX = 140;
 const MAP_RADIUS_PX = MAP_DIAMETER_PX / 2;
@@ -31,8 +31,8 @@ export class Minimap {
     this.root = document.createElement('div');
     this.root.style.cssText =
       `position:absolute; top:24px; right:24px; width:${MAP_DIAMETER_PX}px; height:${MAP_DIAMETER_PX}px;` +
-      ' border-radius:50%; border:2px solid rgba(255,255,255,0.35); background:rgba(0,0,0,0.35);' +
-      ' overflow:hidden;';
+      ` border-radius:50%; border:1px solid ${HAIRLINE}; background:${SURFACE}; backdrop-filter:blur(10px);` +
+      ' overflow:hidden; pointer-events:none;';
 
     // A fixed forward-facing wedge at the map's own center, standing in for the local player -
     // always points "up" since the whole map rotates around the player instead of the player's
@@ -41,7 +41,7 @@ export class Minimap {
     const forwardWedge = document.createElement('div');
     forwardWedge.style.cssText =
       'position:absolute; width:0; height:0; border-left:5px solid transparent;' +
-      ' border-right:5px solid transparent; border-bottom:9px solid #fff;' +
+      ` border-right:5px solid transparent; border-bottom:9px solid ${ACCENT};` +
       ` left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -70%);`;
     this.root.appendChild(forwardWedge);
 
@@ -50,16 +50,10 @@ export class Minimap {
 
   addDot(slot: PlayerSlot): void {
     if (this.dots.has(slot)) return;
-    ensureMotionKeyframesInjected();
     const dot = document.createElement('div');
-    // A slow, continuous pulse (opacity, via the shared pulseGlow keyframe) - reads as a live
-    // radar blip rather than a static marker. Independent of the per-frame left/top writes in
-    // update() below (different CSS properties), so it's set once here and never touched again.
     dot.style.cssText =
       `position:absolute; width:${DOT_SIZE_PX}px; height:${DOT_SIZE_PX}px; border-radius:50%;` +
-      ' background:#e0483c; box-shadow:0 0 4px 1px rgba(224,72,60,0.8);' +
-      ` left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);` +
-      ' animation:pulseGlow 1.6s ease-in-out infinite;';
+      ` background:${THREAT}; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
     this.root.appendChild(dot);
     this.dots.set(slot, dot);
   }
@@ -74,7 +68,7 @@ export class Minimap {
     const dot = document.createElement('div');
     dot.style.cssText =
       `position:absolute; width:${DOT_SIZE_PX - 2}px; height:${DOT_SIZE_PX - 2}px; border-radius:50%;` +
-      ' background:#3ecf5f; box-shadow:0 0 4px 1px rgba(62,207,95,0.8);' +
+      ` background:${AMBER};` +
       ` left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
     this.root.appendChild(dot);
     this.itemDots.set(id, dot);
