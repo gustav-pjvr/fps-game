@@ -1,6 +1,5 @@
-import { loadGLTF } from '../../core/AssetLoader.ts';
 import { WEAPON_DEFINITIONS, type WeaponDefinition } from '../../weapons/definitions.ts';
-import { WEAPON_MODEL_SPECS, createProceduralMeleeViewModel } from '../../weapons/viewModel.ts';
+import { buildWeaponViewModel } from '../../weapons/models/arsenal.ts';
 import {
   createButton,
   createEyebrow,
@@ -313,17 +312,11 @@ export class LoadoutScreen {
         orderedWeaponIds.map(async (weaponId): Promise<WeaponCard> => {
           const weapon = WEAPON_DEFINITIONS[weaponId]!;
           const category = WEAPON_CATEGORIES[weaponId]!;
-          const spec = WEAPON_MODEL_SPECS[weapon.id];
           let thumbnailDataUrl = getCachedWeaponThumbnail(weapon.id);
           if (thumbnailDataUrl === null) {
             try {
-              if (spec) {
-                const gltf = await loadGLTF(spec.path);
-                thumbnailDataUrl = renderWeaponThumbnail(weapon.id, gltf.scene);
-              } else {
-                const { group } = createProceduralMeleeViewModel(weapon);
-                thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
-              }
+              const { group } = buildWeaponViewModel(weapon.id);
+              thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
             } catch (error) {
               console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
             }
