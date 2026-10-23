@@ -4,7 +4,7 @@ import { ENEMY_HEIGHT, ENEMY_RADIUS } from '../../core/config.ts';
 
 /** Eye height above the capsule centre: where the brain's sight lines and shots start. It is the
  * old head ball's centre, kept when the hit shapes were fitted to the SWAT character
- * (enemyHitbox.ts) so that no sight line moved. */
+ * (characterHitbox.ts) so that no sight line moved. */
 export const ENEMY_HEAD_OFFSET_Y = ENEMY_HEIGHT / 2 - ENEMY_RADIUS * 0.55;
 
 export interface EnemyPosition {

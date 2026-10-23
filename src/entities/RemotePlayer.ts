@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { allocateEntityId, type Entity } from './Entity.ts';
 import type { Damageable } from '../combat/damage.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
-import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../core/config.ts';
+import { HEADSHOT_MULTIPLIER, PLAYER_HEIGHT } from '../core/config.ts';
+import { createHitColliders, PLAYER_HIT_SHAPE, yawRotation } from './characterHitbox.ts';
 import { instantiateCharacter, PLAYER_CHARACTER } from './characterModels.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
 
@@ -45,7 +46,8 @@ export class RemotePlayer implements Entity, Damageable {
   readonly mesh: THREE.Group;
 
   private readonly rigidBody: RAPIER.RigidBody;
-  private readonly collider: RAPIER.Collider;
+  private readonly bodyCollider: RAPIER.Collider;
+  private readonly headCollider: RAPIER.Collider;
   private disposed = false;
 
   private readonly mixer: THREE.AnimationMixer;
@@ -81,19 +83,20 @@ export class RemotePlayer implements Entity, Damageable {
 
     // Kinematic, not simulated - this body only ever gets pushed to wherever the mesh already is
     // (see update()), it never falls, collides, or reacts to anything itself. It exists purely so
-    // other colliders (the local player's hitscan raycasts) have something real to hit. Sized to
-    // match the local player's own collision capsule (PLAYER_HEIGHT/PLAYER_RADIUS), not the visual
-    // model's own silhouette - the model is cosmetic only, same as Enemy's.
-    const cylinderHalfHeight = PLAYER_HEIGHT / 2 - PLAYER_RADIUS;
+    // other colliders (the local player's hitscan raycasts) have something real to hit. Its body and
+    // head shapes are fitted to the spacesuit character (characterHitbox.ts), the same way Enemy's
+    // are to the SWAT kit; it turns with the model so the head sits where the helmet is.
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       initialPosition.x,
       initialPosition.y,
       initialPosition.z,
     );
     this.rigidBody = physics.world.createRigidBody(bodyDesc);
-    const colliderDesc = RAPIER.ColliderDesc.capsule(cylinderHalfHeight, PLAYER_RADIUS);
-    this.collider = physics.world.createCollider(colliderDesc, this.rigidBody);
-    physics.registerCollider(this.collider, this);
+    const colliders = createHitColliders(physics.world, this.rigidBody, PLAYER_HIT_SHAPE);
+    this.bodyCollider = colliders.body;
+    this.headCollider = colliders.head;
+    physics.registerCollider(this.bodyCollider, this);
+    physics.registerCollider(this.headCollider, this);
   }
 
   /** Async because the model has to be loaded (and cached - see AssetLoader.loadGLTF, so a match
@@ -118,8 +121,10 @@ export class RemotePlayer implements Entity, Damageable {
     return false;
   }
 
-  takeDamage(amount: number, _hitColliderHandle: number): void {
-    this.onHit(amount);
+  /** A hit on the helmet counts HEADSHOT_MULTIPLIER times, as on an enemy. The amount sent is
+   * the multiplied one: the victim's client applies whatever the damageEvent carries. */
+  takeDamage(amount: number, hitColliderHandle: number): void {
+    this.onHit(hitColliderHandle === this.headCollider.handle ? amount * HEADSHOT_MULTIPLIER : amount);
   }
 
   /** Called whenever a `playerSnapshot` message arrives - just records where the opponent should
@@ -154,6 +159,7 @@ export class RemotePlayer implements Entity, Damageable {
     this.mesh.position.z = THREE.MathUtils.damp(this.mesh.position.z, this.targetPosition.z, POSITION_DAMP_RATE, dt);
     this.mesh.rotation.y = THREE.MathUtils.damp(this.mesh.rotation.y, this.targetYaw, ROTATION_DAMP_RATE, dt);
     this.rigidBody.setNextKinematicTranslation(this.mesh.position);
+    this.rigidBody.setNextKinematicRotation(yawRotation(this.mesh.rotation.y));
 
     const dx = this.mesh.position.x - previousX;
     const dz = this.mesh.position.z - previousZ;
@@ -184,8 +190,10 @@ export class RemotePlayer implements Entity, Damageable {
   dispose(scene: THREE.Scene): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.physics.unregisterCollider(this.collider);
-    this.physics.world.removeCollider(this.collider, true);
+    this.physics.unregisterCollider(this.bodyCollider);
+    this.physics.unregisterCollider(this.headCollider);
+    this.physics.world.removeCollider(this.bodyCollider, true);
+    this.physics.world.removeCollider(this.headCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);
     scene.remove(this.mesh);
     this.mesh.traverse((child) => {

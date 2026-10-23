@@ -11,7 +11,7 @@ import { steerWithAvoidance } from './enemySteering.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
-import { createEnemyHitColliders, yawRotation } from './enemyHitbox.ts';
+import { createHitColliders, ENEMY_HIT_SHAPE, yawRotation } from '../characterHitbox.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import type { IntentSink } from './calloutDirector.ts';
@@ -65,7 +65,7 @@ const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
  * Visuals are the full-size SWAT character (characterModels.ts, phase 7 of the visual overhaul):
  * it stands with its gun up, walks or runs by speed, plays a shot on each round fired and its death
  * clip as it falls. Hit detection uses invisible capsule and ball colliders fitted to that model
- * (enemyHitbox.ts); the model itself is cosmetic only.
+ * (characterHitbox.ts); the model itself is cosmetic only.
  */
 export class Enemy implements Entity, Damageable, EnemyBody {
   readonly id = allocateEntityId();
@@ -124,7 +124,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     );
     this.rigidBody = physics.world.createRigidBody(bodyDesc);
 
-    const colliders = createEnemyHitColliders(physics.world, this.rigidBody);
+    const colliders = createHitColliders(physics.world, this.rigidBody, ENEMY_HIT_SHAPE);
     this.bodyCollider = colliders.body;
     this.headCollider = colliders.head;
     physics.registerCollider(this.bodyCollider, this);

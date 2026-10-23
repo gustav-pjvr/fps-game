@@ -79,8 +79,9 @@ export const MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT = 35;
  * end. Raised from 1/18 (~55ms) to 1/30 (~33ms) after players reported hits frequently not
  * registering, worst with the sniper - at sprint speed (PLAYER_MOVE_SPEED * SPRINT_MULTIPLIER = 8
  * units/sec) the old interval let real position drift up to ~0.44 units between updates, close to
- * the target's own hit-radius (PLAYER_RADIUS = 0.4), before RemotePlayer's damping smoothing even
- * adds its own further lag on top. More frequent, tiny snapshot messages is a fine trade for a 1v1. */
+ * the target's then hit-radius (0.4; the spacesuit's fitted body is now 0.28, see
+ * entities/characterHitbox.ts), before RemotePlayer's damping smoothing even adds its own further
+ * lag on top. More frequent, tiny snapshot messages is a fine trade for a 1v1. */
 export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 30;
 
 /** How long a dead player waits before automatically respawning at their own spawn point
