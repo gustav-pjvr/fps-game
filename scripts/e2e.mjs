@@ -60,8 +60,11 @@ if (runs.length === 0) {
   process.exit(0);
 }
 let failed = false;
-for (const run of runs) {
-  const playwrightArgs = ['playwright', 'test', ...run.files, ...(run.grep ? ['--grep', run.grep] : []), ...passThrough];
+for (const [index, run] of runs.entries()) {
+  // Each Playwright run clears its output folder first, so with two runs the second wiped the
+  // first one's failure traces (2026-10-23): give each its own.
+  const output = runs.length > 1 ? ['--output', `test-results/run-${index + 1}`] : [];
+  const playwrightArgs = ['playwright', 'test', ...run.files, ...(run.grep ? ['--grep', run.grep] : []), ...output, ...passThrough];
   console.log(`> npx ${playwrightArgs.join(' ')}`);
   if (dry) continue;
   const result = spawnSync('npx', playwrightArgs, { stdio: 'inherit', shell: process.platform === 'win32' });

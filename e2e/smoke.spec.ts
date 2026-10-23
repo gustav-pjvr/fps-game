@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import type { PlayerLoadout } from '../src/core/gameModes.ts';
-import { equipPistol, findFirstEnemyIndex, killPlayerByEnemy, lockPointer, openPauseMenu, waitForGameReady } from './helpers.ts';
+import { equipPistol, findFirstEnemyIndex, killPlayerByEnemy, lockPointer, openPauseMenu, SHIPPED_GRAPHICS, waitForGameReady } from './helpers.ts';
 
 /** Same key core/loadout.ts persists the Loadout page's choice under (its STORAGE_KEY isn't
  * exported). Since v3.8.0 a default single-player match always resolves its weapons from this
@@ -128,21 +128,27 @@ async function killReachableTarget(page: Page): Promise<void> {
   throw new Error(`no live target died after being shot from ${JSON.stringify(player)}; is spawn blocked by a structure?`);
 }
 
-test('loads without console errors and renders a canvas', { tag: '@quick' }, async ({ page }) => {
-  const errors: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(msg.text());
+// The full shipped render path (post-processing, shadows) is loaded once, here, at the default
+// quality; the behaviour tests below run on Low (playwright.config.ts).
+test.describe('at the shipped graphics quality', () => {
+  test.use({ storageState: SHIPPED_GRAPHICS });
+
+  test('loads without console errors and renders a canvas', { tag: '@quick' }, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text());
+    });
+    page.on('pageerror', (err) => errors.push(err.message));
+
+    await page.goto('/');
+    await waitForGameReady(page);
+
+    // The game's renderer canvas specifically (Renderer mounts it in #app, see main.ts): since v3.8.0
+    // the lobby's Loadout page keeps its own character-preview canvas in the DOM as well, so a bare
+    // 'canvas' locator matches two elements and trips Playwright's strict mode.
+    await expect(page.locator('#app canvas')).toBeVisible();
+    expect(errors).toEqual([]);
   });
-  page.on('pageerror', (err) => errors.push(err.message));
-
-  await page.goto('/');
-  await waitForGameReady(page);
-
-  // The game's renderer canvas specifically (Renderer mounts it in #app, see main.ts): since v3.8.0
-  // the lobby's Loadout page keeps its own character-preview canvas in the DOM as well, so a bare
-  // 'canvas' locator matches two elements and trips Playwright's strict mode.
-  await expect(page.locator('#app canvas')).toBeVisible();
-  expect(errors).toEqual([]);
 });
 
 test('pointer lock engages on click', { tag: '@quick' }, async ({ page }) => {

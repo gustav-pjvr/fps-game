@@ -1,5 +1,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { SHIPPED_GRAPHICS } from './helpers.ts';
+
+// Accessibility and layout are judged on what players get by default.
+test.use({ storageState: SHIPPED_GRAPHICS });
 
 // The site-qa guards for the v4.0 menu reskin (docs/visual-overhaul-ui.md): each menu screen at
 // desktop and phone width, failing on console errors, uncaught errors, 5xx responses, axe

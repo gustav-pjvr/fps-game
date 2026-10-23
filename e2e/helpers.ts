@@ -1,5 +1,10 @@
 import type { Page } from '@playwright/test';
 
+/** No stored settings, so the game starts on its shipped default graphics (Medium). The config runs
+ * behaviour specs on Low (playwright.config.ts); a spec that judges the rendered look opts back in
+ * with `test.use({ storageState: SHIPPED_GRAPHICS })`. */
+export const SHIPPED_GRAPHICS = { cookies: [], origins: [] };
+
 /** Clicks through the lobby (Play -> Start Match with default counts) and waits for Game.create()
  * to finish (WASM init, world seed, encounters spawned) - see Game.installDebugApi(). */
 export async function waitForGameReady(page: Page): Promise<void> {

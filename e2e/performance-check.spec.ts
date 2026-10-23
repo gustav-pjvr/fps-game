@@ -1,5 +1,8 @@
 import { test } from '@playwright/test';
-import { lockPointer, waitForGameReady } from './helpers.ts';
+import { lockPointer, SHIPPED_GRAPHICS, waitForGameReady } from './helpers.ts';
+
+// Frame times are only meaningful at the quality players run by default.
+test.use({ storageState: SHIPPED_GRAPHICS });
 
 /**
  * Local performance check - NOT part of the automated smoke suite. Run it explicitly, on your own

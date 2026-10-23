@@ -40,6 +40,9 @@ async function killOpponentOnce(hostPage: Page, guestPage: Page): Promise<void> 
   // which starts on the automatic rifle again (see equipPistol).
   await equipPistol(hostPage);
   for (const [offsetX, offsetZ] of KILL_ATTEMPT_OFFSETS) {
+    // The opponent appears once its character has loaded, which a starved CPU can stretch past
+    // the match start (2026-10-23): wait for it rather than fail the round.
+    await hostPage.waitForFunction(() => window.__gameDebug?.getOpponentPosition() != null, null, { timeout: 30000 });
     const opponentPosition = await hostPage.evaluate(() => window.__gameDebug?.getOpponentPosition());
     if (!opponentPosition) throw new Error('host has no opponent position');
 
@@ -168,7 +171,10 @@ test('reaching the kill limit ends the match for both players, and Rematch start
  * than leaving the remaining player's RemotePlayer frozen in place forever with no way out short
  * of a page reload (the pre-phase-4 behavior). No Rematch option here - the connection itself is gone. */
 test('the host disconnecting mid-match ends it for the guest', async ({ browser }) => {
-  test.setTimeout(60000);
+  // Measured 2026-10-23 on SwiftShader with the v4 characters: creating, joining and starting the
+  // match alone takes about 50 s here on Low graphics (a click 5 to 10 s, the second page's load
+  // 7 s), and a 90 s budget ran out with every step still advancing (docs/testing.md).
+  test.setTimeout(150000);
 
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();

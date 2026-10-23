@@ -1,5 +1,15 @@
 import { defineConfig, devices } from '@playwright/test';
 
+/**
+ * Behaviour specs run on Low graphics (no shadows, post-processing or environment light): on this
+ * machine's SwiftShader the v4 Medium look ran two lobby pages at about 2 FPS, so every multiplayer
+ * spec ran out of time with all its steps still advancing (docs/testing.md). Specs that judge the
+ * rendered look (ui-qa, perf, the console-errors load test) opt back into the shipped default with
+ * `test.use({ storageState: SHIPPED_GRAPHICS })`. E2E_GRAPHICS=medium or high runs everything at
+ * that quality instead.
+ */
+const graphics = process.env.E2E_GRAPHICS ?? 'low';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -15,6 +25,10 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: 'http://localhost:5173',
+    storageState: {
+      cookies: [],
+      origins: [{ origin: 'http://localhost:5173', localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: graphics }) }] }],
+    },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

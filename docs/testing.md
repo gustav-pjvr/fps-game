@@ -36,6 +36,15 @@ shared helpers (`e2e/helpers.ts`, `e2e/global.d.ts`), `playwright.config.ts`, `v
 with their own unit tests, including a check that every spec in `e2e/` belongs to a group: a new
 spec has to be added there.
 
+## Graphics quality in tests
+
+Behaviour specs run on Low graphics: `playwright.config.ts` seeds the settings through
+`storageState`, which also reaches the contexts the multiplayer specs open themselves. The specs that
+judge the rendered look run on the shipped default (Medium) by opting out with
+`test.use({ storageState: SHIPPED_GRAPHICS })` from `e2e/helpers.ts`: `ui-qa.spec.ts`, both perf
+specs, and the `@quick` load test that checks for console errors. `E2E_GRAPHICS=medium` (or `high`)
+runs everything at that quality, for example before a release that changed rendering.
+
 ## Known slow spots
 
 Every spec runs on SwiftShader here, at about 2 frames a second once a match is loaded, so the
