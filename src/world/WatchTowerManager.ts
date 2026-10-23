@@ -107,6 +107,31 @@ interface PlacedTower {
   colliderHandles: number[];
 }
 
+/** Metres of open ground kept between a tower's footprint and the edge of any town pad. */
+const TOWN_CLEARANCE = 2;
+const TOWN_CLEARANCE_SAMPLES = 16;
+const WHOLE_MAP_ATTEMPTS = 200;
+/** A tower may stand on a forest's thinning rim, never in its core. */
+const FOREST_CORE_MEMBERSHIP = 0.5;
+
+/**
+ * How many of a tower's footprint samples (its centre and a ring just past its stairs) land on a
+ * town pad; 0 means the tower is clear of every town. Checking only the centre (as placement first
+ * did) let 472 of 1200 towers across a 300-seed sweep hang their stairs into a pad, cutting into
+ * its houses (found in the v4.0 screenshots). Town pads are 10 to 16 m across with no soft skirt,
+ * so the ring catches every overlap wider than the gap between samples.
+ */
+function townOverlap(x: number, z: number): number {
+  let overlap = sampleFlatZone(x, z).membership > 0 ? 1 : 0;
+  const radius = WATCH_TOWER_FOOTPRINT_RADIUS + TOWN_CLEARANCE;
+  for (let i = 0; i < TOWN_CLEARANCE_SAMPLES; i++) {
+    const angle = (i / TOWN_CLEARANCE_SAMPLES) * Math.PI * 2;
+    if (sampleFlatZone(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius).membership > 0) overlap++;
+  }
+  return overlap;
+}
+
+
 /**
  * Places WATCH_TOWER_COUNT towers evenly spaced around spawn, each jittered within its own
  * sector and re-jittered away from any existing town/forest zone membership - mirrors
@@ -134,21 +159,30 @@ export function computeWatchTowerPositions(): { x: number; z: number }[] {
   const baseAngle = rng() * Math.PI * 2;
   const sectorAngle = (Math.PI * 2) / WATCH_TOWER_COUNT;
   const positions: { x: number; z: number }[] = [];
-  let lastAttempted: { x: number; z: number } | null = null;
 
   for (let i = 0; i < WATCH_TOWER_COUNT; i++) {
     let placed: { x: number; z: number } | null = null;
+    // The least bad candidate so far, for the fallback below: a tower touching a town is worse than
+    // one crowding another tower, which is worse than one standing in a forest (vegetation is
+    // cleared around every tower anyway).
+    let best: { x: number; z: number } | null = null;
+    let bestCost = Infinity;
 
     const tryCandidate = (angle: number): boolean => {
       const distance = minDistance + rng() * (maxDistance - minDistance);
       const candidate = { x: SPAWN_X + Math.cos(angle) * distance, z: SPAWN_Z + Math.sin(angle) * distance };
-      lastAttempted = candidate;
 
-      const clearOfZones = sampleFlatZone(candidate.x, candidate.z).membership <= 0 && sampleForestZone(candidate.x, candidate.z).membership <= 0;
+      const overlap = townOverlap(candidate.x, candidate.z);
+      const inForest = sampleForestZone(candidate.x, candidate.z).membership > FOREST_CORE_MEMBERSHIP;
       const separatedFromOtherTowers = positions.every((other) => Math.hypot(candidate.x - other.x, candidate.z - other.z) >= minTowerSeparation);
-      if (clearOfZones && separatedFromOtherTowers) {
+      if (overlap === 0 && !inForest && separatedFromOtherTowers) {
         placed = candidate;
         return true;
+      }
+      const cost = overlap * 100 + (separatedFromOtherTowers ? 0 : 10) + (inForest ? 1 : 0);
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = candidate;
       }
       return false;
     };
@@ -168,15 +202,15 @@ export function computeWatchTowerPositions(): { x: number; z: number }[] {
     // accept that rate, this second pass drops the "stay in your own evenly-spaced sector" ideal
     // and searches the *entire* angular range at the same distance band instead - a tower ending
     // up not perfectly evenly spaced is a far smaller cost than one sitting inside a zone.
-    for (let attempt = 0; attempt < 40 && !placed; attempt++) {
+    for (let attempt = 0; attempt < WHOLE_MAP_ATTEMPTS && !placed; attempt++) {
       tryCandidate(rng() * Math.PI * 2);
     }
 
-    // Falls back to the last attempted position (still boundary-clear by construction, since
-    // every candidate is drawn from [minDistance, maxDistance]) rather than dropping the tower
-    // entirely - landing inside a zone's rim or a little close to another tower is a much smaller
-    // issue than a map missing one of its four towers outright.
-    positions.push(placed ?? lastAttempted!);
+    // Falls back to the least bad candidate (still boundary-clear by construction, since every
+    // candidate is drawn from [minDistance, maxDistance]) rather than dropping the tower entirely -
+    // standing in a forest or a little close to another tower is a much smaller issue than a map
+    // missing one of its four towers outright.
+    positions.push(placed ?? best!);
   }
 
   return positions;

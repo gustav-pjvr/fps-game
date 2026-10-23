@@ -1746,6 +1746,9 @@ export class Game {
   }
 
   private missionResult(won: boolean): MissionResult {
+    // The killing blow lands on a tick updateMission no longer runs on, so settle it here.
+    this.missionDamageTaken += Math.max(0, this.missionLastHealth - this.player.currentHealth);
+    this.missionLastHealth = this.player.currentHealth;
     const view = this.mission?.view(this.player.position);
     return {
       won,

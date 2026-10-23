@@ -5,7 +5,7 @@ import { ACCENT_AMBER, ACCENT_CYAN } from '../render/look.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 
 const BEAM_HEIGHT = 140;
-const BEAM_RADIUS = 0.9;
+const BEAM_RADIUS = 1.1;
 /** Seconds per pulse while an uplink uploads. */
 const PULSE_PERIOD = 1.1;
 
@@ -31,7 +31,7 @@ const beamFragment = /* glsl */ `
   void main() {
     // Bright core seen face on, soft at the silhouette; fades out toward the top.
     float facing = abs(dot(normalize(vNormalView), normalize(vViewDir)));
-    float core = pow(facing, 1.6);
+    float core = pow(facing, 3.0);
     float rise = pow(1.0 - vHeight, 1.4);
     gl_FragColor = vec4(uColor * uIntensity * core * rise, 1.0);
   }
@@ -108,19 +108,21 @@ export class UplinkBeacons {
 
   /** `time` in seconds, for the pulse; `reducedMotion` holds the pulse at a steady glow. */
   update(view: MissionView, time: number, reducedMotion: boolean): void {
-    const pulse = reducedMotion ? 1.2 : 1 + 0.6 * (0.5 + 0.5 * Math.sin((time * Math.PI * 2) / PULSE_PERIOD));
+    // Additive over a bright dusk sky: kept low so the beam stays amber or cyan instead of washing out
+    // to cream under ACES.
+    const pulse = reducedMotion ? 0.55 : 0.4 + 0.3 * (0.5 + 0.5 * Math.sin((time * Math.PI * 2) / PULSE_PERIOD));
     view.uplinks.forEach((uplink, index) => {
       const beam = this.uplinkBeams[index];
       if (!beam) return;
       const uniforms = beam.material.uniforms;
       (uniforms.uColor!.value as THREE.Color).copy(uplink.status === 'online' ? this.cyan : this.amber);
-      uniforms.uIntensity!.value = uplink.status === 'uploading' ? pulse : uplink.status === 'online' ? 1.1 : 0.75;
+      uniforms.uIntensity!.value = uplink.status === 'uploading' ? pulse : uplink.status === 'online' ? 0.5 : 0.32;
     });
     const extractionOpen = view.phase === 'extract' || view.phase === 'won';
     this.extractionBeam.mesh.visible = extractionOpen;
     this.ring.visible = extractionOpen;
     if (extractionOpen) {
-      this.extractionBeam.material.uniforms.uIntensity!.value = 1.2 + view.extractionProgress;
+      this.extractionBeam.material.uniforms.uIntensity!.value = 0.55 + 0.4 * view.extractionProgress;
       this.ringMaterial.opacity = 0.55 + 0.45 * Math.max(view.extractionProgress, reducedMotion ? 0.5 : 0.5 + 0.5 * Math.sin(time * 3));
     }
   }
