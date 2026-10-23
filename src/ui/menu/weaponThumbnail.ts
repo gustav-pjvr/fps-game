@@ -1,3 +1,4 @@
+import { INK } from '../theme.ts';
 import * as THREE from 'three';
 
 // Rendered larger than the 72px slot the old inventory card used, since the card was enlarged to
@@ -53,8 +54,8 @@ export function renderWeaponThumbnail(weaponId: string, source: THREE.Object3D):
 
   const scene = new THREE.Scene();
   scene.add(model);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-  const key = new THREE.DirectionalLight(0xffffff, 1.1);
+  scene.add(new THREE.AmbientLight(INK, 0.7));
+  const key = new THREE.DirectionalLight(INK, 1.1);
   key.position.set(1.5, 2, 2);
   scene.add(key);
 
