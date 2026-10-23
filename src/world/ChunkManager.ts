@@ -34,7 +34,7 @@ function loadTiledTexture(url: string, colorSpace?: THREE.ColorSpace): THREE.Tex
   return texture;
 }
 
-function createGroundMaterial(): THREE.Material {
+export function createGroundMaterial(): THREE.Material {
   const material = new THREE.MeshStandardMaterial({
     map: loadTiledTexture(GROUND_TEXTURE_URL, THREE.SRGBColorSpace),
     normalMap: loadTiledTexture(GROUND_NORMAL_TEXTURE_URL),

@@ -481,6 +481,16 @@ function createPlatformRailingColliders(world: RAPIER.World, rigidBody: RAPIER.R
  * every ~1.2m along the slope, same "cosmetic detail on top of a plain collider shape" approach
  * already used for the crate stack's tier bands) so a smooth ramp collider still *reads* as a
  * staircase, not a wheelchair ramp. */
+/** The tower's look without its colliders, for scenery outside a match (the title screen's valley,
+ * see lobby/LobbyScene.ts). Same graded materials and proportions as a placed tower. */
+export function createDecorativeTowerVisual(): THREE.Group {
+  const towerMaterial = new THREE.MeshStandardMaterial({ color: 0x8a8a86, roughness: 0.85 });
+  const stepMaterial = new THREE.MeshStandardMaterial({ color: 0x6e6e68, roughness: 0.9 });
+  const railingMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4a46, roughness: 0.7 });
+  for (const material of [towerMaterial, stepMaterial, railingMaterial]) gradeMaterial(material, 'concrete');
+  return createTowerVisual(towerMaterial, stepMaterial, railingMaterial, WATCH_TOWER_HALF_WIDTH + WATCH_TOWER_PLATFORM_OVERHANG);
+}
+
 function createTowerVisual(towerMaterial: THREE.Material, stepMaterial: THREE.Material, railingMaterial: THREE.Material, platformHalfExtent: number): THREE.Group {
   const group = new THREE.Group();
 

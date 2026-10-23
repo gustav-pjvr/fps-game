@@ -38,17 +38,17 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 
-type VegetationTypeId = 'treeDefault' | 'treePine' | 'bush' | 'rock';
+export type VegetationTypeId = 'treeDefault' | 'treePine' | 'bush' | 'rock';
 type ColliderShape = 'cylinder' | 'box' | 'none';
 
-interface VegetationTypeDef {
+export interface VegetationTypeDef {
   id: VegetationTypeId;
   modelPath: string;
   targetHeight: number;
   colliderShape: ColliderShape;
 }
 
-const VEGETATION_TYPES: VegetationTypeDef[] = [
+export const VEGETATION_TYPES: VegetationTypeDef[] = [
   { id: 'treeDefault', modelPath: '/assets/models/vegetation/tree_default.glb', targetHeight: 6.0, colliderShape: 'cylinder' },
   { id: 'treePine', modelPath: '/assets/models/vegetation/tree_pineRoundA.glb', targetHeight: 4.5, colliderShape: 'cylinder' },
   { id: 'bush', modelPath: '/assets/models/vegetation/plant_bushLarge.glb', targetHeight: 1.0, colliderShape: 'none' },
@@ -92,7 +92,7 @@ function vegetationSurfaceKind(materialName: string): SurfaceKind {
   return 'foliage';
 }
 
-function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferGeometry; material: THREE.Material }[] {
+export function extractBakedPrimitives(root: THREE.Object3D): { geometry: THREE.BufferGeometry; material: THREE.Material }[] {
   root.updateMatrixWorld(true);
   const primitives: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = [];
 

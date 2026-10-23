@@ -1,181 +1,235 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { ENEMY_MODEL_PATH } from '../entities/enemies/Enemy.ts';
-import { buildGooseMesh } from '../entities/Goose.ts';
-import { GOOSE_HEIGHT } from '../core/config.ts';
+import { createNoise2D } from 'simplex-noise';
+import { SPAWN_X, SPAWN_Z, TERRAIN_CHUNK_SIZE } from '../core/config.ts';
+import { loadGLTF } from '../core/AssetLoader.ts';
+import { getWorldSeed } from '../core/worldSeed.ts';
+import { lookFor } from '../render/look.ts';
+import { installLookFog, StylizedSky } from '../render/StylizedSky.ts';
+import { PostStack } from '../render/PostStack.ts';
+import { GRAPHICS_QUALITY_PRESETS } from '../settings/graphicsQuality.ts';
+import { Settings } from '../settings/Settings.ts';
+import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { createGroundMaterial } from '../world/ChunkManager.ts';
+import { createDecorativeTowerVisual, getWatchTowerPositions } from '../world/WatchTowerManager.ts';
+import { extractBakedPrimitives, VEGETATION_TYPES, type VegetationTypeId } from '../world/VegetationManager.ts';
+import { mulberry32 } from '../utils/rng.ts';
 
-const BOB_SPEED = 1.6;
-const BOB_AMPLITUDE = 0.045;
-const SWAY_SPEED = 0.35;
-const SWAY_AMPLITUDE = 0.25;
-const CHARACTER_HEIGHT = 1.75;
-/** Left-of-center rather than dead-center, so the lobby's title/readout (left) and action rail
- * (right) - see MainMenu.ts - both get real space instead of competing with a centered figure. */
-const CHARACTER_OFFSET_X = -1.1;
-/** Kenney's "Mini Characters" bind pose measures ~0.671 units tall, feet at local Y=0. */
-const MODEL_BIND_HEIGHT = 0.671;
-const MODEL_SCALE = CHARACTER_HEIGHT / MODEL_BIND_HEIGHT;
+/** Half-width of the terrain patch around the tower. Wide enough that the patch edge sits inside
+ * the fog (FOG_FAR below) from anywhere on the drift path. */
+const PATCH_HALF_SIZE = 420;
+const PATCH_SEGMENTS = 210;
+/** The title screen hazes out sooner than a match, so the patch edge never shows. */
+const FOG_FAR = 300;
+const DRIFT_RADIUS = 54;
+const DRIFT_HEIGHT = 11;
+/** Seconds per full circle around the tower: slow enough to read as drifting, not orbiting. */
+const DRIFT_PERIOD_SECONDS = 240;
+/** The camera aims this far to the tower's left, so the tower sits in the right third of the frame
+ * and the left stays clear for the menu (see MainMenu.ts). */
+const AIM_OFFSET_LEFT = 11;
+const CLEAR_RADIUS_AROUND_TOWER = 12;
 
-/** Decorative goose wandering the lobby floor alongside the bobbing character - purely cosmetic, no
- * physics/collision needed. Walks a continuous elliptical loop spanning the whole floor (not just
- * one side), passing behind the character on one leg and in front of it on the other, rather than
- * roaming a small patch next to it. `GOOSE_LOOP_CENTER_X/Z` and the two radii size the ellipse to
- * clear CHARACTER_OFFSET_X on the left and stay within the floor/camera frustum on the right and
- * front/back. */
-const GOOSE_LOOP_CENTER_X = 0;
-const GOOSE_LOOP_CENTER_Z = -0.3;
-const GOOSE_LOOP_RADIUS_X = 2.8;
-const GOOSE_LOOP_RADIUS_Z = 2.3;
-/** Seconds for one full lap - a leisurely walking pace, not a sprint. */
-const GOOSE_LOOP_PERIOD_SECONDS = 22;
-/** Increasing angle traces the ellipse counter-clockwise (standard math convention: from the +X
- * axis toward +Z, viewed from above) - per user request ("anti-clockwise rotation"). */
-const GOOSE_LOOP_ANGULAR_SPEED = (2 * Math.PI) / GOOSE_LOOP_PERIOD_SECONDS;
-const GOOSE_WADDLE_BOB_HEIGHT = 0.035;
-const GOOSE_WADDLE_BOB_SPEED = 8;
-const GOOSE_WADDLE_ROCK_ANGLE = 0.15;
+const SCATTER: { type: VegetationTypeId; attempts: number; radius: number; density: number }[] = [
+  { type: 'treeDefault', attempts: 900, radius: 170, density: -0.15 },
+  { type: 'treePine', attempts: 700, radius: 170, density: 0.05 },
+  { type: 'bush', attempts: 260, radius: 90, density: -0.3 },
+  { type: 'rock', attempts: 90, radius: 80, density: -1 },
+];
 
-/** Standalone render loop shown before a match starts: the player's character idling center-screen
- * with a gentle bob/sway, in front of the main menu. Owns its own WebGL context, disposed once the
- * player starts a match so the gameplay Renderer can take over the canvas container cleanly. */
+/** The title screen (docs/visual-overhaul-ui.md, "The valley is the menu"): a real slice of the
+ * current world seed's valley around its first watch tower, under the match's dusk look, drifting
+ * slowly past. After a match the seed is that match's, so the title shows the valley just played.
+ * No physics or streaming: one terrain patch from the same height function, instanced vegetation
+ * from the same models and grades, the tower's own visual. Owns its own WebGL context, disposed
+ * once a match starts so the gameplay Renderer can take over. */
 export class LobbyScene {
   private readonly webgl: THREE.WebGLRenderer;
-  private readonly scene: THREE.Scene;
+  private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
-  private readonly clock = new THREE.Clock();
-  private character: THREE.Group | null = null;
-  private mixer: THREE.AnimationMixer | null = null;
+  private readonly sky: StylizedSky;
+  private readonly post: PostStack | null;
+  private readonly timer = new THREE.Timer();
+  private readonly towerCenter: THREE.Vector3;
+  private readonly startAngle: number;
+  private readonly driftSpeed: number;
+  private readonly disposables: { dispose(): void }[] = [];
+  private environment: THREE.Texture | null = null;
   private elapsed = 0;
   private frameHandle = 0;
 
-  private readonly goose: THREE.Group;
-  private gooseLoopAngle = 0;
-  private gooseWaddlePhase = Math.random() * Math.PI * 2;
-
   private constructor(container: HTMLElement) {
+    const quality = GRAPHICS_QUALITY_PRESETS[Settings.getGraphicsQuality()];
+    const look = lookFor('day');
+    installLookFog(look);
+
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
-    this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.webgl.setSize(window.innerWidth, window.innerHeight);
+    this.webgl.shadowMap.enabled = quality.shadowsEnabled;
+    this.webgl.shadowMap.type = THREE.PCFShadowMap;
+    // The scene never changes, so the shadow map is drawn once after loading (see create()).
+    this.webgl.shadowMap.autoUpdate = false;
+    this.webgl.toneMapping = quality.postProcessing ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
+    this.webgl.toneMappingExposure = look.exposure;
     container.appendChild(this.webgl.domElement);
 
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a0c0f);
-    this.scene.fog = new THREE.Fog(0x0a0c0f, 8, 22);
+    this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 2000);
+    this.sky = new StylizedSky(look);
+    this.scene.add(this.sky);
+    this.scene.fog = new THREE.Fog(look.sky.haze, look.fog.near, FOG_FAR);
 
-    // Camera aim stays at world origin; the character sits off-center (CHARACTER_OFFSET_X) so it
-    // renders left-of-frame, leaving room for the lobby's title/readout (left) and action rail
-    // (right) - see MainMenu.ts - rather than fighting a dead-centered figure for the same space.
-    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-    this.camera.position.set(0, 1.65, 4.2);
-    this.camera.lookAt(0, 1.1, 0);
+    const fill = new THREE.HemisphereLight(look.hemiSkyColor, look.hemiGroundColor, quality.environmentLighting ? 0 : look.hemiIntensity);
+    this.scene.add(fill);
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    this.scene.add(ambient);
-    const key = new THREE.DirectionalLight(0xfff2d6, 1.1);
-    key.position.set(3, 6, 4);
-    this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x3ecf5f, 0.5);
-    rim.position.set(-4, 3, -3);
-    this.scene.add(rim);
+    const tower = getWatchTowerPositions()[0] ?? { x: SPAWN_X + 70, z: SPAWN_Z };
+    this.towerCenter = new THREE.Vector3(tower.x, sampleHeight(tower.x, tower.z), tower.z);
 
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(6, 48),
-      new THREE.MeshStandardMaterial({ color: 0x14171c, roughness: 0.9 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    this.scene.add(floor);
+    const sun = new THREE.DirectionalLight(look.sunColor, look.sunIntensity);
+    sun.position.copy(this.towerCenter).addScaledVector(look.sunDirection, 120);
+    sun.target.position.copy(this.towerCenter);
+    sun.castShadow = quality.shadowsEnabled;
+    sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
+    const extent = 80;
+    Object.assign(sun.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 1, far: 260 });
+    sun.shadow.bias = -0.0006;
+    sun.shadow.normalBias = 0.06;
+    this.scene.add(sun, sun.target);
 
-    // Soft accent-tinted ground glow beneath the character - a small signature touch that gives
-    // the figure presence without needing extra geometry/lighting complexity. A radial-gradient
-    // canvas texture (rather than a flat-color circle) is what actually makes this read as a soft
-    // glow instead of a hard-edged puddle.
-    const glowCanvas = document.createElement('canvas');
-    glowCanvas.width = 128;
-    glowCanvas.height = 128;
-    const glowCtx = glowCanvas.getContext('2d')!;
-    const gradient = glowCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
-    gradient.addColorStop(0, 'rgba(62, 207, 95, 0.55)');
-    gradient.addColorStop(1, 'rgba(62, 207, 95, 0)');
-    glowCtx.fillStyle = gradient;
-    glowCtx.fillRect(0, 0, 128, 128);
-    const glowTexture = new THREE.CanvasTexture(glowCanvas);
+    if (quality.environmentLighting) {
+      const envScene = new THREE.Scene();
+      const envSky = new StylizedSky(look);
+      envScene.add(envSky);
+      const pmrem = new THREE.PMREMGenerator(this.webgl);
+      this.environment = pmrem.fromScene(envScene, 0, 0.1, 2000).texture;
+      pmrem.dispose();
+      envSky.geometry.dispose();
+      envSky.material.dispose();
+      this.scene.environment = this.environment;
+      this.scene.environmentIntensity = look.environmentIntensity;
+    }
 
-    const glow = new THREE.Mesh(
-      new THREE.CircleGeometry(1.6, 32),
-      new THREE.MeshBasicMaterial({ map: glowTexture, transparent: true, depthWrite: false }),
-    );
-    glow.rotation.x = -Math.PI / 2;
-    glow.position.set(CHARACTER_OFFSET_X, 0.01, 0);
-    this.scene.add(glow);
+    this.post = quality.postProcessing
+      ? new PostStack(this.webgl, this.scene, this.camera, null, look, { ambientOcclusion: quality.ambientOcclusion })
+      : null;
+    this.post?.setSize(window.innerWidth, window.innerHeight);
 
-    this.goose = buildGooseMesh();
-    this.goose.position.set(
-      GOOSE_LOOP_CENTER_X + GOOSE_LOOP_RADIUS_X,
-      GOOSE_HEIGHT / 2,
-      GOOSE_LOOP_CENTER_Z,
-    );
-    this.scene.add(this.goose);
+    // Start beside the sun so the opening frame is side-lit, and drift toward it.
+    this.startAngle = Math.atan2(look.sunDirection.z, look.sunDirection.x) + Math.PI * 0.55;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.driftSpeed = ((2 * Math.PI) / DRIFT_PERIOD_SECONDS) * (reducedMotion ? 0.15 : 1);
+    this.placeCamera();
 
     window.addEventListener('resize', this.onResize);
   }
 
   static async create(container: HTMLElement): Promise<LobbyScene> {
     const lobby = new LobbyScene(container);
-    await lobby.loadCharacter();
+    lobby.buildTerrain();
+    lobby.buildTower();
+    await lobby.buildVegetation();
+    lobby.webgl.shadowMap.needsUpdate = true;
     return lobby;
   }
 
-  private async loadCharacter(): Promise<void> {
-    const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(ENEMY_MODEL_PATH);
-    const model = cloneSkeleton(gltf.scene) as THREE.Group;
-    model.scale.setScalar(MODEL_SCALE);
-
-    this.character = new THREE.Group();
-    this.character.add(model);
-    this.character.position.x = CHARACTER_OFFSET_X;
-    this.scene.add(this.character);
-
-    this.mixer = new THREE.AnimationMixer(model);
-    const idleClip = gltf.animations.find((clip) => clip.name === 'idle') ?? gltf.animations[0];
-    if (idleClip) this.mixer.clipAction(idleClip).play();
+  private buildTerrain(): void {
+    const size = PATCH_HALF_SIZE * 2;
+    const geometry = new THREE.PlaneGeometry(size, size, PATCH_SEGMENTS, PATCH_SEGMENTS);
+    geometry.rotateX(-Math.PI / 2);
+    const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i) + this.towerCenter.x;
+      const z = position.getZ(i) + this.towerCenter.z;
+      position.setXYZ(i, x, sampleHeight(x, z), z);
+      // The ground textures repeat GROUND_TEXTURE_REPEAT times per chunk (see ChunkManager), so a
+      // UV of one chunk length gives the same texel density as in a match.
+      uv.setXY(i, x / TERRAIN_CHUNK_SIZE, z / TERRAIN_CHUNK_SIZE);
+    }
+    geometry.computeVertexNormals();
+    const material = createGroundMaterial();
+    const ground = new THREE.Mesh(geometry, material);
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+    this.disposables.push(geometry, material);
   }
 
-  /** Advances the goose continuously around GOOSE_LOOP_CENTER_X/Z's ellipse - no destination-
-   * picking/arrival logic needed since it's a closed loop, always walking, never idle. */
-  private updateGoose(dt: number): void {
-    this.gooseLoopAngle += dt * GOOSE_LOOP_ANGULAR_SPEED;
+  private buildTower(): void {
+    const tower = createDecorativeTowerVisual();
+    tower.position.copy(this.towerCenter);
+    tower.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    this.scene.add(tower);
+  }
 
-    this.goose.position.x = GOOSE_LOOP_CENTER_X + Math.cos(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_X;
-    this.goose.position.z = GOOSE_LOOP_CENTER_Z + Math.sin(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_Z;
+  private async buildVegetation(): Promise<void> {
+    const rng = mulberry32(getWorldSeed() + 7919);
+    const density = createNoise2D(mulberry32(getWorldSeed() + 2));
+    const matrix = new THREE.Matrix4();
+    const rotation = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const scale = new THREE.Vector3();
+    const point = new THREE.Vector3();
 
-    // Tangent of the ellipse at the current angle (derivative of the position formula above) -
-    // faces the goose the direction it's actually walking, not just toward the loop's center.
-    const tangentX = -Math.sin(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_X;
-    const tangentZ = Math.cos(this.gooseLoopAngle) * GOOSE_LOOP_RADIUS_Z;
-    this.goose.rotation.y = Math.atan2(tangentX, tangentZ);
+    for (const scatter of SCATTER) {
+      const def = VEGETATION_TYPES.find((type) => type.id === scatter.type);
+      if (!def) continue;
+      const gltf = await loadGLTF(def.modelPath);
+      const primitives = extractBakedPrimitives(gltf.scene.clone());
+      const rawHeight = (primitives[0]?.geometry.userData.rawHeight as number | undefined) ?? def.targetHeight;
+      const baseScale = def.targetHeight / rawHeight;
 
-    this.gooseWaddlePhase += dt * GOOSE_WADDLE_BOB_SPEED;
-    // The mesh's local origin is the goose's vertical *center*, not its feet (see Goose.ts's own
-    // applyPosition, which lifts by this exact same GOOSE_HEIGHT/2 above ground) - without this, the
-    // goose's center sits at floor level and it visibly sinks in by about half its height.
-    this.goose.position.y = GOOSE_HEIGHT / 2 + Math.sin(this.gooseWaddlePhase) * GOOSE_WADDLE_BOB_HEIGHT;
-    this.goose.rotation.z = Math.sin(this.gooseWaddlePhase) * GOOSE_WADDLE_ROCK_ANGLE;
+      const matrices: THREE.Matrix4[] = [];
+      for (let i = 0; i < scatter.attempts; i++) {
+        const angle = rng() * Math.PI * 2;
+        const distance = CLEAR_RADIUS_AROUND_TOWER + Math.sqrt(rng()) * scatter.radius;
+        const x = this.towerCenter.x + Math.cos(angle) * distance;
+        const z = this.towerCenter.z + Math.sin(angle) * distance;
+        if (density(x * 0.012, z * 0.012) < scatter.density) continue;
+        point.set(x, sampleHeight(x, z), z);
+        rotation.setFromAxisAngle(up, rng() * Math.PI * 2);
+        scale.setScalar(baseScale * (0.8 + rng() * 0.45));
+        matrices.push(matrix.compose(point, rotation, scale).clone());
+      }
+
+      for (const { geometry, material } of primitives) {
+        const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+        matrices.forEach((m, index) => mesh.setMatrixAt(index, m));
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.disposables.push(geometry);
+      }
+    }
+  }
+
+  private placeCamera(): void {
+    const angle = this.startAngle + this.elapsed * this.driftSpeed;
+    const x = this.towerCenter.x + Math.cos(angle) * DRIFT_RADIUS;
+    const z = this.towerCenter.z + Math.sin(angle) * DRIFT_RADIUS;
+    const ground = Math.max(sampleHeight(x, z), this.towerCenter.y);
+    this.camera.position.set(x, ground + DRIFT_HEIGHT, z);
+
+    const toTowerX = this.towerCenter.x - x;
+    const toTowerZ = this.towerCenter.z - z;
+    const length = Math.hypot(toTowerX, toTowerZ) || 1;
+    // Right of the view direction is (-dz, dx); aiming left of the tower pushes it right in frame.
+    const rightX = -toTowerZ / length;
+    const rightZ = toTowerX / length;
+    this.camera.lookAt(this.towerCenter.x - rightX * AIM_OFFSET_LEFT, this.towerCenter.y + 7, this.towerCenter.z - rightZ * AIM_OFFSET_LEFT);
+    this.sky.follow(this.camera);
   }
 
   start(): void {
-    this.clock.start();
-    const tick = (): void => {
-      const dt = this.clock.getDelta();
-      this.elapsed += dt;
-      this.mixer?.update(dt);
-      if (this.character) {
-        this.character.position.y = Math.sin(this.elapsed * BOB_SPEED) * BOB_AMPLITUDE;
-        this.character.rotation.y = Math.sin(this.elapsed * SWAY_SPEED) * SWAY_AMPLITUDE;
-      }
-      this.updateGoose(dt);
-      this.webgl.render(this.scene, this.camera);
+    const tick = (time: number): void => {
+      this.timer.update(time);
+      this.elapsed += Math.min(this.timer.getDelta(), 0.1);
+      this.placeCamera();
+      if (this.post) this.post.render();
+      else this.webgl.render(this.scene, this.camera);
       this.frameHandle = requestAnimationFrame(tick);
     };
     this.frameHandle = requestAnimationFrame(tick);
@@ -184,6 +238,11 @@ export class LobbyScene {
   dispose(): void {
     cancelAnimationFrame(this.frameHandle);
     window.removeEventListener('resize', this.onResize);
+    this.post?.dispose();
+    this.environment?.dispose();
+    this.sky.geometry.dispose();
+    this.sky.material.dispose();
+    for (const item of this.disposables) item.dispose();
     // Explicit context loss before dispose (after the last frame: the rAF loop was just cancelled
     // above) - see Renderer.dispose's comment. The lobby is rebuilt on every return from a match, so
     // an un-lost context here leaks one live context per lobby/match cycle.
@@ -196,5 +255,6 @@ export class LobbyScene {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.webgl.setSize(window.innerWidth, window.innerHeight);
+    this.post?.setSize(window.innerWidth, window.innerHeight);
   };
 }

@@ -109,7 +109,8 @@ export class PostStack {
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
     camera: THREE.PerspectiveCamera,
-    viewModelCamera: THREE.PerspectiveCamera,
+    /** Null when nothing is parented to the camera (the title screen), which skips that pass. */
+    viewModelCamera: THREE.PerspectiveCamera | null,
     look: LookPreset,
     options: PostStackOptions,
   ) {
@@ -132,11 +133,13 @@ export class PostStack {
       this.ao = null;
     }
 
-    const viewModelPass = new RenderPass(scene, viewModelCamera);
-    viewModelPass.clearPass.setClearFlags(false, true, false);
-    viewModelPass.ignoreBackground = true;
-    viewModelPass.skipShadowMapUpdate = true;
-    this.composer.addPass(viewModelPass);
+    if (viewModelCamera) {
+      const viewModelPass = new RenderPass(scene, viewModelCamera);
+      viewModelPass.clearPass.setClearFlags(false, true, false);
+      viewModelPass.ignoreBackground = true;
+      viewModelPass.skipShadowMapUpdate = true;
+      this.composer.addPass(viewModelPass);
+    }
 
     this.bloom = new BloomEffect({ blendFunction: BlendFunction.ADD, mipmapBlur: true, radius: 0.7, levels: 6 });
     this.composer.addPass(new EffectPass(camera, this.bloom, this.grade));
