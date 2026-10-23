@@ -3,16 +3,14 @@ import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
 import {
-  createProceduralMeleeViewModel,
-  createWeaponViewModel,
   WEAPON_ADS_POSITION,
   WEAPON_HIP_POSITION,
-  WEAPON_MODEL_SPECS,
+  type WeaponViewModel,
 } from './viewModel.ts';
+import { buildWeaponViewModel } from './models/arsenal.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { applySpreadCone } from '../combat/spread.ts';
-import { loadGLTF } from '../core/AssetLoader.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import type { Action } from '../input/actions.ts';
@@ -39,10 +37,11 @@ const HITSCAN_RANGE = 500;
 
 const SLOT_ACTIONS: Action[] = ['weaponSlot1', 'weaponSlot2', 'weaponSlot3', 'weaponSlot4', 'weaponSlot5'];
 
-interface WeaponSlot {
+interface WeaponSlot extends Omit<WeaponViewModel, 'group'> {
   weapon: Weapon;
   viewModel: THREE.Object3D;
-  muzzleLocalOffset: THREE.Vector3;
+  previousAmmo: number;
+  shotFlash: number[];
 }
 
 export class WeaponManager {
@@ -159,15 +158,16 @@ export class WeaponManager {
     const definition = WEAPON_DEFINITIONS[id];
     if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
-    const spec = WEAPON_MODEL_SPECS[id];
-    // No sourced model for melee weapons (Phase D) - a procedural placeholder stands in rather
-    // than blocking on a new asset (see createProceduralMeleeViewModel).
-    const { group, muzzleLocalOffset } = spec
-      ? createWeaponViewModel(definition, await loadGLTF(spec.path))
-      : createProceduralMeleeViewModel(definition);
+    const { group, ...model } = buildWeaponViewModel(id);
     group.visible = false;
     camera.add(group);
-    return { weapon: new Weapon(definition, damageOverride, initialReserveAmmo), viewModel: group, muzzleLocalOffset };
+    return {
+      weapon: new Weapon(definition, damageOverride, initialReserveAmmo),
+      viewModel: group,
+      ...model,
+      previousAmmo: definition.magazineSize,
+      shotFlash: model.glowMaterials.map(() => 0),
+    };
   }
 
   /** Gun Game's kill-upgrade: replaces whatever's in the active slot with a fresh instance of
@@ -494,6 +494,29 @@ export class WeaponManager {
       // driving both.
       this.active.viewModel.position.y +=
         Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength;
+    }
+
+    const slot = this.active;
+    const { weapon, glowMaterials, magazine, magazineRestPosition } = slot;
+    const { magazineSize, kind, burstCount } = weapon.definition;
+    const ammoFrac = kind === 'melee' || !Number.isFinite(magazineSize) ? 1 : weapon.ammo / magazineSize;
+    const reloadCharge = weapon.isReloading ? weapon.reloadProgress : 1;
+    // Observe spent rounds in the pose pass, including the follow-up rounds of a burst.
+    const fired = weapon.ammo < slot.previousAmmo;
+    const burstRound = (magazineSize - weapon.ammo - 1) % (burstCount ?? 1);
+    for (let i = 0; i < glowMaterials.length; i++) {
+      const material = glowMaterials[i]!;
+      const flashThisPip = material.userData.burstPip === undefined || material.userData.burstPip === burstRound;
+      const shotFlash = fired && flashThisPip ? 6 : Math.max(0, slot.shotFlash[i]! - dt * 6 / 0.06);
+      slot.shotFlash[i] = shotFlash;
+      material.emissive.setHex(ammoFrac > 0.25 ? 0x6ff0dc : 0xe8a64a);
+      material.emissiveIntensity = 2.5 * (0.3 + 0.7 * ammoFrac) * reloadCharge + shotFlash;
+    }
+    slot.previousAmmo = weapon.ammo;
+    if (magazine) {
+      const drop = weapon.isReloading ? Math.min(1, Math.sin(weapon.reloadProgress * Math.PI) * 1.6) : 0;
+      magazine.position.copy(magazineRestPosition);
+      magazine.position.y -= 0.22 * drop;
     }
 
     const scopeShouldShow = hasScope && this.aimAmount >= SCOPE_REVEAL_THRESHOLD;
