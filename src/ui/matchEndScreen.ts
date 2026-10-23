@@ -1,4 +1,5 @@
-import { createButton, ACCENT, TEXT, HAIRLINE, BG_RAISED, DISPLAY_FONT } from './menu/menuStyles.ts';
+import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED, SURFACE } from './theme.ts';
+import { createButton, ACCENT, TEXT, HAIRLINE, DISPLAY_FONT } from './menu/menuStyles.ts';
 import {
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
   GOOSE_EXPLOSION_DIFFICULTIES,
@@ -15,7 +16,7 @@ import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../core/gameModes.ts';
-import { MOTION_EASE, attachScanSweep } from './menu/menuStyles.ts';
+import { attachScanSweep } from './menu/menuStyles.ts';
 
 /** 'hordeCleared'/'hordeWipe' are Goose Horde's own win/loss reasons - previously both reused
  * 'killLimit', which is semantically wrong for a co-op mode with no kill limit at all and would
@@ -86,13 +87,15 @@ export class MatchEndScreen {
   constructor(root: HTMLElement, onRematchClick: (settings: RematchSettings) => void, onReturnToLobbyClick: () => void) {
     this.element = document.createElement('div');
     this.element.dataset.testid = 'match-end-screen';
+    this.element.className = 'menu-surface';
     this.element.style.cssText =
       'position:absolute; inset:0; display:none; align-items:center; justify-content:center;' +
-      ' flex-direction:column; gap:18px; background:rgba(6,7,9,0.82); color:#fff;' +
-      ` font-family:${DISPLAY_FONT}, system-ui, sans-serif; z-index:25; pointer-events:auto;`;
+      ` flex-direction:column; gap:18px; background:${SURFACE}; backdrop-filter:blur(10px); color:${INK};` +
+      ` font-family:${DISPLAY_FONT}; z-index:25; pointer-events:auto;`;
 
     this.titleElement = document.createElement('div');
-    this.titleElement.style.cssText = 'font-size:2.5rem; font-weight:700; letter-spacing:0.12em; text-shadow:0 4px 20px rgba(0,0,0,0.6);';
+    this.titleElement.className = 'menu-panel-title';
+    this.titleElement.style.cssText = 'font-size:2.5rem; font-weight:300; letter-spacing:-0.01em;';
 
     // Ranked podium (up to MULTIPLAYER_MAX_PLAYERS rows) rather than a plain "You N - M Opponent"
     // line, per user request - real usernames plus a clear rank/medal read faster than parsing a
@@ -111,7 +114,7 @@ export class MatchEndScreen {
     this.hostSettings = document.createElement('div');
     this.hostSettings.style.cssText =
       `display:flex; flex-direction:column; gap:10px; width:420px; padding:16px 18px;` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:8px;`;
+      ` background:${SURFACE}; backdrop-filter:blur(10px); border:1px solid ${HAIRLINE}; border-radius:2px;`;
 
     const settingsRow = document.createElement('div');
     settingsRow.style.cssText = 'display:flex; gap:14px;';
@@ -123,7 +126,7 @@ export class MatchEndScreen {
     // min-height reserves 2 lines regardless of actual wrap - see CreateRoomScreen.ts's identical
     // fix for why (this label wraps to 2 lines while gooseDifficultyLabel stays on 1, misaligning
     // the two selects without it).
-    killLimitLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px; min-height:2.1em;';
+    killLimitLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px; min-height:2.1em;`;
     // A free-typed number instead of a fixed preset list (per user request) - host isn't limited
     // to 10/15/25 kills anymore, same change as CreateRoomScreen.ts's kill-limit field.
     this.killLimitInput = document.createElement('input');
@@ -134,14 +137,14 @@ export class MatchEndScreen {
     this.killLimitInput.value = String(DEFAULT_MULTIPLAYER_KILL_LIMIT);
     this.killLimitInput.style.cssText =
       `width:100%; box-sizing:border-box; padding:10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
-      ` background:rgba(255,255,255,0.08); border:1px solid ${HAIRLINE}; border-radius:6px; color-scheme:dark;`;
+      ` background:${SURFACE_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; color-scheme:dark;`;
     killLimitColumn.append(killLimitLabel, this.killLimitInput);
 
     const gooseDifficultyColumn = document.createElement('div');
     gooseDifficultyColumn.style.cssText = 'flex:1;';
     const gooseDifficultyLabel = document.createElement('div');
     gooseDifficultyLabel.textContent = 'Goose explosions:';
-    gooseDifficultyLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px; min-height:2.1em;';
+    gooseDifficultyLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px; min-height:2.1em;`;
     this.gooseDifficultySelect = document.createElement('select');
     this.gooseDifficultySelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const difficulty of GOOSE_EXPLOSION_DIFFICULTIES) {
@@ -158,7 +161,7 @@ export class MatchEndScreen {
     // why (the mode labels are long enough to read cluttered crammed into a third column here).
     const gameModeLabel = document.createElement('div');
     gameModeLabel.textContent = 'Game mode:';
-    gameModeLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    gameModeLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px;`;
     this.gameModeSelect = document.createElement('select');
     this.gameModeSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const mode of GAME_MODES) {
@@ -171,7 +174,7 @@ export class MatchEndScreen {
 
     const weatherLabel = document.createElement('div');
     weatherLabel.textContent = 'Match weather:';
-    weatherLabel.style.cssText = 'font-size:0.8rem; opacity:0.8; margin-bottom:6px;';
+    weatherLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px;`;
     this.weatherSelect = document.createElement('select');
     this.weatherSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const weather of MATCH_WEATHERS) {
@@ -180,6 +183,8 @@ export class MatchEndScreen {
       optionElement.textContent = MATCH_WEATHER_LABELS[weather];
       this.weatherSelect.appendChild(optionElement);
     }
+
+    this.killLimitInput.style.fontFamily = MONO_FONT;
 
     const newMapLabel = document.createElement('label');
     newMapLabel.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;';
@@ -229,14 +234,6 @@ export class MatchEndScreen {
           : result.won
             ? 'VICTORY'
             : 'DEFEAT';
-    // Re-triggers every show(), not just the first - this is the one moment in the whole app
-    // that most deserves an emphasized entrance (the match's actual outcome), so it gets its own
-    // small extra beat beyond the shared scan-sweep below. Reflow trick (see multiplayerHud's hit
-    // flash) so a second match-end while an earlier animation is still technically "the same"
-    // restarts it instead of no-opping.
-    this.titleElement.style.animation = 'none';
-    void this.titleElement.offsetWidth;
-    this.titleElement.style.animation = `titleReveal 0.6s ${MOTION_EASE} both`;
 
     const ranked = [...result.placements].sort((a, b) => b.score - a.score);
     ranked.forEach((entry, index) => {
@@ -244,11 +241,6 @@ export class MatchEndScreen {
       if (!row) return; // more placements than podium rows shouldn't happen at MULTIPLAYER_MAX_PLAYERS, defensive
       setPodiumRow(row, index + 1, entry);
       row.row.style.display = 'flex';
-      // Staggered, not simultaneous - reads as the podium filling in rank by rank rather than the
-      // whole list appearing at once.
-      row.row.style.animation = 'none';
-      void row.row.offsetWidth;
-      row.row.style.animation = `rowSlideIn 0.3s ${MOTION_EASE} ${150 + index * 90}ms both`;
     });
     for (let i = ranked.length; i < this.podiumRows.length; i++) this.podiumRows[i]!.row.style.display = 'none';
 
@@ -289,17 +281,17 @@ interface PodiumRow {
 function createPodiumRow(): PodiumRow {
   const row = document.createElement('div');
   row.style.cssText =
-    'display:flex; align-items:center; gap:14px; padding:12px 18px; border-radius:8px;' +
-    ' background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);';
+    'display:flex; align-items:center; gap:14px; padding:12px 18px; border-radius:2px;' +
+    ` background:${SURFACE_RAISED}; border:1px solid ${HAIRLINE};`;
 
   const rankElement = document.createElement('div');
-  rankElement.style.cssText = 'font-size:1.4rem; font-weight:700; width:28px; text-align:center;';
+  rankElement.style.cssText = 'font-size:1.4rem; font-weight:300; width:28px; text-align:center;';
 
   const nameElement = document.createElement('div');
   nameElement.style.cssText = 'flex:1; font-size:1.05rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
 
   const scoreElement = document.createElement('div');
-  scoreElement.style.cssText = 'font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums;';
+  scoreElement.style.cssText = `font-family:${MONO_FONT}; font-size:1.2rem; font-weight:400; font-variant-numeric:tabular-nums;`;
 
   row.append(rankElement, nameElement, scoreElement);
   return { row, rankElement, nameElement, scoreElement };
@@ -311,6 +303,6 @@ function setPodiumRow(row: PodiumRow, rank: number, entry: { username: string; s
   row.rankElement.textContent = RANK_MEDALS[rank] ?? `${rank}th`;
   row.nameElement.textContent = entry.isYou ? `${entry.username} (you)` : entry.username;
   row.scoreElement.textContent = String(entry.score);
-  row.row.style.borderColor = rank === 1 ? ACCENT : 'rgba(255,255,255,0.1)';
-  row.row.style.background = rank === 1 ? 'rgba(62,207,95,0.12)' : 'rgba(255,255,255,0.05)';
+  row.row.style.borderColor = rank === 1 ? ACCENT : HAIRLINE;
+  row.row.style.background = SURFACE_RAISED;
 }

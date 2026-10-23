@@ -1,3 +1,4 @@
+import { INK, ACCENT } from '../theme.ts';
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { loadGLTF } from '../../core/AssetLoader.ts';
@@ -45,11 +46,11 @@ export class LoadoutCharacterPreview {
     root.appendChild(this.canvas);
 
     this.scene = new THREE.Scene();
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const key = new THREE.DirectionalLight(0xffffff, 1.3);
+    this.scene.add(new THREE.AmbientLight(INK, 0.65));
+    const key = new THREE.DirectionalLight(INK, 1.3);
     key.position.set(1.5, 2.5, 2.2);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x3ecf5f, 0.4);
+    const rim = new THREE.DirectionalLight(ACCENT, 0.4);
     rim.position.set(-2, 1, -1.5);
     this.scene.add(rim);
 

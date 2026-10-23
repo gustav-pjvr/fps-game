@@ -1,3 +1,4 @@
+import { MONO_FONT, LABEL_CSS, ACCENT_INK, INK, SURFACE_RAISED } from '../theme.ts';
 import { Settings } from '../../settings/Settings.ts';
 import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '../../input/actions.ts';
 import { ACCENT, HAIRLINE, TEXT, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
@@ -100,7 +101,7 @@ export class SettingsPanel {
 
     const labelEl = document.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const slider = document.createElement('input');
     slider.type = 'range';
@@ -125,16 +126,15 @@ export class SettingsPanel {
 
     const labelEl = document.createElement('label');
     labelEl.textContent = 'Graphics Quality';
-    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
     row.appendChild(labelEl);
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = 'display:flex; gap:8px;';
 
     for (const quality of GRAPHICS_QUALITY_ORDER) {
-      const button = document.createElement('button');
-      button.textContent = GRAPHICS_QUALITY_LABELS[quality];
-      button.style.cssText = 'flex:1; padding:8px 0; font-size:0.85rem; cursor:pointer; border-radius:4px;';
+      const button = createButton(GRAPHICS_QUALITY_LABELS[quality]);
+      button.style.cssText += 'flex:1; padding:12px 0;';
       button.addEventListener('click', () => {
         Settings.setGraphicsQuality(quality);
         onGraphicsQualityChange?.(quality);
@@ -154,8 +154,8 @@ export class SettingsPanel {
     const active = Settings.getGraphicsQuality();
     for (const [quality, button] of this.qualityButtons) {
       const isActive = quality === active;
-      button.style.background = isActive ? ACCENT : 'rgba(255,255,255,0.06)';
-      button.style.color = isActive ? '#08130a' : TEXT;
+      button.style.background = isActive ? ACCENT : SURFACE_RAISED;
+      button.style.color = isActive ? ACCENT_INK : TEXT;
       button.style.border = `1px solid ${isActive ? ACCENT : HAIRLINE}`;
       button.style.fontWeight = isActive ? '600' : '400';
     }
@@ -166,24 +166,24 @@ export class SettingsPanel {
     const heading = document.createElement('div');
     heading.textContent = 'Key Bindings';
     heading.style.cssText =
-      'font-size:0.85rem; opacity:0.8; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.05em;';
+      `${LABEL_CSS} margin-bottom:8px;`;
     section.appendChild(heading);
 
     for (const action of REBINDABLE_ACTIONS) {
       const row = document.createElement('div');
       row.style.cssText =
         'display:flex; justify-content:space-between; align-items:center; padding:6px 0;' +
-        ' border-bottom:1px solid rgba(255,255,255,0.06);';
+        ` border-bottom:1px solid ${HAIRLINE};`;
 
       const label = document.createElement('span');
       label.textContent = ACTION_LABELS[action];
       label.style.cssText = 'font-size:0.9rem;';
 
-      const keyButton = document.createElement('button');
+      const keyButton = createButton('');
       keyButton.style.cssText =
-        'min-width:90px; padding:6px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.15);' +
-        ' background:rgba(255,255,255,0.06); color:#eee; font-size:0.85rem; cursor:pointer;' +
-        ' font-variant-numeric:tabular-nums;';
+        `min-width:90px; padding:6px 10px; border-radius:2px; border:1px solid ${HAIRLINE};` +
+        ` background:${SURFACE_RAISED}; color:${INK}; font-size:0.85rem; cursor:pointer;` +
+        ` font-family:${MONO_FONT}; font-weight:400; font-variant-numeric:tabular-nums;`;
       keyButton.addEventListener('click', () => {
         this.listeningFor = action;
         keyButton.textContent = 'Press a key…';

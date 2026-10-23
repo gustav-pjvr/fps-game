@@ -1,3 +1,4 @@
+import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED } from '../theme.ts';
 import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
 import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, type GooseExplosionDifficulty } from '../../core/config.ts';
 
@@ -116,12 +117,12 @@ export class PlaySetupModal {
 
     const labelEl = document.createElement('label');
     labelEl.textContent = 'Goose explosions';
-    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const select = document.createElement('select');
     select.style.cssText =
       `width:100%; box-sizing:border-box; padding:8px 10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
-      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:6px; cursor:pointer;` +
+      ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; cursor:pointer;` +
       // See CreateRoomScreen.ts's identical select styling for why this is needed - without it the
       // native dropdown popup ignores the dark theme above and renders illegible light-on-light text.
       ' color-scheme:dark;';
@@ -144,7 +145,7 @@ export class PlaySetupModal {
 
     const labelEl = document.createElement('label');
     labelEl.textContent = `${label} (0-${max})`;
-    labelEl.style.cssText = 'display:block; font-size:0.85rem; opacity:0.8; margin-bottom:6px;';
+    labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const input = document.createElement('input');
     input.type = 'number';
@@ -152,8 +153,8 @@ export class PlaySetupModal {
     input.max = String(max);
     input.value = String(defaultValue);
     input.style.cssText =
-      'width:100%; box-sizing:border-box; padding:8px 10px; border-radius:6px; font-size:0.95rem;' +
-      ' border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06); color:#eee;';
+      `width:100%; box-sizing:border-box; padding:8px 10px; border-radius:2px; font-family:${MONO_FONT}; font-size:0.95rem;` +
+      ` border:1px solid ${HAIRLINE}; background:${SURFACE_RAISED}; color:${INK};`;
 
     row.append(labelEl, input);
     panel.appendChild(row);

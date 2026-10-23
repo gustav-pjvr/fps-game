@@ -1,3 +1,4 @@
+import { MONO_FONT, LABEL_CSS } from './theme.ts';
 import {
   createOverlay,
   createPanel,
@@ -5,13 +6,11 @@ import {
   createEyebrow,
   createButton,
   attachScanSweep,
-  chamferClipPath,
   ACCENT,
   TEXT,
   STEEL,
   HAIRLINE,
   BG_RAISED,
-  DISPLAY_FONT,
   BODY_FONT,
 } from './menu/menuStyles.ts';
 import type { ModeExplanationIcon, ModeExplanationStep } from '../core/modeExplanations.ts';
@@ -100,7 +99,7 @@ export class ModeExplanationScreen {
     });
 
     this.waitingNote = document.createElement('div');
-    this.waitingNote.style.cssText = `font-family:${BODY_FONT}; font-size:0.78rem; color:${STEEL}; margin-top:10px; text-align:center;`;
+    this.waitingNote.style.cssText = `font-family:${MONO_FONT}; font-size:0.78rem; color:${STEEL}; margin-top:10px; text-align:center;`;
 
     this.overlay.appendChild(this.panel);
     root.appendChild(this.overlay);
@@ -161,7 +160,7 @@ export class ModeExplanationScreen {
     iconBox.style.cssText =
       `flex:0 0 auto; width:44px; height:44px; padding:9px; box-sizing:border-box; display:flex; align-items:center;` +
       ` justify-content:center; background:${BG_RAISED}; border:1px solid ${HAIRLINE}; color:${ACCENT};` +
-      ` clip-path:${chamferClipPath('top-left', 8)};`;
+      ` border-radius:2px;`;
     iconBox.innerHTML = ICONS[step.icon];
 
     const textWrap = document.createElement('div');
@@ -170,7 +169,7 @@ export class ModeExplanationScreen {
     const stepLabel = document.createElement('div');
     stepLabel.textContent = `STEP ${index}`;
     stepLabel.style.cssText =
-      `font-family:${DISPLAY_FONT}; font-size:0.65rem; font-weight:600; letter-spacing:0.18em; color:${STEEL}; margin-bottom:4px;`;
+      `${LABEL_CSS} margin-bottom:4px;`;
 
     const text = document.createElement('div');
     text.textContent = step.text;
