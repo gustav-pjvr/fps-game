@@ -1,4 +1,4 @@
-﻿import { INK, THREAT } from './theme.ts';
+import { INK, THREAT } from './theme.ts';
 
 const DURATION = 0.18;
 

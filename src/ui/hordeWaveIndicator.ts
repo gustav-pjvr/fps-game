@@ -1,4 +1,4 @@
-﻿import { INK, LABEL_CSS, MONO_FONT, TEXT_SHADOW } from './theme.ts';
+import { INK, LABEL_CSS, MONO_FONT, TEXT_SHADOW } from './theme.ts';
 
 /** Always-visible wave count, below the compass and multiplayer scoreboard. */
 export class HordeWaveIndicator {

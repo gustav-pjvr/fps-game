@@ -1,4 +1,4 @@
-﻿import { AMBER, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
+import { AMBER, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
 const ENTRY_DURATION = 3;
 const FADE_DURATION = 0.18;

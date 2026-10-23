@@ -1,4 +1,4 @@
-﻿import { Compass, bearingDeg } from './compass.ts';
+import { Compass, bearingDeg } from './compass.ts';
 import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, INK_FAINT, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_SHADOW, THREAT } from './theme.ts';
 
 export class Hud {
@@ -17,6 +17,10 @@ export class Hud {
   private readonly magazine: HTMLSpanElement;
   private readonly capacity: HTMLSpanElement;
   private readonly reserve: HTMLSpanElement;
+  private readonly prompt: HTMLDivElement;
+  private readonly promptKey: HTMLElement;
+  private readonly promptText: HTMLSpanElement;
+  private progressShown = '';
 
   constructor(root: HTMLElement) {
     this.container = document.createElement('div');
@@ -93,6 +97,15 @@ export class Hud {
     ammo.append(this.magazine, this.capacity, this.reserve);
     weapon.append(this.weaponNameElement, ammo);
     this.container.appendChild(weapon);
+
+    // An interaction prompt under the crosshair, e.g. the Uplink mission's `E  START UPLINK`.
+    this.prompt = document.createElement('div');
+    this.prompt.style.cssText = `position:absolute; top:calc(50% + 46px); left:50%; transform:translateX(-50%); display:none; align-items:center; gap:10px; ${LABEL_CSS} color:${INK};`;
+    this.promptKey = document.createElement('kbd');
+    this.promptKey.style.cssText = `font-family:${MONO_FONT}; font-size:11px; color:${ACCENT}; border:1px solid ${ACCENT}; border-radius:2px; padding:3px 7px;`;
+    this.promptText = document.createElement('span');
+    this.prompt.append(this.promptKey, this.promptText);
+    this.container.appendChild(this.prompt);
   }
 
   setObjective(label: string, text: string): void {
@@ -101,9 +114,13 @@ export class Hud {
   }
 
   setObjectiveProgress(done: number, total: number): void {
-    this.progress.replaceChildren();
     this.progress.style.display = 'flex';
     this.scoreElement.style.display = 'none';
+    // Called every tick by the mission; only rebuild the pips when they change.
+    const shown = `${done}/${total}`;
+    if (shown === this.progressShown) return;
+    this.progressShown = shown;
+    this.progress.replaceChildren();
     for (let i = 0; i < total; i++) {
       const pip = document.createElement('span');
       pip.style.cssText = `width:26px; height:4px; background:${i < done ? ACCENT : INK_FAINT};`;
@@ -123,6 +140,17 @@ export class Hud {
     this.magazine.textContent = reloading ? 'RELOADING' : numeric ? String(current) : 'MELEE';
     this.capacity.textContent = numeric ? ` / ${max}` : '';
     this.reserve.textContent = reserve != null && Number.isFinite(reserve) ? ` +${reserve}` : '';
+  }
+
+  /** Shows `key` and `text` under the crosshair, or hides the prompt with null. */
+  setPrompt(key: string, text: string | null): void {
+    if (text === null) {
+      this.prompt.style.display = 'none';
+      return;
+    }
+    this.promptKey.textContent = key;
+    this.promptText.textContent = text;
+    this.prompt.style.display = 'flex';
   }
 
   setWeaponName(name: string): void {

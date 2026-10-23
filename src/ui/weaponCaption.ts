@@ -1,4 +1,4 @@
-﻿import { INK, INK_DIM, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
+import { INK, INK_DIM, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
 const CAPTION_DURATION = 2.8;
 const FADE_DURATION = 0.18;

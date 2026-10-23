@@ -1,4 +1,4 @@
-﻿import { ACCENT, HAIRLINE, INK, INK_DIM, MONO_FONT, SANS_FONT, TEXT_SHADOW } from './theme.ts';
+import { ACCENT, HAIRLINE, INK, INK_DIM, MONO_FONT, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
 const SLOT_STYLE = `display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:2px solid transparent; font-family:${SANS_FONT}; font-size:11px; text-transform:uppercase; color:${INK_DIM};`;
 

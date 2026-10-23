@@ -1,4 +1,4 @@
-﻿import { INK, INK_DIM, SANS_FONT, TEXT_SHADOW } from './theme.ts';
+import { INK, INK_DIM, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
 const ENTRY_DURATION = 4;
 const FADE_DURATION = 0.18;

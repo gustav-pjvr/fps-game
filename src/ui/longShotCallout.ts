@@ -1,4 +1,4 @@
-﻿import { ACCENT, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
+import { ACCENT, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
 const ENTRY_DURATION = 1.5;
 const FADE_DURATION = 0.18;
