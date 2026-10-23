@@ -100,6 +100,7 @@ export class Hud {
 
     // An interaction prompt under the crosshair, e.g. the Uplink mission's `E  START UPLINK`.
     this.prompt = document.createElement('div');
+    this.prompt.setAttribute('aria-live', 'polite');
     this.prompt.style.cssText = `position:absolute; top:calc(50% + 46px); left:50%; transform:translateX(-50%); display:none; align-items:center; gap:10px; ${LABEL_CSS} color:${INK};`;
     this.promptKey = document.createElement('kbd');
     this.promptKey.style.cssText = `font-family:${MONO_FONT}; font-size:11px; color:${ACCENT}; border:1px solid ${ACCENT}; border-radius:2px; padding:3px 7px;`;

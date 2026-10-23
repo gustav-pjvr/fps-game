@@ -13,6 +13,9 @@
       rel="stylesheet"
     />
     <style>
+      html {
+        color-scheme: dark;
+      }
       html, body {
         margin: 0;
         padding: 0;
@@ -44,10 +47,11 @@
     </style>
   </head>
   <body>
-    <div id="lobby"></div>
-    <div id="app"></div>
-    <div id="hud"></div>
-    <div id="overlay"></div>
+    <!-- The canvases draw the world and carry no text; menus and the HUD sit in landmarks. -->
+    <div id="lobby" aria-hidden="true"></div>
+    <div id="app" aria-hidden="true"></div>
+    <div id="hud" role="region" aria-label="Match status"></div>
+    <main id="overlay"></main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

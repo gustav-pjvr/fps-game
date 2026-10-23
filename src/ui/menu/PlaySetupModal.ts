@@ -129,9 +129,12 @@ export class PlaySetupModal {
 
     const labelEl = document.createElement('label');
     labelEl.textContent = 'Goose explosions';
+    labelEl.htmlFor = 'match-setup-goose-difficulty';
     labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const select = document.createElement('select');
+    select.id = 'match-setup-goose-difficulty';
+    select.name = 'gooseDifficulty';
     select.style.cssText =
       `width:100%; box-sizing:border-box; padding:8px 10px; font-size:0.95rem; font-weight:600; color:${TEXT};` +
       ` background:${BG_RAISED}; border:1px solid ${HAIRLINE}; border-radius:2px; cursor:pointer;` +
@@ -156,11 +159,17 @@ export class PlaySetupModal {
     row.style.cssText = 'margin-bottom:16px;';
 
     const labelEl = document.createElement('label');
-    labelEl.textContent = `${label} (0-${max})`;
+    const id = `match-setup-${label.toLowerCase()}`;
+    labelEl.textContent = `${label} (0 to ${max})`;
+    labelEl.htmlFor = id;
     labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const input = document.createElement('input');
     input.type = 'number';
+    input.id = id;
+    input.name = label.toLowerCase();
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
     input.min = '0';
     input.max = String(max);
     input.value = String(defaultValue);

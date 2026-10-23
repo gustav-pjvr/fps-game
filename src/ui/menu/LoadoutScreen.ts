@@ -181,6 +181,10 @@ export class LoadoutScreen {
 
     const leftColumn = document.createElement('div');
     leftColumn.className = 'loadout-scroll-hide';
+    // It scrolls with its scrollbar hidden, so keyboard users need to be able to focus it.
+    leftColumn.tabIndex = 0;
+    leftColumn.setAttribute('role', 'region');
+    leftColumn.setAttribute('aria-label', 'Weapon catalog');
     leftColumn.style.cssText =
       'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:22px;' +
       ' scrollbar-width:none; -ms-overflow-style:none;';

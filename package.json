@@ -21,6 +21,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
     "@playwright/test": "^1.61.1",
     "@types/three": "^0.185.0",
     "typescript": "^6.0.3",

@@ -7,7 +7,13 @@ interface Marker {
   label: HTMLDivElement;
   range: HTMLDivElement;
   arrow: HTMLDivElement;
+  /** Half the marker's rendered size, measured once per label so update() never reads layout. */
+  halfWidth: number;
+  halfHeight: number;
 }
+
+/** Pixels at the top of the screen the compass (docs/visual-overhaul-ui.md, "HUD layout") owns. */
+const COMPASS_CLEARANCE = 112;
 
 export class WorldMarkers {
   private readonly element: HTMLDivElement;
@@ -38,11 +44,14 @@ export class WorldMarkers {
       arrow.style.cssText = 'position:absolute; left:calc(50% - 6px); top:-18px; width:12px; display:none;';
       element.append(arrow, diamond, labelElement, range);
       this.element.appendChild(element);
-      marker = { position: worldPos.clone(), element, label: labelElement, range, arrow };
+      marker = { position: worldPos.clone(), element, label: labelElement, range, arrow, halfWidth: 0, halfHeight: 0 };
       this.markers.set(id, marker);
     }
     marker.position.copy(worldPos);
-    marker.label.textContent = label;
+    if (marker.label.textContent !== label) {
+      marker.label.textContent = label;
+      marker.halfWidth = 0;
+    }
   }
 
   remove(id: string): void {
@@ -66,8 +75,11 @@ export class WorldMarkers {
       const offscreen = behind || Math.abs(dx) > 1 || Math.abs(dy) > 1 || this.projected.z < -1 || this.projected.z > 1;
       marker.element.style.display = 'block';
       marker.range.textContent = `${Math.round(this.cameraPosition.distanceTo(marker.position))} m`;
-      const halfWidth = marker.element.offsetWidth / 2;
-      const halfHeight = marker.element.offsetHeight / 2;
+      if (marker.halfWidth === 0) {
+        marker.halfWidth = marker.element.offsetWidth / 2;
+        marker.halfHeight = marker.element.offsetHeight / 2;
+      }
+      const { halfWidth, halfHeight } = marker;
       const limitX = Math.max(0, width / 2 - 48 - halfWidth);
       const limitY = Math.max(0, height / 2 - 48 - halfHeight - (offscreen ? 18 : 0));
       let x = dx * width / 2;
@@ -77,6 +89,8 @@ export class WorldMarkers {
         x *= scale;
         y *= scale;
       }
+      // Never under the compass tape: a tall target seen from close by projects onto the top strip.
+      y = Math.max(y, COMPASS_CLEARANCE + halfHeight - height / 2);
       marker.element.style.left = `${width / 2 + x}px`;
       marker.element.style.top = `${height / 2 + y}px`;
       marker.arrow.style.display = offscreen ? 'block' : 'none';

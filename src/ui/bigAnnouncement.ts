@@ -11,6 +11,9 @@ export class BigAnnouncement {
 
   constructor(root: HTMLElement) {
     this.element = document.createElement('div');
+    // Spoken as well as shown: these carry mission state (an uplink online, extraction open).
+    this.element.setAttribute('role', 'status');
+    this.element.setAttribute('aria-live', 'polite');
     this.element.style.cssText = `position:absolute; top:max(250px, 33%); left:50%; transform:translate(-50%, -50%); text-align:center; width:70%; z-index:30; font-family:${SANS_FONT}; color:${AMBER}; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; opacity:0; pointer-events:none;`;
     const label = document.createElement('div');
     label.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;

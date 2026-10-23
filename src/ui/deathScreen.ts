@@ -25,7 +25,7 @@ function formatClock(seconds: number): string {
 
 export class DeathScreen {
   private readonly element: HTMLDivElement;
-  private readonly titleElement: HTMLDivElement;
+  private readonly titleElement: HTMLHeadingElement;
   private readonly scoreElement: HTMLDivElement;
   private readonly statsElement: HTMLDListElement;
 
@@ -40,11 +40,11 @@ export class DeathScreen {
       `px; flex-direction:column; gap:14px; background:${SURFACE}; backdrop-filter:blur(10px); color:${INK};` +
       ` font-family:${SANS_FONT}; z-index:20; pointer-events:auto;`;
 
-    const title = document.createElement('div');
+    const title = document.createElement('h2');
     this.titleElement = title;
     title.textContent = 'YOU DIED';
     title.className = 'menu-panel-title';
-    title.style.cssText = 'font-size:2.5rem; font-weight:300; letter-spacing:-0.01em;';
+    title.style.cssText = 'margin:0; font-size:2.5rem; font-weight:300; letter-spacing:-0.01em; text-wrap:balance;';
 
     this.scoreElement = document.createElement('div');
     this.scoreElement.style.cssText = `font-family:${MONO_FONT}; font-size:1.1rem; color:${INK_DIM};`;

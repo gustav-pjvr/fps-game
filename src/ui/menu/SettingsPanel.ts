@@ -5,6 +5,8 @@ import { ACCENT, HAIRLINE, TEXT, attachScanSweep, createButton, createOverlay, c
 import { GRAPHICS_QUALITY_LABELS, GRAPHICS_QUALITY_ORDER, type GraphicsQuality } from '../../settings/graphicsQuality.ts';
 import { CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../../core/config.ts';
 
+let sliderIdCounter = 0;
+
 /** Lobby overlay: master volume, mouse sensitivity, and rebindable key bindings - all persisted via Settings. */
 export class SettingsPanel {
   private readonly overlay: HTMLDivElement;
@@ -104,6 +106,9 @@ export class SettingsPanel {
     labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
     const slider = document.createElement('input');
+    // Unique per panel: the lobby and a live match each build their own SettingsPanel.
+    slider.id = `settings-slider-${++sliderIdCounter}`;
+    labelEl.htmlFor = slider.id;
     slider.type = 'range';
     slider.min = String(min);
     slider.max = String(max);
