@@ -1,4 +1,5 @@
 import type { FrameStats } from '../core/FpsMeter.ts';
+import { ACCENT } from './theme.ts';
 
 /** Debug-only, off by default - toggled with F3 (see Game.ts's raw keydown listener; this is a
  * dev tool, not a rebindable gameplay action, so it deliberately doesn't go through the
@@ -14,7 +15,7 @@ export class PerfOverlay {
     this.element.dataset.testid = 'perf-overlay';
     this.element.style.cssText =
       'position:absolute; top:8px; left:8px; padding:6px 10px; background:rgba(0,0,0,0.6);' +
-      ' color:#3ecf5f; font:12px/1.4 monospace; white-space:pre; z-index:50; pointer-events:none; display:none;';
+      ` color:${ACCENT}; font:12px/1.4 monospace; white-space:pre; z-index:50; pointer-events:none; display:none;`;
     root.appendChild(this.element);
   }
 

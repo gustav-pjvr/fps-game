@@ -1,38 +1,35 @@
-import { DISPLAY_FONT } from './menu/menuStyles.ts';
+﻿import { AMBER, LABEL_CSS, SANS_FONT, TEXT_SHADOW } from './theme.ts';
 
 const ENTRY_DURATION = 3;
-const FADE_DURATION = 0.5;
+const FADE_DURATION = 0.18;
 
-/** Large, center-screen banner for genuinely rare/exciting events (currently: the bonus golden
- * goose spawning - per explicit user request for "big text" on that event) - distinct from
- * GooseAnnouncement's small top-center toast, which fires constantly for the routine "a goose
- * appeared" spawn. Reserved for the one thing per match actually worth stopping to notice. */
 export class BigAnnouncement {
   private readonly element: HTMLDivElement;
+  private readonly headline: HTMLDivElement;
   private timeRemaining = 0;
+  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   constructor(root: HTMLElement) {
     this.element = document.createElement('div');
-    this.element.style.cssText =
-      `position:absolute; top:28%; left:50%; transform:translate(-50%, -50%); font-family:${DISPLAY_FONT}; font-size:2.6rem;` +
-      ' font-weight:800; letter-spacing:0.04em; color:#ffd54a; text-align:center; opacity:0;' +
-      ' pointer-events:none; z-index:30; text-shadow:0 4px 20px rgba(0,0,0,0.8), 0 0 30px rgba(255,213,74,0.5);' +
-      ' transition:opacity 0.3s;';
+    this.element.style.cssText = `position:absolute; top:max(250px, 33%); left:50%; transform:translate(-50%, -50%); text-align:center; width:70%; z-index:30; font-family:${SANS_FONT}; color:${AMBER}; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; opacity:0; pointer-events:none;`;
+    const label = document.createElement('div');
+    label.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
+    label.textContent = 'FIELD UPDATE';
+    this.headline = document.createElement('div');
+    this.headline.style.cssText = 'font-size:clamp(24px, 2.4vw, 40px); font-weight:300;';
+    this.element.append(label, this.headline);
     root.appendChild(this.element);
   }
 
   show(label: string): void {
-    this.element.textContent = label;
+    this.headline.textContent = label;
     this.timeRemaining = ENTRY_DURATION;
+    this.element.style.opacity = '1';
   }
 
   update(dt: number): void {
-    if (this.timeRemaining <= 0) {
-      this.element.style.opacity = '0';
-      return;
-    }
-    this.timeRemaining -= dt;
-    this.element.style.opacity = this.timeRemaining < FADE_DURATION ? String(this.timeRemaining / FADE_DURATION) : '1';
+    this.timeRemaining = Math.max(0, this.timeRemaining - dt);
+    this.element.style.opacity = String(this.timeRemaining > 0 ? this.reducedMotion.matches ? 1 : Math.min(1, this.timeRemaining / FADE_DURATION) : 0);
   }
 
   dispose(): void {

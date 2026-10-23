@@ -25,6 +25,8 @@ import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
 import { Tracers } from '../combat/Tracers.ts';
 import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
+import { DamageArcs } from '../ui/damageArcs.ts';
+import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
 import { HitMarker } from '../ui/hitMarker.ts';
@@ -314,6 +316,7 @@ export class Game {
   /** Set after construction (same forward-reference pattern as modeExplanationScreen); only needed
    * to build the mid-match Loadout page lazily, the first time the pause menu opens it. */
   private hudRoot: HTMLElement | null = null;
+  private readonly hudForward = new THREE.Vector3();
   private loadoutScreenLoading = false;
   private disposed = false;
   /** See makeSpawnBlockedCheck. Assigned in the constructor (it needs the BuildingManager). */
@@ -420,6 +423,7 @@ export class Game {
     private readonly hotbar: Hotbar,
     private readonly hitMarker: HitMarker,
     private readonly damageVignette: DamageVignette,
+    private readonly damageArcs: DamageArcs,
     private readonly deathScreen: DeathScreen,
     private readonly weaponCaption: WeaponCaption,
     private readonly longShotCallout: LongShotCallout,
@@ -451,6 +455,8 @@ export class Game {
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
     this.director = !multiplayer && matchConfig.directorMode && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
     this.directorLastHealth = player.currentHealth;
+    hud.setObjective(this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', this.director || matchConfig.hordeMode ? 'Survive the waves' : 'Clear the valley');
+    hud.compass.setSunDirection(renderer.currentLook.sunDirection);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
@@ -666,11 +672,18 @@ export class Game {
     document.addEventListener('click', () => sound.resume(), { once: true });
 
     const damageVignette = new DamageVignette(hudRoot);
+    const damageArcs = new DamageArcs(hudRoot);
+    const hud = new Hud(hudRoot);
     const spawnY = sampleHeight(ownSpawn.x, ownSpawn.y) + SPAWN_HEIGHT_OFFSET;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(ownSpawn.x, spawnY, ownSpawn.y), {
-      onDamaged: () => {
+      onDamaged: (sourcePosition) => {
         sound.playPlayerHurt();
         damageVignette.trigger();
+        if (sourcePosition) {
+          const bearing = bearingDeg(sourcePosition.x - player.position.x, sourcePosition.z - player.position.z);
+          damageArcs.trigger(bearing);
+          hud.compass.addContact(bearing);
+        }
       },
       onFootstep: () => {
         sound.playFootstep();
@@ -1074,7 +1087,6 @@ export class Game {
       };
     }
 
-    const hud = new Hud(hudRoot);
     if (activeMultiplayer) {
       // MultiplayerHud (constructed above, alongside the rest of activeMultiplayer) shows both
       // players' health/score in different positions - the single-player-shaped elements here
@@ -1145,6 +1157,7 @@ export class Game {
       hotbar,
       hitMarker,
       damageVignette,
+      damageArcs,
       deathScreen,
       weaponCaption,
       longShotCallout,
@@ -1414,6 +1427,7 @@ export class Game {
     this.hotbar.dispose();
     this.hitMarker.dispose();
     this.damageVignette.dispose();
+    this.damageArcs.dispose();
     this.deathScreen.dispose();
     this.weaponCaption.dispose();
     this.longShotCallout.dispose();
@@ -2015,6 +2029,10 @@ export class Game {
       this.gooseTossController ? (this.gooseTossController.isHolding ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
     );
     this.hud.setScore(this.scoreState.value);
+    if (this.director) {
+      const phase = { buildUp: 'BUILDING', peak: 'PEAK', fade: 'FADING', relax: 'QUIET' }[this.director.phase];
+      this.hud.setScoreLine(`SCORE ${this.scoreState.value}  ${phase}`);
+    }
     this.hud.setHealth(this.player.currentHealth, this.player.maxHealth);
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
@@ -2659,6 +2677,12 @@ export class Game {
     // through, and unlike interpolating every enemy/target mesh, it needs no new per-entity
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
+    this.renderer.camera.getWorldDirection(this.hudForward);
+    const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
+    const hudDt = Math.max(0, frameMs / 1000);
+    this.hud.compass.setSunDirection(this.renderer.currentLook.sunDirection);
+    this.hud.update(hudDt, -heading * Math.PI / 180);
+    this.damageArcs.update(hudDt, heading);
     this.updateSunFollow();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
