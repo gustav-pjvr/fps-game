@@ -1,9 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Behaviour specs run on Low graphics (no shadows, post-processing or environment light): on this
- * machine's SwiftShader the v4 Medium look ran two lobby pages at about 2 FPS, so every multiplayer
- * spec ran out of time with all its steps still advancing (docs/testing.md). Specs that judge the
+ * Behaviour specs run on Low graphics (no shadows, post-processing or environment light), the
+ * lightest load for what they check. Measured 2026-10-23: a single page here runs at about 2.2 FPS
+ * on Low and on Medium alike (the CPU, not the renderer, is the limit), so the multiplayer specs'
+ * real fix was their budgets; Low stays because it costs nothing (docs/testing.md). Specs that judge the
  * rendered look (ui-qa, perf, the console-errors load test) opt back into the shipped default with
  * `test.use({ storageState: SHIPPED_GRAPHICS })`. E2E_GRAPHICS=medium or high runs everything at
  * that quality instead.

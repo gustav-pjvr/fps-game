@@ -120,7 +120,7 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 - Look pass in the main thread: cooler gunmetal albedo with lower metalness and a sky env map on every tier (the first port read as bronze), scale down to 0.92 and offset right (too big and central), glow that dims with the magazine and turns amber below a quarter, a sprint tuck and a reload roll, the magazine dropping during reloads.
 - Checks: `arsenal.test.ts`, gun gallery screenshots, in-match screenshots at Low and Medium.
 
-### Phase 3: HUD and menus (in progress)
+### Phase 3: HUD and menus (2026-10-23)
 
 - Title screen (`84f538a`): `lobby/LobbyScene.ts` drifts a camera over a terrain patch, a tower and vegetation from the live seed under the match look; `MainMenu.ts` is the AFTERLIGHT-style column with the valley seed and the sun's bearing on the label line.
 - Menus (`6af6105`, Codex job `ui-menus`): every menu screen on the `ui/theme.ts` tokens, Manrope and Martian Mono, weapon descriptions rewritten as plain competitive lines.
@@ -130,13 +130,13 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 - `site-qa` (`e2e/ui-qa.spec.ts`, axe 4.10.1): every menu screen at 1440 and 390 px fails on console errors, uncaught errors, 5xx, axe violations and anything off screen; plus a keyboard-only flow (F01-H1) and an out-of-range count (F01-E1). The first run found three real issues, all fixed: no landmarks (`<main>` for menus, a labelled region for the HUD, canvases hidden from assistive tech), unlabelled settings sliders, and the loadout list unreachable by keyboard. 12 of 12 pass.
 - Screenshots at 1920x1080 and 1280x640: title, setup, HUD at start, the uplink prompt, uploading, and the mission end screen.
 
-### Phase 5: procedural detail (in progress)
+### Phase 5: procedural detail (2026-10-23; wall surface detail moves to the building redesign)
 
 - Terrain AO (`a732c69`): `world/terrainShading.ts` bakes horizon AO and seamless central-difference normals into each chunk's vertex colour, sampled past the chunk edge so borders match.
 - Lit windows (`043d6a3`): the building grade masks the glass in the Kenney atlas and lights it from the look's `windowGlow` (faint at dusk, warm at night).
 - Contact shadows: `render/contactShadows.ts` puts a multiply-blended soft patch under every tree, bush and rock (a disc tilted to the slope, in the same instanced slots as the vegetation), every house (a soft rectangle past the walls) and every tower. They fade out past 150 m so they never leave dark spots in the haze. The first strengths (about 0.4) did not read in screenshots and were raised to about 0.6. Verified with an A/B toggle in the page on a fixed view: 38 shadow meshes, and 24k to 59k pixels change when they are switched off (`a9dfe84`).
 
-### Phase 4: Uplink mission (in progress)
+### Phase 4: Uplink mission (2026-10-23)
 
 - `core/mission/missionState.ts`: the pure state machine with 8 unit tests (tower selection, prompt and start radius, waves at 10, 20 and 30 seconds with their biases, pausing and resuming, switching uplinks without resending waves, extraction with its last wave and the ring hold, death).
 - `world/UplinkBeacons.ts`: beams over the uplinks (amber, pulsing while uploading, cyan online) and the extraction beam and ring.
@@ -171,3 +171,4 @@ Gustav approved the preview, with two asks: enemy hitboxes the size of the chara
 - The multiplayer connection spec got a 90 s budget: a trace showed two pages rendering the lobby world made each step crawl (guest load 8.8 s, a click 10.7 s), and the 30 s default ran out with "Join Room" resolved but not yet clicked. Nothing hung; the earlier guess that the panel entrance animation kept the button moving was wrong.
 - Test split (Gustav: run only what a change needs): `npm run test:e2e` picks Playwright groups from the changed files, `test:e2e:quick` runs four `@quick` smoke tests, `test:e2e:full` is for a release or merge to master; rules in `scripts/e2eGroups.mjs`, guide in `docs/testing.md`. Behaviour specs now run on Low graphics (the v4 Medium look ran two lobby pages at about 2 FPS on SwiftShader); ui-qa, perf and the console-errors load test stay on the shipped default. Multiplayer budgets now cover the roughly 50 s of match setup this machine needs.
 - e2e status at the end of the step: quick 4/4, ui-qa 11/12, multiplayer 5/8 (connection, match sync, pause damage, host disconnect pass), smoke and mission all pass, enemy AI all pass (the cover test needed a rerun: archetype and placement variance). Open, to check in a real two-player session: the combat and moving-target specs (known not to give a verdict here: quick clicks lost to weapon cooldown at 2 FPS) and the kill-limit spec, where the host lost the guest mid-match, most likely the 8 s silence sweep (`MULTIPLAYER_CONNECTION_TIMEOUT_MS`) tripping on a starved guest page; its trace was lost to a runner bug, since fixed. To check: the ui-qa phone guard for the multiplayer menu timed out waiting for PLAY once, after passing earlier the same day.
+- Release checks (v4.0.0): smoke, enemy AI, mission and world groups on the final code, 29 of 32 at first. The pistol hearing test passed alone (an enemy drifted inside 30 m before the shot). The director peak test failed the same way on the pre-overhaul build this morning and stays a known flake. World bounds failed twice for real: it sprinted north from the spawn and two random worlds pinned it in forest at 62 and 72 m of the 100 m it needed, so the boundary was never tested. It now starts 15 m inside the push zone facing outward and passed twice. Measured on the way: one page runs at about 2.2 FPS on Low and on Medium alike here, so Low graphics in tests is not a speed fix (docs corrected).

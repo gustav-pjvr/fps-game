@@ -9,7 +9,11 @@ Live at **[hunter-n-goose.pages.dev](https://hunter-n-goose.pages.dev/)**.
 - **Procedural open world** — seeded terrain, zones (towns/forests), roads, vegetation, and 4 fixed watch towers, all generated client-side from a single world seed so every player in a multiplayer match sees the identical map.
 - **Enemy AI (solo)**: several archetypes with distinct loadouts that notice you gradually, share what they know as a squad, limit themselves to two shooters at once while others flank, fight from cover, search for you in pairs when they lose you, and call out what they are doing. See `docs/enemy-ai-v2.md`.
 - **Director mode (solo)**: an opt-in Match Setup option where a pacing director sends waves of enemies in from out of sight and gives you a breather between peaks.
-- **Full weapon set** — pistol, rifle, shotgun, sniper, and knife, each with real ballistics (hitscan, spread, damage falloff), ADS, reload, and per-weapon sounds.
+- **A stylised dusk look (v4.0):** a teal sky over an amber horizon, a low sun, horizon-coloured haze and muted surfaces, with bloom, a colour grade and anti-aliasing on Medium and High and ambient occlusion on High. See `docs/visual-overhaul.md`.
+- **Full weapon set:** pistol, burst SMG, rifle, shotgun, sniper and knife, all built in one design language (gunmetal, brushed barrels, cyan glow strips that track the magazine), each with real ballistics (hitscan, spread, damage falloff), ADS, reload, per-weapon sounds and glowing tracers.
+- **Uplink mission (solo):** bring three watch-tower uplinks online, hold each tower while waves come for you, then reach extraction.
+- **Full-size animated characters** with hitboxes fitted to the body and head: SWAT enemies with red visors, other players in spacesuits lit cyan. Headshots count triple, in solo and multiplayer.
+- **Sound with depth:** valley reverb on gunshots and explosions, combat music that follows the fight, and a heartbeat at low health.
 - **Goose Dash Buster mini-game** — a wandering goose that takes exactly 2 hits to kill, then explodes with distance-based falloff damage. Spawns at match start and again whenever a player dies. Multiplayer host picks an explosion difficulty (Easy/Normal/Extreme/Nuke).
 - **Multiplayer (up to 4 players)** — host-relay star topology over PeerJS/WebRTC (with a TURN fallback for cross-network play), room codes, live lobby rosters, mid-match rejoin, positional audio, a shared minimap, and a full podium/scoreboard flow.
 - **Host-picked game modes** (multiplayer only) — Default, 1 Shot 1 Kill, Sniper Duel, Gun Game, and Knife Only.
@@ -31,7 +35,9 @@ npm run build       # type-check + production build (outputs to dist/)
 npm run preview     # preview a production build locally
 npm run typecheck   # tsc --noEmit only
 npm run test:unit   # Vitest unit suite
-npm run test:e2e    # Playwright end-to-end suite (spins up its own dev server)
+npm run test:e2e    # Playwright specs for what changed since the pushed branch (spins up its own dev server)
+npm run test:e2e:quick   # four core smoke tests, about 2 minutes
+npm run test:e2e:full    # the whole Playwright suite: for a release or a merge to master
 ```
 
 ## Controls
@@ -44,6 +50,7 @@ npm run test:e2e    # Playwright end-to-end suite (spins up its own dev server)
 | Fire | Left click |
 | Aim (ADS) | Right click |
 | Reload | `R` |
+| Interact (start an uplink) | `E` |
 | Switch weapon | `1`–`5`, or mouse wheel |
 | Reset match | `T` |
 | Pause / menu | `Esc` |

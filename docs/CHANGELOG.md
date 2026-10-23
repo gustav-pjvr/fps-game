@@ -10,7 +10,43 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v3.10.0 (current)
+## v4.0.0 (current)
+
+The visual overhaul, built on 2026-10-23 after Gustav reviewed a three-model 3D game test. A new
+identity: a well-made, focused shooter at dusk instead of a goose joke (the goose modes stay
+playable). The full record is in `docs/visual-overhaul.md`.
+
+- **A new look: stylised dusk.** A deep teal sky over an amber horizon, a low sun with long
+  shadows, haze that takes the horizon's colour, and muted surfaces, so the only strong colour is
+  light: weapon glow, objectives, tracers, lit windows. Medium and High add bloom, a colour grade
+  and anti-aliasing, and High adds ambient occlusion; Low keeps the palette without the extra
+  passes. Night and fog get their own versions of the look.
+- **A new arsenal.** Every weapon is rebuilt in one design language: dark gunmetal, brushed
+  barrels, hazard trim and cyan glow strips that dim as the magazine empties and turn amber when it
+  runs low. The magazine drops out during a reload and the gun tucks in when you sprint. Names,
+  stats and saved loadouts are unchanged.
+- **New HUD and menus.** An objective panel, a compass with contact ticks, world markers with
+  distance, damage direction arcs, a restyled minimap, kill feed and hotbar, and a title screen that
+  drifts over the real valley.
+- **Uplink, a solo mission.** Bring three watch-tower uplinks online, hold each tower for 40 s
+  while waves come for you, then reach extraction. Beams over the towers show what is pending,
+  uploading and online, and an end screen sums up your time, kills and damage taken.
+- **Detail in the world.** Shaded terrain, soft shadows under every tree, rock, house and tower,
+  and windows that glow at dusk and night. Watch towers no longer cut into towns.
+- **Sound with depth.** Gunshots and explosions echo off the valley, combat music follows the
+  fight in Director and Uplink matches (with its own volume slider), and a heartbeat warns you at
+  low health.
+- **Full-size characters.** Enemies are SWAT troopers with red visors, other players wear
+  spacesuits lit cyan, with real animations: gun up at rest, walking or running by speed, a shot
+  for every round fired and a proper death.
+- **Fair hitboxes.** Hits are measured against the character you see: the old boxes were nearly
+  twice as wide, so near misses counted. Multiplayer now has headshots too, at three times the
+  damage, as against enemies.
+- **Tracers that fit.** Rounds fly as glowing streaks with a hot core and a fading tail.
+- **Accessibility.** Menus are labelled for screen readers and fully usable by keyboard, and
+  announcements are spoken.
+
+## v3.10.0
 
 Enemy AI v2 for solo play, built at Gustav's request on 2026-09-15. The full record (plan,
 decisions, measurements, and what each step changed) is in `docs/enemy-ai-v2.md`.

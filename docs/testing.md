@@ -42,7 +42,9 @@ Behaviour specs run on Low graphics: `playwright.config.ts` seeds the settings t
 `storageState`, which also reaches the contexts the multiplayer specs open themselves. The specs that
 judge the rendered look run on the shipped default (Medium) by opting out with
 `test.use({ storageState: SHIPPED_GRAPHICS })` from `e2e/helpers.ts`: `ui-qa.spec.ts`, both perf
-specs, and the `@quick` load test that checks for console errors. `E2E_GRAPHICS=medium` (or `high`)
+specs, and the `@quick` load test that checks for console errors. Low is not a speed fix here: a
+single page measured about 2.2 FPS on Low and on Medium alike (2026-10-23), because the CPU (physics,
+world streaming, scripts) is the limit, not the renderer. `E2E_GRAPHICS=medium` (or `high`)
 runs everything at that quality, for example before a release that changed rendering.
 
 ## Known slow spots
