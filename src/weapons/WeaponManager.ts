@@ -8,6 +8,7 @@ import {
   type WeaponViewModel,
 } from './viewModel.ts';
 import { buildWeaponViewModel } from './models/arsenal.ts';
+import { WEAPON_GLOW_INTENSITY } from './models/weaponMaterials.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { applySpreadCone } from '../combat/spread.ts';
@@ -43,6 +44,11 @@ interface WeaponSlot extends Omit<WeaponViewModel, 'group'> {
   previousAmmo: number;
   shotFlash: number[];
 }
+
+/** How fast the view model blends into and out of the sprint tuck. */
+const SPRINT_POSE_DAMP = 8;
+/** Peak roll (radians) at the middle of a reload, while the magazine is out. */
+const RELOAD_ROLL_ANGLE = 0.35;
 
 export class WeaponManager {
   private readonly slots: WeaponSlot[];
@@ -83,6 +89,8 @@ export class WeaponManager {
   private previousCameraPitch = 0;
   private swayYaw = 0;
   private swayPitch = 0;
+  /** 0 to 1 blend into the sprint tuck (see updateAim). */
+  private sprintPose = 0;
 
   private constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -494,6 +502,18 @@ export class WeaponManager {
       // driving both.
       this.active.viewModel.position.y +=
         Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength;
+
+      // Sprint tuck and reload roll, after the Opus 5.5 viewmodel pose
+      // (reference/model-test/opus-5.5/game.js, renderViewmodel): the gun swings across the body
+      // while sprinting and rolls onto its side mid-reload while the magazine drops out.
+      const sprinting = this.aimAmount < 0.05 && input.isActionActive('sprint') && player.movementBobStrength > 0.5;
+      this.sprintPose = THREE.MathUtils.damp(this.sprintPose, sprinting ? 1 : 0, SPRINT_POSE_DAMP, dt);
+      const sp = this.sprintPose;
+      this.active.viewModel.position.x += 0.02 * sp;
+      this.active.viewModel.position.y -= 0.04 * sp;
+      this.active.viewModel.rotation.x -= 0.25 * sp;
+      this.active.viewModel.rotation.y += 0.55 * sp;
+      this.active.viewModel.rotation.z = 0.15 * sp + RELOAD_ROLL_ANGLE * reloadCurve;
     }
 
     const slot = this.active;
@@ -510,7 +530,7 @@ export class WeaponManager {
       const shotFlash = fired && flashThisPip ? 6 : Math.max(0, slot.shotFlash[i]! - dt * 6 / 0.06);
       slot.shotFlash[i] = shotFlash;
       material.emissive.setHex(ammoFrac > 0.25 ? 0x6ff0dc : 0xe8a64a);
-      material.emissiveIntensity = 2.5 * (0.3 + 0.7 * ammoFrac) * reloadCharge + shotFlash;
+      material.emissiveIntensity = WEAPON_GLOW_INTENSITY * (0.3 + 0.7 * ammoFrac) * reloadCharge + shotFlash;
     }
     slot.previousAmmo = weapon.ammo;
     if (magazine) {

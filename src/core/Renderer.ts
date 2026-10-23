@@ -5,6 +5,7 @@ import { Settings } from '../settings/Settings.ts';
 import { lookFor, type LookPreset } from '../render/look.ts';
 import { installLookFog, StylizedSky } from '../render/StylizedSky.ts';
 import { PostStack } from '../render/PostStack.ts';
+import { setWeaponEnvironment } from '../weapons/models/weaponMaterials.ts';
 
 /** Layer the weapon view models (everything parented to the camera) render on, so the post stack
  * can draw them in their own depth-cleared pass (see PostStack). */
@@ -102,6 +103,7 @@ export class Renderer {
     this.skyEnvironmentTexture?.dispose();
     this.skyEnvironmentTexture = pmremGenerator.fromScene(envScene, 0, CAMERA_NEAR, CAMERA_FAR).texture;
     pmremGenerator.dispose();
+    setWeaponEnvironment(this.skyEnvironmentTexture);
     envSky.geometry.dispose();
     envSky.material.dispose();
     this.post?.applyLook(look);
@@ -161,6 +163,7 @@ export class Renderer {
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
     this.post?.dispose();
+    setWeaponEnvironment(null);
     this.skyEnvironmentTexture?.dispose();
     this.sky.geometry.dispose();
     this.sky.material.dispose();

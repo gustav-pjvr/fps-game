@@ -5,15 +5,17 @@ import { createWeaponGlow, getWeaponMaterials } from './weaponMaterials.ts';
 type Point = readonly [number, number, number];
 interface ModelTuning { scale: number; offset: Point }
 
-/** Camera-space adjustments for visual tuning, independent of the manager's hip/ADS pose. */
+/** Camera-space adjustments for visual tuning, independent of the manager's hip/ADS pose. Scales
+ * are about 1.15x the Opus size, because Opus drew its view model at a 60 degree FOV and ours shares
+ * the 75 degree world camera, which shrinks it on screen. */
 export const WEAPON_MODEL_TUNING = {
-  rifle: { scale: 0.85, offset: [-0.09, 0.05, 0.14] },
-  pistol: { scale: 0.95, offset: [-0.09, 0.04, 0.1] },
-  mp5: { scale: 0.9, offset: [-0.09, 0.05, 0.12] },
-  shotgun: { scale: 0.85, offset: [-0.09, 0.04, 0.14] },
-  sniper: { scale: 0.8, offset: [-0.09, 0.035, 0.13] },
-  knife: { scale: 0.95, offset: [-0.06, 0.03, 0.08] },
-  gooseLauncher: { scale: 0.85, offset: [-0.08, 0.04, 0.13] },
+  rifle: { scale: 0.977, offset: [-0.07, 0.05, 0.14] },
+  pistol: { scale: 1.093, offset: [-0.07, 0.04, 0.1] },
+  mp5: { scale: 1.035, offset: [-0.07, 0.05, 0.12] },
+  shotgun: { scale: 0.977, offset: [-0.07, 0.04, 0.14] },
+  sniper: { scale: 0.92, offset: [-0.07, 0.035, 0.13] },
+  knife: { scale: 1.093, offset: [-0.04, 0.03, 0.08] },
+  gooseLauncher: { scale: 0.977, offset: [-0.06, 0.04, 0.13] },
 } satisfies Record<string, ModelTuning>;
 
 class Parts {

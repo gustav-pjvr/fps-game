@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { WEAPON_DEFINITIONS } from '../definitions.ts';
 import { WEAPON_HIP_POSITION } from '../viewModel.ts';
 import { buildWeaponViewModel, WEAPON_MODEL_TUNING } from './arsenal.ts';
-import { getWeaponMaterials } from './weaponMaterials.ts';
+import { getWeaponMaterials, WEAPON_GLOW_INTENSITY } from './weaponMaterials.ts';
 
 function meshes(group: THREE.Group): THREE.Mesh[] {
   const result: THREE.Mesh[] = [];
@@ -46,7 +46,7 @@ describe('Opus arsenal', () => {
           expect(material).not.toBe(second.glowMaterials[i]);
           expect(material.emissive.getHex()).toBe(0x6ff0dc);
           expect(material.color.getHex()).toBe(0x000000);
-          expect(material.emissiveIntensity).toBe(2.5);
+          expect(material.emissiveIntensity).toBe(WEAPON_GLOW_INTENSITY);
           expect(material.toneMapped).toBe(true);
           expect(parts.some((part) => part.material === material)).toBe(true);
           material.emissive.setHex(0xe8a64a);
@@ -127,8 +127,8 @@ describe('Opus procedural materials in Node', () => {
         expect(texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
       }
     }
-    expect(materials.gunmetal.metalness).toBe(0.6);
-    expect(materials.pipe.metalness).toBe(0.8);
+    expect(materials.gunmetal.metalness).toBe(0.35);
+    expect(materials.pipe.metalness).toBe(0.55);
     expect(materials.trim.metalness).toBe(0.3);
     expect(materials.sleeve.color.getHex()).toBe(0x3b4a42);
     expect(materials.sleeve.roughness).toBe(0.9);
