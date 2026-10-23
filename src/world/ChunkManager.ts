@@ -41,6 +41,8 @@ export function createGroundMaterial(): THREE.Material {
     roughnessMap: loadTiledTexture(GROUND_ROUGHNESS_TEXTURE_URL),
     aoMap: loadTiledTexture(GROUND_AO_TEXTURE_URL),
     roughness: 1,
+    // Baked terrain AO (terrainShading.ts): every geometry using this material carries a colour.
+    vertexColors: true,
   });
   gradeMaterial(material, 'ground');
   return material;

@@ -63,6 +63,24 @@ Every weapon keeps its id, stats and name, so multiplayer and saved loadouts are
 | Bicknell Trench Knife | Gunmetal knuckle-guard handle, brushed blade with a glowing edge line |
 | Goose Launcher (reward) | Fat drum chamber with glow windows and a flared muzzle, still gold-trimmed so it reads as the reward |
 
+## Mission mode: Uplink (phase 4 design)
+
+A solo mode with a beginning, a middle and an end, built on the systems the enemy AI v2 work already made: the Director's pacing, the search grid, the reinforcement spawner and the watch towers.
+
+**Loop.**
+1. **Travel.** The match picks three of the map's four watch towers as uplinks (seeded by the world seed, the three nearest the spawn) and the fourth as the extraction point. Each uplink has an amber beam rising from its platform, a world marker and a compass diamond. The player may take them in any order.
+2. **Uplink.** At an uplink (within 9 m of the tower's centre, ground or platform), `E` starts the upload: 40 seconds of progress that only advances while the player stays within 14 m. Leaving pauses it and the HUD says so. Every 10 seconds of upload the mission calls in a wave of two through the Director's own reinforcement spawner (`spawnDirectorWave`), biased in turn mixed, rusher, sniper, so each tower is a short defence. The beam pulses amber while uploading and turns cyan when the uplink is online, with a big announcement (`UPLINK 2 / 3 ONLINE`).
+3. **Extract.** With all three online, the fourth tower lights a cyan beam and a ring on the ground at its base, the objective becomes `Reach extraction`, and one last wave of three is sent. Standing in the ring for 3 seconds wins.
+4. **Lose.** Death ends the mission (no respawn into the same mission; Respawn restarts it).
+
+**Pressure between uplinks** comes from the Director exactly as in Director mode (the mission turns it on), so the travel legs breathe and the towers spike.
+
+**HUD.** Objective panel: label `UPLINK`, text `Bring the uplinks online` with three pips, then `Hold the tower` with a percentage while uploading (`Upload paused` in amber when outside), then `Reach extraction`. World markers for pending uplinks (`UPLINK A`, `B`, `C`) and extraction (`EXTRACT`), the same as compass diamonds. A prompt `E  START UPLINK` near an idle uplink.
+
+**End screen.** The death screen grows a mission variant: title `Uplink complete` or `Signal lost`, then time, kills and damage taken in mono numerals, buttons `Respawn` (restart) and `Return to Lobby`, the same labels the e2e helpers use.
+
+**Code shape.** A pure state machine in `src/core/mission/missionState.ts` (signals in: dt, player position, interact pressed, player dead; events out: waveRequested, uplinkOnline, extractionOpen, won, lost), unit tested like the Director. Game owns the visuals (`src/world/UplinkBeacons.ts`) and the wiring. The setup modal offers it as a third exclusive mode beside Director and Goose Horde. Single player only.
+
 ## Phases
 
 Each phase ends with typecheck, unit tests, the relevant e2e specs, screenshots at Low and Medium, and an entry in the build log below. High cannot be judged in the sandbox (its software renderer draws High black), so High-only effects are also checked on Gustav's machine at the end.

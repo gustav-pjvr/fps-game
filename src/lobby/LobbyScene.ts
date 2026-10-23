@@ -146,6 +146,10 @@ export class LobbyScene {
       uv.setXY(i, x / TERRAIN_CHUNK_SIZE, z / TERRAIN_CHUNK_SIZE);
     }
     geometry.computeVertexNormals();
+    // The ground material multiplies in baked AO from the vertex colour (terrainShading.ts). The
+    // patch is one big mesh rather than chunks, so its AO is approximated here from the same
+    // horizon idea at the patch's own spacing.
+    geometry.setAttribute('color', new THREE.BufferAttribute(patchAo(position), 3));
     const material = createGroundMaterial();
     const ground = new THREE.Mesh(geometry, material);
     ground.receiveShadow = true;
@@ -257,4 +261,32 @@ export class LobbyScene {
     this.webgl.setSize(window.innerWidth, window.innerHeight);
     this.post?.setSize(window.innerWidth, window.innerHeight);
   };
+}
+
+/** Grey AO per vertex of the title patch, from how far the neighbouring vertices rise above each
+ * one (the patch's own grid, PATCH_SEGMENTS + 1 per side). Coarser than a match chunk's, which is
+ * fine at title-screen distances. */
+function patchAo(position: THREE.BufferAttribute): Float32Array {
+  const side = PATCH_SEGMENTS + 1;
+  const spacing = (PATCH_HALF_SIZE * 2) / PATCH_SEGMENTS;
+  const colors = new Float32Array(position.count * 3);
+  for (let row = 0; row < side; row++) {
+    for (let col = 0; col < side; col++) {
+      const index = row * side + col;
+      const h = position.getY(index);
+      let occlusion = 0;
+      let samples = 0;
+      for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-2, -2], [2, 2], [-2, 2], [2, -2]] as const) {
+        const r = row + dr;
+        const c = col + dc;
+        if (r < 0 || c < 0 || r >= side || c >= side) continue;
+        const rise = position.getY(r * side + c) - h;
+        occlusion += Math.atan(Math.max(0, rise) / (Math.hypot(dr, dc) * spacing)) / (Math.PI / 2);
+        samples++;
+      }
+      const ao = Math.max(0.4, 1 - 0.75 * Math.sqrt(occlusion / Math.max(samples, 1)));
+      colors.fill(ao, index * 3, index * 3 + 3);
+    }
+  }
+  return colors;
 }
