@@ -8,7 +8,7 @@ import { installLookFog, StylizedSky } from '../render/StylizedSky.ts';
 import { PostStack } from '../render/PostStack.ts';
 import { GRAPHICS_QUALITY_PRESETS } from '../settings/graphicsQuality.ts';
 import { Settings } from '../settings/Settings.ts';
-import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { groundWear, sampleHeight } from '../world/TerrainGenerator.ts';
 import { createGroundMaterial } from '../world/ChunkManager.ts';
 import { createDecorativeTowerVisual, getWatchTowerPositions } from '../world/WatchTowerManager.ts';
 import { extractBakedPrimitives, VEGETATION_TYPES, type VegetationTypeId } from '../world/VegetationManager.ts';
@@ -150,6 +150,9 @@ export class LobbyScene {
     // patch is one big mesh rather than chunks, so its AO is approximated here from the same
     // horizon idea at the patch's own spacing.
     geometry.setAttribute('color', new THREE.BufferAttribute(patchAo(position), 3));
+    const surface = new Float32Array(position.count);
+    for (let i = 0; i < position.count; i++) surface[i] = groundWear(position.getX(i), position.getZ(i));
+    geometry.setAttribute('surface', new THREE.BufferAttribute(surface, 1));
     const material = createGroundMaterial();
     const ground = new THREE.Mesh(geometry, material);
     ground.receiveShadow = true;

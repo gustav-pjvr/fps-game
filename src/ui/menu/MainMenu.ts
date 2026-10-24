@@ -66,7 +66,7 @@ export class MainMenu {
     title.append(hunter, goose);
 
     const tagline = document.createElement('p');
-    tagline.textContent = 'Last light over the valley. Make every shot count.';
+    tagline.textContent = 'Last light over the valley.';
     tagline.style.cssText = 'margin:0; font-size:clamp(16px, 1.4vw, 21px); font-weight:300; line-height:1.5; letter-spacing:0.01em; color:#c7d4ce;';
 
     const rule = document.createElement('div');
@@ -107,7 +107,7 @@ export class MainMenu {
       'position:absolute; left:clamp(24px, 7vw, 120px); right:clamp(24px, 4vw, 64px); bottom:24px; display:flex;' +
       ` justify-content:space-between; gap:16px; padding-top:14px; border-top:1px solid ${HAIRLINE}; ${LABEL_CSS} font-size:9.5px;`;
     const deployment = document.createElement('span');
-    deployment.textContent = `DEFAULT DEPLOYMENT  ${DEFAULT_ENEMY_COUNT} HOSTILES / ${DEFAULT_TARGET_COUNT} TARGETS`;
+    deployment.textContent = `DEFAULT MATCH  ${DEFAULT_ENEMY_COUNT} HOSTILES / ${DEFAULT_TARGET_COUNT} TARGETS`;
     const version = document.createElement('span');
     version.textContent = `v${GAME_VERSION}`;
     version.style.cssText = `font-family:${MONO_FONT}; letter-spacing:0.08em; text-transform:none;`;

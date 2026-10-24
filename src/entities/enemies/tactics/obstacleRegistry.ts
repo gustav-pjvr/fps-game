@@ -1,4 +1,4 @@
-import type { HouseFootprint } from '../../../world/buildingColliders.ts';
+import type { HouseFootprint } from '../../../world/houseFootprint.ts';
 
 /**
  * Where the cover is (enemy AI v2, step 3 - docs/enemy-ai-v2.md). The world managers register
@@ -31,7 +31,7 @@ const MAX_OBSTACLE_REACH = 14;
 
 /** The obstacle's centre in world XZ. A house's centre is its footprint rectangle's centre, which
  * sits offsetX/offsetZ from its placement origin, turned by the building's rotation (the inverse of
- * the transform in buildingColliders.ts's isPointNearFootprint). */
+ * the transform in houseFootprint.ts's isPointNearFootprint). */
 export function obstacleCentre(obstacle: Obstacle): { x: number; z: number } {
   if (obstacle.kind === 'trunk') return { x: obstacle.x, z: obstacle.z };
   const fp = obstacle.footprint;

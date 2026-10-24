@@ -1,4 +1,4 @@
-import type { HouseFootprint } from '../../../world/buildingColliders.ts';
+import type { HouseFootprint } from '../../../world/houseFootprint.ts';
 import type { PlanarPoint } from '../perception.ts';
 import type { Obstacle } from './obstacleRegistry.ts';
 import {

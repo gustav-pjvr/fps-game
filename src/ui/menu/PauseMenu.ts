@@ -25,7 +25,7 @@ export class PauseMenu {
    * comment below. */
   private pausedSinceMs: number | null = null;
 
-  /** `isMultiplayer` hides the "Reset Play" button entirely - it's single-player's own
+  /** `isMultiplayer` hides the "Restart" button entirely - it's single-player's own
    * practice-reset feature (fresh targets/enemies/ammo/score); Game.resetPlay() is a no-op in
    * multiplayer unless the player happens to already be dead, so showing it there is a button
    * that does nothing for anyone not currently waiting to respawn. In its place, multiplayer gets
@@ -73,7 +73,7 @@ export class PauseMenu {
       this.respawnButton = respawnButton;
       buttonColumn.append(respawnButton);
     } else {
-      const resetButton = createButton('Reset Play');
+      const resetButton = createButton('Restart');
       resetButton.addEventListener('click', callbacks.onResetPlay);
       buttonColumn.append(resetButton);
     }

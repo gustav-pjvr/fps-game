@@ -122,7 +122,7 @@ export class MatchEndScreen {
     const killLimitColumn = document.createElement('div');
     killLimitColumn.style.cssText = 'flex:1;';
     const killLimitLabel = document.createElement('div');
-    killLimitLabel.textContent = 'First to how many kills wins?';
+    killLimitLabel.textContent = 'Kills to win';
     // min-height reserves 2 lines regardless of actual wrap - see CreateRoomScreen.ts's identical
     // fix for why (this label wraps to 2 lines while gooseDifficultyLabel stays on 1, misaligning
     // the two selects without it).
@@ -143,7 +143,7 @@ export class MatchEndScreen {
     const gooseDifficultyColumn = document.createElement('div');
     gooseDifficultyColumn.style.cssText = 'flex:1;';
     const gooseDifficultyLabel = document.createElement('div');
-    gooseDifficultyLabel.textContent = 'Goose explosions:';
+    gooseDifficultyLabel.textContent = 'Goose explosions';
     gooseDifficultyLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px; min-height:2.1em;`;
     this.gooseDifficultySelect = document.createElement('select');
     this.gooseDifficultySelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
@@ -160,7 +160,7 @@ export class MatchEndScreen {
     // Full-width, not a third column in settingsRow - see CreateRoomScreen's identical choice for
     // why (the mode labels are long enough to read cluttered crammed into a third column here).
     const gameModeLabel = document.createElement('div');
-    gameModeLabel.textContent = 'Game mode:';
+    gameModeLabel.textContent = 'Mode';
     gameModeLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px;`;
     this.gameModeSelect = document.createElement('select');
     this.gameModeSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
@@ -173,7 +173,7 @@ export class MatchEndScreen {
     }
 
     const weatherLabel = document.createElement('div');
-    weatherLabel.textContent = 'Match weather:';
+    weatherLabel.textContent = 'Weather';
     weatherLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px;`;
     this.weatherSelect = document.createElement('select');
     this.weatherSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
@@ -192,7 +192,7 @@ export class MatchEndScreen {
     this.newMapCheckbox.type = 'checkbox';
     this.newMapCheckbox.checked = true;
     const newMapText = document.createElement('span');
-    newMapText.textContent = 'Generate a new map';
+    newMapText.textContent = 'New map';
     newMapLabel.append(this.newMapCheckbox, newMapText);
 
     this.hostSettings.append(settingsRow, gameModeLabel, this.gameModeSelect, weatherLabel, this.weatherSelect, newMapLabel);

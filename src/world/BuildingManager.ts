@@ -1,18 +1,17 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { gradeObject } from '../render/materialGrade.ts';
 import { CONTACT_SHADOW_LIFT, createContactShadowGeometry, createContactShadowMaterial } from '../render/contactShadows.ts';
 import * as THREE from 'three';
-import { loadGLTF } from '../core/AssetLoader.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 import { mulberry32 } from '../utils/rng.ts';
-import { computeBuildingColliderShapes, isPointNearFootprint, type BuildingColliderShapes } from './buildingColliders.ts';
+import { isPointNearFootprint } from './houseFootprint.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
+import { HOUSE_DESIGNS, type HouseDesign } from './houseDesigns.ts';
+import { createBoxCollider, createHullCollider } from './structureKit.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { getFlatZoneSite, radiusOfFlatZoneAtAngle, type FlatZoneSite } from './ZoneMap.ts';
 import {
-  BUILDING_COLLIDER_FOOTPRINT_SHRINK,
   FLAT_ZONE_CELL_SIZE,
   FLAT_ZONE_RADIUS_MAX,
   TOWN_BUILD_FRACTION,
@@ -23,34 +22,13 @@ import {
   TOWN_MIN_BUILDINGS,
 } from '../core/config.ts';
 
-interface BuildingPresetDef {
-  modelPath: string;
-  targetHeight: number;
-}
-
-/** Premade sample structures from Kenney's Modular Buildings kit (CC0) - already assembled from
- * the kit's own wall/window/door/roof pieces, so they read as real buildings (not a plain box)
- * without this project needing to hand-place and rotate individual tiles. Houses only - the
- * taller "tower" presets that used to live here were removed per user request in favor of
- * standalone watch towers (see WatchTowerManager.ts), which aren't part of town layouts at all. */
-const BUILDING_PRESET_DEFS: BuildingPresetDef[] = [
-  { modelPath: '/assets/models/buildings/building-sample-house-a.glb', targetHeight: 4 },
-  { modelPath: '/assets/models/buildings/building-sample-house-b.glb', targetHeight: 6.5 },
-  { modelPath: '/assets/models/buildings/building-sample-house-c.glb', targetHeight: 6.5 },
-];
-
+/** One house design ready to place: the merged meshes every placement clones (sharing geometry and
+ * materials) and its footprint, centred on the placement point. */
 interface BuildingPreset {
-  scene: THREE.Object3D;
-  scaleFactor: number;
+  design: HouseDesign;
+  template: THREE.Group;
   footprintWidth: number;
   footprintDepth: number;
-  /** Some prefabs aren't modeled symmetrically about their local origin - the footprint's true
-   * center sits a small offset away from (0,0). Scaled world-space offset, before rotation is
-   * applied. */
-  footprintOffsetX: number;
-  footprintOffsetZ: number;
-  /** Wall box plus roof prisms in the model's scaled local frame (see measurePreset). */
-  colliders: BuildingColliderShapes;
 }
 
 /** One building's position within its town, in coordinates local to the town's site center. */
@@ -69,61 +47,8 @@ interface TownLayout {
 interface PlacedBuilding {
   group: THREE.Object3D;
   rigidBodyHandle: number;
-  /** The wall box plus one convex prism per roof piece, all attached to rigidBodyHandle's body. */
+  /** One collider per solid part of the design, all attached to rigidBodyHandle's body. */
   colliderHandles: number[];
-}
-
-/** Every mesh face in the prefab as flat xyz, in the frame createBuilding's clone gets scaled in:
- * each mesh's matrixWorld (relative to the GLTF scene root, which GLTFLoader always leaves at
- * identity and whose own transform createBuilding overwrites with the placement's), times
- * scaleFactor. The same matrices Box3.setFromObject reads, so faces and footprint agree. */
-function collectScaledTriangles(scene: THREE.Object3D, scaleFactor: number): number[] {
-  const triangles: number[] = [];
-  const vertex = new THREE.Vector3();
-  scene.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const geometry: THREE.BufferGeometry = child.geometry;
-    const position = geometry.getAttribute('position');
-    const index = geometry.getIndex();
-    const count = index ? index.count : position.count;
-    for (let i = 0; i < count; i++) {
-      vertex.fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(child.matrixWorld).multiplyScalar(scaleFactor);
-      triangles.push(vertex.x, vertex.y, vertex.z);
-    }
-  });
-  return triangles;
-}
-
-/** Measures a freshly loaded prefab's real bounding box rather than trusting hand-inspected
- * numbers, then computes the uniform scale needed to reach targetHeight - same "verify, don't
- * guess the asset's own dimensions" discipline used for vegetation. Also captures the footprint's
- * center offset from the model's local origin - not every prefab is modeled symmetrically about
- * (0,0), so assuming the origin IS the footprint center would silently misalign the collider from
- * the visual. The collider shapes come from the model's own faces too (see
- * computeBuildingColliderShapes): the one box up to the ridge this used to produce filled the empty
- * air above every gabled roof's slopes. */
-function measurePreset(scene: THREE.Object3D, targetHeight: number): BuildingPreset {
-  scene.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(scene);
-  const rawHeight = box.max.y - box.min.y;
-  const scaleFactor = targetHeight / rawHeight;
-  const bounds = {
-    minX: box.min.x * scaleFactor,
-    minY: box.min.y * scaleFactor,
-    minZ: box.min.z * scaleFactor,
-    maxX: box.max.x * scaleFactor,
-    maxY: box.max.y * scaleFactor,
-    maxZ: box.max.z * scaleFactor,
-  };
-  return {
-    scene,
-    scaleFactor,
-    footprintWidth: (box.max.x - box.min.x) * scaleFactor,
-    footprintDepth: (box.max.z - box.min.z) * scaleFactor,
-    footprintOffsetX: ((box.max.x + box.min.x) / 2) * scaleFactor,
-    footprintOffsetZ: ((box.max.z + box.min.z) / 2) * scaleFactor,
-    colliders: computeBuildingColliderShapes(collectScaledTriangles(scene, scaleFactor), bounds, BUILDING_COLLIDER_FOOTPRINT_SHRINK),
-  };
 }
 
 /**
@@ -153,13 +78,13 @@ export class BuildingManager {
   ) {}
 
   static async create(scene: THREE.Scene, physics: PhysicsWorld, obstacles?: ObstacleRegistry): Promise<BuildingManager> {
-    const presets: BuildingPreset[] = [];
-    for (const def of BUILDING_PRESET_DEFS) {
-      const gltf = await loadGLTF(def.modelPath);
-      // Clones share these materials, so grading the loaded prefab once covers every placement.
-      gradeObject(gltf.scene, 'building');
-      presets.push(measurePreset(gltf.scene, def.targetHeight));
-    }
+    // Built in code, so nothing loads; kept async so the match setup awaits it as before.
+    const presets: BuildingPreset[] = HOUSE_DESIGNS.map((design) => ({
+      design,
+      template: design.build(),
+      footprintWidth: design.footprintWidth,
+      footprintDepth: design.footprintDepth,
+    }));
     return new BuildingManager(scene, physics, presets, obstacles);
   }
 
@@ -196,8 +121,8 @@ export class BuildingManager {
             footprint: {
               originX: worldX,
               originZ: worldZ,
-              offsetX: preset.footprintOffsetX,
-              offsetZ: preset.footprintOffsetZ,
+              offsetX: 0,
+              offsetZ: 0,
               halfWidth: preset.footprintWidth / 2,
               halfDepth: preset.footprintDepth / 2,
               rotationY: placement.rotationY,
@@ -257,8 +182,8 @@ export class BuildingManager {
    * (x, z) lies within `margin` metres of any house footprint anywhere in the world, streamed in or
    * not. Walks the same memoized getTownLayout placement uses, so it answers identically before and
    * after the surrounding chunks load, and identically on every client for one seed. The footprint
-   * is each model's full measured XZ rectangle (eaves and porch steps included, not the shrunk
-   * collider), turned with the building's own rotation; `margin` is Euclidean distance from that
+   * is each design's full XZ rectangle (eaves included, wider than its walls), turned with the
+   * building's own rotation; `margin` is Euclidean distance from that
    * rectangle, and a negative margin counts as 0. Only the one to four flat-zone cells within reach
    * are looked at, each a dozen or so rectangle tests, so ~50 calls per respawn cost next to nothing. */
   isPointInsideBuilding(x: number, z: number, margin: number): boolean {
@@ -267,8 +192,7 @@ export class BuildingManager {
     // building's placement point, plus the margin itself.
     let footprintReach = 0;
     for (const preset of this.presets) {
-      const centerOffset = Math.hypot(preset.footprintOffsetX, preset.footprintOffsetZ);
-      footprintReach = Math.max(footprintReach, centerOffset + Math.hypot(preset.footprintWidth, preset.footprintDepth) / 2);
+      footprintReach = Math.max(footprintReach, Math.hypot(preset.footprintWidth, preset.footprintDepth) / 2);
     }
     const reach = FLAT_ZONE_RADIUS_MAX + footprintReach + Math.max(margin, 0);
     const gxMin = Math.floor((x - reach) / FLAT_ZONE_CELL_SIZE);
@@ -288,8 +212,8 @@ export class BuildingManager {
           const footprint = {
             originX: site.siteX + placement.localX,
             originZ: site.siteZ + placement.localZ,
-            offsetX: preset.footprintOffsetX,
-            offsetZ: preset.footprintOffsetZ,
+            offsetX: 0,
+            offsetZ: 0,
             halfWidth: preset.footprintWidth / 2,
             halfDepth: preset.footprintDepth / 2,
             rotationY: placement.rotationY,
@@ -353,50 +277,28 @@ export class BuildingManager {
   private createBuilding(worldX: number, worldZ: number, rotationY: number, preset: BuildingPreset): PlacedBuilding {
     const groundY = sampleHeight(worldX, worldZ);
 
-    const group = preset.scene.clone(true);
-    group.scale.setScalar(preset.scaleFactor);
+    // Clones share the template's merged geometry and materials.
+    const group = preset.template.clone();
     group.rotation.y = rotationY;
     group.position.set(worldX, groundY, worldZ);
-    group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-    // The group is scaled, so the shadow is sized and offset in the model's unscaled frame.
     const contactShadow = new THREE.Mesh(this.contactShadowGeometry, this.contactShadowMaterial);
-    contactShadow.scale.set(
-      (preset.footprintWidth + HOUSE_CONTACT_SHADOW_MARGIN * 2) / preset.scaleFactor,
-      1,
-      (preset.footprintDepth + HOUSE_CONTACT_SHADOW_MARGIN * 2) / preset.scaleFactor,
-    );
-    contactShadow.position.set(preset.footprintOffsetX / preset.scaleFactor, CONTACT_SHADOW_LIFT / preset.scaleFactor, preset.footprintOffsetZ / preset.scaleFactor);
+    contactShadow.scale.set(preset.footprintWidth + HOUSE_CONTACT_SHADOW_MARGIN * 2, 1, preset.footprintDepth + HOUSE_CONTACT_SHADOW_MARGIN * 2);
+    contactShadow.position.y = CONTACT_SHADOW_LIFT;
     contactShadow.renderOrder = -1;
     group.add(contactShadow);
     this.scene.add(group);
 
-    // The collider shapes live in the model's scaled local frame (see measurePreset), on a body
-    // given exactly the visual group's position and Y rotation - so any rotation, and the
-    // off-center footprint correction measurePreset documents, come from the same transform as the
-    // visual instead of being re-derived by hand per collider. three's rotation.y and this
-    // quaternion are the same right-handed turn about +Y.
+    // The design's solids and gable fills, in its local frame, on a body given exactly the visual
+    // group's position and Y rotation, so collider and mesh share one transform. three's rotation.y
+    // and this quaternion are the same right-handed turn about +Y.
     const bodyDesc = RAPIER.RigidBodyDesc.fixed()
       .setTranslation(worldX, groundY, worldZ)
       .setRotation({ x: 0, y: Math.sin(rotationY / 2), z: 0, w: Math.cos(rotationY / 2) });
     const rigidBody = this.physics.world.createRigidBody(bodyDesc);
-
-    const { wallBox, roofHulls } = preset.colliders;
-    const wallDesc = RAPIER.ColliderDesc.cuboid(wallBox.halfX, wallBox.halfY, wallBox.halfZ).setTranslation(
-      wallBox.centerX,
-      wallBox.centerY,
-      wallBox.centerZ,
-    );
-    const colliderHandles = [this.physics.world.createCollider(wallDesc, rigidBody).handle];
-    for (const points of roofHulls) {
-      // Typed as nullable, but computeBuildingColliderShapes only emits pieces with real area and
-      // real height above their support, so there is no flat or collinear point set to refuse.
-      const hullDesc = RAPIER.ColliderDesc.convexHull(points);
-      if (hullDesc) colliderHandles.push(this.physics.world.createCollider(hullDesc, rigidBody).handle);
+    const colliderHandles = preset.design.solids.map((solid) => createBoxCollider(this.physics.world, rigidBody, solid.box).handle);
+    for (const points of preset.design.hulls) {
+      const hull = createHullCollider(this.physics.world, rigidBody, points);
+      if (hull) colliderHandles.push(hull.handle);
     }
 
     return {

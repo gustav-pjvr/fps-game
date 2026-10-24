@@ -10,7 +10,26 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.0.0 (current)
+## v4.1.0 (current)
+
+The world redesign, 2026-10-24: new towers, houses and terrain, and simpler menu text. The full
+record is in `docs/world-redesign.md`.
+
+- **New watch towers.** A concrete core with five steel flights of real stairs around it, flat
+  landings at every turn, a grated lookout deck over the whole tower and a roof on posts with a mast
+  and a red warning light. The stairs climb cleanly now: the old landings stood half a metre above
+  the ramps and two flights leaned into the wall. Towers also stand further apart.
+- **New houses.** Three prefab outpost buildings (a bunkhouse, a two-storey block and a workshop)
+  in concrete, ribbed cladding and corrugated roofing, with lit windows and lamps at the doors, on
+  the same footprints as before. Shots stop exactly where the walls and roofs are.
+- **New terrain.** Broad rises and basins, winding spurs and a few ridgelines for cover, with every
+  slope walkable. Towns, towers and the spawn sit level in the ground instead of in pits or behind
+  steep banks. The ground now shows grass, bare soil, rock on steep banks and gravel round the towns
+  and towers.
+- **Simpler menus.** Shorter labels, status lines and mode briefings; "Reset Play" is now "Restart",
+  and ticking a mode in the match setup greys out the counts it replaces.
+
+## v4.0.0
 
 The visual overhaul, built on 2026-10-23 after Gustav reviewed a three-model 3D game test. A new
 identity: a well-made, focused shooter at dusk instead of a goose joke (the goose modes stay

@@ -83,7 +83,7 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
 
   if (isSpecial) {
     const badge = document.createElement('div');
-    badge.textContent = 'REWARD ONLY - NOT EQUIPPABLE';
+    badge.textContent = 'REWARD ONLY';
     badge.style.cssText = `${LABEL_CSS} color:${REWARD_GOLD};`;
     card.appendChild(badge);
   }
@@ -161,7 +161,7 @@ export class LoadoutScreen {
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; flex-shrink:0;';
     const titleWrap = document.createElement('div');
-    titleWrap.append(createEyebrow('Equip your fight'));
+    titleWrap.append(createEyebrow('Choose your weapons'));
     const title = document.createElement('div');
     title.textContent = 'LOADOUT';
     title.className = 'menu-panel-title';

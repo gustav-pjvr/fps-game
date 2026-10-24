@@ -110,7 +110,7 @@ export class CreateRoomScreen {
     rightColumn.style.cssText = 'flex:1; min-width:280px; display:flex; flex-direction:column;';
 
     const usernameLabel = document.createElement('div');
-    usernameLabel.textContent = 'Your name:';
+    usernameLabel.textContent = 'Name';
     usernameLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     leftColumn.appendChild(usernameLabel);
 
@@ -134,7 +134,7 @@ export class CreateRoomScreen {
     leftColumn.appendChild(this.usernameInput);
 
     const label = document.createElement('div');
-    label.textContent = 'Share this code - up to 3 other players can join:';
+    label.textContent = 'Share this code. Up to 3 players can join.';
     label.style.cssText = `${LABEL_CSS} margin-bottom:10px;`;
     leftColumn.appendChild(label);
 
@@ -168,7 +168,7 @@ export class CreateRoomScreen {
     const killLimitColumn = document.createElement('div');
     killLimitColumn.style.cssText = 'flex:1;';
     const killLimitLabel = document.createElement('div');
-    killLimitLabel.textContent = 'First to how many kills wins?';
+    killLimitLabel.textContent = 'Kills to win';
     // min-height reserves 2 lines' worth of space regardless of actual wrap, so this label and
     // gooseDifficultyLabel below (1 line) both push their selects down by the same amount - without
     // it, this longer label wraps to 2 lines while the goose one stays on 1, leaving the two selects
@@ -190,7 +190,7 @@ export class CreateRoomScreen {
     const gooseDifficultyColumn = document.createElement('div');
     gooseDifficultyColumn.style.cssText = 'flex:1;';
     const gooseDifficultyLabel = document.createElement('div');
-    gooseDifficultyLabel.textContent = 'Goose explosions:';
+    gooseDifficultyLabel.textContent = 'Goose explosions';
     gooseDifficultyLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px; min-height:2.2em;`;
     this.gooseDifficultySelect = document.createElement('select');
     this.gooseDifficultySelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
@@ -211,7 +211,7 @@ export class CreateRoomScreen {
     // would read cluttered. Multiplayer-only, host-picked pre-match (per user request - single-
     // player never has a mode).
     const gameModeLabel = document.createElement('div');
-    gameModeLabel.textContent = 'Game mode:';
+    gameModeLabel.textContent = 'Mode';
     gameModeLabel.style.cssText = `${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
     leftColumn.appendChild(gameModeLabel);
     this.gameModeSelect = document.createElement('select');
@@ -227,7 +227,7 @@ export class CreateRoomScreen {
 
     // Purely cosmetic/atmospheric - mirrors gameModeSelect's own full-width layout above it.
     const weatherLabel = document.createElement('div');
-    weatherLabel.textContent = 'Match weather:';
+    weatherLabel.textContent = 'Weather';
     weatherLabel.style.cssText = `${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
     leftColumn.appendChild(weatherLabel);
     this.weatherSelect = document.createElement('select');
@@ -249,7 +249,7 @@ export class CreateRoomScreen {
     // the panel required scrolling to see everything - widening it and placing the player list to
     // the side keeps the whole screen visible without scrolling).
     const playerListLabel = document.createElement('div');
-    playerListLabel.textContent = 'Players in this room:';
+    playerListLabel.textContent = 'Players';
     playerListLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     rightColumn.appendChild(playerListLabel);
 
@@ -329,12 +329,12 @@ export class CreateRoomScreen {
 
     this.roomCode = generateRoomCode();
     this.codeDisplay.textContent = this.roomCode;
-    this.setStatus('Waiting for other players to join…');
+    this.setStatus('Waiting for players…');
 
     const generation = ++this.showGeneration;
     void PeerConnection.hostRoom(this.roomCode, {
       onConnected: () => {
-        this.setStatus('Connection verified. Ready when you are.');
+        this.setStatus('Everyone is connected. Start when ready.');
         this.startButton.style.display = 'block';
         this.updateStartButtonState();
         // The just-connected guest's own connection was only added to PeerConnection's map
@@ -364,14 +364,14 @@ export class CreateRoomScreen {
       onError: (message, kind) => {
         if (generation !== this.showGeneration) return;
         if (kind === 'brokerLost') {
-          this.setStatus('Lost contact with the matchmaking server. Reconnecting so new players can still join…');
+          this.setStatus('Lost the matchmaking server. Reconnecting…');
           return;
         }
         if (kind === 'networkBlocked') {
           // A guest's connection attempt failed its ICE negotiation. The room itself is fine, but the
           // raw PeerJS text ("Negotiation of connection to <uuid> failed.") told the host nothing.
           this.setStatus(
-            "A player tried to join but couldn't connect through the network. Strict work, school or mobile networks can block peer-to-peer play; try a different network.",
+            "A player couldn’t connect. Work, school and mobile networks can block online play, so they should try another network.",
           );
           return;
         }
@@ -379,7 +379,7 @@ export class CreateRoomScreen {
       },
       onBrokerReconnected: () => {
         if (generation !== this.showGeneration || !this.hostRoster) return;
-        this.setStatus(this.hostRoster.currentRoster().length > 1 ? 'Connection verified. Ready when you are.' : 'Waiting for other players to join…');
+        this.setStatus(this.hostRoster.currentRoster().length > 1 ? 'Everyone is connected. Start when ready.' : 'Waiting for players…');
       },
       onMessage: (message) => {
         if (message.type !== 'playerReady' || !this.hostRoster) return;
@@ -427,7 +427,7 @@ export class CreateRoomScreen {
       // re-arming the flow (a fresh Create Room click just calls show() again) is a strictly
       // additive safety net regardless of what turns out to actually cause a given failure.
       if (generation !== this.showGeneration) return;
-      this.setStatus(error instanceof Error ? error.message : 'Failed to create room - try again.');
+      this.setStatus(error instanceof Error ? error.message : 'Couldn’t create the room. Try again.');
     });
   }
 
@@ -435,10 +435,10 @@ export class CreateRoomScreen {
     this.playerList.replaceChildren(
       ...roster.map((entry) => {
         const name = entry.slot === HOST_SLOT ? `${entry.username} (you, host)` : entry.username;
-        const readyTag = this.readySlots.has(entry.slot) ? ' — ✓ Ready' : ' — Not Ready';
+        const readyTag = this.readySlots.has(entry.slot) ? ' · ready' : ' · not ready';
         return createPlayerRow(`${name}${readyTag}`);
       }),
-      ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for a player to join…', true)),
+      ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for players…', true)),
     );
   }
 

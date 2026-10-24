@@ -51,25 +51,37 @@ export class PlaySetupModal {
     this.targetInput = this.buildCountRow(panel, 'Targets', defaults.targetCount, maxCount);
     this.gooseDifficultySelect = this.buildDifficultyRow(panel, defaults.gooseDifficulty);
 
-    this.hordeModeCheckbox = this.buildCheckboxRow(panel, 'Goose Horde (10-wave survival, ignores enemy/target counts above)', defaults.hordeMode);
+    this.hordeModeCheckbox = this.buildCheckboxRow(panel, 'Goose Horde: survive 10 waves', defaults.hordeMode);
     this.directorModeCheckbox = this.buildCheckboxRow(
       panel,
-      'Director (enemies arrive in waves paced to the fight, ignores enemy/target counts above)',
+      'Director: waves paced to the fight',
       defaults.directorMode,
     );
     this.missionModeCheckbox = this.buildCheckboxRow(
       panel,
-      'Uplink mission (bring three tower uplinks online under pressure, then extract; ignores enemy/target counts above)',
+      'Uplink mission: bring 3 towers online, then extract',
       defaults.missionMode,
     );
     // Three different ways to run the match, so at most one of them.
     const exclusiveModes = [this.hordeModeCheckbox, this.directorModeCheckbox, this.missionModeCheckbox];
+    const updateCountInputs = () => {
+      const disabled = exclusiveModes.some((checkbox) => checkbox.checked);
+      for (const input of [this.enemyInput, this.targetInput]) {
+        input.disabled = disabled;
+        // A ticked mode sets its own enemies and targets, so the counts grey out instead of saying so.
+        if (input.parentElement) input.parentElement.style.opacity = disabled ? '0.4' : '1';
+        input.style.cursor = disabled ? 'not-allowed' : '';
+      }
+    };
     for (const checkbox of exclusiveModes) {
       checkbox.addEventListener('change', () => {
-        if (!checkbox.checked) return;
-        for (const other of exclusiveModes) if (other !== checkbox) other.checked = false;
+        if (checkbox.checked) {
+          for (const other of exclusiveModes) if (other !== checkbox) other.checked = false;
+        }
+        updateCountInputs();
       });
     }
+    updateCountInputs();
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';

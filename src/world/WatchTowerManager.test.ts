@@ -7,6 +7,7 @@ import {
   SPAWN_X,
   SPAWN_Z,
   WATCH_TOWER_COUNT,
+  WATCH_TOWER_MIN_SEPARATION,
   WATCH_TOWER_HALF_WIDTH,
   WATCH_TOWER_STAIR_WIDTH,
   WORLD_EDGE_RAMP_START,
@@ -73,6 +74,19 @@ describe('computeWatchTowerPositions', () => {
       }
     }
     expect(failures / SEED_SWEEP).toBeLessThanOrEqual(MAX_ACCEPTABLE_FAILURE_RATE);
+  });
+
+  it('keeps the wider preferred spacing in nearly every seed, so two towers rarely read as a pair', () => {
+    let crowdedSeeds = 0;
+    for (let seed = 1; seed <= SEED_SWEEP; seed++) {
+      setWorldSeedForTesting(seed);
+      const positions = computeWatchTowerPositions();
+      const crowded = positions.some((a, i) => positions.some((b, j) => j > i && Math.hypot(a.x - b.x, a.z - b.z) < WATCH_TOWER_MIN_SEPARATION - BOUNDARY_EPSILON));
+      if (crowded) crowdedSeeds++;
+    }
+    // Measured 11% over the sweep at 22 m (2026-10-24): where towns and forests leave no room the
+    // placement settles for the closer bound, which the test above holds to 2%.
+    expect(crowdedSeeds / SEED_SWEEP).toBeLessThanOrEqual(0.12);
   });
 
   it('is deterministic - the same seed always yields the same positions', () => {

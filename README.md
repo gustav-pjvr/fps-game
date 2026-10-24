@@ -6,7 +6,7 @@ Live at **[hunter-n-goose.pages.dev](https://hunter-n-goose.pages.dev/)**.
 
 ## Features
 
-- **Procedural open world** — seeded terrain, zones (towns/forests), roads, vegetation, and 4 fixed watch towers, all generated client-side from a single world seed so every player in a multiplayer match sees the identical map.
+- **Procedural open world:** seeded terrain with rises, basins and ridgelines, towns of prefab outpost buildings, forests, roads, vegetation and four watch towers with switchback stairs and a roofed lookout, all generated client-side from a single world seed so every player in a multiplayer match sees the identical map. See `docs/world-redesign.md`.
 - **Enemy AI (solo)**: several archetypes with distinct loadouts that notice you gradually, share what they know as a squad, limit themselves to two shooters at once while others flank, fight from cover, search for you in pairs when they lose you, and call out what they are doing. See `docs/enemy-ai-v2.md`.
 - **Director mode (solo)**: an opt-in Match Setup option where a pacing director sends waves of enemies in from out of sight and gives you a breather between peaks.
 - **A stylised dusk look (v4.0):** a teal sky over an amber horizon, a low sun, horizon-coloured haze and muted surfaces, with bloom, a colour grade and anti-aliasing on Medium and High and ambient occlusion on High. See `docs/visual-overhaul.md`.
