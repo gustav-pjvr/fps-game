@@ -84,6 +84,9 @@ export const MULTIPLAYER_RESPAWN_MIN_DISTANCE_FROM_OPPONENT = 35;
  * lag on top. More frequent, tiny snapshot messages is a fine trade for a 1v1. */
 export const PLAYER_SNAPSHOT_SEND_INTERVAL = 1 / 30;
 
+/** Seconds between browser connection-stat polls for ping and opponent prediction. */
+export const MULTIPLAYER_CONNECTION_POLL_INTERVAL = 2;
+
 /** How long a dead player waits before automatically respawning at their own spawn point
  * (MULTIPLAYER_PLAN.md §4a/§4) - a PvP match should keep flowing after a kill, not stop at a death
  * screen until someone clicks a button the way single-player's practice-reset flow does. */

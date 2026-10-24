@@ -1,5 +1,7 @@
 import Peer, { type DataConnection, type PeerError } from 'peerjs';
 import { HOST_SLOT, isNetworkMessage, type NetworkMessage, type PlayerSlot, type WelcomeMessage } from './protocol.ts';
+import { FAST_MESSAGE_TYPES, FastChannel } from './fastChannel.ts';
+import { readConnectionQuality, UNKNOWN_QUALITY, type ConnectionQuality } from './connectionStats.ts';
 
 /** Namespaces this game's rooms on PeerJS's shared public signaling broker - the broker is a free
  * service shared by every app using PeerJS's default config, so a short, human-typeable room code
@@ -134,6 +136,9 @@ export function classifyPeerError(type: string, rawMessage: string): { kind: Pee
  * resulting WebRTC DataChannel. */
 export class PeerConnection {
   private readonly connections = new Map<PlayerSlot, DataConnection>();
+  /** The unreliable channel beside each connection, for position snapshots (see fastChannel.ts).
+   * Missing or not yet confirmed means those go on the reliable connection, as they always did. */
+  private readonly fastChannels = new Map<PlayerSlot, FastChannel>();
   private ownSlotValue: PlayerSlot = HOST_SLOT;
   private disposed = false;
   private brokerReconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -234,11 +239,13 @@ export class PeerConnection {
           // acting on it used to delete the NEW connection and remove the rejoined player again.
           if (this.connections.get(slot) !== connection) return;
           this.connections.delete(slot);
+          this.closeFastChannel(slot);
           this.callbacks.onPeerDisconnected(slot);
         });
         // Same slot handed to a new connection (see HostRoster.handleHello's token takeover): the
         // old one is stale, close it so it stops relaying/sending as that player.
         if (previous && previous !== connection) previous.close();
+        this.openFastChannel(slot, connection);
         // The listener above only exists to catch the initial hello - once accepted, every
         // further message from this connection is slot-known gameplay/lobby traffic routed
         // through the normal onMessage callback instead.
@@ -256,8 +263,14 @@ export class PeerConnection {
    * once `welcome` actually arrives (see the class's own doc comment on why). */
   private attachHostConnection(connection: DataConnection, username: string, rejoinToken: string | null): void {
     this.connections.set(HOST_SLOT, connection);
-    connection.on('open', () => connection.send({ type: 'hello', username, rejoinToken }));
-    connection.on('close', () => this.callbacks.onPeerDisconnected(HOST_SLOT));
+    connection.on('open', () => {
+      connection.send({ type: 'hello', username, rejoinToken });
+      this.openFastChannel(HOST_SLOT, connection);
+    });
+    connection.on('close', () => {
+      this.closeFastChannel(HOST_SLOT);
+      this.callbacks.onPeerDisconnected(HOST_SLOT);
+    });
     connection.on('error', (error) => this.reportError(error));
     connection.on('data', (data) => {
       if (!isNetworkMessage(data)) return;
@@ -275,7 +288,7 @@ export class PeerConnection {
   /** Broadcasts to every currently connected party. Guest: its one connection (the host).
    * Host: every connected guest. */
   send(message: NetworkMessage): void {
-    for (const connection of this.connections.values()) connection.send(message);
+    for (const [slot, connection] of this.connections) this.deliver(slot, connection, message);
   }
 
   /** Sends to exactly one slot - host-only in practice (a guest only ever has one connection to
@@ -283,7 +296,8 @@ export class PeerConnection {
    * specific guest and no one else (e.g. a targeted reply, though the initial WelcomeMessage today
    * is sent directly on the raw connection before this class's own map is even populated). */
   sendTo(slot: PlayerSlot, message: NetworkMessage): void {
-    this.connections.get(slot)?.send(message);
+    const connection = this.connections.get(slot);
+    if (connection) this.deliver(slot, connection, message);
   }
 
   /** Host-only: relays `message` to every guest except the one it originated from - see Game.ts's
@@ -291,7 +305,7 @@ export class PeerConnection {
    * equivalent to a no-op, since there is no "everyone except the host" to send to. */
   sendExcept(message: NetworkMessage, excludeSlot: PlayerSlot): void {
     for (const [slot, connection] of this.connections) {
-      if (slot !== excludeSlot) connection.send(message);
+      if (slot !== excludeSlot) this.deliver(slot, connection, message);
     }
   }
 
@@ -305,7 +319,60 @@ export class PeerConnection {
     // Closing first ran onPeerDisconnected too, so the caller's own removal (the staleness sweep)
     // happened twice and a duplicate playerLeft went out.
     this.connections.delete(slot);
+    this.closeFastChannel(slot);
     connection?.close();
+  }
+
+  /** Snapshots go on the fast channel when it is confirmed and not congested; everything else, and
+   * any snapshot it declines, on the reliable connection. */
+  private deliver(slot: PlayerSlot, connection: DataConnection, message: NetworkMessage): void {
+    // Only a snapshot carrying its sender's clock may go unordered: the receiver needs `t` to drop a
+    // late one. An older build's snapshots, relayed by this host, keep the ordered channel.
+    const clocked = (message as { t?: unknown }).t !== undefined;
+    if (clocked && FAST_MESSAGE_TYPES.has(message.type) && this.fastChannels.get(slot)?.trySend(message)) return;
+    connection.send(message);
+  }
+
+  /** Opens the fast channel on the connection's own RTCPeerConnection. Messages arriving on it are
+   * handed on only while `connection` still holds the slot, the same rule as its 'close' handler. */
+  private openFastChannel(slot: PlayerSlot, connection: DataConnection): void {
+    this.closeFastChannel(slot);
+    const peerConnection = connection.peerConnection as RTCPeerConnection | undefined;
+    if (!peerConnection) return;
+    const fast = FastChannel.open(peerConnection, (message) => {
+      if (this.connections.get(slot) === connection) this.callbacks.onMessage(message, slot);
+    });
+    if (fast) this.fastChannels.set(slot, fast);
+  }
+
+  /** How many connections currently carry snapshots on a confirmed fast channel (for the e2e debug
+   * API: proof that the channel really opens between two browsers, not only in unit tests). */
+  fastChannelReadyCount(): number {
+    let ready = 0;
+    for (const fast of this.fastChannels.values()) if (fast.ready) ready++;
+    return ready;
+  }
+
+  private closeFastChannel(slot: PlayerSlot): void {
+    this.fastChannels.get(slot)?.close();
+    this.fastChannels.delete(slot);
+  }
+
+  /** Round trip and route (direct or relay) to each connected slot, read from the browser's own
+   * connection statistics; no extra messages are sent to measure it. */
+  async connectionQuality(): Promise<Map<PlayerSlot, ConnectionQuality>> {
+    const result = new Map<PlayerSlot, ConnectionQuality>();
+    await Promise.all(
+      [...this.connections].map(async ([slot, connection]) => {
+        const peerConnection = connection.peerConnection as RTCPeerConnection | undefined;
+        try {
+          result.set(slot, peerConnection ? readConnectionQuality(await peerConnection.getStats()) : UNKNOWN_QUALITY);
+        } catch {
+          result.set(slot, UNKNOWN_QUALITY);
+        }
+      }),
+    );
+    return result;
   }
 
   /** Whether a data channel to `slot` exists and is open right now. Lets a guest notice at match
@@ -338,6 +405,8 @@ export class PeerConnection {
       clearTimeout(this.brokerReconnectTimer);
       this.brokerReconnectTimer = null;
     }
+    for (const fast of this.fastChannels.values()) fast.close();
+    this.fastChannels.clear();
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();
     this.peer.destroy();

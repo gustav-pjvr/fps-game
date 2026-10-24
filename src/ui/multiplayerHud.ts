@@ -1,4 +1,5 @@
 import type { PlayerSlot } from '../network/protocol.ts';
+import { formatConnection, type ConnectionQuality } from '../network/connectionStats.ts';
 import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, LABEL_CSS, MONO_FONT, SURFACE, TEXT_SHADOW, THREAT } from './theme.ts';
 
 const HEALTH_BAR_WIDTH = 140;
@@ -65,6 +66,7 @@ export class MultiplayerHud {
   private readonly opponentHealthRows = new Map<PlayerSlot, HealthRow>();
   private readonly scoreboard: HTMLDivElement;
   private readonly roomCodeLabel: HTMLDivElement;
+  private readonly connectionLabel: HTMLDivElement;
   private readonly ownSlot: PlayerSlot;
   private ownName: string;
   private readonly opponentNames = new Map<PlayerSlot, string>();
@@ -94,6 +96,23 @@ export class MultiplayerHud {
       `position:absolute; top:180px; right:24px; font-family:${MONO_FONT}; color:${INK_DIM};` +
       ` font-size:10px; letter-spacing:0.05em; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;`;
     root.appendChild(this.roomCodeLabel);
+
+    this.connectionLabel = document.createElement('div');
+    this.connectionLabel.textContent = formatConnection({ rttMs: null, route: null });
+    this.connectionLabel.style.cssText =
+      `position:absolute; top:194px; right:24px; font-family:${MONO_FONT}; color:${INK_DIM};` +
+      ` font-size:10px; letter-spacing:0.05em; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;`;
+    this.connectionLabel.setAttribute('aria-hidden', 'true');
+    root.appendChild(this.connectionLabel);
+  }
+
+  /** The ping line as shown, for the e2e debug API. */
+  get connectionText(): string {
+    return this.connectionLabel.textContent ?? '';
+  }
+
+  setConnection(quality: ConnectionQuality): void {
+    this.connectionLabel.textContent = formatConnection(quality);
   }
 
   /** Called once per opponent when they're added to the match (initial roster, a rejoin, or a
@@ -195,5 +214,6 @@ export class MultiplayerHud {
     this.healthContainer.remove();
     this.scoreboard.remove();
     this.roomCodeLabel.remove();
+    this.connectionLabel.remove();
   }
 }

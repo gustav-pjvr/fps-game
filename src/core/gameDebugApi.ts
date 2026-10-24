@@ -114,6 +114,10 @@ export interface GameDebugApi {
    * equals the opponent's kill count from this client's point of view (see Game's
    * multiplayerDeathCount comment). 0 outside a multiplayer match. */
   getOpponentScore(): number;
+  /** Multiplayer only - how many of this client's connections carry position snapshots on the
+   * confirmed fast channel (network/fastChannel.ts), and the HUD's ping line. 0 and '' outside a
+   * multiplayer match. */
+  getNetworkDebug(): { fastChannelsReady: number; pingLabel: string };
   /** Multiplayer only - how many OTHER players are currently in this match (0-3), for verifying a
    * 3-4 player lobby actually has everyone present instead of just the single opponent the older
    * getOpponentPosition/getOpponentScore helpers above assume. 0 outside a multiplayer match. */

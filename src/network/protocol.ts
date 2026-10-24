@@ -135,6 +135,11 @@ export interface PlayerSnapshotMessage {
   yaw: number;
   pitch: number;
   health: number;
+  /** The sender's performance.now() when sent. Snapshots travel on the unreliable fast channel
+   * (network/fastChannel.ts), so they can arrive late or out of order; the receiver drops any not
+   * newer than the last it applied, or than the sender's last death or respawn. Optional because a
+   * browser still on an older build sends none. */
+  t?: number;
 }
 
 /** Sent by the shooter on every shot - purely cosmetic (tracer/muzzle flash/positional gunshot
@@ -179,6 +184,9 @@ export interface PlayerDiedMessage {
   senderSlot: PlayerSlot;
   victimSlot: PlayerSlot;
   killerSlot: PlayerSlot | null;
+  /** Sender's clock, as on PlayerSnapshotMessage: a snapshot sent before this death must not
+   * bring the body back to life when it arrives after it. */
+  t?: number;
 }
 
 /** Sent once a dying player actually respawns - lets every other client's RemotePlayer for that
@@ -190,6 +198,9 @@ export interface RespawnEventMessage {
   x: number;
   y: number;
   z: number;
+  /** Sender's clock, as on PlayerSnapshotMessage: a snapshot from before the respawn must not drag
+   * the player back to where they died. */
+  t?: number;
 }
 
 /** Sent by a client each time its own player takes a footstep (per user request: other players

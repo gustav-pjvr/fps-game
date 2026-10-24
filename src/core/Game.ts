@@ -124,6 +124,7 @@ import {
   HORDE_WAVE_TABLE_MULTIPLAYER,
   KOTH_POINTS_TO_WIN,
   type MatchWeather,
+  MULTIPLAYER_CONNECTION_POLL_INTERVAL,
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_RESPAWN_DELAY,
@@ -149,6 +150,8 @@ import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
 import { HOST_SLOT, type PlayerSlot } from '../network/protocol.ts';
+import { summarizeConnection } from '../network/connectionStats.ts';
+import { createSendClock } from '../network/stateOrder.ts';
 import type { ActiveMultiplayer, RemoteOpponent } from '../network/multiplayerMatchTypes.ts';
 import { routeMatchMessage, type MatchMessageContext } from '../network/MatchMessageRouter.ts';
 import { isHordeAllEliminated, MultiplayerMatchState } from '../network/MultiplayerMatchState.ts';
@@ -343,6 +346,10 @@ export class Game {
   private readonly isSpawnBlocked: SpawnBlockedCheck;
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
+  private connectionPollAccumulator = 0;
+  /** Stamps `t` on this player's snapshots, deaths and respawns (see network/stateOrder.ts). */
+  private readonly sendClock = createSendClock();
+  private connectionPollInFlight = false;
   /** Set when death is detected while the pause menu is open (multiplayer only - single-player
    * can never die while paused, see the early-return above isPaused's own comment) - per user
    * request, the death/respawn screen must never visually overlay the pause menu. The death ITSELF
@@ -457,7 +464,7 @@ export class Game {
     private readonly matchConfig: MatchConfig,
     private readonly sun: THREE.DirectionalLight,
     private readonly fillLight: THREE.HemisphereLight,
-    private readonly multiplayer: ActiveMultiplayer | null,
+    private multiplayer: ActiveMultiplayer | null,
     private readonly onMultiplayerMatchEnd?: (result: MultiplayerMatchEndResult) => void,
     /** Fired when a matchStart message arrives *after* this Game already exists - the guest's
      * signal that the host clicked Rematch (see MatchEndScreen / App.restartMultiplayerMatch); the
@@ -587,6 +594,10 @@ export class Game {
         const p = opponent.remotePlayer.position;
         return { x: p.x, y: p.y, z: p.z };
       },
+      getNetworkDebug: () => ({
+        fastChannelsReady: this.multiplayer?.session.connection.fastChannelReadyCount() ?? 0,
+        pingLabel: this.multiplayer?.multiplayerHud.connectionText ?? '',
+      }),
       getOpponentScore: () => {
         const opponent = this.multiplayer?.opponents.keys().next().value;
         return opponent !== undefined ? this.multiplayerMatchState.scoreboard.get(opponent) ?? 0 : 0;
@@ -1488,6 +1499,7 @@ export class Game {
     if (!options?.keepConnectionAlive) {
       this.multiplayer?.session.connection.dispose();
     }
+    this.multiplayer = null;
     // Invalidate any in-flight spawnEncountersAsync loop *before* freeing the physics world -
     // its frame-yielded batches would otherwise call createRigidBody on freed WASM memory.
     this.spawnGeneration++;
@@ -2154,7 +2166,7 @@ export class Game {
         const recentlyDamaged = performance.now() - this.multiplayer.lastDamageSourceAt <= MULTIPLAYER_KILL_CREDIT_WINDOW_MS;
         const killerSlot = recentlyDamaged ? this.multiplayer.lastDamageSourceSlot : null;
         const ownSlot = this.multiplayer.session.ownSlot;
-        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot });
+        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, t: this.sendClock() });
         // Goose Horde is co-op - per explicit user request, nobody should score points off a
         // teammate's death (accidental friendly fire or otherwise), and there's no kill-limit win
         // condition for this mode anyway (see updateMultiplayer's own gooseHorde skip). Every other
@@ -2228,6 +2240,25 @@ export class Game {
         ? { pointsToWin: KOTH_POINTS_TO_WIN, carrierSlot: this.goldenGooseManager?.carrierSlot ?? null }
         : undefined,
     );
+
+    // Ping comes from the browser's own connection stats; lead lets RemotePlayer draw opponents where they are now.
+    this.connectionPollAccumulator += dt;
+    if (this.connectionPollAccumulator >= MULTIPLAYER_CONNECTION_POLL_INTERVAL) {
+      this.connectionPollAccumulator = 0;
+      if (!this.connectionPollInFlight) {
+        this.connectionPollInFlight = true;
+        void this.multiplayer.session.connection.connectionQuality().then((measured) => {
+          if (!this.multiplayer) return;
+          const summary = summarizeConnection(this.multiplayer.session.role, HOST_SLOT, measured, this.multiplayer.opponents.keys());
+          this.multiplayer.multiplayerHud.setConnection(summary.shown);
+          for (const [slot, opponent] of this.multiplayer.opponents) {
+            opponent.remotePlayer.setLeadSeconds(summary.leadSeconds.get(slot) ?? 0);
+          }
+        }).catch(() => {}).finally(() => {
+          this.connectionPollInFlight = false;
+        });
+      }
+    }
 
     // Win condition: first to killLimit ends the match. Checked here rather than where each score
     // actually changes (the playerDied handling scattered across create()'s onMessage and update()'s
@@ -2329,6 +2360,7 @@ export class Game {
         yaw: this.player.facingYaw,
         pitch: this.player.facingPitch,
         health: this.player.currentHealth,
+        t: this.sendClock(),
       });
     }
   }
@@ -2378,7 +2410,7 @@ export class Game {
     this.deathScreenVisible = false;
     this.pendingDeathScreenReveal = false;
     if (!pauseMenuCurrentlyOpen) this.input.requestPointerLock();
-    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
+    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z, t: this.sendClock() });
   }
 
   /** The pause menu's "Respawn" button (multiplayer only, gated behind PauseMenu's own 5-second
@@ -2397,7 +2429,7 @@ export class Game {
     const { x, z } = pickRandomRespawnPoint(otherPositions, this.isSpawnBlocked);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.debugTeleport(new THREE.Vector3(x, spawnY, z));
-    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z });
+    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z, t: this.sendClock() });
   }
 
   /** Goose Horde multiplayer's ammo crates: host-only spawn tick (see AmmoDropManager.update's own
@@ -2688,7 +2720,14 @@ export class Game {
    * is already tracked (a relay-hop race, or this client is the host that already added it inside
    * onHostHello before broadcasting - see create()'s own comment on that ordering). */
   private async addMultiplayerOpponent(slot: PlayerSlot, username: string): Promise<void> {
-    if (!this.multiplayer || this.multiplayer.opponents.has(slot)) return;
+    if (!this.multiplayer) return;
+    const existing = this.multiplayer.opponents.get(slot);
+    if (existing) {
+      // A rejoin that took over this slot before the old connection closed: the new page's clock
+      // starts again near zero, so the old floor would drop its snapshots (see stateOrder.ts).
+      existing.lastStateSentAt = undefined;
+      return;
+    }
     const remotePlayer = await RemotePlayer.create(
       this.physics,
       this.renderer.scene,
