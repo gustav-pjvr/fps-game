@@ -106,6 +106,18 @@ export interface GameDebugApi {
   } | null;
   /** The Uplink mission's state (docs/visual-overhaul.md, phase 4), null outside a mission match. */
   getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
+  /** The Facility (docs/facility-map.md) in a Facility match, null on the Valley: the map, the
+   * layout's seed, its room, open cell and lamp counts, how long the light bake took and how many
+   * vertices it lit. */
+  getFacilityDebug(): {
+    map: 'facility';
+    seed: number;
+    rooms: number;
+    openCells: number;
+    lamps: number;
+    bakeMs: number;
+    vertexCount: number;
+  } | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

@@ -49,6 +49,9 @@ export interface LookPreset {
   readonly bloom: { readonly intensity: number; readonly threshold: number };
   /** Emissive strength of building windows (render/materialGrade.ts). */
   readonly windowGlow: number;
+  /** An indoor map (the Facility): no sky dome and no image-based lighting for the world; the
+   * hemisphere fill follows the baked light probes instead (see Game's facility light). */
+  readonly indoor?: boolean;
 }
 
 function sunFrom(elevationDeg: number, azimuthDeg: number): THREE.Vector3 {
@@ -142,6 +145,38 @@ export const LOOK_PRESETS: Record<MatchWeather, LookPreset> = {
     bloom: { intensity: 0.7, threshold: 0.95 },
     windowGlow: 1.8,
   },
+};
+
+/** The Facility's indoor look (docs/facility-map.md, section 6). Weather does not apply indoors.
+ * The sun is off and the hemisphere colours are a neutral-warm base that the baked probe of the
+ * camera's cell scales every frame. The sky colours never show (the dome is hidden); they only feed
+ * the dim reflection map the weapons carry, so metal reads as dark steel instead of black. */
+export const FACILITY_LOOK: LookPreset = {
+  sunDirection: sunFrom(60, SUN_AZIMUTH_DEG),
+  sunColor: 0xffffff,
+  sunIntensity: 0,
+  hemiSkyColor: 0xfff1e0,
+  hemiGroundColor: 0x8c8274,
+  hemiIntensity: 1,
+  environmentIntensity: 0,
+  sky: {
+    zenith: 0x24221e,
+    band: 0x1c1b18,
+    haze: 0x0b0d0e,
+    horizonSun: 0x0b0d0e,
+    horizonSunStrength: 0,
+    sunDisc: 0x000000,
+    sunDiscRadius: 0,
+    sunGlow: 0x000000,
+    stars: 0,
+  },
+  fog: { near: 6, far: 48, haze: 0.004 },
+  exposure: 1.2,
+  grade: { lift: 0.02, gain: 1.04, saturation: 0.88, contrast: 1.02, vignette: 0.38, grain: 0.05 },
+  bloom: { intensity: 1.1, threshold: 0.75 },
+  // No windows indoors. The glow is a global setting the lobby never resets, so it keeps the day value.
+  windowGlow: 1.4,
+  indoor: true,
 };
 
 export function lookFor(weather: MatchWeather): LookPreset {

@@ -976,6 +976,10 @@ export const FACILITY_LAMP_WARM = 0xffd2a0;
 export const FACILITY_LAMP_COOL = 0xcfe2ff;
 /** Dark room and emergency lamp colour. */
 export const FACILITY_LAMP_AMBER = 0xffa040;
+/** Multiplier on every lamp's strength in the facility bake (vertex light and probes). The layout's
+ * intensities of 0.25 to 1 under the bake's falloff read far too dark through BRDF_Lambert; this
+ * value is tuned by eye. */
+export const FACILITY_LAMP_POWER = 16;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;

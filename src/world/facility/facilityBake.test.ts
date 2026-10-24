@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FACILITY_LAMP_POWER } from '../../core/config.ts';
 import { bakeFacility, sampleProbe } from './facilityBake.ts';
 import { buildFacilityGeometry } from './facilityGeometry.ts';
 import { generateFacilityLayout, OPEN, PROP, SOLID, type FacilityLayout } from './facilityLayout.ts';
@@ -71,7 +72,7 @@ describe('Facility bake', () => {
     const aoAt = (offset: number): number => {
       const x = positions[offset]!, z = positions[offset + 2]!, dy = layout.lamps[0]!.y;
       const d2 = x * x + z * z + dy * dy, d = Math.sqrt(d2), fade = Math.max(0, Math.min(1, (14 - d) / 6));
-      const direct = dy / d * (0.35 + 0.65 * dy / d) * fade * fade * (3 - 2 * fade) / (1 + d2 / 2.56);
+      const direct = FACILITY_LAMP_POWER * dy / d * (0.35 + 0.65 * dy / d) * fade * fade * (3 - 2 * fade) / (1 + d2 / 2.56);
       const i = Math.floor(x / 1.5 + 4.5), j = Math.floor(z / 1.5 + 4.5);
       let fill = 0;
       for (let b = j - 1; b <= j + 1; b++) for (let a = i - 1; a <= i + 1; a++) fill += result.probes[(b * 9 + a) * 3]!;

@@ -70,7 +70,8 @@ export class Renderer {
     this.quality = quality;
     this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.webgl.shadowMap.enabled = quality.shadowsEnabled;
-    this.scene.environment = quality.environmentLighting ? this.skyEnvironmentTexture : null;
+    // Indoors the sky does not light the world: the baked light and the probe-driven fill do.
+    this.scene.environment = quality.environmentLighting && !this.look.indoor ? this.skyEnvironmentTexture : null;
     this.scene.environmentIntensity = this.look.environmentIntensity;
     this.rebuildPostStack();
   }
@@ -84,6 +85,13 @@ export class Renderer {
     this.applyQuality(this.quality);
   }
 
+  /** Applies a whole look instead of a weather's: the Facility's indoor look (render/look.ts).
+   * Called once at match setup in place of setMatchWeather, before anything compiles. */
+  setMatchLook(look: LookPreset): void {
+    this.applyLook(look);
+    this.applyQuality(this.quality);
+  }
+
   get currentLook(): LookPreset {
     return this.look;
   }
@@ -92,12 +100,15 @@ export class Renderer {
     this.look = look;
     installLookFog(look);
     this.sky.applyLook(look);
+    this.sky.visible = !look.indoor;
     this.scene.fog = new THREE.Fog(look.sky.haze, look.fog.near, look.fog.far);
     this.webgl.toneMappingExposure = look.exposure;
     setWindowGlow(look.windowGlow);
 
     // Image-based lighting from the sky itself, rendered from a scene holding only a copy of the
-    // sky so nothing already added to the match scene leaks into the environment.
+    // sky so nothing already added to the match scene leaks into the environment. Indoors the world
+    // never uses it (see applyQuality), but the weapons still do: the indoor look's dim sky colours
+    // give metal a faint reflection, where no map at all would leave gunmetal near black.
     const envScene = new THREE.Scene();
     const envSky = new StylizedSky(look);
     envScene.add(envSky);

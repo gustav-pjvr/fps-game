@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { getWorldSeed, setWorldSeed } from '../core/worldSeed.ts';
-import { sampleHeight } from './TerrainGenerator.ts';
+import { sampleHeight, setHeightOverride } from './TerrainGenerator.ts';
 import { getWatchTowerPositions, WATCH_TOWER_FOOTPRINT_RADIUS } from './WatchTowerManager.ts';
 import { getGuaranteedFlatSites } from './ZoneMap.ts';
 import { ENEMY_RING_BASE_RADIUS, FLAT_ZONE_INNER_FRACTION, SPAWN_X, SPAWN_Z, WORLD_EDGE_RAMP_START } from '../core/config.ts';
@@ -86,5 +86,21 @@ describe('terrain generation', () => {
         }
       }
     }
+  });
+});
+
+describe('height override (the Facility)', () => {
+  afterAll(() => setHeightOverride(null));
+
+  it('returns the override while set and the valley again once cleared', () => {
+    const valley = [sampleHeight(SPAWN_X, SPAWN_Z), sampleHeight(120, -80), sampleHeight(-200, 35)];
+    setHeightOverride(() => 0);
+    expect(sampleHeight(SPAWN_X, SPAWN_Z)).toBe(0);
+    expect(sampleHeight(120, -80)).toBe(0);
+    setHeightOverride((x, z) => x + 2 * z);
+    expect(sampleHeight(3, 4)).toBe(11);
+    setHeightOverride(null);
+    expect([sampleHeight(SPAWN_X, SPAWN_Z), sampleHeight(120, -80), sampleHeight(-200, 35)]).toEqual(valley);
+    expect(valley.some((height) => height !== 0)).toBe(true);
   });
 });

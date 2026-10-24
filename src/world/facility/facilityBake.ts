@@ -1,3 +1,4 @@
+import { FACILITY_LAMP_POWER } from '../../core/config.ts';
 import { SOLID, type FacilityLayout } from './facilityLayout.ts';
 
 type RGB = [number, number, number];
@@ -111,7 +112,7 @@ export function bakeFacility(layout: FacilityLayout, positions: Float32Array, no
       if (cosine <= 0) continue;
       const fade = Math.max(0, Math.min(1, (RADIUS - d) / 6));
       const cone = lamp.panel ? 0.35 + 0.65 * Math.max(0, dy / d) : 1;
-      const strength = lamp.intensity * cosine * cone * fade * fade * (3 - 2 * fade) / (1 + d2 / 2.56);
+      const strength = lamp.intensity * FACILITY_LAMP_POWER * cosine * cone * fade * fade * (3 - 2 * fade) / (1 + d2 / 2.56);
       const push = probe ? 0 : 0.05;
       if (blocked(x + nx * push, y + ny * push, z + nz * push, dx - nx * push, dy - ny * push, dz - nz * push)) continue;
       out[offset] = out[offset]! + lamp.r * strength;
