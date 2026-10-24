@@ -106,6 +106,26 @@ export interface GameDebugApi {
   } | null;
   /** The Uplink mission's state (docs/visual-overhaul.md, phase 4), null outside a mission match. */
   getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
+  /** The Facility (docs/facility-map.md) in a Facility match, null on the Valley: the map, the
+   * layout's seed, its room, open cell and lamp counts, how long the light bake took and how many
+   * vertices it lit, and whether the player's torch is on. */
+  getFacilityDebug(): {
+    map: 'facility';
+    seed: number;
+    rooms: number;
+    openCells: number;
+    lamps: number;
+    bakeMs: number;
+    vertexCount: number;
+    torchOn: boolean;
+    /** Lamps shot out so far (docs/facility-map.md, section 11). */
+    deadLamps: number;
+  } | null;
+  /** Test-only, Facility only: shoots out lamp `index` exactly like a hit (light, effect, sound and,
+   * in multiplayer, the lampDestroyed send). False when there is no such live lamp. */
+  shootLamp(index: number): boolean;
+  /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
+  lampPosition(index: number): { x: number; y: number; z: number } | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

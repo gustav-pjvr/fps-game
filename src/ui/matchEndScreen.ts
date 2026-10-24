@@ -2,6 +2,7 @@ import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED, SURFACE } from './theme.ts';
 import { createButton, ACCENT, TEXT, HAIRLINE, DISPLAY_FONT } from './menu/menuStyles.ts';
 import {
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
+  DEFAULT_MATCH_MAP,
   GOOSE_EXPLOSION_DIFFICULTIES,
   GOOSE_EXPLOSION_DIFFICULTY_LABELS,
   MATCH_WEATHER_LABELS,
@@ -10,12 +11,13 @@ import {
   MULTIPLAYER_KILL_LIMIT_MIN,
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
+  type MatchMap,
   type MatchWeather,
 } from '../core/config.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
-import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../core/gameModes.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, isModeAllowedOnMap, type GameMode } from '../core/gameModes.ts';
 import { attachScanSweep } from './menu/menuStyles.ts';
 
 /** 'hordeCleared'/'hordeWipe' are Goose Horde's own win/loss reasons - previously both reused
@@ -42,6 +44,7 @@ export interface MultiplayerMatchEndResult {
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
   weather: MatchWeather;
+  map: MatchMap;
   role: MultiplayerRole;
   connection: PeerConnection;
 }
@@ -56,6 +59,7 @@ export interface RematchSettings {
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
   weather: MatchWeather;
+  map: MatchMap;
   /** true generates a fresh world seed (same as the original "always randomize" behavior); false
    * reuses the map both players just fought on, for a direct rematch on the same terrain. */
   newMap: boolean;
@@ -81,6 +85,8 @@ export class MatchEndScreen {
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly gameModeSelect: HTMLSelectElement;
   private readonly weatherSelect: HTMLSelectElement;
+  private readonly weatherLabel: HTMLDivElement;
+  private map: MatchMap = DEFAULT_MATCH_MAP;
   private readonly newMapCheckbox: HTMLInputElement;
   private readonly rematchButton: HTMLButtonElement;
 
@@ -173,6 +179,7 @@ export class MatchEndScreen {
     }
 
     const weatherLabel = document.createElement('div');
+    this.weatherLabel = weatherLabel;
     weatherLabel.textContent = 'Weather';
     weatherLabel.style.cssText = `${LABEL_CSS} margin-bottom:6px;`;
     this.weatherSelect = document.createElement('select');
@@ -213,6 +220,7 @@ export class MatchEndScreen {
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         gameMode: this.gameModeSelect.value as GameMode,
         weather: this.weatherSelect.value as MatchWeather,
+        map: this.map,
         newMap: this.newMapCheckbox.checked,
       });
     });
@@ -256,6 +264,15 @@ export class MatchEndScreen {
       this.gooseDifficultySelect.value = result.gooseDifficulty;
       this.gameModeSelect.value = result.gameMode;
       this.weatherSelect.value = result.weather;
+      this.map = result.map;
+      this.weatherSelect.disabled = this.map === 'facility';
+      this.weatherLabel.textContent = this.map === 'facility' ? 'Indoor' : 'Weather';
+      for (const option of this.gameModeSelect.options) {
+        const mode = option.value as GameMode;
+        option.disabled = !isModeAllowedOnMap(mode, this.map);
+        option.textContent = GAME_MODE_LABELS[mode] + (option.disabled ? ' (Valley only)' : '');
+      }
+      if (!isModeAllowedOnMap(result.gameMode, this.map)) this.gameModeSelect.value = DEFAULT_GAME_MODE;
     }
 
     this.element.style.display = 'flex';

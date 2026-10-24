@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { ADS_SIGHT_DISTANCE } from '../../core/config.ts';
 import { WEAPON_DEFINITIONS } from '../definitions.ts';
-import { WEAPON_HIP_POSITION } from '../viewModel.ts';
+import { WEAPON_ADS_POSITION, WEAPON_HIP_POSITION } from '../viewModel.ts';
 import { buildWeaponViewModel, WEAPON_MODEL_TUNING } from './arsenal.ts';
 import { getWeaponMaterials, WEAPON_GLOW_INTENSITY } from './weaponMaterials.ts';
 
@@ -101,6 +102,27 @@ describe('Opus arsenal', () => {
     const edge = knife.group.getObjectByName('edge-glow') as THREE.Mesh;
     expect(edge.material).toBe(knife.glowMaterials[0]);
     expect(knife.magazine).toBeNull();
+  });
+
+  for (const definition of Object.values(WEAPON_DEFINITIONS).filter((d) => d.kind === 'ranged')) {
+    it(`aims ${definition.id} with its sight-dot on the screen centre`, () => {
+      const model = buildWeaponViewModel(definition.id);
+      model.group.position.copy(model.adsPosition);
+      model.group.updateMatrixWorld(true);
+      const sight = model.group.getObjectByName('sight-dot') as THREE.Mesh<THREE.BoxGeometry>;
+      expect(sight).toBeDefined();
+      const centre = sight.getWorldPosition(new THREE.Vector3());
+      expect(centre.distanceTo(new THREE.Vector3(0, 0, -ADS_SIGHT_DISTANCE))).toBeLessThan(0.001);
+    });
+  }
+
+  it('keeps the shared aim pose for models without a sight', () => {
+    for (const id of ['knife', 'unarmed']) {
+      const model = buildWeaponViewModel(id);
+      expect(model.group.getObjectByName('sight-dot')).toBeUndefined();
+      expect(model.adsPosition).toEqual(WEAPON_ADS_POSITION);
+      expect(model.adsPosition).not.toBe(WEAPON_ADS_POSITION);
+    }
   });
 
   it('rejects an unknown id instead of substituting an unrelated weapon', () => {

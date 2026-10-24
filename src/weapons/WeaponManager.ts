@@ -1,9 +1,9 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
+import { meleePose, type MeleeVariant } from './meleeSwing.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
 import {
-  WEAPON_ADS_POSITION,
   WEAPON_HIP_POSITION,
   type WeaponViewModel,
 } from './viewModel.ts';
@@ -18,9 +18,13 @@ import type { Action } from '../input/actions.ts';
 import type { Player } from '../entities/Player.ts';
 import type { ScopeOverlay } from '../ui/scope.ts';
 import { Settings } from '../settings/Settings.ts';
+import { viewModelPointToWorldLens } from '../render/viewModelCamera.ts';
 import {
   ADS_LERP_SPEED,
+  ADS_MOTION_DAMPING,
   CAMERA_FOV,
+  MELEE_SWING_DURATION,
+  MELEE_STAB_DURATION,
   LONG_SHOT_DISTANCE,
   RELOAD_DIP,
   RELOAD_TILT_ANGLE,
@@ -91,6 +95,10 @@ export class WeaponManager {
   private swayPitch = 0;
   /** 0 to 1 blend into the sprint tuck (see updateAim). */
   private sprintPose = 0;
+  private meleeVariant: MeleeVariant = 'draw';
+  private meleeProgress = 1;
+  private meleeDuration = MELEE_SWING_DURATION;
+  private nextSlash: 'slashRight' | 'slashLeft' = 'slashRight';
 
   private constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -99,6 +107,7 @@ export class WeaponManager {
     private readonly scopeOverlay: ScopeOverlay,
     private readonly onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     private readonly onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
+    private readonly onMeleeSwing: (origin: THREE.Vector3, weaponId: string) => void,
     private readonly onFire: (weaponId: string) => void,
     private readonly onReloadStart: (weaponId: string) => void,
     private readonly onLongShot: (distance: number) => void,
@@ -106,10 +115,13 @@ export class WeaponManager {
     /** Fires instead of the normal per-pellet hitscan loop for a weapon with isProjectile set (see
      * definitions.ts's WeaponDefinition.isProjectile) - currently only the Goose Launcher. */
     private readonly onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
+    /** Every ranged hitscan pellet's ray, with the distance to its physics hit (or its range). */
+    private readonly onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
   ) {
     this.slots = slots;
     const first = this.slots[0];
     if (first) first.viewModel.visible = true;
+    this.startMeleeDraw();
   }
 
   static async create(
@@ -119,6 +131,7 @@ export class WeaponManager {
     scopeOverlay: ScopeOverlay,
     onImpact: (point: THREE.Vector3, isEntityHit: boolean) => void,
     onTracer: (start: THREE.Vector3, end: THREE.Vector3) => void,
+    onMeleeSwing: (origin: THREE.Vector3, weaponId: string) => void,
     onFire: (weaponId: string) => void,
     onReloadStart: (weaponId: string) => void,
     onLongShot: (distance: number) => void,
@@ -133,6 +146,10 @@ export class WeaponManager {
      * keyed by weapon id. Absent/undefined for every other mode, matching the existing unlimited-
      * reload behavior exactly. */
     initialReserveAmmo?: Readonly<Record<string, number>>,
+    /** Per ranged hitscan pellet: its origin, unit direction and the distance to its physics hit
+     * or, on a miss, its range. Lets the Facility test the ray against its lamps
+     * (docs/facility-map.md, section 11). The knife and the Goose Launcher never call it. */
+    onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -147,11 +164,13 @@ export class WeaponManager {
       scopeOverlay,
       onImpact,
       onTracer,
+      onMeleeSwing,
       onFire,
       onReloadStart,
       onLongShot,
       onMuzzleFlash,
       onProjectileFire,
+      onHitscanRay,
     );
   }
 
@@ -192,6 +211,7 @@ export class WeaponManager {
     }
     newSlot.viewModel.visible = true;
     this.slots[index] = newSlot;
+    this.startMeleeDraw();
     // Same phantom-fire guard as beginSwitch - a kill upgrade can land while the player is still
     // holding fire from the kill itself, and the fresh weapon shouldn't inherit that as a press.
     this.fireLockedUntilRelease = true;
@@ -285,6 +305,13 @@ export class WeaponManager {
     return this.active.weapon.definition.id;
   }
 
+  /** Where the Facility's torch body hangs (docs/facility-map.md, section 7): the active view model
+   * and its muzzle for a ranged weapon, null for the knife and empty hands, which carry none. */
+  get torchMount(): { viewModel: THREE.Object3D; muzzle: THREE.Vector3 } | null {
+    const slot = this.active;
+    return slot.weapon.definition.kind === 'ranged' ? { viewModel: slot.viewModel, muzzle: slot.muzzleLocalOffset } : null;
+  }
+
   get weaponDescription(): string {
     return this.active.weapon.definition.description;
   }
@@ -343,7 +370,7 @@ export class WeaponManager {
       (this.active.weapon.definition.automatic ? input.isActionActive('fire') : input.consumeJustPressed('fire'));
     if (firePressed) {
       if (this.active.weapon.tryFire()) {
-        this.fireShot(player);
+        this.fireShot(player, input.isActionActive('aim'));
         const burstCount = this.active.weapon.definition.burstCount ?? 1;
         if (burstCount > 1) {
           this.burstShotsRemaining = burstCount - 1;
@@ -405,6 +432,7 @@ export class WeaponManager {
   }
 
   private beginSwitch(targetIndex: number, input: InputManager): void {
+    this.meleeProgress = 1;
     this.switching = true;
     this.pendingIndex = targetIndex;
     this.scopeOverlay.setVisible(false);
@@ -430,6 +458,7 @@ export class WeaponManager {
         this.pendingIndex = null;
         this.active.viewModel.visible = true;
         this.aimAmount = 0;
+        this.startMeleeDraw();
       }
     } else {
       this.switchProgress = Math.max(0, this.switchProgress - step);
@@ -438,13 +467,15 @@ export class WeaponManager {
       }
     }
     // The holster/draw pose itself is written by updateAim (runs right after this, same tick), so
-    // it shares the FOV compensation there instead of setting an unscaled position of its own.
+    // it starts and ends exactly on the normal pose there.
   }
 
   private updateAim(dt: number, input: InputManager, player: Player): void {
     const { adsFov, hasScope } = this.active.weapon.definition;
-    const targetAim = !this.switching && input.isActionActive('aim') ? 1 : 0;
+    const isMelee = this.active.weapon.definition.kind === 'melee';
+    const targetAim = !isMelee && !this.switching && input.isActionActive('aim') ? 1 : 0;
     this.aimAmount = THREE.MathUtils.damp(this.aimAmount, targetAim, ADS_LERP_SPEED, dt);
+    if (isMelee) this.aimAmount = 0;
 
     // The user's live FOV setting (see settings/Settings.ts), not the bare CAMERA_FOV constant -
     // read fresh every frame so a mid-match Settings.setFov() change applies on the very next
@@ -454,36 +485,23 @@ export class WeaponManager {
     // "same as hip fire," so it needs to track the live setting too, not stay pinned to the old
     // hardcoded default while every other weapon's hip fire already moved.
     const baseFov = Settings.getFov();
-    const effectiveAdsFov = adsFov === CAMERA_FOV ? baseFov : adsFov;
+    const effectiveAdsFov = isMelee || adsFov === CAMERA_FOV ? baseFov : adsFov;
     this.camera.fov = THREE.MathUtils.lerp(baseFov, effectiveAdsFov, this.aimAmount);
     this.camera.updateProjectionMatrix();
 
     this.updateWeaponSway(dt);
 
-    this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
-
-    // The hip/ADS offsets above were hand-tuned at the original fixed CAMERA_FOV (75). Apparent
-    // size of a camera-attached object scales with 1/tan(fov/2), so at a wider user FOV the gun
-    // renders smaller and reads as floating detached in front of the player instead of held
-    // (confirmed via live screenshots at high FOV). Scaling the whole offset vector by the tan
-    // ratio pulls the gun proportionally closer, keeping its on-screen size and placement as
-    // tuned regardless of the FOV setting. At full ADS a weapon with a real zoom renders at its
-    // own authored adsFov (exactly what the ADS offset was tuned against - factor 1), while a
-    // sentinel weapon (adsFov === CAMERA_FOV, "no dedicated zoom") renders at the live base FOV
-    // and needs the same compensation as hip fire. Applied mid-switch too: the switch animation
-    // used to write its own unscaled position.y while this block was skipped, so at any FOV but
-    // 75 the gun popped between the two poses at the start and end of every switch.
-    const tunedTan = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
-    const hipScale = tunedTan / Math.tan(THREE.MathUtils.degToRad(baseFov) / 2);
-    const adsScale = adsFov === CAMERA_FOV ? hipScale : 1;
-    this.active.viewModel.position.multiplyScalar(THREE.MathUtils.lerp(hipScale, adsScale, this.aimAmount));
+    // The view model draws with its own fixed lens (VIEW_MODEL_FOV, see render/viewModelCamera.ts),
+    // so neither the FOV setting nor the aim zoom above changes how the gun looks: the poses are
+    // plain camera-space positions. Full aim puts this model's own sight on the screen centre.
+    this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, this.active.adsPosition, this.aimAmount);
+    // Bob and sway fade out while aiming so the sight stays steady on the centre.
+    const handMotion = 1 - ADS_MOTION_DAMPING * this.aimAmount;
 
     if (this.switching) {
-      // Holster drop: y slides from the compensated pose above (switchProgress 0, so a switch's
-      // first and last frames meet the normal pose exactly) to the same fixed holster height the
-      // animation always used (switchProgress 1). That end point is deliberately NOT scaled: it's
-      // what puts the gun below the frame for the swap, and a scaled drop at FOV 110 would stop
-      // short of the (wider) bottom edge. At FOV 75 the scale is 1 and this is the old animation.
+      // Holster drop: y slides from the pose above (switchProgress 0, so a switch's first and last
+      // frames meet the normal pose exactly) to the fixed holster height below the frame
+      // (switchProgress 1).
       this.active.viewModel.position.y = THREE.MathUtils.lerp(
         this.active.viewModel.position.y,
         WEAPON_HIP_POSITION.y - WEAPON_HOLSTER_DROP,
@@ -494,14 +512,14 @@ export class WeaponManager {
       // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
       const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);
       this.active.viewModel.position.y -= RELOAD_DIP * reloadCurve;
-      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve + this.swayPitch;
-      this.active.viewModel.rotation.y = this.swayYaw;
+      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve + this.swayPitch * handMotion;
+      this.active.viewModel.rotation.y = this.swayYaw * handMotion;
 
       // Same shared phase the camera bob uses (see Player.movementBobPhase) - the weapon and the
       // camera bob together rather than independently, matching the doc's framing of one phase
       // driving both.
       this.active.viewModel.position.y +=
-        Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength;
+        Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength * handMotion;
 
       // Sprint tuck and reload roll, after the Opus 5.5 viewmodel pose
       // (reference/model-test/opus-5.5/game.js, renderViewmodel): the gun swings across the body
@@ -514,6 +532,18 @@ export class WeaponManager {
       this.active.viewModel.rotation.x -= 0.25 * sp;
       this.active.viewModel.rotation.y += 0.55 * sp;
       this.active.viewModel.rotation.z = 0.15 * sp + RELOAD_ROLL_ANGLE * reloadCurve;
+    }
+
+    if (isMelee) {
+      if (this.switching) this.active.viewModel.rotation.set(0, 0, 0);
+      const pose = meleePose(this.meleeProgress, this.meleeVariant);
+      this.active.viewModel.position.x += pose.px;
+      this.active.viewModel.position.y += pose.py;
+      this.active.viewModel.position.z += pose.pz;
+      this.active.viewModel.rotation.x += pose.rx;
+      this.active.viewModel.rotation.y += pose.ry;
+      this.active.viewModel.rotation.z += pose.rz;
+      this.meleeProgress = Math.min(1, this.meleeProgress + dt / this.meleeDuration);
     }
 
     const slot = this.active;
@@ -564,13 +594,26 @@ export class WeaponManager {
     this.swayPitch = THREE.MathUtils.damp(this.swayPitch, targetSwayPitch, WEAPON_SWAY_DAMP, dt);
   }
 
-  /** One trigger pull - fires pelletCount independent rays (shotguns; 1 for everything else) but a single recoil kick. */
-  private fireShot(player: Player): void {
+  private startMeleeDraw(): void {
+    this.meleeProgress = this.active.weapon.definition.kind === 'melee' ? 0 : 1;
+    this.meleeVariant = 'draw';
+    this.meleeDuration = MELEE_SWING_DURATION;
+  }
+
+  /** One trigger pull, with independent hit rays and one visual attack. */
+  private fireShot(player: Player, aiming = false): void {
     const { pelletCount, recoilKick, kind, isProjectile } = this.active.weapon.definition;
 
     // camera has no parent, so .position IS the world position - avoids reading a stale
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
     const origin = this.camera.position.clone();
+    if (kind === 'melee') {
+      this.meleeVariant = aiming ? 'stab' : this.nextSlash;
+      if (!aiming) this.nextSlash = this.nextSlash === 'slashRight' ? 'slashLeft' : 'slashRight';
+      this.meleeProgress = 0;
+      this.meleeDuration = aiming ? MELEE_STAB_DURATION : MELEE_SWING_DURATION;
+      this.onMeleeSwing(origin, this.active.weapon.definition.id);
+    }
     const muzzleWorld = this.active.viewModel.position
       .clone()
       .add(this.active.muzzleLocalOffset)
@@ -581,18 +624,25 @@ export class WeaponManager {
       const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
       this.onProjectileFire(origin, muzzleWorld, direction);
     } else {
+      // The tracer is drawn by the world camera, whose FOV differs from the gun's fixed lens (the
+      // setting, the aim zoom), so it starts from the point the world camera shows where the
+      // player sees the muzzle. The flash stays at muzzleWorld: it draws with the gun.
+      const tracerStart = viewModelPointToWorldLens(
+        this.active.viewModel.position.clone().add(this.active.muzzleLocalOffset),
+        this.camera.fov,
+      ).applyQuaternion(this.camera.quaternion).add(origin);
       for (let i = 0; i < pelletCount; i++) {
-        this.firePellet(origin, muzzleWorld, player.ownCollider);
+        this.firePellet(origin, tracerStart, player.ownCollider);
       }
     }
 
     this.onFire(this.active.weapon.definition.id);
     // Melee has no muzzle - a flash there would be a light spawning out of a knife blade.
     if (kind === 'ranged') this.onMuzzleFlash(muzzleWorld, this.active.weapon.definition.id);
-    player.addRecoil(recoilKick);
+    if (kind !== 'melee') player.addRecoil(recoilKick);
   }
 
-  private firePellet(origin: THREE.Vector3, muzzleWorld: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
+  private firePellet(origin: THREE.Vector3, tracerStart: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
     const { spreadRadians, adsSpreadMultiplier, range } = this.active.weapon.definition;
     const damage = this.active.weapon.effectiveDamage;
     const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
@@ -606,7 +656,8 @@ export class WeaponManager {
     const hit = castHitscan(this.physics, origin, direction, effectiveRange, excludeCollider);
 
     const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(effectiveRange));
-    this.onTracer(muzzleWorld, tracerEnd);
+    if (this.active.weapon.definition.kind !== 'melee') this.onTracer(tracerStart, tracerEnd);
+    if (this.active.weapon.definition.kind === 'ranged') this.onHitscanRay?.(origin, direction, hit ? hit.distance : effectiveRange);
 
     if (hit) {
       const target = this.physics.getEntity(hit.colliderHandle);

@@ -7,16 +7,21 @@ import { installLookFog, StylizedSky } from '../render/StylizedSky.ts';
 import { PostStack } from '../render/PostStack.ts';
 import { setWeaponEnvironment } from '../weapons/models/weaponMaterials.ts';
 import { setWindowGlow } from '../render/materialGrade.ts';
+import { syncViewModelCamera } from '../render/viewModelCamera.ts';
 
-/** Layer the weapon view models (everything parented to the camera) render on, so the post stack
- * can draw them in their own depth-cleared pass (see PostStack). */
+/** Layer the weapon view models (everything parented to the camera) render on, so they draw in
+ * their own depth-cleared pass with their own fixed-FOV camera (see render() and PostStack). */
 export const VIEW_MODEL_LAYER = 1;
+
+/** A light that may cast shadows (spot, directional, point). */
+type ShadowLight = THREE.Light & { shadow?: THREE.LightShadow };
 
 export class Renderer {
   readonly webgl: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
-  /** Copies `camera` every frame but sees only VIEW_MODEL_LAYER. */
+  /** Follows `camera` every frame with its own fixed lens (VIEW_MODEL_FOV, see
+   * syncViewModelCamera) and sees only VIEW_MODEL_LAYER. */
   private readonly viewModelCamera = new THREE.PerspectiveCamera();
 
   /** The stylised dusk sky (render/StylizedSky.ts). It is also the source of scene.environment on
@@ -26,6 +31,9 @@ export class Renderer {
   private look: LookPreset = lookFor('day');
   private quality: GraphicsQualityPreset;
   private post: PostStack | null = null;
+  /** worldOnly lights dimmed for the current view-model pass, with what to restore. */
+  private readonly dimmed: { light: ShadowLight; intensity: number; shadowAutoUpdate: boolean }[] = [];
+  private matrixWorldAutoUpdate = true;
 
   constructor(container: HTMLElement, quality: GraphicsQualityPreset) {
     this.quality = quality;
@@ -55,6 +63,9 @@ export class Renderer {
     // though it's used for the view/projection matrices. Scene has no transform of its own, so
     // this doesn't change camera.position's meaning (still equals world position).
     this.scene.add(this.camera);
+    // The world pass never draws the view model: it gets its own pass on every preset (render()).
+    this.camera.layers.disable(VIEW_MODEL_LAYER);
+    this.viewModelCamera.layers.set(VIEW_MODEL_LAYER);
 
     this.applyLook(this.look);
     this.applyQuality(quality);
@@ -70,7 +81,8 @@ export class Renderer {
     this.quality = quality;
     this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.webgl.shadowMap.enabled = quality.shadowsEnabled;
-    this.scene.environment = quality.environmentLighting ? this.skyEnvironmentTexture : null;
+    // Indoors the sky does not light the world: the baked light and the probe-driven fill do.
+    this.scene.environment = quality.environmentLighting && !this.look.indoor ? this.skyEnvironmentTexture : null;
     this.scene.environmentIntensity = this.look.environmentIntensity;
     this.rebuildPostStack();
   }
@@ -84,6 +96,13 @@ export class Renderer {
     this.applyQuality(this.quality);
   }
 
+  /** Applies a whole look instead of a weather's: the Facility's indoor look (render/look.ts).
+   * Called once at match setup in place of setMatchWeather, before anything compiles. */
+  setMatchLook(look: LookPreset): void {
+    this.applyLook(look);
+    this.applyQuality(this.quality);
+  }
+
   get currentLook(): LookPreset {
     return this.look;
   }
@@ -92,12 +111,15 @@ export class Renderer {
     this.look = look;
     installLookFog(look);
     this.sky.applyLook(look);
+    this.sky.visible = !look.indoor;
     this.scene.fog = new THREE.Fog(look.sky.haze, look.fog.near, look.fog.far);
     this.webgl.toneMappingExposure = look.exposure;
     setWindowGlow(look.windowGlow);
 
     // Image-based lighting from the sky itself, rendered from a scene holding only a copy of the
-    // sky so nothing already added to the match scene leaks into the environment.
+    // sky so nothing already added to the match scene leaks into the environment. Indoors the world
+    // never uses it (see applyQuality), but the weapons still do: the indoor look's dim sky colours
+    // give metal a faint reflection, where no map at all would leave gunmetal near black.
     const envScene = new THREE.Scene();
     const envSky = new StylizedSky(look);
     envScene.add(envSky);
@@ -120,11 +142,11 @@ export class Renderer {
     // Low renders straight to the screen, so three applies ACES itself; with the composer the grade
     // pass owns tone mapping (see PostStack's GradeEffect).
     this.webgl.toneMapping = wantsPost ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
-    // Without the composer the view model shares the world pass.
-    if (wantsPost) this.camera.layers.disable(VIEW_MODEL_LAYER);
-    else this.camera.layers.enable(VIEW_MODEL_LAYER);
     if (!wantsPost) return;
-    this.post = new PostStack(this.webgl, this.scene, this.camera, this.viewModelCamera, this.look, { ambientOcclusion: wantsAo });
+    this.post = new PostStack(this.webgl, this.scene, this.camera, this.viewModelCamera, this.look, {
+      ambientOcclusion: wantsAo,
+      viewModelPass: { before: this.beginViewModelPass, after: this.endViewModelPass },
+    });
     this.post.setSize(window.innerWidth, window.innerHeight);
   }
 
@@ -135,24 +157,72 @@ export class Renderer {
   render(): void {
     this.webgl.info.reset();
     this.sky.follow(this.camera);
-    if (!this.post) {
-      this.webgl.render(this.scene, this.camera);
+    this.syncViewModelLayer();
+    if (this.post) {
+      this.post.render();
       return;
     }
-    this.syncViewModelLayer();
-    this.post.render();
+    // Low has no composer: the world, then the view model over it in a depth-cleared pass, the same
+    // two passes PostStack runs. Nothing on the camera (the title screen) skips the second pass.
+    this.webgl.render(this.scene, this.camera);
+    if (this.camera.children.length === 0) return;
+    const autoClear = this.webgl.autoClear;
+    const shadowAutoUpdate = this.webgl.shadowMap.autoUpdate;
+    const background = this.scene.background;
+    this.webgl.autoClear = false;
+    // The world pass already updated the shadow maps, and a background would paint over the world.
+    this.webgl.shadowMap.autoUpdate = false;
+    this.scene.background = null;
+    this.webgl.clearDepth();
+    this.beginViewModelPass();
+    try {
+      this.webgl.render(this.scene, this.viewModelCamera);
+    } finally {
+      this.endViewModelPass();
+    }
+    this.scene.background = background;
+    this.webgl.shadowMap.autoUpdate = shadowAutoUpdate;
+    this.webgl.autoClear = autoClear;
   }
 
+  /** Before the view-model pass (Low's second render, PostStack's view-model pass): the world pass
+   * already updated every world matrix this frame, so the scene is not walked again; and lights
+   * marked `userData.worldOnly` (the torch: it sits centimetres from the gun and flared it white)
+   * go dark for the gun. They stay on the layer, so both passes see the same light count and three
+   * does not re-resolve every lit material's program twice a frame. */
+  private readonly beginViewModelPass = (): void => {
+    this.matrixWorldAutoUpdate = this.scene.matrixWorldAutoUpdate;
+    this.scene.matrixWorldAutoUpdate = false;
+    for (const child of this.scene.children) {
+      const light = child as ShadowLight;
+      if (!light.isLight || !child.userData.worldOnly) continue;
+      this.dimmed.push({ light, intensity: light.intensity, shadowAutoUpdate: light.shadow?.autoUpdate ?? false });
+      light.intensity = 0;
+      if (light.shadow) light.shadow.autoUpdate = false;
+    }
+  };
+
+  /** Restores what beginViewModelPass changed. */
+  private readonly endViewModelPass = (): void => {
+    for (const { light, intensity, shadowAutoUpdate } of this.dimmed) {
+      light.intensity = intensity;
+      if (light.shadow) light.shadow.autoUpdate = shadowAutoUpdate;
+    }
+    this.dimmed.length = 0;
+    this.scene.matrixWorldAutoUpdate = this.matrixWorldAutoUpdate;
+  };
+
   /** Puts everything parented to the camera on the view-model layer and lets every top-level light
-   * reach that layer too (three filters lights by camera layers as well), then mirrors the main
-   * camera. Cheap: the camera has a handful of children and the scene's top level is small. */
+   * reach that layer too (three filters lights by camera layers as well; worldOnly lights included,
+   * dimmed for that pass instead, see beginViewModelPass), then points the view-model camera like
+   * the main camera, keeping its own fixed lens. Cheap: the camera has a handful of children and the
+   * scene's top level is small. */
   private syncViewModelLayer(): void {
     for (const child of this.camera.children) child.traverse(setViewModelLayer);
     for (const child of this.scene.children) {
       if ((child as THREE.Light).isLight) child.layers.enable(VIEW_MODEL_LAYER);
     }
-    this.viewModelCamera.copy(this.camera, false);
-    this.viewModelCamera.layers.set(VIEW_MODEL_LAYER);
+    syncViewModelCamera(this.viewModelCamera, this.camera);
   }
 
   private readonly onResize = (): void => {

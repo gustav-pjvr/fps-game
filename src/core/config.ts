@@ -118,12 +118,17 @@ export const MULTIPLAYER_KILL_LIMIT_MAX = 100;
 
 export const CAMERA_FOV = 75;
 /** Settings panel's Field of View slider bounds (see settings/Settings.ts's getFov/setFov) - wide
- * enough to matter (a narrow FOV feels like zooming, a wide one feels like a fisheye) without going
- * so far either direction that the view models/weapon sway (tuned around CAMERA_FOV) look broken. */
+ * enough to matter (a narrow FOV feels like zooming, a wide one feels like a fisheye). The weapon
+ * view model ignores it: it draws with its own fixed VIEW_MODEL_FOV. */
 export const CAMERA_FOV_MIN = 60;
 export const CAMERA_FOV_MAX = 110;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
+/** The weapon view model's own fixed lens (see render/viewModelCamera.ts). The gun is drawn with
+ * this FOV whatever the world camera uses, so neither the FOV setting nor an aim zoom stretches,
+ * magnifies or moves it. Equal to the default CAMERA_FOV, the FOV WEAPON_MODEL_TUNING and the hip
+ * pose were tuned at. */
+export const VIEW_MODEL_FOV = 75;
 
 /** Directional-light shadow camera (VISUAL_REALISM.md §1) - an unconfigured Three.js shadow camera
  * defaults to a +/-5 unit ortho box centered on the origin, so in this ~800x800m world shadows only
@@ -197,6 +202,19 @@ export const WEAPON_SWAY_MAX = 0.06;
 export const WEAPON_SWAY_DAMP = 12;
 export const WEAPON_BOB_AMPLITUDE = 0.015;
 
+/** Picked before a match, shared through the same multiplayer messages as weather. */
+export type MatchMap = 'valley' | 'facility';
+export const DEFAULT_MATCH_MAP: MatchMap = 'valley';
+export const MATCH_MAPS: readonly MatchMap[] = ['valley', 'facility'];
+export const MATCH_MAP_LABELS: Record<MatchMap, string> = {
+  valley: 'Valley',
+  facility: 'Facility',
+};
+export const MATCH_MAP_DESCRIPTIONS: Record<MatchMap, string> = {
+  valley: 'Open valley, towns and towers',
+  facility: 'Indoor complex, a new layout every match',
+};
+
 /** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'day' in single-player - purely
  * cosmetic/atmospheric, mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
  * sites: MatchStartMessage, WelcomeMessage.activeMatch, MultiplayerSession,
@@ -231,8 +249,15 @@ export const KNOCKBACK_DECAY_PER_SECOND = 6;
 
 export const ADS_LERP_SPEED = 12;
 export const SCOPE_REVEAL_THRESHOLD = 0.92;
+/** How far in front of the eye (metres, along the view axis) a weapon's sight-dot sits when fully
+ * aimed (see weapons/viewModel.ts adsPositionForSight). */
+export const ADS_SIGHT_DISTANCE = 0.32;
+/** Share of the weapon bob and look sway removed at full aim, so the sight stays on the centre. */
+export const ADS_MOTION_DAMPING = 0.85;
 
 export const WEAPON_SWITCH_DURATION = 0.35;
+export const MELEE_SWING_DURATION = 0.35;
+export const MELEE_STAB_DURATION = 0.3;
 export const WEAPON_HOLSTER_DROP = 0.35;
 export const RELOAD_TILT_ANGLE = 0.5;
 export const RELOAD_DIP = 0.08;
@@ -615,6 +640,13 @@ export const MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE = 25;
 export const MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE = 90;
 export const MULTIPLAYER_GUNSHOT_MIN_VOLUME = 0.15;
 
+/** An opponent's knife swing is a short, quiet sound: full volume within 5 m, silent beyond 15 m
+ * (the gunshot curve made it audible map-wide). */
+export const KNIFE_SWING_FULL_VOLUME_RANGE = 5;
+export const KNIFE_SWING_AUDIBLE_RANGE = 15;
+/** A Facility lamp breaking: full volume as near as a gunshot is, fading to silence at 40 m. */
+export const LAMP_BREAK_AUDIBLE_RANGE = 40;
+
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
  * picked random points within only 6 units of spawn every 3s and read as running in small circles
@@ -934,6 +966,44 @@ export const TRACER_SPEED = 260;
 export const TRACER_LENGTH = 4.5;
 /** The player's own tracer glow: warm amber around a white core, the dusk palette's accent light. */
 export const TRACER_COLOR = 0xffb45a;
+
+/** Facility grid cell width in metres. */
+export const FACILITY_CELL = 1.5;
+/** Facility grid width and depth in cells. */
+export const FACILITY_GRID = 56;
+/** Independent random stream for the indoor layout. */
+export const FACILITY_SEED_OFFSET = 307;
+/** Atrium ceiling height in metres. */
+export const FACILITY_ATRIUM_CEILING = 7.5;
+/** Minimum hall ceiling height in metres. */
+export const FACILITY_HALL_CEILING_MIN = 6;
+/** Maximum hall ceiling height in metres. */
+export const FACILITY_HALL_CEILING_MAX = 7;
+/** Storage ceiling height in metres. */
+export const FACILITY_STORAGE_CEILING = 4.5;
+/** Plant room ceiling height in metres. */
+export const FACILITY_PLANT_CEILING = 5;
+/** Office ceiling height in metres. */
+export const FACILITY_OFFICE_CEILING = 3.5;
+/** Corridor ceiling height in metres. */
+export const FACILITY_CORRIDOR_CEILING = 3.2;
+/** Warm ceiling panel colour. */
+export const FACILITY_LAMP_WARM = 0xffd2a0;
+/** Cool plant room panel colour. */
+export const FACILITY_LAMP_COOL = 0xcfe2ff;
+/** Dark room and emergency lamp colour. */
+export const FACILITY_LAMP_AMBER = 0xffa040;
+/** Multiplier on every lamp's strength in the facility bake (vertex light and probes). The layout's
+ * intensities of 0.25 to 1 under the bake's falloff read far too dark through BRDF_Lambert; this
+ * value is tuned by eye. */
+export const FACILITY_LAMP_POWER = 12;
+/** Square of the distance (m^2) at which a lamp's light halves: small, so light falls off into pools
+ * with dark floor between lamps, as in the Kepler Deep reference (tuned by eye, 2026-10-24). */
+export const FACILITY_LAMP_FALLOFF_M2 = 1.2;
+/** Lamps hung above this height (m) are boosted by (height / this) ^ FACILITY_LAMP_HEIGHT_EXPONENT, so
+ * the 7 m atrium is lit like a 3.5 m office instead of fading to black under the tight falloff. */
+export const FACILITY_LAMP_REFERENCE_HEIGHT = 3.4;
+export const FACILITY_LAMP_HEIGHT_EXPONENT = 1.6;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;

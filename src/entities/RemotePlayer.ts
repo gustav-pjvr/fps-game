@@ -15,6 +15,10 @@ import { RemoteMotion } from './remoteMotion.ts';
 const POSITION_DAMP_RATE = 25;
 const VERTICAL_DAMP_RATE = 18;
 const ROTATION_DAMP_RATE = 18;
+/** The torch lens (docs/facility-map.md, section 7): chest high, a little to the right of the
+ * model's own forward (+Z), where the first-person torch sits on the gun. */
+const TORCH_LENS_POSITION = new THREE.Vector3(-0.18, 0.5, 0.32);
+const TORCH_LENS_GLOW = 4;
 
 
 /** Below this squared distance moved in a frame, treat the opponent as standing still rather than
@@ -52,6 +56,13 @@ export class RemotePlayer implements Entity, Damageable {
   private readonly motion: RemoteMotion;
   private readonly predictedPosition = new THREE.Vector3();
   private targetYaw: number;
+  /** The look pitch from their snapshots, damped like the yaw; their torch aims with it. */
+  private targetPitch = 0;
+  private pitch = 0;
+  /** Facility only: their torch, lit unless their snapshots say otherwise. Null until the first
+   * setTorch, so the Valley never builds a lens. */
+  private torchLens: THREE.Mesh<THREE.CircleGeometry, THREE.MeshStandardMaterial> | null = null;
+  private torchLit = false;
 
   private constructor(
     private readonly physics: PhysicsWorld,
@@ -140,6 +151,39 @@ export class RemotePlayer implements Entity, Damageable {
     if (teleported || snap) this.teleportTo(x, y, z);
   }
 
+  /** Their camera pitch from the latest snapshot (Player.facingPitch). */
+  setLookPitch(pitch: number): void {
+    this.targetPitch = pitch;
+  }
+
+  /** Facility only (docs/facility-map.md, section 7): shows or hides the small glowing lens on the
+   * avatar. Built on first use. */
+  setTorch(on: boolean): void {
+    this.torchLit = on;
+    if (!this.torchLens) {
+      if (!on) return;
+      const material = new THREE.MeshStandardMaterial({ name: 'remote-torch-lens', color: 0x1a1a18, emissive: 0xfff1dc, emissiveIntensity: TORCH_LENS_GLOW });
+      this.torchLens = new THREE.Mesh(new THREE.CircleGeometry(0.035, 16), material);
+      this.torchLens.position.copy(TORCH_LENS_POSITION);
+      this.mesh.add(this.torchLens);
+    }
+    this.torchLens.visible = on;
+  }
+
+  get torchOn(): boolean {
+    return this.torchLit;
+  }
+
+  /** The damped look, in Player's camera convention (yaw 0 faces -Z): the model's own facing less
+   * the +PI that applySnapshot adds. */
+  get lookYaw(): number {
+    return this.mesh.rotation.y - Math.PI;
+  }
+
+  get lookPitch(): number {
+    return this.pitch;
+  }
+
   /** A player who just died: stop drawing them ahead of their last snapshot. */
   stopPrediction(): void {
     this.motion.stop();
@@ -167,6 +211,7 @@ export class RemotePlayer implements Entity, Damageable {
     this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, predicted.y, VERTICAL_DAMP_RATE, dt);
     this.mesh.position.z = THREE.MathUtils.damp(this.mesh.position.z, predicted.z, POSITION_DAMP_RATE, dt);
     this.mesh.rotation.y = THREE.MathUtils.damp(this.mesh.rotation.y, this.targetYaw, ROTATION_DAMP_RATE, dt);
+    this.pitch = THREE.MathUtils.damp(this.pitch, this.targetPitch, ROTATION_DAMP_RATE, dt);
     this.rigidBody.setNextKinematicTranslation(this.mesh.position);
     this.rigidBody.setNextKinematicRotation(yawRotation(this.mesh.rotation.y));
 
@@ -210,5 +255,6 @@ export class RemotePlayer implements Entity, Damageable {
         child.geometry.dispose();
       }
     });
+    this.torchLens?.material.dispose();
   }
 }

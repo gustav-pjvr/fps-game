@@ -1,13 +1,13 @@
 import * as THREE from 'three';
-import { WEAPON_HIP_POSITION, type WeaponViewModel } from '../viewModel.ts';
+import { adsPositionForSight, WEAPON_ADS_POSITION, WEAPON_HIP_POSITION, type WeaponViewModel } from '../viewModel.ts';
 import { createWeaponGlow, getWeaponMaterials } from './weaponMaterials.ts';
 
 type Point = readonly [number, number, number];
 interface ModelTuning { scale: number; offset: Point }
 
 /** Camera-space adjustments for visual tuning, independent of the manager's hip/ADS pose. Scales
- * are about 1.15x the Opus size, because Opus drew its view model at a 60 degree FOV and ours shares
- * the 75 degree world camera, which shrinks it on screen. */
+ * are about 1.15x the Opus size, because Opus drew its view model at a 60 degree FOV and ours uses
+ * the 75 degree view-model lens (VIEW_MODEL_FOV), which shrinks it on screen. */
 export const WEAPON_MODEL_TUNING = {
   rifle: { scale: 0.977, offset: [-0.07, 0.05, 0.14] },
   pistol: { scale: 1.093, offset: [-0.07, 0.04, 0.1] },
@@ -258,7 +258,14 @@ export function buildWeaponViewModel(id: string): WeaponViewModel {
   group.name = `weapon-${id}`;
   group.position.copy(WEAPON_HIP_POSITION);
   if (id === 'unarmed') {
-    return { group, muzzleLocalOffset: new THREE.Vector3(), glowMaterials: [], magazine: null, magazineRestPosition: new THREE.Vector3() };
+    return {
+      group,
+      muzzleLocalOffset: new THREE.Vector3(),
+      adsPosition: WEAPON_ADS_POSITION.clone(),
+      glowMaterials: [],
+      magazine: null,
+      magazineRestPosition: new THREE.Vector3(),
+    };
   }
   if (!Object.hasOwn(builders, id)) throw new Error(`Unknown weapon model: ${id}`);
   const key = id as keyof typeof builders;
@@ -268,9 +275,16 @@ export function buildWeaponViewModel(id: string): WeaponViewModel {
   parts.group.scale.setScalar(tuning.scale);
   parts.group.position.set(...tuning.offset);
   group.add(parts.group);
+  // The sight-dot is a direct child of the tuning group, so its centre in the outer group's space
+  // is its own position through the tuning scale and offset.
+  const sightDot = parts.group.getObjectByName('sight-dot');
+  const adsPosition = sightDot
+    ? adsPositionForSight(sightDot.position.clone().multiplyScalar(tuning.scale).add(parts.group.position))
+    : WEAPON_ADS_POSITION.clone();
   return {
     group,
     muzzleLocalOffset: new THREE.Vector3(...parts.muzzle).multiplyScalar(tuning.scale).add(parts.group.position),
+    adsPosition,
     glowMaterials: parts.glowMaterials,
     magazine: parts.magazine,
     magazineRestPosition: parts.magazine?.position.clone() ?? new THREE.Vector3(),

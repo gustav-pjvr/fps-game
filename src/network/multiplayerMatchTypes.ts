@@ -4,7 +4,7 @@ import type { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import type { MultiplayerSession } from './MultiplayerSession.ts';
 import type { HostRoster } from './HostRoster.ts';
 import type { PlayerSlot } from './protocol.ts';
-import type { GooseExplosionDifficulty, MatchWeather } from '../core/config.ts';
+import type { GooseExplosionDifficulty, MatchMap, MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 
 /** One other player currently in the match - keyed by slot in ActiveMultiplayer.opponents below,
@@ -61,6 +61,7 @@ export interface ActiveMultiplayer {
    * the matchWeather field) so a late-joining/rejoining guest's WelcomeMessage.activeMatch can
    * still report it (see onHostHello below). */
   readonly weather: MatchWeather;
+  readonly map: MatchMap;
   /** Host-only (see MultiplayerSession.hostRoster) - non-null exactly when role==='host', used to
    * resolve a mid-match join/rejoin's hello (see onHostHello below) and to periodically free
    * expired rejoin reservations (see hostSweepAccumulator). */

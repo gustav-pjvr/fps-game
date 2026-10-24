@@ -211,6 +211,15 @@ function padHeight(gx: number, gz: number, siteX: number, siteZ: number): number
   return height;
 }
 
+/** Set by a Facility match (docs/facility-map.md, section 10): the indoor floor is flat at y = 0, so
+ * every caller of sampleHeight (spawns, enemies, markers) reads the override instead of the valley.
+ * Cleared on the match's dispose, since the lobby samples the valley again afterwards. */
+let heightOverride: ((x: number, z: number) => number) | null = null;
+
+export function setHeightOverride(fn: ((x: number, z: number) => number) | null): void {
+  heightOverride = fn;
+}
+
 /**
  * World height including flattening (WORLD_PLAN.md follow-up: towns need genuinely flat ground,
  * not just naturally-flat-by-luck terrain): the spawn clearing, each town's pad (easing back to the
@@ -222,6 +231,7 @@ function padHeight(gx: number, gz: number, siteX: number, siteZ: number): number
  * core, and each pull undo part of the last.)
  */
 export function sampleHeight(worldX: number, worldZ: number): number {
+  if (heightOverride) return heightOverride(worldX, worldZ);
   // First, so a new seed clears the cached pad, spawn and tower heights before any are read.
   ensureNoiseForCurrentSeed();
   const targets = flatTargets(worldX, worldZ);

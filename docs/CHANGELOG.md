@@ -10,7 +10,35 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.2.0 (current)
+## v4.3.0 (current)
+
+The Facility, 2026-10-24. The full design is in `docs/facility-map.md`.
+
+- **A new indoor map, the Facility.** Pick it in the solo match setup or, as the host, in Create
+  Room. Every match builds a new layout from the match seed: about 16 rooms of different sizes and
+  heights around a pillared atrium, looping corridors, crates for cover and a few dark rooms. Every
+  player in a multiplayer match gets the same layout. Solo: Elimination and Director. Multiplayer:
+  Default, 1 Shot 1 Kill, Sniper Duel, Gun Game and Knife Only (Goose Toss, King of the Hill, Goose
+  Horde, Horde and Mission stay on the Valley).
+- **Lit like the Kepler Deep test game.** Lamp light is baked into the walls and floors with
+  shadows and darkened corners, so rooms have pools of light and dark stretches between them, with
+  glowing lamps, light shafts in the tall halls and drifting dust. Players and enemies take the
+  light of the room they stand in.
+- **A torch on the gun.** On by default on the Facility; F turns it on and off. Other players'
+  torches light the rooms too.
+- **Shoot out the lights.** Any lamp can be shot out: sparks and glass fall and its light really
+  leaves the room, so a room can be made almost pitch dark. Every player sees the same dark rooms,
+  including someone who joins late. A solo Restart turns them all back on.
+- **The map in the top right shows the facility.** The plan turns with you, rooms you have entered
+  show brighter, and in solo moving enemies show as red dots.
+- **The knife is a knife.** Alternating slashes, a stab while aiming and a flip when you draw it,
+  with a whoosh and a thud on a hit. No more bullet trail, camera kick or gunshot, and other players
+  hear a swing instead of a shot.
+- **Aiming and FOV fixed.** The gun is now drawn with its own fixed lens, so the FOV setting and the
+  aim zoom no longer stretch, magnify or shift it, and every weapon aims down its own sight onto the
+  crosshair.
+
+## v4.2.0
 
 Smoother multiplayer, 2026-10-24.
 

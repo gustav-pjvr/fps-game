@@ -11,7 +11,7 @@ hour for everything). The e2e suite is split into groups so a change runs only w
 | `npm run test:e2e` | the groups the changed files need (since the pushed branch, plus uncommitted and new files) | after a change, the default |
 | `npm run test:e2e:quick` | the four `@quick` smoke tests: load, pointer lock, movement, shoot a target (about 2 minutes) | a quick sanity check |
 | `npm run test:e2e:group -- ai mp` | the named groups | when you know what a change touches |
-| `npm run test:e2e:full` | every group but perf | a release, a merge to master, or a change to what every spec shares |
+| `npm run test:e2e:full` | every group but perf | only when absolutely necessary: a change to what every spec shares. A release or a merge to master runs the groups its changes map to, one group at a time (Gustav, 2026-10-24) |
 | `npx playwright test e2e/<spec>` | one spec | rerunning a failure |
 
 Add `--dry` to see the plan without running it, and `--base <ref>` to compare with another ref
@@ -27,6 +27,7 @@ Add `--dry` to see the plan without running it, and `--base <ref>` to compare wi
 | mission | `mission.spec.ts` | `core/mission/`, uplink beacons, world markers, the death screen, `Game.ts` |
 | ui | `ui-qa.spec.ts` | `src/ui/`, `index.html`, `App.ts` |
 | world | `world-bounds.spec.ts` | `src/world/` |
+| facility | `facility.spec.ts`, `multiplayer-facility.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
 | mp | the six `multiplayer*.spec.ts` | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
 | perf | `perf-log.spec.ts`, `performance-check.spec.ts` | never by a change: measurements, run by name before a release or after render work |
 

@@ -1,5 +1,5 @@
 import Peer, { type DataConnection, type PeerError } from 'peerjs';
-import { HOST_SLOT, isNetworkMessage, type NetworkMessage, type PlayerSlot, type WelcomeMessage } from './protocol.ts';
+import { CLIENT_FEATURES, HOST_SLOT, isNetworkMessage, type NetworkMessage, type PlayerSlot, type WelcomeMessage } from './protocol.ts';
 import { FAST_MESSAGE_TYPES, FastChannel } from './fastChannel.ts';
 import { readConnectionQuality, UNKNOWN_QUALITY, type ConnectionQuality } from './connectionStats.ts';
 
@@ -73,6 +73,9 @@ export function generateRoomCode(): string {
 
 export type MultiplayerRole = 'host' | 'guest';
 
+/** A host's answer to a hello: the welcome to send, or why it is turned away (see onHostHello). */
+export type HostHelloResult = WelcomeMessage | 'full' | 'outdated';
+
 export interface PeerConnectionCallbacks {
   /** Guest: fires once, but only after a WelcomeMessage actually arrives (not the raw WebRTC
    * 'open') - a guest isn't meaningfully "connected" for the app's purposes until it knows its own
@@ -95,10 +98,11 @@ export interface PeerConnectionCallbacks {
    * connection map - the caller owns roster/rejoin policy (see HostRoster.ts) and whatever
    * currently-running match state exists, both of which this class has no visibility into. Return
    * the exact WelcomeMessage to send back (with the slot to assign baked into `yourSlot`), or
-   * 'full' to reject the connection. May return a Promise - resolving this mid-match involves
+   * 'full' to reject the connection ('outdated' when the guest's `features` cannot play the room's
+   * map, see helloSupportsMap). May return a Promise - resolving this mid-match involves
    * constructing a real RemotePlayer (an async GLTF-backed load), not just a synchronous roster
    * lookup. Never invoked for a guest (a guest sends hello, it never receives one). */
-  onHostHello?: (username: string, rejoinToken: string | null) => WelcomeMessage | 'full' | Promise<WelcomeMessage | 'full'>;
+  onHostHello?: (username: string, rejoinToken: string | null, features: unknown) => HostHelloResult | Promise<HostHelloResult>;
 }
 
 /** What a PeerJS/WebRTC error means for the game, rather than PeerJS's own type strings:
@@ -217,9 +221,9 @@ export class PeerConnection {
     connection.on('error', (error) => this.reportError(error));
     connection.on('data', (data) => {
       if (!isNetworkMessage(data) || data.type !== 'hello') return; // ignore anything before hello resolves
-      void Promise.resolve(this.callbacks.onHostHello?.(data.username, data.rejoinToken)).then((result) => {
-        if (!result || result === 'full') {
-          connection.send({ type: 'roomFull' });
+      void Promise.resolve(this.callbacks.onHostHello?.(data.username, data.rejoinToken, data.features)).then((result) => {
+        if (!result || result === 'full' || result === 'outdated') {
+          connection.send(result === 'outdated' ? { type: 'roomFull', reason: 'outdated' } : { type: 'roomFull' });
           // Closing immediately after send() can race the DataChannel's own flush - confirmed via
           // an actual 4-player playtest: the rejected guest only ever saw the connection's 'close'
           // event fire (read by attachHostConnection as "the host disconnected"), never the
@@ -264,7 +268,7 @@ export class PeerConnection {
   private attachHostConnection(connection: DataConnection, username: string, rejoinToken: string | null): void {
     this.connections.set(HOST_SLOT, connection);
     connection.on('open', () => {
-      connection.send({ type: 'hello', username, rejoinToken });
+      connection.send({ type: 'hello', username, rejoinToken, features: [...CLIENT_FEATURES] });
       this.openFastChannel(HOST_SLOT, connection);
     });
     connection.on('close', () => {

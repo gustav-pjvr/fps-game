@@ -4,22 +4,27 @@ import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
-import { HOST_SLOT, type PlayerSlot, type RosterEntry } from '../../network/protocol.ts';
+import { HOST_SLOT, helloSupportsMap, type PlayerSlot, type RosterEntry } from '../../network/protocol.ts';
 import {
   DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
+  DEFAULT_MATCH_MAP,
   DEFAULT_MATCH_WEATHER,
   DEFAULT_MULTIPLAYER_KILL_LIMIT,
   GOOSE_EXPLOSION_DIFFICULTIES,
   GOOSE_EXPLOSION_DIFFICULTY_LABELS,
+  MATCH_MAPS,
+  MATCH_MAP_LABELS,
+  MATCH_MAP_DESCRIPTIONS,
   MATCH_WEATHER_LABELS,
   MATCH_WEATHERS,
   MULTIPLAYER_KILL_LIMIT_MAX,
   MULTIPLAYER_KILL_LIMIT_MIN,
   MULTIPLAYER_MAX_PLAYERS,
   type GooseExplosionDifficulty,
+  type MatchMap,
   type MatchWeather,
 } from '../../core/config.ts';
-import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../../core/gameModes.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, isModeAllowedOnMap, type GameMode } from '../../core/gameModes.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, MOTION_EASE, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
@@ -49,6 +54,7 @@ export class CreateRoomScreen {
   private readonly killLimitInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly gameModeSelect: HTMLSelectElement;
+  private readonly mapSelect: HTMLSelectElement;
   private readonly weatherSelect: HTMLSelectElement;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
@@ -225,6 +231,25 @@ export class CreateRoomScreen {
     }
     leftColumn.appendChild(this.gameModeSelect);
 
+    const mapLabel = document.createElement('label');
+    mapLabel.textContent = 'Map';
+    mapLabel.htmlFor = 'create-room-map';
+    mapLabel.style.cssText = `display:block; ${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
+    this.mapSelect = document.createElement('select');
+    this.mapSelect.id = 'create-room-map';
+    this.mapSelect.name = 'map';
+    this.mapSelect.style.cssText = this.gameModeSelect.style.cssText;
+    for (const map of MATCH_MAPS) {
+      const optionElement = document.createElement('option');
+      optionElement.value = map;
+      optionElement.textContent = MATCH_MAP_LABELS[map];
+      if (map === DEFAULT_MATCH_MAP) optionElement.selected = true;
+      this.mapSelect.appendChild(optionElement);
+    }
+    const mapDescription = document.createElement('div');
+    mapDescription.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px;';
+    leftColumn.append(mapLabel, this.mapSelect, mapDescription);
+
     // Purely cosmetic/atmospheric - mirrors gameModeSelect's own full-width layout above it.
     const weatherLabel = document.createElement('div');
     weatherLabel.textContent = 'Weather';
@@ -240,6 +265,23 @@ export class CreateRoomScreen {
       this.weatherSelect.appendChild(optionElement);
     }
     leftColumn.appendChild(this.weatherSelect);
+
+    const updateMapOptions = () => {
+      const map = this.mapSelect.value as MatchMap;
+      mapDescription.textContent = MATCH_MAP_DESCRIPTIONS[map];
+      this.weatherSelect.disabled = map === 'facility';
+      weatherLabel.textContent = map === 'facility' ? 'Indoor' : 'Weather';
+      for (const option of this.gameModeSelect.options) {
+        const mode = option.value as GameMode;
+        option.disabled = !isModeAllowedOnMap(mode, map);
+        option.textContent = GAME_MODE_LABELS[mode] + (option.disabled ? ' (Valley only)' : '');
+      }
+      if (!isModeAllowedOnMap(this.gameModeSelect.value as GameMode, map)) {
+        this.gameModeSelect.value = DEFAULT_GAME_MODE;
+      }
+    };
+    this.mapSelect.addEventListener('change', updateMapOptions);
+    updateMapOptions();
 
     this.killLimitInput.style.fontFamily = MONO_FONT;
 
@@ -394,8 +436,10 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onHostHello: (username, rejoinToken) => {
+      onHostHello: (username, rejoinToken, features) => {
         if (!this.hostRoster) return 'full';
+        // An older build would load the Valley inside a Facility room: turned away before it takes a slot.
+        if (!helloSupportsMap(features, this.mapSelect.value as MatchMap)) return 'outdated';
         const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
         if (outcome.outcome === 'full') return 'full';
         // A rejoin may take over a slot whose stale connection was still marked ready. The player on
@@ -489,9 +533,10 @@ export class CreateRoomScreen {
     const gooseDifficulty = this.gooseDifficultySelect.value as GooseExplosionDifficulty;
     const gameMode = this.gameModeSelect.value as GameMode;
     const weather = this.weatherSelect.value as MatchWeather;
+    const map = this.mapSelect.value as MatchMap;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, spawns, roster });
+    this.connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, map, spawns, roster });
 
     const connection = this.connection;
     const hostRoster = this.hostRoster;
@@ -507,6 +552,7 @@ export class CreateRoomScreen {
       gooseDifficulty,
       gameMode,
       weather,
+      map,
       ownSlot: HOST_SLOT,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,

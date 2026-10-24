@@ -8,6 +8,7 @@ import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import type { EnemyArchetype } from './archetypes.ts';
 import { steerWithAvoidance } from './enemySteering.ts';
+import { hasEnemyNavigator, resolveMoveTarget } from './enemyNavigator.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
@@ -22,6 +23,7 @@ import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHO
 import { ENEMY_HEIGHT, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
+export { setEnemyNavigator, type EnemyNavigator } from './enemyNavigator.ts';
 
 export const ENEMY_MODEL_PATH = ENEMY_CHARACTER.path;
 
@@ -50,6 +52,10 @@ export interface EnemyDebugRecord {
  * frequency 0.015 means a full noise period spans ~67 units) and the physics body glues back to
  * the exact surface on the next resample. */
 const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
+
+/** How far ahead of itself a retreating enemy looks for the point it backs toward, so a navigator
+ * (see enemyNavigator.ts) can route the retreat through a doorway instead of into a wall. */
+const RETREAT_LOOKAHEAD = 3;
 
 /**
  * The enemy's body: Rapier kinematic body with capsule + head colliders, the animated model,
@@ -276,11 +282,13 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   /** Straight-line movement with whisker obstacle steering (see enemySteering.ts) - used by every
    * moving state (patrol, search, and chase - chase used to beeline without avoidance, which let
    * chasers clip through tree trunks/rocks whose colliders block the ground path even when the
-   * head-height LOS ray clears past them). */
+   * head-height LOS ray clears past them). With a navigator set (a Facility match) it steers at the
+   * navigator's next waypoint instead of the raw target. */
   moveToward(targetX: number, targetZ: number, speed: number, dt: number): void {
     const current = this.rigidBody.translation();
-    const dx = targetX - current.x;
-    const dz = targetZ - current.z;
+    const waypoint = resolveMoveTarget(current.x, current.z, targetX, targetZ);
+    const dx = waypoint.x - current.x;
+    const dz = waypoint.z - current.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
     if (distance < 1e-4) return;
 
@@ -302,10 +310,33 @@ export class Enemy implements Entity, Damageable, EnemyBody {
    * retreat direction. */
   retreatFrom(threatX: number, threatZ: number, speed: number, dt: number): EnemyPosition | null {
     const current = this.rigidBody.translation();
-    const dx = current.x - threatX;
-    const dz = current.z - threatZ;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-    if (distance <= 1e-4) return null;
+    const awayX = current.x - threatX;
+    const awayZ = current.z - threatZ;
+    const awayDistance = Math.sqrt(awayX * awayX + awayZ * awayZ);
+    if (awayDistance <= 1e-4) return null;
+
+    // With a navigator set, the point it backs toward is routed through it; without one (the
+    // Valley) it backs straight away, exactly as before.
+    let dx = awayX;
+    let dz = awayZ;
+    let distance = awayDistance;
+    if (hasEnemyNavigator()) {
+      const waypoint = resolveMoveTarget(
+        current.x,
+        current.z,
+        current.x + (awayX / awayDistance) * RETREAT_LOOKAHEAD,
+        current.z + (awayZ / awayDistance) * RETREAT_LOOKAHEAD,
+      );
+      const wx = waypoint.x - current.x;
+      const wz = waypoint.z - current.z;
+      const waypointDistance = Math.sqrt(wx * wx + wz * wz);
+      // A waypoint on top of the enemy (already at the snapped target) keeps the straight retreat.
+      if (waypointDistance > 1e-4) {
+        dx = wx;
+        dz = wz;
+        distance = waypointDistance;
+      }
+    }
 
     const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
     const chestPos = new THREE.Vector3(current.x, current.y, current.z);

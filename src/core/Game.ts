@@ -18,7 +18,20 @@ import { getWatchTowerPositions, isPointInsideWatchTower, WatchTowerManager } fr
 import { WATCH_TOWER_ROOF_TOP } from '../world/towerDesign.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
-import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { sampleHeight, setHeightOverride } from '../world/TerrainGenerator.ts';
+import { FacilityWorld } from '../world/facility/FacilityBuilder.ts';
+import { LampBreakEffect } from '../world/facility/lampBreakEffect.ts';
+import {
+  cellCentre,
+  encounterPoints,
+  generateFacilityLayout,
+  isSpawnBlocked as isFacilitySpawnBlocked,
+  OPEN,
+  playerStart,
+  type FacilityLayout,
+} from '../world/facility/facilityLayout.ts';
+import { FacilityNav } from '../world/facility/facilityNav.ts';
+import { setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -45,6 +58,7 @@ import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
+import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
@@ -92,7 +106,7 @@ import {
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
-import { computeStereoPan, enemyGunshotVolume } from './positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, lampBreakVolume } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
@@ -124,9 +138,11 @@ import {
   HORDE_WAVE_TABLE_MULTIPLAYER,
   KOTH_POINTS_TO_WIN,
   type MatchWeather,
+  type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
+  MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
@@ -149,7 +165,8 @@ import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
-import { HOST_SLOT, type PlayerSlot } from '../network/protocol.ts';
+import { HOST_SLOT, helloSupportsMap, type PlayerSlot } from '../network/protocol.ts';
+import { LampSyncTracker, parseLampList } from '../network/lampSync.ts';
 import { summarizeConnection } from '../network/connectionStats.ts';
 import { createSendClock } from '../network/stateOrder.ts';
 import type { ActiveMultiplayer, RemoteOpponent } from '../network/multiplayerMatchTypes.ts';
@@ -158,7 +175,8 @@ import { isHordeAllEliminated, MultiplayerMatchState } from '../network/Multipla
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
-import type { LookPreset } from '../render/look.ts';
+import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
+import { Flashlight, RemoteTorches } from '../render/Flashlight.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -211,6 +229,29 @@ interface DirectorSpawnRecord {
   readonly onScreen: boolean;
 }
 const TARGET_RING_BASE_RADIUS = 15;
+/** Facility encounters keep this far from the player's start (docs/facility-map.md). */
+const FACILITY_ENCOUNTER_AVOID_RADIUS = 14;
+/** How fast the hemisphere fill follows the baked probe under the camera, per second. */
+const FACILITY_PROBE_DAMP_RATE = 4;
+
+/** A Facility match's world (docs/facility-map.md): the built geometry with its baked light, the
+ * layout it came from, and the single-player start that every reset returns to. */
+interface FacilityMatch {
+  readonly world: FacilityWorld;
+  readonly layout: FacilityLayout;
+  readonly start: { x: number; z: number };
+  /** The player's torch (section 7). */
+  readonly torch: Flashlight;
+  /** Other players' torches, null in single-player. Created with the match so the light count never
+   * changes mid-match. */
+  readonly remoteTorches: RemoteTorches | null;
+  /** The minimap's plan of the layout (section 8). */
+  readonly mapLayer: FacilityMapLayer;
+  /** Sparks and glass from shot-out lamps (section 11). */
+  readonly lampBreak: LampBreakEffect;
+}
+/** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
+const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
@@ -223,6 +264,7 @@ export interface MatchConfig {
   enemyCount: number;
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  map: MatchMap;
   /** Single-player only (see PlaySetupModal) - multiplayer's equivalent is gameMode==='gooseHorde'
    * instead (unused/false here for a multiplayer match, same as enemyCount/targetCount's zeros). */
   hordeMode: boolean;
@@ -342,11 +384,21 @@ export class Game {
   private readonly hudForward = new THREE.Vector3();
   private loadoutScreenLoading = false;
   private disposed = false;
-  /** See makeSpawnBlockedCheck. Assigned in the constructor (it needs the BuildingManager). */
+  /** See makeSpawnBlockedCheck on the Valley; the layout's own check on the Facility. Built in
+   * create() and handed to the constructor. */
   private readonly isSpawnBlocked: SpawnBlockedCheck;
+  /** The probe under the camera, damped (see updateFacilityLight); primed on the first frame. */
+  private readonly facilityProbe = new THREE.Color(0, 0, 0);
+  private facilityProbePrimed = false;
+  private readonly facilityTint = new THREE.Color();
+  /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
+   * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
+  private soloMinimap: Minimap | null = null;
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
   private connectionPollAccumulator = 0;
+  /** When this client re-broadcasts its dead Facility lamps (see network/lampSync.ts). */
+  private readonly lampSync = new LampSyncTracker();
   /** Stamps `t` on this player's snapshots, deaths and respawns (see network/stateOrder.ts). */
   private readonly sendClock = createSendClock();
   private connectionPollInFlight = false;
@@ -426,9 +478,13 @@ export class Game {
     private readonly input: InputManager,
     private readonly physics: PhysicsWorld,
     private readonly player: Player,
-    private readonly chunkManager: ChunkManager,
-    private readonly buildings: BuildingManager,
-    private readonly watchTowers: WatchTowerManager,
+    // The Valley's world managers; null on the Facility, which builds none of them.
+    private readonly chunkManager: ChunkManager | null,
+    private readonly buildings: BuildingManager | null,
+    private readonly watchTowers: WatchTowerManager | null,
+    /** Null on the Valley. */
+    private readonly facility: FacilityMatch | null,
+    isSpawnBlocked: SpawnBlockedCheck,
     private readonly entityManager: EntityManager,
     // Mutable, not readonly: a mid-match Loadout change rebuilds this entirely at the player's next
     // respawn (see applyPendingLoadoutIfNeeded) rather than mutating WeaponManager's own internals.
@@ -478,11 +534,11 @@ export class Game {
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
-    this.isSpawnBlocked = makeSpawnBlockedCheck(buildings);
+    this.isSpawnBlocked = isSpawnBlocked;
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
     this.director = !multiplayer && (matchConfig.directorMode || matchConfig.missionMode) && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
     this.directorLastHealth = player.currentHealth;
-    hud.setObjective(this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', this.director || matchConfig.hordeMode ? 'Survive the waves' : 'Clear the valley');
+    hud.setObjective(this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', this.director || matchConfig.hordeMode ? 'Survive the waves' : facility ? 'Clear the facility' : 'Clear the valley');
     hud.compass.setSunDirection(renderer.currentLook.sunDirection);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
@@ -507,6 +563,94 @@ export class Game {
       snappedZ + toSun.z * SUN_SHADOW_LIGHT_DISTANCE,
     );
     this.sun.target.updateMatrixWorld();
+  }
+
+  /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
+   * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. */
+  private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number): void {
+    if (!this.facility) return;
+    const lamp = this.facility.world.rayHitLamp(origin, direction, distance);
+    if (lamp >= 0) this.destroyFacilityLamp(lamp, true);
+  }
+
+  /** Shoots out a Facility lamp: its light leaves the room, sparks and glass fall and it breaks
+   * audibly where it hung. `broadcast` for this player's own shot (other clients then do the same
+   * on lampDestroyed). False when there is no such live lamp. */
+  private destroyFacilityLamp(lamp: number, broadcast: boolean): boolean {
+    const position = this.facility?.world.killLamp(lamp);
+    if (!this.facility || !position) return false;
+    this.facility.lampBreak.spawn(position);
+    const at = new THREE.Vector3(position.x, position.y, position.z);
+    const volume = lampBreakVolume(at.distanceTo(this.player.position));
+    if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, at));
+    if (broadcast && this.multiplayer) {
+      this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp });
+    }
+    return true;
+  }
+
+  /** Another player's whole dead-lamp set (lampSync): every listed lamp still lit goes dark
+   * quietly, with no sparks or sound (it broke a while ago, out of this client's hearing). */
+  private syncFacilityLamps(lamps: unknown): void {
+    if (!this.facility) return;
+    this.facility.world.killLamps(parseLampList(lamps, this.facility.world.lampCount));
+  }
+
+  /** A playerSnapshot from `slot` on the Facility: the first one sends them this client's dead
+   * lamps, which they may have missed while loading (see network/lampSync.ts). */
+  private noteOpponentInMatch(slot: PlayerSlot): void {
+    const facility = this.facility;
+    if (!facility) return;
+    const lamps = this.lampSync.opponentSnapshot(slot, () => facility.world.deadLampIndices());
+    if (lamps) this.sendLampSync(lamps);
+  }
+
+  private sendLampSync(lamps: number[]): void {
+    if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'lampSync', senderSlot: this.multiplayer.session.ownSlot, lamps });
+  }
+
+  /** The Facility's light for moving things (docs/facility-map.md, section 6): the hemisphere fill
+   * takes the baked probe under the camera, damped so walking from a lit room into a dark corridor
+   * fades rather than snaps, tinted by the probe's colour over the look's neutral-warm base. It
+   * lights players, enemies and the gun the way the baked light lights the walls around them. Also
+   * drifts the facility's dust around the camera. */
+  private updateFacilityLight(dt: number): void {
+    const facility = this.facility!;
+    const camera = this.renderer.camera;
+    facility.world.update(camera, dt);
+    const [r, g, b] = facility.world.probeAt(camera.position.x, camera.position.z);
+    const probe = this.facilityProbe;
+    const blend = this.facilityProbePrimed ? 1 - Math.exp(-FACILITY_PROBE_DAMP_RATE * dt) : 1;
+    this.facilityProbePrimed = true;
+    probe.setRGB(probe.r + (r - probe.r) * blend, probe.g + (g - probe.g) * blend, probe.b + (b - probe.b) * blend);
+    const peak = Math.max(probe.r, probe.g, probe.b);
+    const look = this.renderer.currentLook;
+    if (peak > 1e-6) {
+      this.facilityTint.setRGB(probe.r / peak, probe.g / peak, probe.b / peak);
+      this.fillLight.color.setHex(look.hemiSkyColor).multiply(this.facilityTint);
+      this.fillLight.groundColor.setHex(look.hemiGroundColor).multiply(this.facilityTint);
+    }
+    this.fillLight.intensity = look.hemiIntensity * peak;
+  }
+
+  /** The Facility's torches (docs/facility-map.md, section 7), after the camera's interpolation:
+   * the player's own on the gun (its body on the active ranged view model) or the shoulder, and one
+   * pooled light per opponent, dark while their torch is off or they are dead. */
+  private updateTorches(): void {
+    const { torch, remoteTorches } = this.facility!;
+    const mount = this.weaponManager.torchMount;
+    torch.mountBody(mount);
+    torch.update(this.renderer.camera, mount !== null);
+    if (!remoteTorches) return;
+    const sources = this.multiplayer
+      ? Array.from(this.multiplayer.opponents.values(), (opponent) => ({
+          position: opponent.remotePlayer.position,
+          yaw: opponent.remotePlayer.lookYaw,
+          pitch: opponent.remotePlayer.lookPitch,
+          on: opponent.remotePlayer.torchOn && !opponent.isDead,
+        }))
+      : [];
+    remoteTorches.update(sources);
   }
 
   private installDebugApi(): void {
@@ -560,8 +704,8 @@ export class Game {
       damagePlayer: (amount) => {
         this.pendingDebugDamage += amount;
       },
-      getActiveBuildingCount: () => this.buildings.getActiveBuildingCount(),
-      getActiveTowerPositions: () => this.watchTowers.getActiveTowerPositions(),
+      getActiveBuildingCount: () => this.buildings?.getActiveBuildingCount() ?? 0,
+      getActiveTowerPositions: () => this.watchTowers?.getActiveTowerPositions() ?? [],
       getFrameStats: () => this.fpsMeter.getStats(),
       getPerfLog: () => [...this.perfLogger.log],
       getLiveEnemyDebug: () => this.entityManager.getLiveEnemyDebug(),
@@ -583,6 +727,25 @@ export class Game {
         const view = this.mission.view(this.player.position);
         return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
       },
+      getFacilityDebug: () => {
+        if (!this.facility) return null;
+        const { layout, world } = this.facility;
+        let openCells = 0;
+        for (const kind of layout.kinds) if (kind === OPEN) openCells++;
+        return {
+          map: 'facility',
+          seed: layout.seed,
+          rooms: layout.rooms.length,
+          openCells,
+          lamps: layout.lamps.length,
+          bakeMs: world.bakeMs,
+          vertexCount: world.vertexCount,
+          torchOn: this.facility.torch.isOn,
+          deadLamps: world.deadLampIndices().length,
+        };
+      },
+      shootLamp: (index) => this.destroyFacilityLamp(index, true),
+      lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -650,34 +813,84 @@ export class Game {
     // Multiplayer-only, host-chosen (see CreateRoomScreen); single-player always 'day'. Applied
     // once here, before anything compiles, not live-toggleable like graphics quality - see
     // Renderer.setMatchWeather. The lights then take the same look.
+    // The Facility (docs/facility-map.md) is indoors: weather does not apply, it has its own look.
+    const isFacility = (multiplayer?.map ?? matchConfig.map) === 'facility';
     const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
-    renderer.setMatchWeather(matchWeather);
+    if (isFacility) renderer.setMatchLook(FACILITY_LOOK);
+    else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
 
-    onProgress?.('Growing vegetation…', 0.02);
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
-    // here as their chunks load, and EntityManager's enemies read it.
+    // here as their chunks load (the Facility's crates and pillars once, when it is built), and
+    // EntityManager's enemies read it.
     const obstacles = new ObstacleRegistry();
-    const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
-    onProgress?.('Constructing buildings…', 0.04);
-    const buildings = await BuildingManager.create(renderer.scene, physics, obstacles);
-    const roads = RoadManager.create(renderer.scene, buildings);
-    const watchTowers = WatchTowerManager.create(renderer.scene, physics);
+    let chunkManager: ChunkManager | null = null;
+    let buildings: BuildingManager | null = null;
+    let watchTowers: WatchTowerManager | null = null;
+    let facility: FacilityMatch | null = null;
+    let isSpawnBlocked: SpawnBlockedCheck;
+    if (isFacility) {
+      // The Facility builds none of the outdoor world: its floor is flat at y = 0 for every height
+      // query, and enemies route through its doors (both cleared in dispose).
+      onProgress?.('Building the facility…', 0.02);
+      await waitForNextFrame();
+      const layout = generateFacilityLayout(getWorldSeed());
+      setHeightOverride(() => 0);
+      const nav = new FacilityNav(layout);
+      setEnemyNavigator((fromX, fromZ, toX, toZ) => nav.nextWaypoint(fromX, fromZ, toX, toZ));
+      onProgress?.('Baking light…', 0.03);
+      await waitForNextFrame();
+      const world = FacilityWorld.build(layout, {
+        scene: renderer.scene,
+        physics,
+        obstacles,
+        lightShafts: quality.postProcessing,
+        dust: quality.postProcessing,
+      });
+      // Single-player starts in a room other than the atrium; plain Math.random like the other
+      // single-player spawn picks (nobody else has to agree on it).
+      facility = {
+        world,
+        layout,
+        start: playerStart(layout, Math.random),
+        torch: new Flashlight(renderer.scene, quality.shadowsEnabled),
+        remoteTorches: multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null,
+        mapLayer: new FacilityMapLayer(layout),
+        lampBreak: new LampBreakEffect(renderer.scene),
+      };
+      // A late joiner starts with the lamps the others already shot out (section 11), quietly.
+      // Their rebakes are queued and run one per frame (FacilityWorld.update).
+      world.killLamps(parseLampList(multiplayer?.deadLamps, world.lampCount));
+      isSpawnBlocked = (x, z) => isFacilitySpawnBlocked(layout, x, z);
+    } else {
+      // A failed Facility create could have left these set; the Valley always runs without them.
+      setHeightOverride(null);
+      setEnemyNavigator(null);
+      onProgress?.('Growing vegetation…', 0.02);
+      const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
+      onProgress?.('Constructing buildings…', 0.04);
+      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles);
+      const roads = RoadManager.create(renderer.scene, valleyBuildings);
+      const valleyTowers = WatchTowerManager.create(renderer.scene, physics);
 
-    const chunkManager = new ChunkManager(renderer.scene, physics, {
-      onChunkLoaded: (cx, cz, originX, originZ, size) => {
-        vegetation.placeForChunk(cx, cz, originX, originZ, size);
-        buildings.placeForChunk(cx, cz, originX, originZ, size);
-        roads.placeForChunk(cx, cz, originX, originZ, size);
-        watchTowers.placeForChunk(cx, cz, originX, originZ, size);
-      },
-      onChunkUnloaded: (cx, cz) => {
-        vegetation.removeChunk(cx, cz);
-        buildings.removeChunk(cx, cz);
-        roads.removeChunk(cx, cz);
-        watchTowers.removeChunk(cx, cz);
-      },
-    });
+      chunkManager = new ChunkManager(renderer.scene, physics, {
+        onChunkLoaded: (cx, cz, originX, originZ, size) => {
+          vegetation.placeForChunk(cx, cz, originX, originZ, size);
+          valleyBuildings.placeForChunk(cx, cz, originX, originZ, size);
+          roads.placeForChunk(cx, cz, originX, originZ, size);
+          valleyTowers.placeForChunk(cx, cz, originX, originZ, size);
+        },
+        onChunkUnloaded: (cx, cz) => {
+          vegetation.removeChunk(cx, cz);
+          valleyBuildings.removeChunk(cx, cz);
+          roads.removeChunk(cx, cz);
+          valleyTowers.removeChunk(cx, cz);
+        },
+      });
+      buildings = valleyBuildings;
+      watchTowers = valleyTowers;
+      isSpawnBlocked = makeSpawnBlockedCheck(valleyBuildings);
+    }
 
     // Multiplayer: each client spawns at its own designated point (one per roster slot, looked up
     // by slot rather than a fixed host/guest pair now that there can be up to 4), not the shared
@@ -690,18 +903,22 @@ export class Game {
     // The host picked every slot's point before any world existed (pickMultiplayerSpawnPoints on a
     // fixed ring), so this client steps its OWN point off any house/tower it landed on. Other
     // clients still place this player's RemotePlayer at the host-picked point, but the first
-    // playerSnapshot (~33 ms) corrects it, same as a late join.
-    const isSpawnBlocked = makeSpawnBlockedCheck(buildings);
+    // playerSnapshot (~33 ms) corrects it, same as a late join. On the Facility the same search
+    // steps it off the walls instead. Single-player on the Facility starts at the layout's start.
     const clearOwnSpawnPoint = ownSpawnPoint ? findClearSpawnPoint(ownSpawnPoint, isSpawnBlocked) : null;
     const ownSpawn = clearOwnSpawnPoint
       ? new THREE.Vector2(clearOwnSpawnPoint.x, clearOwnSpawnPoint.z)
-      : isHordeMode && !multiplayer
-        ? pickRandomHordeSpawnPoint(isSpawnBlocked)
-        : clearFixedSpawnPoint(isSpawnBlocked);
+      : facility
+        ? new THREE.Vector2(facility.start.x, facility.start.z)
+        : isHordeMode && !multiplayer
+          ? pickRandomHordeSpawnPoint(isSpawnBlocked)
+          : clearFixedSpawnPoint(isSpawnBlocked);
 
     // Seed enough chunks around spawn up front so the player never spawns over an ungenerated gap.
-    for (let i = 0; i < 30; i++) {
-      chunkManager.update(ownSpawn.x, ownSpawn.y);
+    if (chunkManager) {
+      for (let i = 0; i < 30; i++) {
+        chunkManager.update(ownSpawn.x, ownSpawn.y);
+      }
     }
 
     const sound = await SoundEngine.create();
@@ -788,6 +1005,7 @@ export class Game {
             game.lastHitConfirmTick = game.tickCount;
             hitMarker.trigger();
             sound.playHitConfirm();
+            if (WEAPON_DEFINITIONS[game.weaponManager.activeWeaponId]?.kind === 'melee') sound.playKnifeHit();
           }
         },
         (start, end) => {
@@ -810,7 +1028,23 @@ export class Game {
             weaponId: game.weaponManager.activeWeaponId,
           });
         },
-        (weaponId) => sound.playGunshot(weaponId),
+        (origin, weaponId) => {
+          sound.playKnifeSwing();
+          multiplayer?.connection.send({
+            type: 'fireEvent',
+            senderSlot: multiplayer.ownSlot,
+            originX: origin.x,
+            originY: origin.y,
+            originZ: origin.z,
+            endX: origin.x,
+            endY: origin.y,
+            endZ: origin.z,
+            weaponId,
+          });
+        },
+        (weaponId) => {
+          if (WEAPON_DEFINITIONS[weaponId]?.kind !== 'melee') sound.playGunshot(weaponId);
+        },
         (weaponId) => sound.playReloadClick(weaponId),
         (distance) => longShotCallout.show(distance),
         (point, weaponId) => {
@@ -851,6 +1085,8 @@ export class Game {
         },
         damageOverrides,
         reserveAmmo,
+        // Facility lamps are not physics colliders: each ranged pellet's ray is tested against them.
+        (origin, direction, distance) => game.handleHitscanRay(origin, direction, distance),
       );
     const weaponManager = await buildWeaponManager(loadout.weaponIds, loadout.damageOverrides, initialReserveAmmo);
 
@@ -901,7 +1137,7 @@ export class Game {
         },
       },
       // Enemies may not pick a spot inside a house or a watch tower - the same check spawns use.
-      { obstacles, isBlocked: makeSpawnBlockedCheck(buildings) },
+      { obstacles, isBlocked: isSpawnBlocked },
     );
 
     // Multiplayer matches are pure PvP (MULTIPLAYER_PLAN.md's premise: the bot/enemy system is
@@ -910,7 +1146,7 @@ export class Game {
     // is the only thing attacking the player in that mode, not the regular enemy roster.
     if (!multiplayer && !matchConfig.hordeMode) {
       const counts = Game.encounterCounts(matchConfig);
-      await Game.spawnEncountersAsync(entityManager, counts.targets, counts.enemies, (status, spawnRatio) => {
+      await Game.spawnEncountersAsync(entityManager, counts.targets, counts.enemies, facility, (status, spawnRatio) => {
         onProgress?.(status, 0.15 + spawnRatio * 0.85);
       });
     }
@@ -945,7 +1181,8 @@ export class Game {
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
     // part of the wave") - the ambient wandering flock is a different mode's feature entirely.
-    if (!isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
+    // No ambient flock on the Facility either (docs/facility-map.md, section 1).
+    if (!facility && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
@@ -1022,7 +1259,8 @@ export class Game {
     // single-player's PlaySetupModal), so it keeps the ambient goose too, same as before. Single-
     // player and the multiplayer host run the spawn-timer/hit-attribution state machine themselves;
     // a guest is a pure follower (see BonusGooseManager's own isAuthoritative comment).
-    const isBonusGooseEnabled = !isHordeMode && (!multiplayer || multiplayer.gameMode === 'default');
+    // Never on the Facility (docs/facility-map.md, section 1).
+    const isBonusGooseEnabled = !facility && !isHordeMode && (!multiplayer || multiplayer.gameMode === 'default');
     const bonusGooseManager = isBonusGooseEnabled
       ? new BonusGooseManager(
           renderer.scene,
@@ -1082,7 +1320,7 @@ export class Game {
       const roomCode = multiplayer.roomCode;
       const opponents = new Map<PlayerSlot, RemoteOpponent>();
       const usernames = new Map<PlayerSlot, string>([[multiplayer.ownSlot, ownUsername]]);
-      const minimap = new Minimap(hudRoot);
+      const minimap = new Minimap(hudRoot, facility ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer } : undefined);
       const multiplayerHud = new MultiplayerHud(hudRoot, multiplayer.ownSlot, ownUsername, roomCode);
 
       for (const entry of multiplayer.roster) {
@@ -1112,6 +1350,7 @@ export class Game {
         gooseDifficulty: multiplayer.gooseDifficulty,
         gameMode: multiplayer.gameMode,
         weather: multiplayer.weather,
+        map: multiplayer.map,
         hostRoster: multiplayer.role === 'host' ? multiplayer.hostRoster ?? null : null,
         snapshotAccumulator: 0,
         hostSweepAccumulator: 0,
@@ -1174,6 +1413,8 @@ export class Game {
       chunkManager,
       buildings,
       watchTowers,
+      facility,
+      isSpawnBlocked,
       entityManager,
       weaponManager,
       impactMarkers,
@@ -1222,6 +1463,9 @@ export class Game {
     // and each instance used to cost several WebGL contexts (thumbnails plus a live preview) on every
     // match start, restricted modes included.
     game.hudRoot = hudRoot;
+    if (facility && !activeMultiplayer) {
+      game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
+    }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
     // Per-mode controllers (see core/modeControllers/) - each mode gets at most one, matching its
@@ -1294,6 +1538,9 @@ export class Game {
         addMultiplayerOpponent: (slot, username) => game.addMultiplayerOpponent(slot, username),
         onRematchReceived: (params) => game.onMultiplayerRematchReceived?.(params),
         onOpponentLeftRoom: () => game.onOpponentLeftRoom?.(),
+        destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
+        syncLamps: (lamps) => game.syncFacilityLamps(lamps),
+        opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1337,9 +1584,11 @@ export class Game {
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
         // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
         // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
-        onHostHello: async (username, rejoinToken) => {
+        onHostHello: async (username, rejoinToken, features) => {
           const hostRoster = activeMultiplayer.hostRoster;
           if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
+          // An older build would load the Valley inside a Facility match: turned away before it takes a slot.
+          if (!helloSupportsMap(features, activeMultiplayer.map)) return 'outdated';
           const outcome = hostRoster.handleHello(username, rejoinToken, performance.now());
           if (outcome.outcome === 'full') return 'full';
 
@@ -1371,6 +1620,7 @@ export class Game {
                 gooseDifficulty: activeMultiplayer.gooseDifficulty,
                 gameMode: activeMultiplayer.gameMode,
                 weather: activeMultiplayer.weather,
+                map: activeMultiplayer.map,
                 // Only slots in the roster handed over above: the joiner learns usernames from that
                 // roster alone, so a reserved or departed slot's score would sit in its scoreboard with
                 // no name and silently drop off its podium (which iterates known usernames).
@@ -1378,6 +1628,7 @@ export class Game {
                   roster.some((rosterEntry) => rosterEntry.slot === entry.slot),
                 ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
+                ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices() } : {}),
               },
             };
           }
@@ -1457,6 +1708,15 @@ export class Game {
   dispose(options?: { keepConnectionAlive?: boolean }): void {
     this.disposed = true;
     this.loop.stop();
+    // Before the renderer and the physics world go: the facility removes its own body and frees its
+    // GPU resources. The height override and the enemy navigator are module-level, and the lobby
+    // samples the valley again after this match.
+    this.facility?.world.dispose();
+    this.facility?.lampBreak.dispose();
+    this.facility?.torch.dispose();
+    this.facility?.remoteTorches?.dispose();
+    setHeightOverride(null);
+    setEnemyNavigator(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();
@@ -1495,6 +1755,7 @@ export class Game {
       for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.dispose(this.renderer.scene);
     }
     this.multiplayer?.minimap.dispose();
+    this.soloMinimap?.dispose();
     this.multiplayer?.multiplayerHud.dispose();
     if (!options?.keepConnectionAlive) {
       this.multiplayer?.session.connection.dispose();
@@ -1536,7 +1797,12 @@ export class Game {
     // Goose Horde: dying restarts the whole challenge from wave 1 (per explicit user request) at a
     // fresh random point on the map, not the fixed single-player spawn, and skips respawning
     // enemies/targets/the ambient goose flock entirely - none of those are part of this mode.
-    const spawnPoint = this.hordeGooseManager ? pickRandomHordeSpawnPoint(this.isSpawnBlocked) : clearFixedSpawnPoint(this.isSpawnBlocked);
+    // The Facility puts the player back at the same start every time.
+    const spawnPoint = this.facility
+      ? new THREE.Vector2(this.facility.start.x, this.facility.start.z)
+      : this.hordeGooseManager
+        ? pickRandomHordeSpawnPoint(this.isSpawnBlocked)
+        : clearFixedSpawnPoint(this.isSpawnBlocked);
     const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
     // Re-arm death handling at the respawn itself, not on the next tick: this runs after an await,
@@ -1554,19 +1820,23 @@ export class Game {
       this.hordeGooseManager.resetToWaveOne();
     } else {
       this.gooseManager.clearAll();
-      this.gooseManager.spawnInitialBatch(SPAWN_X, SPAWN_Z);
+      if (!this.facility) this.gooseManager.spawnInitialBatch(SPAWN_X, SPAWN_Z);
       const generation = ++this.spawnGeneration;
       const counts = Game.encounterCounts(this.matchConfig);
       void Game.spawnEncountersAsync(
         this.entityManager,
         counts.targets,
         counts.enemies,
+        this.facility,
         undefined,
         () => this.spawnGeneration !== generation,
       );
     }
     this.impactMarkers.clear();
     this.tracers.clear();
+    // Every lamp shot out in the last run is lit again (section 11).
+    this.facility?.world.relightAll();
+    this.facility?.lampBreak.clear();
     this.scoreState.value = 0;
     this.deathScreen.hide();
     this.deathScreenVisible = false;
@@ -1586,7 +1856,8 @@ export class Game {
     quality: GraphicsQualityPreset,
     look: LookPreset,
   ): { sun: THREE.DirectionalLight; fillLight: THREE.HemisphereLight } {
-    const fillLight = new THREE.HemisphereLight(look.hemiSkyColor, look.hemiGroundColor, quality.environmentLighting ? 0 : look.hemiIntensity);
+    // Indoors the fill is never zeroed: it is the light for moving things (see updateFacilityLight).
+    const fillLight = new THREE.HemisphereLight(look.hemiSkyColor, look.hemiGroundColor, quality.environmentLighting && !look.indoor ? 0 : look.hemiIntensity);
     scene.add(fillLight);
 
     const sun = new THREE.DirectionalLight(look.sunColor, look.sunIntensity);
@@ -1594,7 +1865,8 @@ export class Game {
     // Renderer's shadowMap.enabled already gates the whole shadow pass on Low - this additionally
     // keeps the light itself from ever being asked to cast, rather than relying solely on the
     // renderer-level switch.
-    sun.castShadow = quality.shadowsEnabled;
+    // Indoors the sun is off (intensity 0 from the look) and casts nothing.
+    sun.castShadow = quality.shadowsEnabled && !look.indoor;
     sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
     sun.shadow.camera.left = -SUN_SHADOW_ORTHO_HALF_EXTENT;
     sun.shadow.camera.right = SUN_SHADOW_ORTHO_HALF_EXTENT;
@@ -1616,8 +1888,10 @@ export class Game {
    * a fresh one at the new size the next time the shadow pass runs. */
   private applyGraphicsQuality(quality: GraphicsQualityPreset): void {
     this.renderer.applyQuality(quality);
-    this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
-    this.sun.castShadow = quality.shadowsEnabled;
+    // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
+    if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
+    this.sun.castShadow = quality.shadowsEnabled && !this.facility;
+    this.facility?.torch.setCastShadow(quality.shadowsEnabled);
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
       this.sun.shadow.map?.dispose();
@@ -1877,6 +2151,36 @@ export class Game {
     return undefined;
   }
 
+  /** `count` clear Facility cell centres for targets and enemies, none within
+   * FACILITY_ENCOUNTER_AVOID_RADIUS of the player's start: the layout's encounterPoints first (spread
+   * over the rooms, at most three per room), then, for a match larger than that, other clear cells
+   * at random; a point repeats only once every clear cell is taken. Single-player only, so plain
+   * Math.random like the other single-player spawn picks. */
+  private static facilityEncounterPoints(facility: FacilityMatch, count: number): { x: number; z: number }[] {
+    const { layout, start } = facility;
+    const points = encounterPoints(layout, count, { x: start.x, z: start.z, radius: FACILITY_ENCOUNTER_AVOID_RADIUS }, Math.random);
+    if (points.length >= count) return points;
+    const used = new Set(points.map((p) => `${p.x},${p.z}`));
+    const extra: { x: number; z: number }[] = [];
+    for (let j = 0; j < layout.size; j++) {
+      for (let i = 0; i < layout.size; i++) {
+        const point = cellCentre(i, j);
+        if (used.has(`${point.x},${point.z}`) || isFacilitySpawnBlocked(layout, point.x, point.z)) continue;
+        if (Math.hypot(point.x - start.x, point.z - start.z) < FACILITY_ENCOUNTER_AVOID_RADIUS) continue;
+        extra.push(point);
+      }
+    }
+    for (let i = extra.length - 1; i > 0; i--) {
+      const k = Math.floor(Math.random() * (i + 1));
+      [extra[i], extra[k]] = [extra[k]!, extra[i]!];
+    }
+    points.push(...extra.slice(0, count - points.length));
+    const available = points.length;
+    if (available === 0) return Array.from({ length: count }, () => ({ x: start.x, z: start.z }));
+    for (let i = available; i < count; i++) points.push(points[i % available]!);
+    return points;
+  }
+
   /** Spawns the chosen number of targets/enemies in batches, yielding a frame between batches so
    * large match sizes stay responsive and a loading screen can show real progress. `isCancelled`
    * is checked after every yielded frame - a reset or dispose that happens mid-spawn invalidates
@@ -1887,20 +2191,26 @@ export class Game {
     entityManager: EntityManager,
     targetCount: number,
     enemyCount: number,
+    facility: FacilityMatch | null,
     onProgress?: (status: string, ratio: number) => void,
     isCancelled?: () => boolean,
   ): Promise<void> {
     const total = targetCount + enemyCount;
     let done = 0;
     const report = (status: string): void => onProgress?.(status, total > 0 ? done / total : 1);
+    // The Facility spreads everything over its rooms instead of the rings around the valley spawn:
+    // targets first (facing the player's start), then enemies.
+    const facilityPoints = facility ? Game.facilityEncounterPoints(facility, total) : null;
+    const facePoint = facility ? facility.start : { x: SPAWN_X, z: SPAWN_Z };
 
     const targetRadius = Game.ringRadius(targetCount, TARGET_RING_BASE_RADIUS);
     for (let i = 0; i < targetCount; i++) {
+      const point = facilityPoints?.[i];
       const angle = (i / targetCount) * Math.PI * 2;
-      const x = SPAWN_X + Math.cos(angle) * targetRadius;
-      const z = SPAWN_Z + Math.sin(angle) * targetRadius;
+      const x = point ? point.x : SPAWN_X + Math.cos(angle) * targetRadius;
+      const z = point ? point.z : SPAWN_Z + Math.sin(angle) * targetRadius;
       const y = sampleHeight(x, z) + 1;
-      entityManager.spawnTarget(new THREE.Vector3(x, y, z), new THREE.Vector3(SPAWN_X, y, SPAWN_Z));
+      entityManager.spawnTarget(new THREE.Vector3(x, y, z), new THREE.Vector3(facePoint.x, y, facePoint.z));
       done++;
       report(`Placing targets… (${done}/${total})`);
       if (done % SPAWN_BATCH_SIZE === 0) {
@@ -1911,9 +2221,10 @@ export class Game {
 
     const enemyRadius = Game.ringRadius(enemyCount, ENEMY_RING_BASE_RADIUS);
     for (let i = 0; i < enemyCount; i++) {
+      const point = facilityPoints?.[targetCount + i];
       const angle = (i / enemyCount) * Math.PI * 2 + 0.5;
-      const x = SPAWN_X + Math.cos(angle) * enemyRadius;
-      const z = SPAWN_Z + Math.sin(angle) * enemyRadius;
+      const x = point ? point.x : SPAWN_X + Math.cos(angle) * enemyRadius;
+      const z = point ? point.z : SPAWN_Z + Math.sin(angle) * enemyRadius;
       entityManager.spawnEnemy(new THREE.Vector3(x, sampleHeight(x, z) + 1, z));
       done++;
       report(`Deploying enemies… (${done}/${total})`);
@@ -1984,6 +2295,13 @@ export class Game {
       void this.resetPlay();
     }
 
+    // The torch (docs/facility-map.md, section 7). Consumed on the Valley too, where F does nothing.
+    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.facility) {
+      const torch = this.facility.torch;
+      torch.setOn(!torch.isOn);
+      this.sound.playTorchClick(torch.isOn);
+    }
+
     // Re-arms death handling the first tick the player is alive (see deathHandled).
     if (!this.player.isDead) this.deathHandled = false;
 
@@ -2041,7 +2359,7 @@ export class Game {
       let sectionStart = this.perfLogger.mark();
       this.physics.step(dt);
       sectionStart = this.perfLogger.endSection('physics', sectionStart);
-      this.chunkManager.update(this.player.position.x, this.player.position.z);
+      this.chunkManager?.update(this.player.position.x, this.player.position.z);
       sectionStart = this.perfLogger.endSection('world', sectionStart);
       this.entityManager.update(dt, this.player);
       this.updateDirector(dt);
@@ -2118,7 +2436,9 @@ export class Game {
     this.gooseAnnouncement.update(dt);
     this.bigAnnouncement.update(dt);
     this.explosionEffect.update(dt);
+    this.facility?.lampBreak.update(dt);
     this.updateMultiplayer(dt);
+    this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
 
     if (this.player.isDead && !this.deathHandled) {
       this.deathHandled = true;
@@ -2260,6 +2580,14 @@ export class Game {
       }
     }
 
+    // A periodic resync of this client's dead Facility lamps, for anyone who was loading when a
+    // lampDestroyed went past (see network/lampSync.ts).
+    if (this.facility) {
+      const facility = this.facility;
+      const lamps = this.lampSync.update(dt, () => facility.world.deadLampIndices());
+      if (lamps) this.sendLampSync(lamps);
+    }
+
     // Win condition: first to killLimit ends the match. Checked here rather than where each score
     // actually changes (the playerDied handling scattered across create()'s onMessage and update()'s
     // own death-transition block) so there's exactly one place that decides "the match is over,"
@@ -2361,6 +2689,7 @@ export class Game {
         pitch: this.player.facingPitch,
         health: this.player.currentHealth,
         t: this.sendClock(),
+        ...(this.facility ? { torch: this.facility.torch.isOn } : {}),
       });
     }
   }
@@ -2761,6 +3090,8 @@ export class Game {
     // `playerLeft` message independently, so this needs no extra broadcast - it converges exactly
     // like every other self-reported/relayed state in this protocol.
     this.kingOfTheHillController?.dropLocallyIfCarrying(slot, opponent.remotePlayer.position.clone());
+    // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
+    this.lampSync.forget(slot);
     opponent.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);
@@ -2866,6 +3197,7 @@ export class Game {
       gooseDifficulty: this.multiplayer.gooseDifficulty,
       gameMode: this.multiplayer.gameMode,
       weather: this.multiplayer.weather,
+      map: this.multiplayer.map,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
     });
@@ -2892,7 +3224,12 @@ export class Game {
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);
     this.worldMarkers?.update(this.renderer.camera);
-    this.updateSunFollow();
+    if (this.facility) {
+      this.updateFacilityLight(hudDt);
+      this.updateTorches();
+    } else {
+      this.updateSunFollow();
+    }
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
     this.perfLogger.endSection('render', renderStart);

@@ -6,8 +6,52 @@ import { ACCENT, AMBER, HAIRLINE, SURFACE, THREAT } from './theme.ts';
 const MAP_DIAMETER_PX = 140;
 const MAP_RADIUS_PX = MAP_DIAMETER_PX / 2;
 const DOT_SIZE_PX = 10;
+/** An enemy blip stays up this long after the enemy stops, so a stop-start walk does not flicker. */
+const BLIP_LINGER_MS = 500;
 
-/** Opponent-position radar, top-right of the HUD - multiplayer only, a `Hud` sibling rather than
+/** Something drawn under the dots (docs/facility-map.md, section 8): the Facility's plan. */
+export interface MinimapLayer {
+  /** data-testid of the canvas the layer is drawn on. */
+  readonly testId: string;
+  /** Called with the player's position every update, before draw. */
+  update(x: number, z: number): void;
+  /** Draws in world metres (x to the right, z down the image); the minimap has already set the
+   * transform that puts the player at the centre with their forward up (see minimapTransform). */
+  draw(context: CanvasRenderingContext2D): void;
+}
+
+export interface MinimapOptions {
+  /** World metres from the centre to the rim; MINIMAP_WORLD_RADIUS by default. */
+  readonly worldRadius?: number;
+  readonly layer?: MinimapLayer;
+}
+
+/** A live enemy as the minimap sees it (EntityManager.liveEnemyMotion). */
+export interface MinimapBlip {
+  readonly id: number;
+  readonly x: number;
+  readonly z: number;
+  readonly moving: boolean;
+}
+
+/** The 2D canvas transform (a, b, c, d, e, f) taking world (x, z) to map pixels: the player at
+ * (centrePx, centrePx), their forward (yaw, Player.facingYaw) up, `pxPerMetre` scale. The same
+ * mapping placeDot applies to the dots: rotate the offset by -yaw about Y, then scale. Pure. */
+export function minimapTransform(
+  playerX: number,
+  playerZ: number,
+  yaw: number,
+  pxPerMetre: number,
+  centrePx: number,
+): [number, number, number, number, number, number] {
+  const cos = Math.cos(yaw) * pxPerMetre;
+  const sin = Math.sin(yaw) * pxPerMetre;
+  // Screen x = cos * dx - sin * dz, screen y = sin * dx + cos * dz (plus the centre).
+  return [cos, sin, -sin, cos, centrePx - cos * playerX + sin * playerZ, centrePx - sin * playerX - cos * playerZ];
+}
+
+/** Opponent-position radar, top-right of the HUD - multiplayer, plus single-player on the Facility (which draws its plan
+ * under the dots through a MinimapLayer, docs/facility-map.md section 8) - a `Hud` sibling rather than
  * part of it (see hitMarker.ts/killFeed.ts for the same one-class-per-widget pattern this project
  * already uses). Player-relative ("forward" is always "up" on the map, rotating with the local
  * player's current look direction) - per playtest feedback that the map showed distance well but
@@ -26,19 +70,42 @@ export class Minimap {
    * once added (crates don't move) but still needs the same per-frame rotate-with-player-facing
    * treatment as an opponent dot, so it lives in update() too, not a one-time placement. */
   private readonly itemDots = new Map<string, HTMLDivElement>();
+  /** Single-player Facility enemies (docs/facility-map.md, section 8), keyed by entity id. */
+  private readonly enemyDots = new Map<number, { dot: HTMLDivElement; lastMovedAt: number }>();
+  private readonly worldRadius: number;
+  private readonly layer: MinimapLayer | null;
+  private readonly layerCanvas: HTMLCanvasElement | null = null;
+  private readonly layerContext: CanvasRenderingContext2D | null = null;
+  private readonly forwardWedge: HTMLDivElement;
 
-  constructor(hudRoot: HTMLElement) {
+  constructor(hudRoot: HTMLElement, options: MinimapOptions = {}) {
+    this.worldRadius = options.worldRadius ?? MINIMAP_WORLD_RADIUS;
+    this.layer = options.layer ?? null;
     this.root = document.createElement('div');
     this.root.style.cssText =
       `position:absolute; top:24px; right:24px; width:${MAP_DIAMETER_PX}px; height:${MAP_DIAMETER_PX}px;` +
       ` border-radius:50%; border:1px solid ${HAIRLINE}; background:${SURFACE}; backdrop-filter:blur(10px);` +
       ' overflow:hidden; pointer-events:none;';
 
+    // The layer's canvas fills the circle under everything else (the root clips it round).
+    if (this.layer) {
+      const canvas = document.createElement('canvas');
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(MAP_DIAMETER_PX * pixelRatio);
+      canvas.height = Math.round(MAP_DIAMETER_PX * pixelRatio);
+      canvas.dataset.testid = this.layer.testId;
+      canvas.style.cssText = `position:absolute; left:0; top:0; width:${MAP_DIAMETER_PX}px; height:${MAP_DIAMETER_PX}px;`;
+      this.root.appendChild(canvas);
+      this.layerCanvas = canvas;
+      this.layerContext = canvas.getContext('2d');
+    }
+
     // A fixed forward-facing wedge at the map's own center, standing in for the local player -
     // always points "up" since the whole map rotates around the player instead of the player's
     // marker rotating within a fixed map. Gives each opponent dot's position an actual reference
     // to read "turn left/right" from, not just "they're somewhere over there."
     const forwardWedge = document.createElement('div');
+    this.forwardWedge = forwardWedge;
     forwardWedge.style.cssText =
       'position:absolute; width:0; height:0; border-left:5px solid transparent;' +
       ` border-right:5px solid transparent; border-bottom:9px solid ${ACCENT};` +
@@ -90,23 +157,68 @@ export class Minimap {
     localFacingYaw: number,
     /** Goose Horde ammo crates - see addItemDot's own comment. Absent for every other mode. */
     items?: ReadonlyMap<string, THREE.Vector3>,
+    /** Single-player Facility enemies: shown inside the radius while they move. */
+    enemies?: readonly MinimapBlip[],
   ): void {
     // Same rotation Player.ts uses to turn its own yaw into a forward vector, applied here to each
     // opponent's relative offset instead - rotating by -yaw undoes the player's own turn, so
     // "forward" always lands at world -Z (which the unrotated map already treated as "up").
     const yawQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -localFacingYaw, 0, 'YXZ'));
 
+    if (this.layer && this.layerCanvas && this.layerContext) {
+      this.layer.update(localPosition.x, localPosition.z);
+      const context = this.layerContext;
+      const pixelRatio = this.layerCanvas.width / MAP_DIAMETER_PX;
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.clearRect(0, 0, this.layerCanvas.width, this.layerCanvas.height);
+      const [a, b, c, d, e, f] = minimapTransform(localPosition.x, localPosition.z, localFacingYaw, MAP_RADIUS_PX / this.worldRadius, MAP_RADIUS_PX);
+      context.setTransform(a * pixelRatio, b * pixelRatio, c * pixelRatio, d * pixelRatio, e * pixelRatio, f * pixelRatio);
+      this.layer.draw(context);
+    }
+
+    if (enemies) this.updateEnemyDots(localPosition, enemies, yawQuat);
+
     for (const [slot, dot] of this.dots) {
       const opponentPosition = opponents.get(slot);
       if (!opponentPosition) continue;
-      placeDot(dot, localPosition, opponentPosition, yawQuat);
+      placeDot(dot, localPosition, opponentPosition, yawQuat, this.worldRadius);
     }
 
     if (!items) return;
     for (const [id, dot] of this.itemDots) {
       const itemPosition = items.get(id);
       if (!itemPosition) continue;
-      placeDot(dot, localPosition, itemPosition, yawQuat);
+      placeDot(dot, localPosition, itemPosition, yawQuat, this.worldRadius);
+    }
+  }
+
+  /** One red dot per live enemy (the opponent dot style), shown while it moves within the radius
+   * and for BLIP_LINGER_MS after it stops; dots of enemies no longer listed (dead) are removed. */
+  private updateEnemyDots(localPosition: THREE.Vector3, enemies: readonly MinimapBlip[], yawQuat: THREE.Quaternion): void {
+    const now = performance.now();
+    const seen = new Set<number>();
+    for (const enemy of enemies) {
+      seen.add(enemy.id);
+      let entry = this.enemyDots.get(enemy.id);
+      if (!entry) {
+        const dot = document.createElement('div');
+        dot.style.cssText =
+          `position:absolute; width:${DOT_SIZE_PX - 2}px; height:${DOT_SIZE_PX - 2}px; border-radius:50%;` +
+          ` background:${THREAT}; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%); display:none;`;
+        this.root.insertBefore(dot, this.forwardWedge);
+        entry = { dot, lastMovedAt: Number.NEGATIVE_INFINITY };
+        this.enemyDots.set(enemy.id, entry);
+      }
+      if (enemy.moving) entry.lastMovedAt = now;
+      const inRange = Math.hypot(enemy.x - localPosition.x, enemy.z - localPosition.z) <= this.worldRadius;
+      const shown = inRange && now - entry.lastMovedAt <= BLIP_LINGER_MS;
+      entry.dot.style.display = shown ? '' : 'none';
+      if (shown) placeDot(entry.dot, localPosition, enemy, yawQuat, this.worldRadius);
+    }
+    for (const [id, entry] of this.enemyDots) {
+      if (seen.has(id)) continue;
+      entry.dot.remove();
+      this.enemyDots.delete(id);
     }
   }
 
@@ -117,13 +229,19 @@ export class Minimap {
 
 /** Shared by both the opponent-dot and item-dot loops in update() above - projects a world-space
  * offset into the map's rotated, distance-clamped screen space and writes it onto one dot element. */
-function placeDot(dot: HTMLDivElement, localPosition: THREE.Vector3, targetPosition: THREE.Vector3, yawQuat: THREE.Quaternion): void {
+function placeDot(
+  dot: HTMLDivElement,
+  localPosition: THREE.Vector3,
+  targetPosition: { readonly x: number; readonly z: number },
+  yawQuat: THREE.Quaternion,
+  worldRadius: number,
+): void {
   const dx = targetPosition.x - localPosition.x;
   const dz = targetPosition.z - localPosition.z;
   const distance = Math.hypot(dx, dz);
 
   const rotated = new THREE.Vector3(dx, 0, dz).applyQuaternion(yawQuat);
-  const scale = distance <= MINIMAP_WORLD_RADIUS ? MAP_RADIUS_PX / MINIMAP_WORLD_RADIUS : MAP_RADIUS_PX / distance;
+  const scale = distance <= worldRadius ? MAP_RADIUS_PX / worldRadius : MAP_RADIUS_PX / distance;
 
   dot.style.left = `${MAP_RADIUS_PX + rotated.x * scale}px`;
   dot.style.top = `${MAP_RADIUS_PX + rotated.z * scale}px`;

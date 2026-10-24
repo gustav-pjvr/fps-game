@@ -92,6 +92,24 @@ export class GradeEffect extends Effect {
 export interface PostStackOptions {
   /** Screen-space ambient occlusion (N8AO), High only. */
   readonly ambientOcclusion: boolean;
+  /** Run just before and just after the view-model pass (see Renderer.beginViewModelPass). */
+  readonly viewModelPass?: { before(): void; after(): void };
+}
+
+/** A RenderPass with hooks around its render, for the view-model pass. */
+class HookedRenderPass extends RenderPass {
+  constructor(scene: THREE.Scene, camera: THREE.Camera, private readonly hooks: { before(): void; after(): void } | undefined) {
+    super(scene, camera);
+  }
+
+  override render(...args: Parameters<RenderPass['render']>): void {
+    this.hooks?.before();
+    try {
+      super.render(...args);
+    } finally {
+      this.hooks?.after();
+    }
+  }
 }
 
 /** The composer pipeline for Medium and High (Low renders straight to the screen, see Renderer):
@@ -134,7 +152,7 @@ export class PostStack {
     }
 
     if (viewModelCamera) {
-      const viewModelPass = new RenderPass(scene, viewModelCamera);
+      const viewModelPass = new HookedRenderPass(scene, viewModelCamera, options.viewModelPass);
       viewModelPass.clearPass.setClearFlags(false, true, false);
       viewModelPass.ignoreBackground = true;
       viewModelPass.skipShadowMapUpdate = true;

@@ -2,7 +2,7 @@ import type { PeerConnection, MultiplayerRole } from './PeerConnection.ts';
 import type { HostRoster } from './HostRoster.ts';
 import type { SpawnPoint } from '../core/multiplayerSpawn.ts';
 import type { PlayerSlot, RosterEntry } from './protocol.ts';
-import type { GooseExplosionDifficulty, MatchWeather } from '../core/config.ts';
+import type { GooseExplosionDifficulty, MatchMap, MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 
 export type { MultiplayerRole };
@@ -27,6 +27,7 @@ export interface MultiplayerSession {
   /** Purely cosmetic/atmospheric lighting+fog choice - the host's choice, carried alongside
    * killLimit/gooseDifficulty/gameMode on the same messages. */
   weather: MatchWeather;
+  map: MatchMap;
   /** This match's spawn points, one per roster slot - looked up by `slot`, not array position
    * (see MatchStartMessage's own comment on why). Picked fresh each match/rematch/late-join (see
    * multiplayerSpawn.ts), not a fixed layout. */
@@ -55,6 +56,9 @@ export interface MultiplayerSession {
    * Game.ts's mode-explanation briefing (see worldBriefingActive) - a late joiner must never
    * re-freeze/re-gate an already-running match for everyone else. */
   showModeExplanation: boolean;
+  /** Facility only, a late join/rejoin only (see WelcomeMessage.activeMatch): lamps already shot
+   * out, applied once the facility is built. */
+  deadLamps?: number[];
 }
 
 /** Everything a matchStart message carries beyond the connection/role itself - used as one bundle
@@ -67,6 +71,7 @@ export interface MultiplayerMatchStartParams {
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
   weather: MatchWeather;
+  map: MatchMap;
   ownSlot: PlayerSlot;
   spawns: { slot: PlayerSlot; point: SpawnPoint }[];
   roster: RosterEntry[];
@@ -74,4 +79,7 @@ export interface MultiplayerMatchStartParams {
   initialScoreboard: { slot: PlayerSlot; score: number }[];
   hostRoster?: HostRoster;
   showModeExplanation: boolean;
+  /** Facility only, a late join/rejoin only (see WelcomeMessage.activeMatch): lamps already shot
+   * out, applied once the facility is built. */
+  deadLamps?: number[];
 }

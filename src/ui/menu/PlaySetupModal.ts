@@ -1,11 +1,13 @@
 import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED } from '../theme.ts';
 import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
-import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, type GooseExplosionDifficulty } from '../../core/config.ts';
+import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, MATCH_MAPS, MATCH_MAP_LABELS, MATCH_MAP_DESCRIPTIONS, type GooseExplosionDifficulty, type MatchMap } from '../../core/config.ts';
+import { isSinglePlayerModeAllowedOnMap } from '../../core/gameModes.ts';
 
 export interface MatchSetupConfig {
   enemyCount: number;
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  map: MatchMap;
   /** Goose Horde wave-survival mode (see core/config.ts's HORDE_WAVE_TABLE) - when true,
    * enemyCount/targetCount are ignored (no regular AI encounters spawn) and a HordeGooseManager
    * runs instead, see Game.ts's create(). */
@@ -28,6 +30,7 @@ export class PlaySetupModal {
   private readonly enemyInput: HTMLInputElement;
   private readonly targetInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
+  private readonly mapSelect: HTMLSelectElement;
   private readonly hordeModeCheckbox: HTMLInputElement;
   private readonly directorModeCheckbox: HTMLInputElement;
   private readonly missionModeCheckbox: HTMLInputElement;
@@ -50,6 +53,7 @@ export class PlaySetupModal {
     this.enemyInput = this.buildCountRow(panel, 'Enemies', defaults.enemyCount, maxCount);
     this.targetInput = this.buildCountRow(panel, 'Targets', defaults.targetCount, maxCount);
     this.gooseDifficultySelect = this.buildDifficultyRow(panel, defaults.gooseDifficulty);
+    this.mapSelect = this.buildMapRow(panel, defaults.map);
 
     this.hordeModeCheckbox = this.buildCheckboxRow(panel, 'Goose Horde: survive 10 waves', defaults.hordeMode);
     this.directorModeCheckbox = this.buildCheckboxRow(
@@ -81,7 +85,28 @@ export class PlaySetupModal {
         updateCountInputs();
       });
     }
-    updateCountInputs();
+    const valleyOnlyModes = [
+      { mode: 'horde', checkbox: this.hordeModeCheckbox },
+      { mode: 'mission', checkbox: this.missionModeCheckbox },
+    ] as const;
+    const valleyOnlyNotes = valleyOnlyModes.map(({ checkbox }) => {
+      const note = document.createElement('span');
+      note.textContent = 'Valley only';
+      note.style.cssText = 'font-size:0.75rem; opacity:0.7;';
+      checkbox.parentElement?.appendChild(note);
+      return note;
+    });
+    const updateMapOptions = () => {
+      const map = this.mapSelect.value as MatchMap;
+      valleyOnlyModes.forEach(({ mode, checkbox }, index) => {
+        checkbox.disabled = !isSinglePlayerModeAllowedOnMap(mode, map);
+        if (checkbox.disabled) checkbox.checked = false;
+        valleyOnlyNotes[index]!.style.display = checkbox.disabled ? '' : 'none';
+      });
+      updateCountInputs();
+    };
+    this.mapSelect.addEventListener('change', updateMapOptions);
+    updateMapOptions();
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';
@@ -95,6 +120,7 @@ export class PlaySetupModal {
         enemyCount: this.clampInput(this.enemyInput, maxCount),
         targetCount: this.clampInput(this.targetInput, maxCount),
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
+        map: this.mapSelect.value as MatchMap,
         hordeMode: this.hordeModeCheckbox.checked,
         directorMode: this.directorModeCheckbox.checked,
         missionMode: this.missionModeCheckbox.checked,
@@ -162,6 +188,36 @@ export class PlaySetupModal {
     }
 
     row.append(labelEl, select);
+    panel.appendChild(row);
+    return select;
+  }
+
+  private buildMapRow(panel: HTMLDivElement, defaultValue: MatchMap): HTMLSelectElement {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:16px;';
+    const label = document.createElement('label');
+    label.textContent = 'Map';
+    label.htmlFor = 'match-setup-map';
+    label.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
+    const select = document.createElement('select');
+    select.id = 'match-setup-map';
+    select.name = 'map';
+    select.style.cssText = this.gooseDifficultySelect.style.cssText;
+    for (const map of MATCH_MAPS) {
+      const option = document.createElement('option');
+      option.value = map;
+      option.textContent = MATCH_MAP_LABELS[map];
+      if (map === defaultValue) option.selected = true;
+      select.appendChild(option);
+    }
+    const description = document.createElement('div');
+    description.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px;';
+    const updateDescription = () => {
+      description.textContent = MATCH_MAP_DESCRIPTIONS[select.value as MatchMap];
+    };
+    select.addEventListener('change', updateDescription);
+    updateDescription();
+    row.append(label, select, description);
     panel.appendChild(row);
     return select;
   }
