@@ -71,10 +71,16 @@ test('pausing does not grant invincibility in multiplayer - damage still applies
   const opponentPosition = await hostPage.evaluate(() => window.__gameDebug?.getOpponentPosition());
   if (!opponentPosition) throw new Error('host has no opponent position yet');
 
-  await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.teleport(x + 12, y + 8, z), opponentPosition);
-  await hostPage.waitForTimeout(1000);
-  await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), opponentPosition);
-  await hostPage.waitForTimeout(100);
+  // Shoot from 12 m away in the first of eight directions with a clear line to the guest: a fixed
+  // offset put a house between the two players (v4.1 houses are solid where drawn, 2026-10-24).
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    await hostPage.evaluate(({ x, y, z, a }) => window.__gameDebug?.teleport(x + Math.cos(a) * 12, y + 8, z + Math.sin(a) * 12), { ...opponentPosition, a: angle });
+    await hostPage.waitForTimeout(1000);
+    await hostPage.evaluate(({ x, y, z }) => window.__gameDebug?.lookAt(x, y, z), opponentPosition);
+    await hostPage.waitForTimeout(100);
+    if ((await hostPage.evaluate(() => window.__gameDebug?.raycastForward()))?.isEntity) break;
+  }
 
   let guestHealth = 100;
   for (let i = 0; i < 6 && guestHealth > 0; i++) {
