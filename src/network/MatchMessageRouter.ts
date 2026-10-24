@@ -31,6 +31,7 @@ import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
 export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'playerSnapshot',
   'fireEvent',
+  'lampDestroyed',
   'damageEvent',
   'playerDied',
   'respawnEvent',
@@ -88,6 +89,8 @@ export interface MatchMessageContext {
   addMultiplayerOpponent(slot: PlayerSlot, username: string): Promise<void>;
   onRematchReceived(params: MultiplayerMatchStartParams): void;
   onOpponentLeftRoom(): void;
+  /** Facility only (a no-op elsewhere): another player shot out this lamp. */
+  destroyLamp(lamp: number): void;
 }
 
 /** Routes one inbound network message to its local side effects. Takes over from the room screen's
@@ -179,6 +182,10 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance), pan);
       break;
     }
+    case 'lampDestroyed':
+      // Self-reported like fireEvent: the shooter's client already killed it locally.
+      if (Number.isInteger(message.lamp)) ctx.destroyLamp(message.lamp);
+      break;
     case 'damageEvent':
       // This client is authoritative over its own player's health - the attacker only ever
       // reports "you took N," never "you're dead," and only the actual intended target

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FACILITY_LAMP_FALLOFF_M2, FACILITY_LAMP_HEIGHT_EXPONENT, FACILITY_LAMP_POWER, FACILITY_LAMP_REFERENCE_HEIGHT } from '../../core/config.ts';
-import { bakeFacility, sampleProbe } from './facilityBake.ts';
+import { bakeFacility, rebakeFacilityAround, sampleProbe } from './facilityBake.ts';
 import { buildFacilityGeometry } from './facilityGeometry.ts';
 import { generateFacilityLayout, OPEN, PROP, SOLID, type FacilityLayout } from './facilityLayout.ts';
 
@@ -9,6 +9,12 @@ function room(): FacilityLayout {
   for (let j = 1; j < size - 1; j++) for (let i = 1; i < size - 1; i++) { kinds[j * size + i] = OPEN; ceiling[j * size + i] = 5; }
   return { seed: 0, size, cell: 1.5, kinds, ceiling, region: new Int16Array(size * size),
     rooms: [], crates: [], doorways: [], lamps: [{ x: 0, y: 4.85, z: 0, color: 0xffffff, intensity: 1, kind: 'panel' }] };
+}
+
+/** Bit for bit equality, so -0 and NaN patterns count too. */
+function sameBits(a: Float32Array, b: Float32Array): boolean {
+  const x = new Uint32Array(a.buffer, a.byteOffset, a.length), y = new Uint32Array(b.buffer, b.byteOffset, b.length);
+  return x.length === y.length && x.every((value, i) => value === y[i]);
 }
 
 describe('Facility bake', () => {
@@ -29,6 +35,35 @@ describe('Facility bake', () => {
     expect(result.ms).toBeLessThan(4000);
     console.log(`Facility seed 1 bake: ${result.ms.toFixed(1)} ms; vertices: ${length / 3}`);
     for (const g of geometry.byMaterial.values()) g.dispose();
+  }, 10000);
+
+  it('rebakes around a lamp exactly: zero dead lamps reproduce the full bake, a dead lamp matches a bake without it', () => {
+    const layout = generateFacilityLayout(1), geometry = buildFacilityGeometry(layout);
+    const length = [...geometry.byMaterial.values()].reduce((sum, g) => sum + g.getAttribute('position').array.length, 0);
+    const positions = new Float32Array(length), normals = new Float32Array(length);
+    let offset = 0;
+    for (const g of geometry.byMaterial.values()) {
+      positions.set(g.getAttribute('position').array, offset); normals.set(g.getAttribute('normal').array, offset);
+      offset += g.getAttribute('position').array.length;
+      g.dispose();
+    }
+    const full = bakeFacility(layout, positions, normals), light = full.light.slice(), probes = full.probes.slice();
+    const index = layout.lamps.findIndex(lamp => lamp.kind === 'panel'), lamp = layout.lamps[index]!;
+    full.light.fill(NaN);
+    const { vertices } = rebakeFacilityAround(full.state, [], lamp.x, lamp.y, lamp.z);
+    expect(vertices.length).toBeGreaterThan(0);
+    for (const v of vertices) for (let c = 0; c < 3; c++) expect(Object.is(full.light[v * 3 + c], light[v * 3 + c])).toBe(true);
+    expect(sameBits(full.probes, probes)).toBe(true);
+    // Every vertex within the radius is among the recomputed ones.
+    const recomputed = new Set(vertices);
+    for (let v = 0; v < positions.length / 3; v++) {
+      if (Math.hypot(positions[v * 3]! - lamp.x, positions[v * 3 + 1]! - lamp.y, positions[v * 3 + 2]! - lamp.z) < 14) expect(recomputed.has(v)).toBe(true);
+    }
+    full.light.set(light);
+    rebakeFacilityAround(full.state, [index], lamp.x, lamp.y, lamp.z, index);
+    const without = bakeFacility({ ...layout, lamps: layout.lamps.filter((_, i) => i !== index) }, positions, normals);
+    expect(sameBits(full.light, without.light)).toBe(true);
+    expect(sameBits(full.probes, without.probes)).toBe(true);
   }, 10000);
 
   it('lights the floor beneath a lamp more than the floor across a solid wall', () => {

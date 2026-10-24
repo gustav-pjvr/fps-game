@@ -7,8 +7,14 @@ import { getStructureMaterials } from '../structureMaterials.ts';
 import { box, createBoxCollider } from '../structureKit.ts';
 import type { FacilityLayout } from './facilityLayout.ts';
 import { buildFacilityGeometry, type FacilityGeometry } from './facilityGeometry.ts';
-import { bakeFacility, sampleProbe } from './facilityBake.ts';
+import { bakeFacility, rebakeFacilityAround, sampleProbe, type FacilityBakeState } from './facilityBake.ts';
 import { withBakedLight } from './bakedLightMaterial.ts';
+
+/** Ray hit boxes for lamps, a little larger than the visible lamp so they are fair to hit. */
+const LAMP_HIT_HALF = { panel: [0.5, 0.1, 0.2], emergency: [0.175, 0.125, 0.2] } as const;
+
+/** One material's slice of the shared light array, in vertices. */
+interface LightRange { attribute: THREE.BufferAttribute; first: number; count: number }
 
 interface FacilityOptions {
   scene: THREE.Scene;
@@ -29,14 +35,28 @@ export class FacilityWorld {
   private dustStarted = false;
   private registered = false;
   private disposed = false;
+  private readonly probes: Float32Array;
+  private readonly lightRanges: LightRange[] = [];
+  /** The light, probes, direct and fill of the full bake, so relightAll restores them exactly. */
+  private readonly original: { light: Float32Array; probes: Float32Array; direct: Float32Array; fill: Float32Array };
+  private readonly dead = new Set<number>();
+  private lampMesh: THREE.InstancedMesh | null = null;
+  private shaftMesh: THREE.InstancedMesh | null = null;
+  private shafts: FacilityGeometry['shafts'] = [];
+  /** Milliseconds the last killLamp took, rebake and attribute updates included. */
+  lastKillMs = 0;
 
   private constructor(
     private readonly layout: FacilityLayout,
     private readonly options: FacilityOptions,
-    private readonly probes: Float32Array,
+    private readonly bake: FacilityBakeState,
     readonly bakeMs: number,
     readonly vertexCount: number,
-  ) { this.group.name = 'facility'; }
+  ) {
+    this.group.name = 'facility';
+    this.probes = bake.probes;
+    this.original = { light: bake.light.slice(), probes: bake.probes.slice(), direct: bake.direct.slice(), fill: bake.fill.slice() };
+  }
 
   static build(layout: FacilityLayout, options: FacilityOptions): FacilityWorld {
     const geometry = buildFacilityGeometry(layout);
@@ -49,14 +69,16 @@ export class FacilityWorld {
       offset += g.getAttribute('position').array.length;
     }
     const baked = bakeFacility(layout, positions, normals);
-    const facility = new FacilityWorld(layout, options, baked.probes, baked.ms, vertexCount);
+    const facility = new FacilityWorld(layout, options, baked.state, baked.ms, vertexCount);
     for (const g of geometry.byMaterial.values()) facility.geometries.add(g);
     try {
       const shared = getStructureMaterials();
       offset = 0;
       for (const [key, g] of geometry.byMaterial) {
         const count = g.getAttribute('position').array.length;
-        g.setAttribute('bakedLight', new THREE.BufferAttribute(baked.light.subarray(offset, offset + count), 3));
+        const attribute = new THREE.BufferAttribute(baked.light.subarray(offset, offset + count), 3);
+        g.setAttribute('bakedLight', attribute);
+        facility.lightRanges.push({ attribute, first: offset / 3, count: count / 3 });
         offset += count;
         const material = withBakedLight(shared[key]);
         facility.materials.add(material);
@@ -106,6 +128,7 @@ export class FacilityWorld {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
     this.group.add(mesh);
+    this.lampMesh = mesh;
   }
 
   private addShafts(shafts: FacilityGeometry['shafts']): void {
@@ -123,15 +146,115 @@ export class FacilityWorld {
     this.geometries.add(geometry); this.materials.add(material);
     const mesh = new THREE.InstancedMesh(geometry, material, shafts.length);
     mesh.name = 'facility-shafts';
-    const matrix = new THREE.Matrix4(), color = new THREE.Color();
-    shafts.forEach((shaft, i) => {
-      matrix.makeScale(1, shaft.yTop, 1).setPosition(shaft.x, shaft.yTop / 2, shaft.z);
-      mesh.setMatrixAt(i, matrix); mesh.setColorAt(i, color.setHex(shaft.color));
-    });
+    const color = new THREE.Color();
+    this.shafts = shafts;
+    this.shaftMesh = mesh;
+    shafts.forEach((shaft, i) => { this.setShaft(i, true); mesh.setColorAt(i, color.setHex(shaft.color)); });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
     this.group.add(mesh);
+  }
+
+  /** A shaft under a dead lamp is scaled to nothing. */
+  private setShaft(i: number, visible: boolean): void {
+    const shaft = this.shafts[i]!, matrix = new THREE.Matrix4();
+    if (visible) matrix.makeScale(1, shaft.yTop, 1).setPosition(shaft.x, shaft.yTop / 2, shaft.z);
+    else matrix.makeScale(0, 0, 0).setPosition(shaft.x, shaft.yTop / 2, shaft.z);
+    this.shaftMesh!.setMatrixAt(i, matrix);
+  }
+
+  private setLampLit(index: number, lit: boolean): void {
+    const lamps = this.lampMesh;
+    if (lamps) {
+      lamps.setColorAt(index, new THREE.Color(lit ? this.layout.lamps[index]!.color : 0x000000));
+      if (lamps.instanceColor) lamps.instanceColor.needsUpdate = true;
+    }
+    if (!this.shaftMesh) return;
+    let changed = false;
+    this.shafts.forEach((shaft, i) => { if (shaft.lamp === index) { this.setShaft(i, lit); changed = true; } });
+    if (changed) this.shaftMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  get lampCount(): number { return this.layout.lamps.length; }
+
+  lampPosition(index: number): { x: number; y: number; z: number } | null {
+    const lamp = Number.isInteger(index) ? this.layout.lamps[index] : undefined;
+    return lamp ? { x: lamp.x, y: lamp.y, z: lamp.z } : null;
+  }
+
+  isLampDead(index: number): boolean { return this.dead.has(index); }
+
+  deadLampIndices(): number[] { return [...this.dead].sort((a, b) => a - b); }
+
+  /**
+   * Shoots out a lamp: its light leaves the bake (walls, floor and the probes that light moving
+   * things), its panel goes black and its light shaft disappears. Returns the lamp position, or
+   * null when the index is not a live lamp.
+   */
+  killLamp(index: number): { x: number; y: number; z: number } | null {
+    const position = this.lampPosition(index);
+    if (this.disposed || !position || this.dead.has(index)) return null;
+    const start = performance.now();
+    this.dead.add(index);
+    const { vertices } = rebakeFacilityAround(this.bake, this.dead, position.x, position.y, position.z, index);
+    // Changed vertices are ascending and the materials are in order, so one walk finds each range.
+    let k = 0;
+    for (const range of this.lightRanges) {
+      const end = range.first + range.count;
+      while (k < vertices.length && vertices[k]! < range.first) k++;
+      if (k >= vertices.length || vertices[k]! >= end) continue;
+      const low = vertices[k]!;
+      let high = low;
+      while (k < vertices.length && vertices[k]! < end) high = vertices[k++]!;
+      range.attribute.addUpdateRange((low - range.first) * 3, (high - low + 1) * 3);
+      range.attribute.needsUpdate = true;
+    }
+    this.setLampLit(index, false);
+    this.lastKillMs = performance.now() - start;
+    return position;
+  }
+
+  /** Relights every lamp and restores the full bake exactly. */
+  relightAll(): void {
+    if (this.disposed || !this.dead.size) return;
+    const { bake, original } = this;
+    bake.light.set(original.light); bake.probes.set(original.probes);
+    bake.direct.set(original.direct); bake.fill.set(original.fill);
+    for (const range of this.lightRanges) {
+      range.attribute.clearUpdateRanges();
+      range.attribute.needsUpdate = true;
+    }
+    for (const index of this.dead) this.setLampLit(index, true);
+    this.dead.clear();
+  }
+
+  /**
+   * The nearest live lamp whose hit box the ray crosses within maxDistance, or -1. Lamps are not
+   * physics colliders, so hitscan weapons test them here.
+   */
+  rayHitLamp(origin: THREE.Vector3Like, direction: THREE.Vector3Like, maxDistance: number): number {
+    const length = Math.hypot(direction.x, direction.y, direction.z);
+    if (this.disposed || !(length > 0) || !(maxDistance > 0)) return -1;
+    const d = [direction.x / length, direction.y / length, direction.z / length];
+    const o = [origin.x, origin.y, origin.z];
+    let best = -1, nearest = maxDistance;
+    this.layout.lamps.forEach((lamp, index) => {
+      if (this.dead.has(index)) return;
+      const centre = [lamp.x, lamp.y, lamp.z], extent = LAMP_HIT_HALF[lamp.kind];
+      let lo = 0, hi = nearest;
+      for (let axis = 0; axis < 3 && lo <= hi; axis++) {
+        const min = centre[axis]! - extent[axis]!, max = centre[axis]! + extent[axis]!;
+        if (Math.abs(d[axis]!) < 1e-12) {
+          if (o[axis]! < min || o[axis]! > max) hi = -1;
+          continue;
+        }
+        const a = (min - o[axis]!) / d[axis]!, b = (max - o[axis]!) / d[axis]!;
+        lo = Math.max(lo, Math.min(a, b)); hi = Math.min(hi, Math.max(a, b));
+      }
+      if (lo <= hi && lo < nearest) { nearest = lo; best = index; }
+    });
+    return best;
   }
 
   private addDust(): void {

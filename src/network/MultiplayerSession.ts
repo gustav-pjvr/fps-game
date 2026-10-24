@@ -56,6 +56,9 @@ export interface MultiplayerSession {
    * Game.ts's mode-explanation briefing (see worldBriefingActive) - a late joiner must never
    * re-freeze/re-gate an already-running match for everyone else. */
   showModeExplanation: boolean;
+  /** Facility only, a late join/rejoin only (see WelcomeMessage.activeMatch): lamps already shot
+   * out, applied once the facility is built. */
+  deadLamps?: number[];
 }
 
 /** Everything a matchStart message carries beyond the connection/role itself - used as one bundle
@@ -76,4 +79,7 @@ export interface MultiplayerMatchStartParams {
   initialScoreboard: { slot: PlayerSlot; score: number }[];
   hostRoster?: HostRoster;
   showModeExplanation: boolean;
+  /** Facility only, a late join/rejoin only (see WelcomeMessage.activeMatch): lamps already shot
+   * out, applied once the facility is built. */
+  deadLamps?: number[];
 }

@@ -230,6 +230,18 @@ export class SoundEngine {
     this.tone(on ? 1900 : 1500, 0.025, 0.05, 'square');
   }
 
+  /** A Facility lamp shot out (docs/facility-map.md, section 11): breaking glass (a bright crack and
+   * a few falling tinkles) over an electrical fizz and a short mains buzz. `volumeScale`/`pan`
+   * follow the same convention as `playGunshot`. */
+  playLampBreak(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.09, 5200, 'highpass', 0.32 * volumeScale, pan);
+    for (const [frequency, delay] of [[3400, 0.03], [4700, 0.08], [2900, 0.14], [5600, 0.21]] as const) {
+      this.tone(frequency, 0.07, 0.05 * volumeScale, 'sine', pan, delay);
+    }
+    this.noiseBurst(0.45, 2400, 'bandpass', 0.16 * volumeScale, pan, 0, 700, 0.01);
+    this.tone(120, 0.3, 0.06 * volumeScale, 'sawtooth', pan);
+  }
+
   playHitConfirm(): void {
     this.tone(1100, 0.06, 0.22, 'sine');
   }

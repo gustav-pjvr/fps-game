@@ -290,6 +290,7 @@ export class JoinRoomScreen {
               roster: message.roster,
               roomCode: code,
               initialScoreboard: message.activeMatch.scoreboard,
+              deadLamps: message.activeMatch.deadLamps,
               // A late join/rejoin drops straight into an already-live match - every other player
               // dismissed their own mode briefing long ago, so this client must never show one
               // (which would otherwise require them all to re-click Skip, re-freezing a match

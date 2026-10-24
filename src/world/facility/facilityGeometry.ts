@@ -7,7 +7,8 @@ export interface ColliderBox { cx: number; cy: number; cz: number; hx: number; h
 export interface FacilityGeometry {
   byMaterial: Map<StructureMaterialKey, BufferGeometry>;
   lampPanels: Pick<FacilityLamp, 'x' | 'y' | 'z' | 'color' | 'kind'>[];
-  shafts: { x: number; yTop: number; z: number; color: number }[];
+  /** `lamp` is the index of the lamp the shaft hangs under, in `layout.lamps`. */
+  shafts: { x: number; yTop: number; z: number; color: number; lamp: number }[];
   colliderBoxes: ColliderBox[];
   coverFootprints: HouseFootprint[];
 }
@@ -167,9 +168,9 @@ export function buildFacilityGeometry(layout: FacilityLayout): FacilityGeometry 
   }
   return { byMaterial, colliderBoxes, coverFootprints,
     lampPanels: layout.lamps.map(({ x, y, z, color, kind }) => ({ x, y, z, color, kind })),
-    shafts: layout.lamps.filter(lamp => {
+    shafts: layout.lamps.map((lamp, index) => ({ lamp, index })).filter(({ lamp }) => {
       const i = Math.floor((lamp.x + half) / cell), j = Math.floor((lamp.z + half) / cell), id = j * size + i;
       return lamp.kind === 'panel' && layout.region[id]! >= 0 && ceiling[id]! >= 5.5;
-    }).map(({ x, y, z, color }) => ({ x, yTop: y - 0.04, z, color })),
+    }).map(({ lamp: { x, y, z, color }, index }) => ({ x, yTop: y - 0.04, z, color, lamp: index })),
   };
 }

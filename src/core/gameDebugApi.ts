@@ -118,7 +118,14 @@ export interface GameDebugApi {
     bakeMs: number;
     vertexCount: number;
     torchOn: boolean;
+    /** Lamps shot out so far (docs/facility-map.md, section 11). */
+    deadLamps: number;
   } | null;
+  /** Test-only, Facility only: shoots out lamp `index` exactly like a hit (light, effect, sound and,
+   * in multiplayer, the lampDestroyed send). False when there is no such live lamp. */
+  shootLamp(index: number): boolean;
+  /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
+  lampPosition(index: number): { x: number; y: number; z: number } | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

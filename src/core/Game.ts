@@ -20,6 +20,7 @@ import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight, setHeightOverride } from '../world/TerrainGenerator.ts';
 import { FacilityWorld } from '../world/facility/FacilityBuilder.ts';
+import { LampBreakEffect } from '../world/facility/lampBreakEffect.ts';
 import {
   cellCentre,
   encounterPoints,
@@ -105,7 +106,7 @@ import {
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
-import { computeStereoPan, enemyGunshotVolume } from './positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, multiplayerGunshotVolume } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
@@ -245,6 +246,8 @@ interface FacilityMatch {
   readonly remoteTorches: RemoteTorches | null;
   /** The minimap's plan of the layout (section 8). */
   readonly mapLayer: FacilityMapLayer;
+  /** Sparks and glass from shot-out lamps (section 11). */
+  readonly lampBreak: LampBreakEffect;
 }
 /** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
 const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
@@ -559,6 +562,30 @@ export class Game {
     this.sun.target.updateMatrixWorld();
   }
 
+  /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
+   * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. */
+  private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number): void {
+    if (!this.facility) return;
+    const lamp = this.facility.world.rayHitLamp(origin, direction, distance);
+    if (lamp >= 0) this.destroyFacilityLamp(lamp, true);
+  }
+
+  /** Shoots out a Facility lamp: its light leaves the room, sparks and glass fall and it breaks
+   * audibly where it hung. `broadcast` for this player's own shot (other clients then do the same
+   * on lampDestroyed). False when there is no such live lamp. */
+  private destroyFacilityLamp(lamp: number, broadcast: boolean): boolean {
+    const position = this.facility?.world.killLamp(lamp);
+    if (!this.facility || !position) return false;
+    this.facility.lampBreak.spawn(position);
+    const at = new THREE.Vector3(position.x, position.y, position.z);
+    this.sound.playLampBreak(multiplayerGunshotVolume(at.distanceTo(this.player.position)),
+      computeStereoPan(this.player.position, this.player.facingYaw, at));
+    if (broadcast && this.multiplayer) {
+      this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp });
+    }
+    return true;
+  }
+
   /** The Facility's light for moving things (docs/facility-map.md, section 6): the hemisphere fill
    * takes the baked probe under the camera, damped so walking from a lit room into a dark corridor
    * fades rather than snaps, tinted by the probe's colour over the look's neutral-warm base. It
@@ -691,8 +718,11 @@ export class Game {
           bakeMs: world.bakeMs,
           vertexCount: world.vertexCount,
           torchOn: this.facility.torch.isOn,
+          deadLamps: world.deadLampIndices().length,
         };
       },
+      shootLamp: (index) => this.destroyFacilityLamp(index, true),
+      lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -803,7 +833,11 @@ export class Game {
         torch: new Flashlight(renderer.scene, quality.shadowsEnabled),
         remoteTorches: multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null,
         mapLayer: new FacilityMapLayer(layout),
+        lampBreak: new LampBreakEffect(renderer.scene),
       };
+      // A late joiner starts with the lamps the others already shot out (section 11), quietly.
+      const deadLamps: unknown = multiplayer?.deadLamps;
+      if (Array.isArray(deadLamps)) for (const lamp of deadLamps) if (Number.isInteger(lamp)) world.killLamp(lamp as number);
       isSpawnBlocked = (x, z) => isFacilitySpawnBlocked(layout, x, z);
     } else {
       // A failed Facility create could have left these set; the Valley always runs without them.
@@ -1028,6 +1062,8 @@ export class Game {
         },
         damageOverrides,
         reserveAmmo,
+        // Facility lamps are not physics colliders: each ranged pellet's ray is tested against them.
+        (origin, direction, distance) => game.handleHitscanRay(origin, direction, distance),
       );
     const weaponManager = await buildWeaponManager(loadout.weaponIds, loadout.damageOverrides, initialReserveAmmo);
 
@@ -1479,6 +1515,7 @@ export class Game {
         addMultiplayerOpponent: (slot, username) => game.addMultiplayerOpponent(slot, username),
         onRematchReceived: (params) => game.onMultiplayerRematchReceived?.(params),
         onOpponentLeftRoom: () => game.onOpponentLeftRoom?.(),
+        destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1564,6 +1601,7 @@ export class Game {
                   roster.some((rosterEntry) => rosterEntry.slot === entry.slot),
                 ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
+                ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices() } : {}),
               },
             };
           }
@@ -1647,6 +1685,7 @@ export class Game {
     // GPU resources. The height override and the enemy navigator are module-level, and the lobby
     // samples the valley again after this match.
     this.facility?.world.dispose();
+    this.facility?.lampBreak.dispose();
     this.facility?.torch.dispose();
     this.facility?.remoteTorches?.dispose();
     setHeightOverride(null);
@@ -1768,6 +1807,9 @@ export class Game {
     }
     this.impactMarkers.clear();
     this.tracers.clear();
+    // Every lamp shot out in the last run is lit again (section 11).
+    this.facility?.world.relightAll();
+    this.facility?.lampBreak.clear();
     this.scoreState.value = 0;
     this.deathScreen.hide();
     this.deathScreenVisible = false;
@@ -2367,6 +2409,7 @@ export class Game {
     this.gooseAnnouncement.update(dt);
     this.bigAnnouncement.update(dt);
     this.explosionEffect.update(dt);
+    this.facility?.lampBreak.update(dt);
     this.updateMultiplayer(dt);
     this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
 

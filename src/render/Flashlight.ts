@@ -12,16 +12,15 @@ const TORCH_PENUMBRA = 0.55;
 const TORCH_RANGE = 32;
 const TORCH_DECAY = 2;
 const TORCH_COLOR = 0xfff1dc;
-/** Candela. With decay 2 a wall 5 m ahead receives 100 / 25 = 4 units of irradiance, the level of a
- * dim lamp-lit stretch of the bake (FACILITY_LAMP_POWER times the bake's falloff of 0.25 to 1, read
- * through the same BRDF_Lambert), so the beam reads clearly in a dark room and still shows in a lit
- * one. Chosen by that reasoning; tuned by eye. */
-export const TORCH_INTENSITY = 100;
+/** Candela. With decay 2 a wall 5 m ahead receives 14 / 25 = 0.56 units of irradiance, about a
+ * lamp-lit stretch of the bake, so the beam reads as a clear pool in a dark room without blowing
+ * out into the bloom up close (100 did, in the first look at it on 2026-10-24). Tuned by eye. */
+export const TORCH_INTENSITY = 14;
 const TORCH_SHADOW_MAP_SIZE = 512;
 const TORCH_SHADOW_BIAS = -0.0004;
 const TORCH_SHADOW_NORMAL_BIAS = 0.02;
-/** The lens glow while on, bright enough to catch the bloom threshold. */
-const LENS_GLOW = 4;
+/** The lens glow while on: just over the bloom threshold, so it reads as lit without a halo. */
+const LENS_GLOW = 1.6;
 
 /** Where a torch sits and what it aims at: `offset` is in the frame of an eye at `eye` turned by
  * `orientation` (a camera's own position and quaternion, or a remote player's eye and look), and the

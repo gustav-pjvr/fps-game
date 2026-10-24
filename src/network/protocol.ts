@@ -56,6 +56,9 @@ export interface WelcomeMessage {
     map?: MatchMap;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
+    /** Facility only: the lamps already shot out (indices into the layout's lamps), so a late
+     * joiner sees the same dark rooms. Missing means none (and on older builds). */
+    deadLamps?: number[];
   };
 }
 
@@ -163,6 +166,16 @@ export interface FireEventMessage {
   endY: number;
   endZ: number;
   weaponId: string;
+}
+
+/** Self-reported, relayed (see MatchMessageRouter's RELAYABLE_MESSAGE_TYPES): `senderSlot` shot out
+ * a Facility lamp (docs/facility-map.md, section 11). `lamp` indexes the layout's lamps, whose order
+ * is identical on every client. Receivers kill that lamp the same way, if it is still lit. Older
+ * builds drop the unknown type. */
+export interface LampDestroyedMessage {
+  type: 'lampDestroyed';
+  senderSlot: PlayerSlot;
+  lamp: number;
 }
 
 /** Sent by the shooter (`senderSlot`, the attacker) when their own hitscan registers a hit on a
@@ -588,6 +601,7 @@ export type NetworkMessage =
   | MatchStartMessage
   | PlayerSnapshotMessage
   | FireEventMessage
+  | LampDestroyedMessage
   | DamageEventMessage
   | PlayerDiedMessage
   | RespawnEventMessage
@@ -636,6 +650,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchStart',
   'playerSnapshot',
   'fireEvent',
+  'lampDestroyed',
   'damageEvent',
   'playerDied',
   'respawnEvent',

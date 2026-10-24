@@ -114,6 +114,8 @@ export class WeaponManager {
     /** Fires instead of the normal per-pellet hitscan loop for a weapon with isProjectile set (see
      * definitions.ts's WeaponDefinition.isProjectile) - currently only the Goose Launcher. */
     private readonly onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
+    /** Every ranged hitscan pellet's ray, with the distance to its physics hit (or its range). */
+    private readonly onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -143,6 +145,10 @@ export class WeaponManager {
      * keyed by weapon id. Absent/undefined for every other mode, matching the existing unlimited-
      * reload behavior exactly. */
     initialReserveAmmo?: Readonly<Record<string, number>>,
+    /** Per ranged hitscan pellet: its origin, unit direction and the distance to its physics hit
+     * or, on a miss, its range. Lets the Facility test the ray against its lamps
+     * (docs/facility-map.md, section 11). The knife and the Goose Launcher never call it. */
+    onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
@@ -163,6 +169,7 @@ export class WeaponManager {
       onLongShot,
       onMuzzleFlash,
       onProjectileFire,
+      onHitscanRay,
     );
   }
 
@@ -655,6 +662,7 @@ export class WeaponManager {
 
     const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(effectiveRange));
     if (this.active.weapon.definition.kind !== 'melee') this.onTracer(muzzleWorld, tracerEnd);
+    if (this.active.weapon.definition.kind === 'ranged') this.onHitscanRay?.(origin, direction, hit ? hit.distance : effectiveRange);
 
     if (hit) {
       const target = this.physics.getEntity(hit.colliderHandle);
