@@ -144,6 +144,9 @@ export interface PlayerSnapshotMessage {
    * newer than the last it applied, or than the sender's last death or respawn. Optional because a
    * browser still on an older build sends none. */
   t?: number;
+  /** Facility only (docs/facility-map.md, section 7): whether the sender's torch is lit. Missing
+   * means on, so an older build's players still carry a light. */
+  torch?: boolean;
 }
 
 /** Sent by the shooter on every shot - purely cosmetic (tracer/muzzle flash/positional gunshot

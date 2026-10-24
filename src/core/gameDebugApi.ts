@@ -108,7 +108,7 @@ export interface GameDebugApi {
   getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
   /** The Facility (docs/facility-map.md) in a Facility match, null on the Valley: the map, the
    * layout's seed, its room, open cell and lamp counts, how long the light bake took and how many
-   * vertices it lit. */
+   * vertices it lit, and whether the player's torch is on. */
   getFacilityDebug(): {
     map: 'facility';
     seed: number;
@@ -117,6 +117,7 @@ export interface GameDebugApi {
     lamps: number;
     bakeMs: number;
     vertexCount: number;
+    torchOn: boolean;
   } | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is

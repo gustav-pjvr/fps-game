@@ -297,6 +297,13 @@ export class WeaponManager {
     return this.active.weapon.definition.id;
   }
 
+  /** Where the Facility's torch body hangs (docs/facility-map.md, section 7): the active view model
+   * and its muzzle for a ranged weapon, null for the knife and empty hands, which carry none. */
+  get torchMount(): { viewModel: THREE.Object3D; muzzle: THREE.Vector3 } | null {
+    const slot = this.active;
+    return slot.weapon.definition.kind === 'ranged' ? { viewModel: slot.viewModel, muzzle: slot.muzzleLocalOffset } : null;
+  }
+
   get weaponDescription(): string {
     return this.active.weapon.definition.description;
   }

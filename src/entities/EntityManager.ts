@@ -573,6 +573,17 @@ export class EntityManager {
     return this.entities.map((entity) => entity.mesh.position.clone());
   }
 
+  /** The Facility minimap's enemy blips (docs/facility-map.md, section 8): every live enemy's
+   * ground position and whether it moved during the last update. Targets are left out. */
+  liveEnemyMotion(): { id: number; x: number; z: number; moving: boolean }[] {
+    const motion: { id: number; x: number; z: number; moving: boolean }[] = [];
+    for (const entity of this.entities) {
+      if (!(entity instanceof Enemy) || entity.isDead) continue;
+      motion.push({ id: entity.id, x: entity.mesh.position.x, z: entity.mesh.position.z, moving: entity.isMoving });
+    }
+    return motion;
+  }
+
   /** Debug/test helper - AI state of everything currently alive (undefined for non-enemy entities
    * like targets, which have no state machine). */
   getLiveEntityStates(): (string | undefined)[] {

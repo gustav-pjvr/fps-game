@@ -153,6 +153,9 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (!acceptsSnapshot(opponent.lastStateSentAt, message.t)) break;
       if (message.t !== undefined) opponent.lastStateSentAt = message.t;
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
+      opponent.remotePlayer.setLookPitch(message.pitch);
+      // Their torch (docs/facility-map.md, section 7): a missing flag means on.
+      if (activeMultiplayer.map === 'facility') opponent.remotePlayer.setTorch(message.torch !== false);
       opponent.health = message.health;
       // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
       // they're alive again, even if their respawnEvent was somehow missed.

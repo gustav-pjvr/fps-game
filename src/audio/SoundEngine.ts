@@ -223,6 +223,13 @@ export class SoundEngine {
     this.noiseBurst(0.06, 300, 'lowpass', 0.12 * volumeScale, pan);
   }
 
+  /** The torch's switch (docs/facility-map.md, section 7): a short mechanical click, a touch higher
+   * switching on than off. */
+  playTorchClick(on: boolean): void {
+    this.noiseBurst(0.018, 4200, 'highpass', 0.14);
+    this.tone(on ? 1900 : 1500, 0.025, 0.05, 'square');
+  }
+
   playHitConfirm(): void {
     this.tone(1100, 0.06, 0.22, 'sine');
   }

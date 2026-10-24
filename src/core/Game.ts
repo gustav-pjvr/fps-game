@@ -57,6 +57,7 @@ import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
+import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
@@ -140,6 +141,7 @@ import {
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
+  MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
@@ -172,6 +174,7 @@ import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
+import { Flashlight, RemoteTorches } from '../render/Flashlight.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -235,7 +238,16 @@ interface FacilityMatch {
   readonly world: FacilityWorld;
   readonly layout: FacilityLayout;
   readonly start: { x: number; z: number };
+  /** The player's torch (section 7). */
+  readonly torch: Flashlight;
+  /** Other players' torches, null in single-player. Created with the match so the light count never
+   * changes mid-match. */
+  readonly remoteTorches: RemoteTorches | null;
+  /** The minimap's plan of the layout (section 8). */
+  readonly mapLayer: FacilityMapLayer;
 }
+/** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
+const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
@@ -375,6 +387,9 @@ export class Game {
   private readonly facilityProbe = new THREE.Color(0, 0, 0);
   private facilityProbePrimed = false;
   private readonly facilityTint = new THREE.Color();
+  /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
+   * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
+  private soloMinimap: Minimap | null = null;
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
   private connectionPollAccumulator = 0;
@@ -568,6 +583,26 @@ export class Game {
     this.fillLight.intensity = look.hemiIntensity * peak;
   }
 
+  /** The Facility's torches (docs/facility-map.md, section 7), after the camera's interpolation:
+   * the player's own on the gun (its body on the active ranged view model) or the shoulder, and one
+   * pooled light per opponent, dark while their torch is off or they are dead. */
+  private updateTorches(): void {
+    const { torch, remoteTorches } = this.facility!;
+    const mount = this.weaponManager.torchMount;
+    torch.mountBody(mount);
+    torch.update(this.renderer.camera, mount !== null);
+    if (!remoteTorches) return;
+    const sources = this.multiplayer
+      ? Array.from(this.multiplayer.opponents.values(), (opponent) => ({
+          position: opponent.remotePlayer.position,
+          yaw: opponent.remotePlayer.lookYaw,
+          pitch: opponent.remotePlayer.lookPitch,
+          on: opponent.remotePlayer.torchOn && !opponent.isDead,
+        }))
+      : [];
+    remoteTorches.update(sources);
+  }
+
   private installDebugApi(): void {
     window.__gameDebug = {
       getScore: () => this.scoreState.value,
@@ -655,6 +690,7 @@ export class Game {
           lamps: layout.lamps.length,
           bakeMs: world.bakeMs,
           vertexCount: world.vertexCount,
+          torchOn: this.facility.torch.isOn,
         };
       },
       setPlayerInvulnerable: (invulnerable) => {
@@ -760,7 +796,14 @@ export class Game {
       });
       // Single-player starts in a room other than the atrium; plain Math.random like the other
       // single-player spawn picks (nobody else has to agree on it).
-      facility = { world, layout, start: playerStart(layout, Math.random) };
+      facility = {
+        world,
+        layout,
+        start: playerStart(layout, Math.random),
+        torch: new Flashlight(renderer.scene, quality.shadowsEnabled),
+        remoteTorches: multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null,
+        mapLayer: new FacilityMapLayer(layout),
+      };
       isSpawnBlocked = (x, z) => isFacilitySpawnBlocked(layout, x, z);
     } else {
       // A failed Facility create could have left these set; the Valley always runs without them.
@@ -1218,7 +1261,7 @@ export class Game {
       const roomCode = multiplayer.roomCode;
       const opponents = new Map<PlayerSlot, RemoteOpponent>();
       const usernames = new Map<PlayerSlot, string>([[multiplayer.ownSlot, ownUsername]]);
-      const minimap = new Minimap(hudRoot);
+      const minimap = new Minimap(hudRoot, facility ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer } : undefined);
       const multiplayerHud = new MultiplayerHud(hudRoot, multiplayer.ownSlot, ownUsername, roomCode);
 
       for (const entry of multiplayer.roster) {
@@ -1361,6 +1404,9 @@ export class Game {
     // and each instance used to cost several WebGL contexts (thumbnails plus a live preview) on every
     // match start, restricted modes included.
     game.hudRoot = hudRoot;
+    if (facility && !activeMultiplayer) {
+      game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
+    }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
     // Per-mode controllers (see core/modeControllers/) - each mode gets at most one, matching its
@@ -1601,6 +1647,8 @@ export class Game {
     // GPU resources. The height override and the enemy navigator are module-level, and the lobby
     // samples the valley again after this match.
     this.facility?.world.dispose();
+    this.facility?.torch.dispose();
+    this.facility?.remoteTorches?.dispose();
     setHeightOverride(null);
     setEnemyNavigator(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
@@ -1641,6 +1689,7 @@ export class Game {
       for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.dispose(this.renderer.scene);
     }
     this.multiplayer?.minimap.dispose();
+    this.soloMinimap?.dispose();
     this.multiplayer?.multiplayerHud.dispose();
     if (!options?.keepConnectionAlive) {
       this.multiplayer?.session.connection.dispose();
@@ -1773,6 +1822,7 @@ export class Game {
     // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
     if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled && !this.facility;
+    this.facility?.torch.setCastShadow(quality.shadowsEnabled);
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
       this.sun.shadow.map?.dispose();
@@ -2176,6 +2226,13 @@ export class Game {
       void this.resetPlay();
     }
 
+    // The torch (docs/facility-map.md, section 7). Consumed on the Valley too, where F does nothing.
+    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.facility) {
+      const torch = this.facility.torch;
+      torch.setOn(!torch.isOn);
+      this.sound.playTorchClick(torch.isOn);
+    }
+
     // Re-arms death handling the first tick the player is alive (see deathHandled).
     if (!this.player.isDead) this.deathHandled = false;
 
@@ -2311,6 +2368,7 @@ export class Game {
     this.bigAnnouncement.update(dt);
     this.explosionEffect.update(dt);
     this.updateMultiplayer(dt);
+    this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
 
     if (this.player.isDead && !this.deathHandled) {
       this.deathHandled = true;
@@ -2553,6 +2611,7 @@ export class Game {
         pitch: this.player.facingPitch,
         health: this.player.currentHealth,
         t: this.sendClock(),
+        ...(this.facility ? { torch: this.facility.torch.isOn } : {}),
       });
     }
   }
@@ -3085,8 +3144,12 @@ export class Game {
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);
     this.worldMarkers?.update(this.renderer.camera);
-    if (this.facility) this.updateFacilityLight(hudDt);
-    else this.updateSunFollow();
+    if (this.facility) {
+      this.updateFacilityLight(hudDt);
+      this.updateTorches();
+    } else {
+      this.updateSunFollow();
+    }
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
     this.perfLogger.endSection('render', renderStart);

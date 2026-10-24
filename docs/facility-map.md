@@ -202,3 +202,28 @@ inside the radius as red blips while they move. Multiplayer keeps its opponent d
 through Rematch. `TerrainGenerator.sampleHeight` gains a module-level override set by a Facility
 match (floor height 0) and cleared on dispose. `Enemy.moveToward` and the retreat step route through
 `FacilityNav` when a Facility match sets the enemy navigator. Debug API: `getFacilityDebug()`.
+
+## 11. Shooting out lights (Gustav, 2026-10-24)
+
+Any lamp (ceiling panel or emergency lamp) can be shot out, so a room can be made almost completely
+dark and players then rely on their torches.
+
+- **Hit test:** lamps are not physics colliders. Every hitscan ray a player fires (each pellet;
+  enemy shots never break lamps) is also tested against the live lamps' boxes
+  (slab test, slightly enlarged to 1.0 x 0.2 x 0.4 m so they are fair to hit). A lamp closer than
+  the physics hit is destroyed; the ray still continues to its physics hit as before.
+- **Light:** the lamp's light is removed from the bake. FacilityWorld keeps the vertex positions and
+  normals, and `killLamp(index)` re-runs the direct, fill and AO terms only for vertices within the
+  lamp radius (14 m) of it, with every dead lamp excluded, and rewrites that part of the
+  `bakedLight` attribute (`addUpdateRange` + `needsUpdate`). Probes within the radius are recomputed
+  too, so the hemisphere light on players and enemies goes dark with the room. Budget: under 25 ms.
+- **Visuals and sound:** the panel instance turns black (no emissive), its light shaft disappears, a
+  short spark burst and a few glass shards fall from it, and a glass-break plus electrical fizz
+  sound plays at its position.
+- **Multiplayer:** a new relayed message `lampDestroyed { senderSlot, lamp }` (lamp index, the
+  layout's lamp order is identical on every client). Receiving one for a live lamp kills it the
+  same way. The welcome's `activeMatch` gains optional `deadLamps?: number[]` so a late joiner
+  sees the same dark rooms. Older builds ignore the unknown message.
+- **Resets:** a single-player Restart relights every lamp. A rematch builds a new facility anyway.
+- **Debug API:** `getFacilityDebug()` gains `deadLamps: number` and a test-only
+  `shootLamp(index)`; plus `lampPosition(index)` so an e2e test can aim at one.
