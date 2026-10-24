@@ -118,12 +118,17 @@ export const MULTIPLAYER_KILL_LIMIT_MAX = 100;
 
 export const CAMERA_FOV = 75;
 /** Settings panel's Field of View slider bounds (see settings/Settings.ts's getFov/setFov) - wide
- * enough to matter (a narrow FOV feels like zooming, a wide one feels like a fisheye) without going
- * so far either direction that the view models/weapon sway (tuned around CAMERA_FOV) look broken. */
+ * enough to matter (a narrow FOV feels like zooming, a wide one feels like a fisheye). The weapon
+ * view model ignores it: it draws with its own fixed VIEW_MODEL_FOV. */
 export const CAMERA_FOV_MIN = 60;
 export const CAMERA_FOV_MAX = 110;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 2000;
+/** The weapon view model's own fixed lens (see render/viewModelCamera.ts). The gun is drawn with
+ * this FOV whatever the world camera uses, so neither the FOV setting nor an aim zoom stretches,
+ * magnifies or moves it. Equal to the default CAMERA_FOV, the FOV WEAPON_MODEL_TUNING and the hip
+ * pose were tuned at. */
+export const VIEW_MODEL_FOV = 75;
 
 /** Directional-light shadow camera (VISUAL_REALISM.md §1) - an unconfigured Three.js shadow camera
  * defaults to a +/-5 unit ortho box centered on the origin, so in this ~800x800m world shadows only
@@ -244,6 +249,11 @@ export const KNOCKBACK_DECAY_PER_SECOND = 6;
 
 export const ADS_LERP_SPEED = 12;
 export const SCOPE_REVEAL_THRESHOLD = 0.92;
+/** How far in front of the eye (metres, along the view axis) a weapon's sight-dot sits when fully
+ * aimed (see weapons/viewModel.ts adsPositionForSight). */
+export const ADS_SIGHT_DISTANCE = 0.32;
+/** Share of the weapon bob and look sway removed at full aim, so the sight stays on the centre. */
+export const ADS_MOTION_DAMPING = 0.85;
 
 export const WEAPON_SWITCH_DURATION = 0.35;
 export const MELEE_SWING_DURATION = 0.35;

@@ -178,7 +178,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
         break;
       }
       ctx.tracers.spawn(origin, end);
-      ctx.muzzleFlash.spawn(origin);
+      ctx.muzzleFlash.spawn(origin, false);
       ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance), pan);
       break;
     }

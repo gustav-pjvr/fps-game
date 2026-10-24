@@ -47,13 +47,15 @@ export class MuzzleFlash {
     });
     this.sprite = new THREE.Sprite(material);
     this.sprite.scale.setScalar(0.3);
-    // Drawn with the weapon (Renderer's view-model pass when the post stack is on), so the gun
-    // itself, rendered after the world, can't cover the flash at its own muzzle.
-    this.sprite.layers.set(VIEW_MODEL_LAYER);
     scene.add(this.sprite);
   }
 
-  spawn(point: THREE.Vector3): void {
+  /** `onViewModel`: the player's own shot. Its flash draws with the weapon (Renderer's view-model
+   * pass, through the gun's own lens), so the gun, rendered after the world, can't cover the flash
+   * at its own muzzle. Another player's flash (false) is a world point: the world pass draws it,
+   * with the world camera's FOV and depth. */
+  spawn(point: THREE.Vector3, onViewModel = true): void {
+    this.sprite.layers.set(onViewModel ? VIEW_MODEL_LAYER : 0);
     this.light.position.copy(point);
     this.light.intensity = MUZZLE_FLASH_LIGHT_INTENSITY;
     this.sprite.position.copy(point);

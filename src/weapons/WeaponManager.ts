@@ -4,7 +4,6 @@ import { Weapon } from './Weapon.ts';
 import { meleePose, type MeleeVariant } from './meleeSwing.ts';
 import { WEAPON_DEFINITIONS } from './definitions.ts';
 import {
-  WEAPON_ADS_POSITION,
   WEAPON_HIP_POSITION,
   type WeaponViewModel,
 } from './viewModel.ts';
@@ -19,8 +18,10 @@ import type { Action } from '../input/actions.ts';
 import type { Player } from '../entities/Player.ts';
 import type { ScopeOverlay } from '../ui/scope.ts';
 import { Settings } from '../settings/Settings.ts';
+import { viewModelPointToWorldLens } from '../render/viewModelCamera.ts';
 import {
   ADS_LERP_SPEED,
+  ADS_MOTION_DAMPING,
   CAMERA_FOV,
   MELEE_SWING_DURATION,
   MELEE_STAB_DURATION,
@@ -466,7 +467,7 @@ export class WeaponManager {
       }
     }
     // The holster/draw pose itself is written by updateAim (runs right after this, same tick), so
-    // it shares the FOV compensation there instead of setting an unscaled position of its own.
+    // it starts and ends exactly on the normal pose there.
   }
 
   private updateAim(dt: number, input: InputManager, player: Player): void {
@@ -490,30 +491,17 @@ export class WeaponManager {
 
     this.updateWeaponSway(dt);
 
-    this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, WEAPON_ADS_POSITION, this.aimAmount);
-
-    // The hip/ADS offsets above were hand-tuned at the original fixed CAMERA_FOV (75). Apparent
-    // size of a camera-attached object scales with 1/tan(fov/2), so at a wider user FOV the gun
-    // renders smaller and reads as floating detached in front of the player instead of held
-    // (confirmed via live screenshots at high FOV). Scaling the whole offset vector by the tan
-    // ratio pulls the gun proportionally closer, keeping its on-screen size and placement as
-    // tuned regardless of the FOV setting. At full ADS a weapon with a real zoom renders at its
-    // own authored adsFov (exactly what the ADS offset was tuned against - factor 1), while a
-    // sentinel weapon (adsFov === CAMERA_FOV, "no dedicated zoom") renders at the live base FOV
-    // and needs the same compensation as hip fire. Applied mid-switch too: the switch animation
-    // used to write its own unscaled position.y while this block was skipped, so at any FOV but
-    // 75 the gun popped between the two poses at the start and end of every switch.
-    const tunedTan = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
-    const hipScale = tunedTan / Math.tan(THREE.MathUtils.degToRad(baseFov) / 2);
-    const adsScale = adsFov === CAMERA_FOV ? hipScale : 1;
-    this.active.viewModel.position.multiplyScalar(THREE.MathUtils.lerp(hipScale, adsScale, this.aimAmount));
+    // The view model draws with its own fixed lens (VIEW_MODEL_FOV, see render/viewModelCamera.ts),
+    // so neither the FOV setting nor the aim zoom above changes how the gun looks: the poses are
+    // plain camera-space positions. Full aim puts this model's own sight on the screen centre.
+    this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, this.active.adsPosition, this.aimAmount);
+    // Bob and sway fade out while aiming so the sight stays steady on the centre.
+    const handMotion = 1 - ADS_MOTION_DAMPING * this.aimAmount;
 
     if (this.switching) {
-      // Holster drop: y slides from the compensated pose above (switchProgress 0, so a switch's
-      // first and last frames meet the normal pose exactly) to the same fixed holster height the
-      // animation always used (switchProgress 1). That end point is deliberately NOT scaled: it's
-      // what puts the gun below the frame for the swap, and a scaled drop at FOV 110 would stop
-      // short of the (wider) bottom edge. At FOV 75 the scale is 1 and this is the old animation.
+      // Holster drop: y slides from the pose above (switchProgress 0, so a switch's first and last
+      // frames meet the normal pose exactly) to the fixed holster height below the frame
+      // (switchProgress 1).
       this.active.viewModel.position.y = THREE.MathUtils.lerp(
         this.active.viewModel.position.y,
         WEAPON_HIP_POSITION.y - WEAPON_HOLSTER_DROP,
@@ -524,14 +512,14 @@ export class WeaponManager {
       // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
       const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);
       this.active.viewModel.position.y -= RELOAD_DIP * reloadCurve;
-      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve + this.swayPitch;
-      this.active.viewModel.rotation.y = this.swayYaw;
+      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve + this.swayPitch * handMotion;
+      this.active.viewModel.rotation.y = this.swayYaw * handMotion;
 
       // Same shared phase the camera bob uses (see Player.movementBobPhase) - the weapon and the
       // camera bob together rather than independently, matching the doc's framing of one phase
       // driving both.
       this.active.viewModel.position.y +=
-        Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength;
+        Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength * handMotion;
 
       // Sprint tuck and reload roll, after the Opus 5.5 viewmodel pose
       // (reference/model-test/opus-5.5/game.js, renderViewmodel): the gun swings across the body
@@ -636,8 +624,15 @@ export class WeaponManager {
       const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
       this.onProjectileFire(origin, muzzleWorld, direction);
     } else {
+      // The tracer is drawn by the world camera, whose FOV differs from the gun's fixed lens (the
+      // setting, the aim zoom), so it starts from the point the world camera shows where the
+      // player sees the muzzle. The flash stays at muzzleWorld: it draws with the gun.
+      const tracerStart = viewModelPointToWorldLens(
+        this.active.viewModel.position.clone().add(this.active.muzzleLocalOffset),
+        this.camera.fov,
+      ).applyQuaternion(this.camera.quaternion).add(origin);
       for (let i = 0; i < pelletCount; i++) {
-        this.firePellet(origin, muzzleWorld, player.ownCollider);
+        this.firePellet(origin, tracerStart, player.ownCollider);
       }
     }
 
@@ -647,7 +642,7 @@ export class WeaponManager {
     if (kind !== 'melee') player.addRecoil(recoilKick);
   }
 
-  private firePellet(origin: THREE.Vector3, muzzleWorld: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
+  private firePellet(origin: THREE.Vector3, tracerStart: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
     const { spreadRadians, adsSpreadMultiplier, range } = this.active.weapon.definition;
     const damage = this.active.weapon.effectiveDamage;
     const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
@@ -661,7 +656,7 @@ export class WeaponManager {
     const hit = castHitscan(this.physics, origin, direction, effectiveRange, excludeCollider);
 
     const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(effectiveRange));
-    if (this.active.weapon.definition.kind !== 'melee') this.onTracer(muzzleWorld, tracerEnd);
+    if (this.active.weapon.definition.kind !== 'melee') this.onTracer(tracerStart, tracerEnd);
     if (this.active.weapon.definition.kind === 'ranged') this.onHitscanRay?.(origin, direction, hit ? hit.distance : effectiveRange);
 
     if (hit) {
