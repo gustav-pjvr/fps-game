@@ -27,6 +27,8 @@ const FOOTPRINT_HALF_DIAGONAL = Math.sqrt(2) * (WATCH_TOWER_HALF_WIDTH + WATCH_T
 const BOUNDARY_EPSILON = 1e-6;
 
 describe('computeWatchTowerPositions', () => {
+  // A sweep of many seeds: about 5 s under the full parallel suite on this laptop, past the 5 s
+  // default, so it gets 20 s.
   it('places exactly WATCH_TOWER_COUNT towers, all clear of the world edge and spawn ring, across many seeds', () => {
     for (let seed = 1; seed <= SEED_SWEEP; seed++) {
       setWorldSeedForTesting(seed);
@@ -42,7 +44,7 @@ describe('computeWatchTowerPositions', () => {
         expect(distanceFromSpawn - FOOTPRINT_HALF_DIAGONAL).toBeGreaterThanOrEqual(ENEMY_RING_BASE_RADIUS + ZONE_EDGE_MARGIN - BOUNDARY_EPSILON);
       }
     }
-  });
+  }, 20000);
 
   // The next two properties (separation, zone clearance) are best-effort, not hard guarantees
   // like the boundary check above - each tower's retry loop searches only its own fixed sector
