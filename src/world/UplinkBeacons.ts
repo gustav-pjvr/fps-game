@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WATCH_TOWER_HEIGHT } from '../core/config.ts';
+import { WATCH_TOWER_ROOF_TOP } from './towerDesign.ts';
 import { EXTRACTION_RADIUS, type MissionView } from '../core/mission/missionState.ts';
 import { ACCENT_AMBER, ACCENT_CYAN } from '../render/look.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
@@ -56,8 +56,8 @@ function createBeam(x: number, z: number): Beam {
   const geometry = new THREE.CylinderGeometry(BEAM_RADIUS, BEAM_RADIUS, BEAM_HEIGHT, 20, 1, true);
   geometry.translate(0, BEAM_HEIGHT / 2, 0);
   const mesh = new THREE.Mesh(geometry, material);
-  // Rises from the platform, so the tower itself stays readable.
-  mesh.position.set(x, sampleHeight(x, z) + WATCH_TOWER_HEIGHT + 0.4, z);
+  // Rises from the lookout roof, around its mast, so the tower itself stays readable.
+  mesh.position.set(x, sampleHeight(x, z) + WATCH_TOWER_ROOF_TOP + 0.2, z);
   mesh.frustumCulled = false;
   mesh.renderOrder = 2;
   return { mesh, material };

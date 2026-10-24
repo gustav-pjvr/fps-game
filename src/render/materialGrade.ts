@@ -93,6 +93,21 @@ export function gradeMaterial(material: THREE.Material, kind: SurfaceKind): void
   material.needsUpdate = true;
 }
 
+/** Window glass for the procedural towers and houses: a dark pane lit from behind by the same
+ * warm glow, and the same uniform, as the graded building windows (faint at dusk, warm at night),
+ * at 0.3 of their strength: a whole pane glowing at full strength burned to white under ACES. */
+export function createWindowMaterial(): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({ name: 'structure-window', color: 0x0b0c0d, emissive: 0xffffff, roughness: 0.15, metalness: 0.2 });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uWindowGlow = windowGlow;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uWindowGlow;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance = vec3(1.0, 0.6, 0.28) * uWindowGlow * 0.3;');
+  };
+  material.customProgramCacheKey = () => 'structure-window';
+  return material;
+}
+
 /** Grades every mesh material under `root`. */
 export function gradeObject(root: THREE.Object3D, kind: SurfaceKind | ((mesh: THREE.Mesh, material: THREE.Material) => SurfaceKind | null)): void {
   root.traverse((child) => {

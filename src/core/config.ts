@@ -949,8 +949,25 @@ export const GROUND_AO_TEXTURE_URL = '/assets/textures/terrain/aerial_grass_rock
 export const TERRAIN_OCTAVES = 4;
 export const TERRAIN_BASE_FREQUENCY = 0.015;
 export const TERRAIN_LACUNARITY = 2.0;
-export const TERRAIN_PERSISTENCE = 0.5;
-export const TERRAIN_AMPLITUDE = 8;
+/** 0.42, down from 0.5 (2026-10-24): the top octave alone (8 m wavelength) carried slopes past 25
+ * degrees over a sixth of the map, a lumpy ground the normal map already supplies at that scale. */
+export const TERRAIN_PERSISTENCE = 0.42;
+/** 6, down from 8 (2026-10-24), now that the landform layers below add relief of their own: the
+ * hills alone had a median slope of 16 degrees and a tenth of the ground past 30. */
+export const TERRAIN_AMPLITUDE = 6;
+/** Landform layers on top of the hills (docs/world-redesign.md, terrain): broad rises and basins
+ * about 125 m across, so the arena has a high side and a low side to fight over; a domain warp that
+ * bends the hills into ridges and spurs instead of round blobs; and ridgelines (ridged noise) in a
+ * few masked areas, hard cover between the towns. Slopes stay walkable: TerrainGenerator.test.ts. */
+export const TERRAIN_MACRO_FREQUENCY = 0.008;
+export const TERRAIN_MACRO_AMPLITUDE = 5;
+export const TERRAIN_WARP_FREQUENCY = 0.01;
+export const TERRAIN_WARP_STRENGTH = 10;
+export const TERRAIN_RIDGE_FREQUENCY = 0.02;
+export const TERRAIN_RIDGE_AMPLITUDE = 3;
+export const TERRAIN_RIDGE_MASK_FREQUENCY = 0.009;
+/** Metres past a town's edge that its flat pad keeps easing back into the natural ground. */
+export const FLAT_ZONE_TERRAIN_SKIRT = 14;
 
 export const VIEW_RADIUS_CHUNKS = 2;
 export const UNLOAD_RADIUS_CHUNKS = 3;
@@ -1243,15 +1260,6 @@ export const TOWN_BUILDING_SPACING_MARGIN = 1;
 /** Raised from 800 alongside the tighter spacing/higher max above - a tighter packing needs more
  * rejection-sampling attempts to actually find the additional valid spots it now has room for. */
 export const TOWN_MAX_PLACEMENT_ATTEMPTS = 1500;
-/** A house's collider footprint is sized from its GLTF's raw bounding box (see
- * BuildingManager.measurePreset), which includes roof eaves/overhangs and other decorative
- * geometry that extends past the walls a player actually perceives as "the house" - reported as an
- * invisible barrier a bit past the visible structure (blocking both movement and bullets). Shrunk
- * by this fraction on both footprint axes so the collider sits inside the walls instead of at the
- * outermost roof/eave edge. Modest (15%) so it still fully covers the walkable wall silhouette for
- * any reasonably-proportioned house model, not just a token nudge. */
-export const BUILDING_COLLIDER_FOOTPRINT_SHRINK = 0.85;
-
 /**
  * Roads (WORLD_PLAN.md §9 follow-up, per the Opus design already logged there): a minimum spanning
  * tree over a town's building positions, rendered as flat strips - the town's flat core is already
@@ -1266,10 +1274,9 @@ export const ROAD_COLOR = 0x6b5a45;
 /**
  * Watch towers (per user request, replacing the generic tower building presets that used to be
  * mixed into town layouts): exactly WATCH_TOWER_COUNT per map, placed independently of towns and
- * forests entirely - see WatchTowerManager.ts. A tall square shaft with a real, walkable
- * switchback staircase wrapping its exterior (a continuous ramp collider per flight, not discrete
- * steps or the crate-jump mechanic used for house roofs - see WatchTowerManager.ts's own docs for
- * why), capped with an open lookout platform.
+ * forests entirely - see WatchTowerManager.ts. A concrete core with four steel stair flights
+ * wrapping it (a continuous ramp collider per flight under the treads), a lookout deck over the
+ * whole tower and a roof on posts above it; the design is in towerDesign.ts.
  */
 export const WATCH_TOWER_COUNT = 4;
 export const WATCH_TOWER_HALF_WIDTH = 3;
@@ -1277,15 +1284,16 @@ export const WATCH_TOWER_HEIGHT = 16;
 /** Comfortably more than 2x PLAYER_RADIUS (0.4) - wide enough that a player can walk up without
  * brushing the rails on either side, per user request ("wide enough for players to navigate"). */
 export const WATCH_TOWER_STAIR_WIDTH = 2.4;
-/** How far the top lookout deck extends past the shaft's own footprint on each side - must clear
- * the outer stair centerline (HALF_WIDTH + STAIR_WIDTH/2) so a flight's top end lands under the
- * platform with no gap, not just past the shaft's own smaller footprint; kept a bit past that
- * minimum for a visible overhang, not just the bare geometric floor. */
-export const WATCH_TOWER_PLATFORM_OVERHANG = 1.5;
+/** Headroom between the lookout deck and the roof over it (towerDesign.ts). */
+export const WATCH_TOWER_ROOF_CLEARANCE = 2.7;
 /** Solid collider height around both the lookout platform's edge and the staircase's outer edge -
  * climbing 16m up without this would make one misstep near the edge an unfair instant fall. */
 export const WATCH_TOWER_RAILING_HEIGHT = 1;
 export const WATCH_TOWER_SEED_OFFSET = 13;
+/** Preferred centre-to-centre spacing, metres: about 11 m of open ground between two decks, so two
+ * towers do not read as one twin structure. Best effort, like the rest of tower placement (see
+ * computeWatchTowerPositions); met in about 89% of seeds. */
+export const WATCH_TOWER_MIN_SEPARATION = 22;
 /** How far *beyond* the tower's own footprint (WatchTowerManager.ts's WATCH_TOWER_FOOTPRINT_RADIUS)
  * TerrainGenerator.ts's clearing blend keeps easing back toward natural terrain, before it's fully
  * natural again. Everything within the footprint radius itself is forced dead flat, not just
@@ -1298,17 +1306,14 @@ export const WATCH_TOWER_SEED_OFFSET = 13;
  * their own fixed local height, so the visible ramp drifted away from the real ground - floating
  * above it or sinking into it depending on which way the local slope happened to run (exactly what
  * the user's manual test screenshots showed: a staircase disconnected from the tower's own base). */
-export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 4;
+export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 8;
 
 /**
- * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): not enterable,
- * solid exterior only - real premade structures from Kenney's Modular Buildings kit (CC0), not a
- * plain box. Placement is now town-clustered within flat zones rather than one-per-chunk - see
- * TOWN_* constants near the zone system below, and BuildingManager.ts. Colliders follow the real
- * shape (2026-09-14, see src/world/buildingColliders.ts): a wall box up to the storey top (still
- * shrunk by BUILDING_COLLIDER_FOOTPRINT_SHRINK) plus convex prisms that follow each roof slope,
- * computed at runtime from the loaded model. Previously one box ran all the way to the ridge, so
- * shots stopped in the empty air above sloped roofs and a player on a roof hovered at ridge height.
+ * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): solid exteriors,
+ * not enterable yet - three prefab outpost designs built in code (houseDesigns.ts), each on the
+ * footprint of the Kenney house it replaced. Placement is town-clustered within flat zones - see
+ * TOWN_* constants near the zone system below, and BuildingManager.ts. Every solid part of a design
+ * is both its collider and its mesh, so shots stop where the walls and roof are drawn.
  */
 
 export const DEFAULT_ENEMY_COUNT = 3;

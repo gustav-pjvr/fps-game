@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
-import { generateHeightfield, sampleHeight } from './TerrainGenerator.ts';
+import { generateHeightfield, groundWear, sampleHeight } from './TerrainGenerator.ts';
 import { shadeTerrain } from './terrainShading.ts';
 
 export interface ChunkOptions {
@@ -51,6 +51,7 @@ function buildGeometry(heights: Float32Array, resolution: number, size: number, 
   const verticesPerSide = resolution + 1;
   const positions = new Float32Array(verticesPerSide * verticesPerSide * 3);
   const uvs = new Float32Array(verticesPerSide * verticesPerSide * 2);
+  const surface = new Float32Array(verticesPerSide * verticesPerSide);
   const step = size / resolution;
 
   for (let row = 0; row < verticesPerSide; row++) {
@@ -62,6 +63,7 @@ function buildGeometry(heights: Float32Array, resolution: number, size: number, 
 
       uvs[index * 2] = col / resolution;
       uvs[index * 2 + 1] = row / resolution;
+      surface[index] = groundWear(originX + col * step, originZ + row * step);
     }
   }
 
@@ -83,6 +85,8 @@ function buildGeometry(heights: Float32Array, resolution: number, size: number, 
   // distinct from the tiled material uv) - a duplicate of the same coordinates is fine here since
   // the AO map is meant to tile with the rest of the terrain material, not use a unique unwrap.
   geometry.setAttribute('uv2', new THREE.BufferAttribute(uvs.slice(), 2));
+  // How worn the ground is (town pads, tower aprons), which the ground shader turns to gravel.
+  geometry.setAttribute('surface', new THREE.BufferAttribute(surface, 1));
   geometry.setIndex(indices);
   // Normals from the terrain's own height function across the chunk border (so neighbouring chunks
   // shade seamlessly, which computeVertexNormals could not), and baked horizon AO in the vertex

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { circleCoverCandidates, houseCoverCandidates, openCandidates } from './coverPoints.ts';
 import { pointSegmentDistance } from './tacticalQuery.ts';
-import { isPointNearFootprint, type HouseFootprint } from '../../../world/buildingColliders.ts';
+import { isPointNearFootprint, type HouseFootprint } from '../../../world/houseFootprint.ts';
 import { mulberry32 } from '../../../utils/rng.ts';
 import { ENEMY_COVER_MARGIN, ENEMY_RADIUS, ENEMY_TACTICAL_OPEN_RADII, ENEMY_TACTICAL_OPEN_SAMPLES } from '../../../core/config.ts';
 

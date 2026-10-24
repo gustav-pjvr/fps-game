@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { gradeMaterial } from '../render/materialGrade.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { Chunk } from './Chunk.ts';
+import { applyTerrainSplat } from './terrainSplat.ts';
 import {
   GROUND_AO_TEXTURE_URL,
   GROUND_NORMAL_TEXTURE_URL,
@@ -44,7 +44,8 @@ export function createGroundMaterial(): THREE.Material {
     // Baked terrain AO (terrainShading.ts): every geometry using this material carries a colour.
     vertexColors: true,
   });
-  gradeMaterial(material, 'ground');
+  // Grass, soil, rock and gravel from the one texture, in the dusk palette (terrainSplat.ts).
+  applyTerrainSplat(material);
   return material;
 }
 

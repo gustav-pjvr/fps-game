@@ -225,6 +225,10 @@ function siteForCell(
 
   const siteX = (gx + jitterX) * cellSize;
   const siteZ = (gz + jitterZ) * cellSize;
+  // computeRadii keeps a zone out of the spawn/combat ring only for a site that starts outside it
+  // (rayEntryDistance assumes so). A site jittered inside the ring would otherwise grow a full
+  // zone over the spawn itself: seed 222 put a town core on the spawn point (2026-10-24).
+  if (Math.hypot(siteX - SPAWN_X, siteZ - SPAWN_Z) < ENEMY_RING_BASE_RADIUS + ZONE_EDGE_MARGIN) return null;
   const radii = computeRadii(siteX, siteZ, cellSize);
   if (!hasMinimumRoom(radii, radiusMin)) return null;
 
@@ -410,6 +414,42 @@ export function sampleFlatZone(x: number, z: number): ZoneSample {
   const membership = membershipFor(distance, radiusAtAngle(site.radii, angle), FLAT_ZONE_INNER_FRACTION);
   if (membership <= 0) return NO_ZONE;
   return { type: 'flat', membership, siteX: site.siteX, siteZ: site.siteZ, gx: site.gx, gz: site.gz };
+}
+
+export interface FlatZoneBlend {
+  weight: number;
+  gx: number;
+  gz: number;
+  siteX: number;
+  siteZ: number;
+}
+
+/** How strongly terrain flattening pulls toward each nearby town's pad height at (x, z): 1 across
+ * a pad's flat core (the same core sampleFlatZone gives membership 1), easing to 0 `skirt` metres
+ * past the zone's edge. Every site in reach is returned, nearest first, so the caller can blend
+ * them in turn: taking only the nearest site, as sampleFlatZone does, jumps from one pad's height
+ * to the next where two skirts overlap. Terrain only: buildings, vegetation and roads keep using
+ * sampleFlatZone. (A blend that ended at the zone's own edge, its outer 15%, under 2.5 m, put pads a
+ * few metres off the natural ground behind walls of up to 75 degrees: measured over five seeds,
+ * 2026-10-24.) */
+export function sampleFlatZoneBlends(x: number, z: number, skirt: number): FlatZoneBlend[] {
+  const cellSize = FLAT_ZONE_CELL_SIZE;
+  const gx = Math.floor(x / cellSize);
+  const gz = Math.floor(z / cellSize);
+  const guaranteedSites = getGuaranteedFlatSites();
+  const found: (FlatZoneBlend & { distance: number })[] = [];
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const site = cachedSiteForCell(gx + dx, gz + dz, cellSize, getWorldSeed() + FLAT_ZONE_SEED_OFFSET, FLAT_ZONE_DENSITY, FLAT_ZONE_RADIUS_MIN, FLAT_ZONE_RADIUS_MAX, guaranteedSites);
+      if (!site) continue;
+      const distance = Math.hypot(x - site.siteX, z - site.siteZ);
+      const radius = radiusAtAngle(site.radii, Math.atan2(z - site.siteZ, x - site.siteX));
+      if (distance >= radius + skirt) continue;
+      const weight = 1 - smoothstep(radius * FLAT_ZONE_INNER_FRACTION, radius + skirt, distance);
+      found.push({ weight, gx: site.gx, gz: site.gz, siteX: site.siteX, siteZ: site.siteZ, distance });
+    }
+  }
+  return found.sort((a, b) => a.distance - b.distance);
 }
 
 /** Where trees cluster densely (WORLD_PLAN.md follow-up: real walk-into-able forests, not just

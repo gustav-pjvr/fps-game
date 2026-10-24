@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ObstacleRegistry, obstacleCentre, obstacleReach, type Obstacle } from './obstacleRegistry.ts';
-import { isPointNearFootprint, type HouseFootprint } from '../../../world/buildingColliders.ts';
+import { isPointNearFootprint, type HouseFootprint } from '../../../world/houseFootprint.ts';
 
 function house(overrides: Partial<HouseFootprint> = {}): HouseFootprint {
   return { originX: 40, originZ: -20, offsetX: 1, offsetZ: 0.5, halfWidth: 4, halfDepth: 3, rotationY: 0.7, ...overrides };

@@ -15,6 +15,7 @@ import { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { getWatchTowerPositions, isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
+import { WATCH_TOWER_ROOF_TOP } from '../world/towerDesign.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
@@ -88,7 +89,6 @@ import {
   ENEMY_DIRECTOR_WAVE_SIZE,
   ENEMY_GLINT_LEAD_TIME,
   ENEMY_HEIGHT,
-  WATCH_TOWER_HEIGHT,
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
@@ -1792,7 +1792,7 @@ export class Game {
     if (!markers) return;
     for (const uplink of view.uplinks) {
       if (uplink.status === 'online') continue;
-      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + WATCH_TOWER_HEIGHT + 3, uplink.z);
+      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + WATCH_TOWER_ROOF_TOP + 3, uplink.z);
       markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
     }
     if (view.phase === 'extract') {
