@@ -171,8 +171,8 @@ export const FACILITY_LOOK: LookPreset = {
     stars: 0,
   },
   fog: { near: 6, far: 48, haze: 0.004 },
-  exposure: 1.2,
-  grade: { lift: 0.02, gain: 1.04, saturation: 0.88, contrast: 1.02, vignette: 0.38, grain: 0.05 },
+  exposure: 1.05,
+  grade: { lift: 0.0, gain: 1.04, saturation: 0.9, contrast: 1.12, vignette: 0.38, grain: 0.05 },
   bloom: { intensity: 1.1, threshold: 0.75 },
   // No windows indoors. The glow is a global setting the lobby never resets, so it keeps the day value.
   windowGlow: 1.4,

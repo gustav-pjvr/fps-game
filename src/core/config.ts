@@ -979,7 +979,14 @@ export const FACILITY_LAMP_AMBER = 0xffa040;
 /** Multiplier on every lamp's strength in the facility bake (vertex light and probes). The layout's
  * intensities of 0.25 to 1 under the bake's falloff read far too dark through BRDF_Lambert; this
  * value is tuned by eye. */
-export const FACILITY_LAMP_POWER = 16;
+export const FACILITY_LAMP_POWER = 12;
+/** Square of the distance (m^2) at which a lamp's light halves: small, so light falls off into pools
+ * with dark floor between lamps, as in the Kepler Deep reference (tuned by eye, 2026-10-24). */
+export const FACILITY_LAMP_FALLOFF_M2 = 1.2;
+/** Lamps hung above this height (m) are boosted by (height / this) ^ FACILITY_LAMP_HEIGHT_EXPONENT, so
+ * the 7 m atrium is lit like a 3.5 m office instead of fading to black under the tight falloff. */
+export const FACILITY_LAMP_REFERENCE_HEIGHT = 3.4;
+export const FACILITY_LAMP_HEIGHT_EXPONENT = 1.6;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;

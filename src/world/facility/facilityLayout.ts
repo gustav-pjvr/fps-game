@@ -129,7 +129,7 @@ export function playerStart(layout: FacilityLayout, rng: RNG): { x: number; z: n
 }
 
 function placeRooms(rng: RNG): FacilityRoom[] {
-  const rooms: FacilityRoom[] = [{ i0: 22, j0: 22, i1: 34, j1: 34, kind: 'hall', ceiling: FACILITY_ATRIUM_CEILING, dark: rng() < 0.2 }];
+  const rooms: FacilityRoom[] = [{ i0: 22, j0: 22, i1: 34, j1: 34, kind: 'hall', ceiling: FACILITY_ATRIUM_CEILING, dark: false }];
   const target = integer(rng, 14, 18);
   for (let attempt = 0; attempt < 400 && rooms.length < target; attempt++) {
     const width = integer(rng, 5, 12), depth = integer(rng, 5, 12);
