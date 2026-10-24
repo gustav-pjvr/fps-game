@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MATCH_MAPS } from '../core/config.ts';
 import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
-import { isNetworkMessage, type MatchStartMessage, type WelcomeMessage } from './protocol.ts';
+import { CLIENT_FEATURES, helloSupportsMap, isNetworkMessage, type MatchStartMessage, type WelcomeMessage } from './protocol.ts';
 
 const matchStart: MatchStartMessage = {
   type: 'matchStart',
@@ -70,5 +70,19 @@ describe('match map protocol', () => {
     const decoded: unknown = JSON.parse(JSON.stringify(welcome));
     expect(isNetworkMessage(decoded)).toBe(true);
     expect(decoded).toEqual(welcome);
+  });
+});
+
+describe('hello features', () => {
+  it('turns away a build without the facility feature from a Facility room only', () => {
+    expect(helloSupportsMap(undefined, 'facility')).toBe(false);
+    expect(helloSupportsMap([], 'facility')).toBe(false);
+    expect(helloSupportsMap('facility', 'facility')).toBe(false);
+    expect(helloSupportsMap(undefined, 'valley')).toBe(true);
+    expect(helloSupportsMap(['facility'], 'facility')).toBe(true);
+  });
+
+  it('is always sent with the facility feature by this build', () => {
+    expect(helloSupportsMap([...CLIENT_FEATURES], 'facility')).toBe(true);
   });
 });

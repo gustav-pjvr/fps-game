@@ -14,7 +14,7 @@ import type { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import type { KillFeed } from '../ui/killFeed.ts';
 import type { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import type { SoundEngine } from '../audio/SoundEngine.ts';
-import { computeStereoPan, enemyGunshotVolume, multiplayerGunshotVolume } from '../core/positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume } from '../core/positionalAudio.ts';
 import { applyPlayerDied } from '../core/multiplayerScoring.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
 import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
@@ -32,6 +32,7 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'playerSnapshot',
   'fireEvent',
   'lampDestroyed',
+  'lampSync',
   'damageEvent',
   'playerDied',
   'respawnEvent',
@@ -91,6 +92,12 @@ export interface MatchMessageContext {
   onOpponentLeftRoom(): void;
   /** Facility only (a no-op elsewhere): another player shot out this lamp. */
   destroyLamp(lamp: number): void;
+  /** Facility only (a no-op elsewhere): another player's whole dead-lamp set (lampSync); kills any
+   * listed lamp still lit, quietly. Validates the list itself. */
+  syncLamps(lamps: unknown): void;
+  /** Facility only: a playerSnapshot from this slot arrived (they are in the match and listening),
+   * the cue to send them this client's dead-lamp set the first time (see network/lampSync.ts). */
+  opponentInMatch(slot: PlayerSlot): void;
 }
 
 /** Routes one inbound network message to its local side effects. Takes over from the room screen's
@@ -158,7 +165,10 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
       opponent.remotePlayer.setLookPitch(message.pitch);
       // Their torch (docs/facility-map.md, section 7): a missing flag means on.
-      if (activeMultiplayer.map === 'facility') opponent.remotePlayer.setTorch(message.torch !== false);
+      if (activeMultiplayer.map === 'facility') {
+        opponent.remotePlayer.setTorch(message.torch !== false);
+        ctx.opponentInMatch(message.senderSlot);
+      }
       opponent.health = message.health;
       // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
       // they're alive again, even if their respawnEvent was somehow missed.
@@ -174,7 +184,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const distance = origin.distanceTo(ctx.player.position);
       const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
       if (WEAPON_DEFINITIONS[message.weaponId]?.kind === 'melee') {
-        ctx.sound.playKnifeSwing(multiplayerGunshotVolume(distance), pan);
+        const volume = knifeSwingVolume(distance);
+        if (volume > 0) ctx.sound.playKnifeSwing(volume, pan);
         break;
       }
       ctx.tracers.spawn(origin, end);
@@ -185,6 +196,9 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     case 'lampDestroyed':
       // Self-reported like fireEvent: the shooter's client already killed it locally.
       if (Number.isInteger(message.lamp)) ctx.destroyLamp(message.lamp);
+      break;
+    case 'lampSync':
+      ctx.syncLamps(message.lamps);
       break;
     case 'damageEvent':
       // This client is authoritative over its own player's health - the attacker only ever

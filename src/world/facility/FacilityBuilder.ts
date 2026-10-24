@@ -40,10 +40,12 @@ export class FacilityWorld {
   /** The light, probes, direct and fill of the full bake, so relightAll restores them exactly. */
   private readonly original: { light: Float32Array; probes: Float32Array; direct: Float32Array; fill: Float32Array };
   private readonly dead = new Set<number>();
+  /** Dead lamps whose light is still in the bake: update rebakes one per frame, oldest first. */
+  private readonly rebakeQueue: number[] = [];
   private lampMesh: THREE.InstancedMesh | null = null;
   private shaftMesh: THREE.InstancedMesh | null = null;
   private shafts: FacilityGeometry['shafts'] = [];
-  /** Milliseconds the last killLamp took, rebake and attribute updates included. */
+  /** Milliseconds the last lamp rebake took, attribute updates included. */
   lastKillMs = 0;
 
   private constructor(
@@ -188,15 +190,43 @@ export class FacilityWorld {
   deadLampIndices(): number[] { return [...this.dead].sort((a, b) => a - b); }
 
   /**
-   * Shoots out a lamp: its light leaves the bake (walls, floor and the probes that light moving
-   * things), its panel goes black and its light shaft disappears. Returns the lamp position, or
+   * Shoots out a lamp: its panel goes black and its light shaft disappears at once, and it counts as
+   * dead from now on; its light leaves the bake (walls, floor and the probes that light moving
+   * things) on a later frame, one queued rebake per update, so a shotgun breaking several lamps or a
+   * late joiner's whole dead set never stacks rebakes into one frame. Returns the lamp position, or
    * null when the index is not a live lamp.
    */
   killLamp(index: number): { x: number; y: number; z: number } | null {
     const position = this.lampPosition(index);
     if (this.disposed || !position || this.dead.has(index)) return null;
-    const start = performance.now();
     this.dead.add(index);
+    this.setLampLit(index, false);
+    this.rebakeQueue.push(index);
+    return position;
+  }
+
+  /** Kills every listed lamp that is still lit (a late joiner's dead set, a resync). Returns those. */
+  killLamps(indices: Iterable<number>): number[] {
+    const killed: number[] = [];
+    for (const index of indices) if (this.killLamp(index)) killed.push(index);
+    return killed;
+  }
+
+  /** Dead lamps whose rebake has not run yet. */
+  get pendingRebakes(): number { return this.rebakeQueue.length; }
+
+  /** Runs every queued rebake now (tests, and anything that must see the final light at once). */
+  flushLampRebakes(): void {
+    while (this.rebakeNext());
+  }
+
+  /** Takes one lamp's light out of the bake. False when the queue was empty. */
+  private rebakeNext(): boolean {
+    const index = this.rebakeQueue.shift();
+    if (index === undefined) return false;
+    const position = this.lampPosition(index);
+    if (this.disposed || !position || !this.dead.has(index)) return true;
+    const start = performance.now();
     const { vertices } = rebakeFacilityAround(this.bake, this.dead, position.x, position.y, position.z, index);
     // Changed vertices are ascending and the materials are in order, so one walk finds each range.
     let k = 0;
@@ -210,14 +240,14 @@ export class FacilityWorld {
       range.attribute.addUpdateRange((low - range.first) * 3, (high - low + 1) * 3);
       range.attribute.needsUpdate = true;
     }
-    this.setLampLit(index, false);
     this.lastKillMs = performance.now() - start;
-    return position;
+    return true;
   }
 
   /** Relights every lamp and restores the full bake exactly. */
   relightAll(): void {
     if (this.disposed || !this.dead.size) return;
+    this.rebakeQueue.length = 0;
     const { bake, original } = this;
     bake.light.set(original.light); bake.probes.set(original.probes);
     bake.direct.set(original.direct); bake.fill.set(original.fill);
@@ -287,8 +317,11 @@ export class FacilityWorld {
     return sampleProbe(this.layout, this.probes, x, z);
   }
 
+  /** Per frame: at most one queued lamp rebake (see killLamp), then the dust drifts. */
   update(camera: THREE.Camera, dt: number): void {
-    if (this.disposed || !this.dustPoints) return;
+    if (this.disposed) return;
+    this.rebakeNext();
+    if (!this.dustPoints) return;
     camera.getWorldPosition(this.cameraPosition);
     const cameraPoint = this.cameraPosition, attribute = this.dustPoints.geometry.getAttribute('position');
     const positions = attribute.array as Float32Array, step = Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0;

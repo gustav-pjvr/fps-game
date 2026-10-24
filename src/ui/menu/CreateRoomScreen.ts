@@ -4,7 +4,7 @@ import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
-import { HOST_SLOT, type PlayerSlot, type RosterEntry } from '../../network/protocol.ts';
+import { HOST_SLOT, helloSupportsMap, type PlayerSlot, type RosterEntry } from '../../network/protocol.ts';
 import {
   DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
   DEFAULT_MATCH_MAP,
@@ -436,8 +436,10 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onHostHello: (username, rejoinToken) => {
+      onHostHello: (username, rejoinToken, features) => {
         if (!this.hostRoster) return 'full';
+        // An older build would load the Valley inside a Facility room: turned away before it takes a slot.
+        if (!helloSupportsMap(features, this.mapSelect.value as MatchMap)) return 'outdated';
         const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
         if (outcome.outcome === 'full') return 'full';
         // A rejoin may take over a slot whose stale connection was still marked ready. The player on

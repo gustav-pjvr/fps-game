@@ -65,6 +65,22 @@ describe('Facility navigation', () => {
     expect(nav.nextWaypoint(10, 0.75, 100, 0.75)).toEqual(cellCentre(54, 28));
   });
 
+  it('snaps a target pressed against a wall to an adjacent walkable cell, from a cache after the first time', () => {
+    const layout = emptyLayout(), nav = new FacilityNav(layout);
+    // A player (radius 0.4) against the west wall: under the 0.45 clearance, so not itself walkable.
+    const wallX = cellCentre(1, 20).x - 0.75, target = { x: wallX + 0.4, z: cellCentre(1, 20).z };
+    expect(isWalkable(layout, target.x, target.z, 0.45)).toBe(false);
+    const from = cellCentre(30, 20);
+    expect(nav.nextWaypoint(from.x, from.z, target.x, target.z)).toEqual(cellCentre(1, 20));
+    const cache = (nav as unknown as { snapped: Map<number, { x: number; z: number }> }).snapped;
+    expect(cache.size).toBe(1);
+    expect(nav.nextWaypoint(from.x, from.z, target.x + 0.01, target.z)).toEqual(cellCentre(1, 20));
+    expect(cache.size).toBe(1);
+    // In a corner the snapped cell is the diagonal neighbour of the solid one, not a far scan.
+    const corner = cellCentre(0, 0);
+    expect(nav.nextWaypoint(from.x, from.z, corner.x, corner.z)).toEqual(cellCentre(1, 1));
+  });
+
   it('does not cut corners and returns an unreachable target unchanged', () => {
     const layout = emptyLayout();
     layout.kinds.fill(SOLID);

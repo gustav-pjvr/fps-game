@@ -70,6 +70,33 @@ describe('Facility lamps', () => {
     expect(facility.lampPosition(3)).toBeNull();
   });
 
+  it('counts a lamp dead and darkens its panel at once, then rebakes one queued lamp per update', () => {
+    const layout = generateFacilityLayout(1);
+    facility = FacilityWorld.build(layout, { scene, physics, obstacles, lightShafts: false, dust: false });
+    const vertices = bakedVertices(scene), before = vertices.map(v => v.light());
+    const lamps = scene.getObjectByName('facility-lamps') as THREE.InstancedMesh, color = new THREE.Color();
+    const camera = new THREE.PerspectiveCamera();
+    // A shotgun breaking three lamps in one shot: nothing is rebaked inside the shot.
+    for (const index of [0, 1, 2]) expect(facility.killLamp(index)).not.toBeNull();
+    expect(facility.deadLampIndices()).toEqual([0, 1, 2]);
+    expect(facility.isLampDead(1)).toBe(true);
+    expect(facility.pendingRebakes).toBe(3);
+    lamps.getColorAt(1, color);
+    expect(color.getHex()).toBe(0);
+    vertices.forEach((v, i) => expect(v.light()).toEqual(before[i]));
+    facility.update(camera, 1 / 60);
+    expect(facility.pendingRebakes).toBe(2);
+    facility.update(camera, 1 / 60); facility.update(camera, 1 / 60);
+    expect(facility.pendingRebakes).toBe(0);
+    expect(vertices.some((v, i) => v.light().some((c, k) => c < before[i]![k]!))).toBe(true);
+    // A batch (late joiner or resync) kills only the live lamps and queues one rebake each.
+    expect(facility.killLamps([2, 3, 4, 3])).toEqual([3, 4]);
+    expect(facility.pendingRebakes).toBe(2);
+    facility.relightAll();
+    expect(facility.pendingRebakes).toBe(0);
+    vertices.forEach((v, i) => expect(v.light()).toEqual(before[i]));
+  }, 20000);
+
   it('kills a lamp on seed 1: the room under it darkens, far rooms keep their light, relightAll restores it exactly', () => {
     const layout = generateFacilityLayout(1);
     facility = FacilityWorld.build(layout, { scene, physics, obstacles, lightShafts: true, dust: false });
@@ -87,6 +114,7 @@ describe('Facility lamps', () => {
     expect(best).toBeLessThan(1);
     const timings: number[] = [];
     expect(facility.killLamp(target)).toEqual({ x: lamp.x, y: lamp.y, z: lamp.z });
+    facility.flushLampRebakes();
     timings.push(facility.lastKillMs);
     const after = vertices[under]!.light();
     for (let c = 0; c < 3; c++) expect(after[c]!).toBeLessThan(before[under]![c]! * 0.8);
@@ -109,7 +137,7 @@ describe('Facility lamps', () => {
     // A few more kills for the timing figure.
     for (let i = 0, kills = 0; i < layout.lamps.length && kills < 6; i++) {
       if (i === target) continue;
-      facility.killLamp(i); timings.push(facility.lastKillMs); kills++;
+      facility.killLamp(i); facility.flushLampRebakes(); timings.push(facility.lastKillMs); kills++;
     }
     timings.sort((a, b) => a - b);
     console.log(`Facility seed 1 killLamp: median ${timings[timings.length >> 1]!.toFixed(1)} ms, max ${timings[timings.length - 1]!.toFixed(1)} ms over ${timings.length} lamps`);

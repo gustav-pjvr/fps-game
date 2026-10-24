@@ -3,13 +3,17 @@ import {
   ENEMY_GUNSHOT_AUDIBLE_RANGE,
   ENEMY_GUNSHOT_FULL_VOLUME_RANGE,
   ENEMY_GUNSHOT_MIN_VOLUME,
+  KNIFE_SWING_AUDIBLE_RANGE,
+  KNIFE_SWING_FULL_VOLUME_RANGE,
+  LAMP_BREAK_AUDIBLE_RANGE,
   MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE,
   MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE,
   MULTIPLAYER_GUNSHOT_MIN_VOLUME,
 } from './config.ts';
 
 /** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`
- * (never silent - an inaudible shot that still damages would read as unfair) at `audibleRange`. */
+ * at `audibleRange` (gunshots never go silent - an inaudible shot that still damages would read as
+ * unfair; the knife swing and lamp break do). */
 function distanceGainFalloff(distance: number, fullVolumeRange: number, audibleRange: number, minVolume: number): number {
   const t = (distance - fullVolumeRange) / (audibleRange - fullVolumeRange);
   const clamped = Math.max(0, Math.min(1, t));
@@ -27,6 +31,18 @@ export function enemyGunshotVolume(distance: number): number {
  * why this needed to be a separate function rather than widening the shared one). */
 export function multiplayerGunshotVolume(distance: number): number {
   return distanceGainFalloff(distance, MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE, MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE, MULTIPLAYER_GUNSHOT_MIN_VOLUME);
+}
+
+/** An opponent's knife swing: full within KNIFE_SWING_FULL_VOLUME_RANGE, silent from
+ * KNIFE_SWING_AUDIBLE_RANGE. */
+export function knifeSwingVolume(distance: number): number {
+  return distanceGainFalloff(distance, KNIFE_SWING_FULL_VOLUME_RANGE, KNIFE_SWING_AUDIBLE_RANGE, 0);
+}
+
+/** A Facility lamp breaking: the multiplayer gunshot's full-volume range, then fading to silence at
+ * LAMP_BREAK_AUDIBLE_RANGE. */
+export function lampBreakVolume(distance: number): number {
+  return distanceGainFalloff(distance, MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE, LAMP_BREAK_AUDIBLE_RANGE, 0);
 }
 
 /** Stereo pan (-1 full left .. 1 full right) for a sound at `sourcePosition`, from the perspective

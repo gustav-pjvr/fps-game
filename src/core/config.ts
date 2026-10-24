@@ -640,6 +640,13 @@ export const MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE = 25;
 export const MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE = 90;
 export const MULTIPLAYER_GUNSHOT_MIN_VOLUME = 0.15;
 
+/** An opponent's knife swing is a short, quiet sound: full volume within 5 m, silent beyond 15 m
+ * (the gunshot curve made it audible map-wide). */
+export const KNIFE_SWING_FULL_VOLUME_RANGE = 5;
+export const KNIFE_SWING_AUDIBLE_RANGE = 15;
+/** A Facility lamp breaking: full volume as near as a gunshot is, fading to silence at 40 m. */
+export const LAMP_BREAK_AUDIBLE_RANGE = 40;
+
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
  * picked random points within only 6 units of spawn every 3s and read as running in small circles

@@ -312,7 +312,9 @@ export class JoinRoomScreen {
         }
         if (message.type === 'roomFull') {
           this.rejectedAsFull = true;
-          this.setStatus('That room is full.');
+          this.setStatus(message.reason === 'outdated'
+            ? 'This room plays the Facility map. Refresh the page to update the game, then join again.'
+            : 'That room is full.');
           this.joinButton.disabled = false;
         }
         if (message.type === 'matchStart') {

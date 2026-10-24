@@ -23,6 +23,17 @@ export interface HelloMessage {
   type: 'hello';
   username: string;
   rejoinToken: string | null;
+  /** What this build can play (CLIENT_FEATURES). Missing on older builds, which know no Facility
+   * and would silently load the Valley inside a Facility room, so the host turns them away. */
+  features?: string[];
+}
+
+/** Sent in every hello by this build. */
+export const CLIENT_FEATURES: readonly string[] = ['facility'];
+
+/** Host side: whether a guest whose hello carried `features` can play `map`. */
+export function helloSupportsMap(features: unknown, map: MatchMap): boolean {
+  return map !== 'facility' || (Array.isArray(features) && features.includes('facility'));
 }
 
 /** One entry in the room roster - the same shape whether it's carried in a pre-match
@@ -107,6 +118,9 @@ export interface LobbyReadyUpdateMessage {
  * accepted parties. */
 export interface RoomFullMessage {
   type: 'roomFull';
+  /** 'outdated': not full, but the guest's build cannot play this room's map (helloSupportsMap).
+   * Older builds ignore it and say the room is full, which still turns them away. */
+  reason?: 'outdated';
 }
 
 /** Host -> guests, right before everyone calls Game.create() (or, for a rematch, re-calls it on
@@ -176,6 +190,15 @@ export interface LampDestroyedMessage {
   type: 'lampDestroyed';
   senderSlot: PlayerSlot;
   lamp: number;
+}
+
+/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out Facility lamps, re-broadcast
+ * so a client that was still loading when a lampDestroyed went past catches up (see
+ * network/lampSync.ts for when it is sent). Receivers kill any listed lamp still lit, quietly. */
+export interface LampSyncMessage {
+  type: 'lampSync';
+  senderSlot: PlayerSlot;
+  lamps: number[];
 }
 
 /** Sent by the shooter (`senderSlot`, the attacker) when their own hitscan registers a hit on a
@@ -602,6 +625,7 @@ export type NetworkMessage =
   | PlayerSnapshotMessage
   | FireEventMessage
   | LampDestroyedMessage
+  | LampSyncMessage
   | DamageEventMessage
   | PlayerDiedMessage
   | RespawnEventMessage
@@ -651,6 +675,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'playerSnapshot',
   'fireEvent',
   'lampDestroyed',
+  'lampSync',
   'damageEvent',
   'playerDied',
   'respawnEvent',

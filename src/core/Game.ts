@@ -106,7 +106,7 @@ import {
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
-import { computeStereoPan, enemyGunshotVolume, multiplayerGunshotVolume } from './positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, lampBreakVolume } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
@@ -165,7 +165,8 @@ import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
-import { HOST_SLOT, type PlayerSlot } from '../network/protocol.ts';
+import { HOST_SLOT, helloSupportsMap, type PlayerSlot } from '../network/protocol.ts';
+import { LampSyncTracker, parseLampList } from '../network/lampSync.ts';
 import { summarizeConnection } from '../network/connectionStats.ts';
 import { createSendClock } from '../network/stateOrder.ts';
 import type { ActiveMultiplayer, RemoteOpponent } from '../network/multiplayerMatchTypes.ts';
@@ -396,6 +397,8 @@ export class Game {
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
   private connectionPollAccumulator = 0;
+  /** When this client re-broadcasts its dead Facility lamps (see network/lampSync.ts). */
+  private readonly lampSync = new LampSyncTracker();
   /** Stamps `t` on this player's snapshots, deaths and respawns (see network/stateOrder.ts). */
   private readonly sendClock = createSendClock();
   private connectionPollInFlight = false;
@@ -578,12 +581,32 @@ export class Game {
     if (!this.facility || !position) return false;
     this.facility.lampBreak.spawn(position);
     const at = new THREE.Vector3(position.x, position.y, position.z);
-    this.sound.playLampBreak(multiplayerGunshotVolume(at.distanceTo(this.player.position)),
-      computeStereoPan(this.player.position, this.player.facingYaw, at));
+    const volume = lampBreakVolume(at.distanceTo(this.player.position));
+    if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, at));
     if (broadcast && this.multiplayer) {
       this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp });
     }
     return true;
+  }
+
+  /** Another player's whole dead-lamp set (lampSync): every listed lamp still lit goes dark
+   * quietly, with no sparks or sound (it broke a while ago, out of this client's hearing). */
+  private syncFacilityLamps(lamps: unknown): void {
+    if (!this.facility) return;
+    this.facility.world.killLamps(parseLampList(lamps, this.facility.world.lampCount));
+  }
+
+  /** A playerSnapshot from `slot` on the Facility: the first one sends them this client's dead
+   * lamps, which they may have missed while loading (see network/lampSync.ts). */
+  private noteOpponentInMatch(slot: PlayerSlot): void {
+    const facility = this.facility;
+    if (!facility) return;
+    const lamps = this.lampSync.opponentSnapshot(slot, () => facility.world.deadLampIndices());
+    if (lamps) this.sendLampSync(lamps);
+  }
+
+  private sendLampSync(lamps: number[]): void {
+    if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'lampSync', senderSlot: this.multiplayer.session.ownSlot, lamps });
   }
 
   /** The Facility's light for moving things (docs/facility-map.md, section 6): the hemisphere fill
@@ -836,8 +859,8 @@ export class Game {
         lampBreak: new LampBreakEffect(renderer.scene),
       };
       // A late joiner starts with the lamps the others already shot out (section 11), quietly.
-      const deadLamps: unknown = multiplayer?.deadLamps;
-      if (Array.isArray(deadLamps)) for (const lamp of deadLamps) if (Number.isInteger(lamp)) world.killLamp(lamp as number);
+      // Their rebakes are queued and run one per frame (FacilityWorld.update).
+      world.killLamps(parseLampList(multiplayer?.deadLamps, world.lampCount));
       isSpawnBlocked = (x, z) => isFacilitySpawnBlocked(layout, x, z);
     } else {
       // A failed Facility create could have left these set; the Valley always runs without them.
@@ -1516,6 +1539,8 @@ export class Game {
         onRematchReceived: (params) => game.onMultiplayerRematchReceived?.(params),
         onOpponentLeftRoom: () => game.onOpponentLeftRoom?.(),
         destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
+        syncLamps: (lamps) => game.syncFacilityLamps(lamps),
+        opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1559,9 +1584,11 @@ export class Game {
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
         // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
         // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
-        onHostHello: async (username, rejoinToken) => {
+        onHostHello: async (username, rejoinToken, features) => {
           const hostRoster = activeMultiplayer.hostRoster;
           if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
+          // An older build would load the Valley inside a Facility match: turned away before it takes a slot.
+          if (!helloSupportsMap(features, activeMultiplayer.map)) return 'outdated';
           const outcome = hostRoster.handleHello(username, rejoinToken, performance.now());
           if (outcome.outcome === 'full') return 'full';
 
@@ -2553,6 +2580,14 @@ export class Game {
       }
     }
 
+    // A periodic resync of this client's dead Facility lamps, for anyone who was loading when a
+    // lampDestroyed went past (see network/lampSync.ts).
+    if (this.facility) {
+      const facility = this.facility;
+      const lamps = this.lampSync.update(dt, () => facility.world.deadLampIndices());
+      if (lamps) this.sendLampSync(lamps);
+    }
+
     // Win condition: first to killLimit ends the match. Checked here rather than where each score
     // actually changes (the playerDied handling scattered across create()'s onMessage and update()'s
     // own death-transition block) so there's exactly one place that decides "the match is over,"
@@ -3055,6 +3090,8 @@ export class Game {
     // `playerLeft` message independently, so this needs no extra broadcast - it converges exactly
     // like every other self-reported/relayed state in this protocol.
     this.kingOfTheHillController?.dropLocallyIfCarrying(slot, opponent.remotePlayer.position.clone());
+    // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
+    this.lampSync.forget(slot);
     opponent.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);

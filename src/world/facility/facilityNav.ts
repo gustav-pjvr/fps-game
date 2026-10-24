@@ -58,18 +58,42 @@ export function segmentClear(layout: FacilityLayout, ax: number, az: number, bx:
 
 export class FacilityNav {
   private readonly fields = new Map<number, Int32Array>();
+  /** Where a blocked target in each grid cell snaps to (see nearestTarget), keyed by cell. */
+  private readonly snapped = new Map<number, Point>();
 
   constructor(private readonly layout: FacilityLayout) {}
 
+  /** The target itself when it is walkable, else the nearest walkable cell centre to its own cell's
+   * centre: rings of cells outward from that cell, stopping at the first ring with one, cached per
+   * cell. A player pressed against a wall (PLAYER_RADIUS is under CLEARANCE) is such a target for
+   * every enemy every tick, so this must not scan the whole grid. */
   private nearestTarget(x: number, z: number): Point {
     if (isWalkable(this.layout, x, z, CLEARANCE)) return { x, z };
-    let result = { x, z }, best = Infinity;
-    for (let j = 0; j < this.layout.size; j++) for (let i = 0; i < this.layout.size; i++) {
-      if (this.layout.kinds[j * this.layout.size + i] !== OPEN) continue;
-      const point = cellCentre(i, j), distance = (point.x - x) ** 2 + (point.z - z) ** 2;
+    const { size, kinds } = this.layout, { i: ci, j: cj } = cellOf(x, z);
+    // Cells off the grid (a target outside the walls) get their own keys too.
+    const key = cj * 1_000_003 + ci;
+    const cached = this.snapped.get(key);
+    if (cached) return { x: cached.x, z: cached.z };
+    const centre = cellCentre(ci, cj), farthest = Math.max(ci, cj, size - 1 - ci, size - 1 - cj);
+    let result: Point = { x, z }, best = Infinity;
+    const consider = (i: number, j: number): void => {
+      if (i < 0 || i >= size || kinds[j * size + i] !== OPEN) return;
+      const point = cellCentre(i, j), distance = (point.x - centre.x) ** 2 + (point.z - centre.z) ** 2;
       if (distance < best && isWalkable(this.layout, point.x, point.z, CLEARANCE)) { best = distance; result = point; }
+    };
+    for (let ring = 0; ring <= farthest && best === Infinity; ring++) {
+      for (let j = Math.max(0, cj - ring); j <= Math.min(size - 1, cj + ring); j++) {
+        if (j === cj - ring || j === cj + ring) {
+          for (let i = Math.max(0, ci - ring); i <= Math.min(size - 1, ci + ring); i++) consider(i, j);
+        } else {
+          consider(ci - ring, j);
+          if (ring > 0) consider(ci + ring, j);
+        }
+      }
     }
-    return result;
+    if (this.snapped.size >= 4096) this.snapped.clear();
+    this.snapped.set(key, result);
+    return { x: result.x, z: result.z };
   }
 
   private field(target: number): Int32Array {

@@ -13,6 +13,9 @@ import { syncViewModelCamera } from '../render/viewModelCamera.ts';
  * their own depth-cleared pass with their own fixed-FOV camera (see render() and PostStack). */
 export const VIEW_MODEL_LAYER = 1;
 
+/** A light that may cast shadows (spot, directional, point). */
+type ShadowLight = THREE.Light & { shadow?: THREE.LightShadow };
+
 export class Renderer {
   readonly webgl: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -28,6 +31,9 @@ export class Renderer {
   private look: LookPreset = lookFor('day');
   private quality: GraphicsQualityPreset;
   private post: PostStack | null = null;
+  /** worldOnly lights dimmed for the current view-model pass, with what to restore. */
+  private readonly dimmed: { light: ShadowLight; intensity: number; shadowAutoUpdate: boolean }[] = [];
+  private matrixWorldAutoUpdate = true;
 
   constructor(container: HTMLElement, quality: GraphicsQualityPreset) {
     this.quality = quality;
@@ -137,7 +143,10 @@ export class Renderer {
     // pass owns tone mapping (see PostStack's GradeEffect).
     this.webgl.toneMapping = wantsPost ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
     if (!wantsPost) return;
-    this.post = new PostStack(this.webgl, this.scene, this.camera, this.viewModelCamera, this.look, { ambientOcclusion: wantsAo });
+    this.post = new PostStack(this.webgl, this.scene, this.camera, this.viewModelCamera, this.look, {
+      ambientOcclusion: wantsAo,
+      viewModelPass: { before: this.beginViewModelPass, after: this.endViewModelPass },
+    });
     this.post.setSize(window.innerWidth, window.innerHeight);
   }
 
@@ -165,21 +174,53 @@ export class Renderer {
     this.webgl.shadowMap.autoUpdate = false;
     this.scene.background = null;
     this.webgl.clearDepth();
-    this.webgl.render(this.scene, this.viewModelCamera);
+    this.beginViewModelPass();
+    try {
+      this.webgl.render(this.scene, this.viewModelCamera);
+    } finally {
+      this.endViewModelPass();
+    }
     this.scene.background = background;
     this.webgl.shadowMap.autoUpdate = shadowAutoUpdate;
     this.webgl.autoClear = autoClear;
   }
 
+  /** Before the view-model pass (Low's second render, PostStack's view-model pass): the world pass
+   * already updated every world matrix this frame, so the scene is not walked again; and lights
+   * marked `userData.worldOnly` (the torch: it sits centimetres from the gun and flared it white)
+   * go dark for the gun. They stay on the layer, so both passes see the same light count and three
+   * does not re-resolve every lit material's program twice a frame. */
+  private readonly beginViewModelPass = (): void => {
+    this.matrixWorldAutoUpdate = this.scene.matrixWorldAutoUpdate;
+    this.scene.matrixWorldAutoUpdate = false;
+    for (const child of this.scene.children) {
+      const light = child as ShadowLight;
+      if (!light.isLight || !child.userData.worldOnly) continue;
+      this.dimmed.push({ light, intensity: light.intensity, shadowAutoUpdate: light.shadow?.autoUpdate ?? false });
+      light.intensity = 0;
+      if (light.shadow) light.shadow.autoUpdate = false;
+    }
+  };
+
+  /** Restores what beginViewModelPass changed. */
+  private readonly endViewModelPass = (): void => {
+    for (const { light, intensity, shadowAutoUpdate } of this.dimmed) {
+      light.intensity = intensity;
+      if (light.shadow) light.shadow.autoUpdate = shadowAutoUpdate;
+    }
+    this.dimmed.length = 0;
+    this.scene.matrixWorldAutoUpdate = this.matrixWorldAutoUpdate;
+  };
+
   /** Puts everything parented to the camera on the view-model layer and lets every top-level light
-   * reach that layer too (three filters lights by camera layers as well), except lights marked
-   * `userData.worldOnly` (the torch: it sits centimetres from the gun and flared it white), then points the
-   * view-model camera like the main camera, keeping its own fixed lens. Cheap: the camera has a
-   * handful of children and the scene's top level is small. */
+   * reach that layer too (three filters lights by camera layers as well; worldOnly lights included,
+   * dimmed for that pass instead, see beginViewModelPass), then points the view-model camera like
+   * the main camera, keeping its own fixed lens. Cheap: the camera has a handful of children and the
+   * scene's top level is small. */
   private syncViewModelLayer(): void {
     for (const child of this.camera.children) child.traverse(setViewModelLayer);
     for (const child of this.scene.children) {
-      if ((child as THREE.Light).isLight && !child.userData.worldOnly) child.layers.enable(VIEW_MODEL_LAYER);
+      if ((child as THREE.Light).isLight) child.layers.enable(VIEW_MODEL_LAYER);
     }
     syncViewModelCamera(this.viewModelCamera, this.camera);
   }

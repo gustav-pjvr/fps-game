@@ -1,4 +1,4 @@
-import { DEFAULT_KEY_BINDINGS, type Action } from '../input/actions.ts';
+import { DEFAULT_KEY_BINDINGS, REBINDABLE_ACTIONS, type Action } from '../input/actions.ts';
 import { isGraphicsQuality, type GraphicsQuality } from './graphicsQuality.ts';
 import { CAMERA_FOV, CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../core/config.ts';
 
@@ -26,6 +26,29 @@ function defaults(): StoredSettings {
   };
 }
 
+/** The player's stored bindings, then every default binding whose action has no key yet (a
+ * binding added since they saved, such as KeyF for the torch) on its default key, but only while
+ * that key is free: a player's own binding is never taken away, and an action they moved to another
+ * key is not bound twice. Rebindable actions first, so they get their key ahead of fixed ones. A
+ * player who had put another action on KeyF keeps it, and binds the torch in Settings. */
+export function mergeKeyBindings(stored: Record<string, Action>): Record<string, Action> {
+  const merged: Record<string, Action> = { ...stored };
+  const bound = new Set(Object.values(merged));
+  const defaults = Object.entries(DEFAULT_KEY_BINDINGS);
+  const order = [...REBINDABLE_ACTIONS, ...defaults.map(([, action]) => action)];
+  for (const action of order) {
+    if (bound.has(action)) continue;
+    for (const [code, defaultAction] of defaults) {
+      if (defaultAction === action && !(code in merged)) {
+        merged[code] = action;
+        bound.add(action);
+        break;
+      }
+    }
+  }
+  return merged;
+}
+
 function loadFromStorage(): StoredSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -39,7 +62,7 @@ function loadFromStorage(): StoredSettings {
       mouseSensitivity: typeof parsed.mouseSensitivity === 'number' ? parsed.mouseSensitivity : base.mouseSensitivity,
       keyBindings:
         parsed.keyBindings && typeof parsed.keyBindings === 'object'
-          ? { ...base.keyBindings, ...parsed.keyBindings }
+          ? mergeKeyBindings(parsed.keyBindings)
           : base.keyBindings,
       graphicsQuality: isGraphicsQuality(parsed.graphicsQuality) ? parsed.graphicsQuality : base.graphicsQuality,
       fov: typeof parsed.fov === 'number' ? Math.max(CAMERA_FOV_MIN, Math.min(CAMERA_FOV_MAX, parsed.fov)) : base.fov,
