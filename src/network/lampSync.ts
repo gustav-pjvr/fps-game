@@ -9,12 +9,19 @@
 /** Seconds between periodic re-broadcasts of a changed dead-lamp set. */
 export const LAMP_SYNC_INTERVAL = 5;
 
+/** At most this many entries of a received list are looked at, so a huge list from a misbehaving
+ * peer costs little. A facility has about 100 to 150 lamps. */
+export const LAMP_SYNC_MAX_SCAN = 4096;
+
 /** The valid lamp indices in a received list: integers in [0, lampCount), at most lampCount of
- * them. Anything that is not an array gives none. */
+ * them, kept in order. Invalid entries are skipped before the cap, so padding a list with junk
+ * cannot push valid lamps past it; only the first LAMP_SYNC_MAX_SCAN entries are read. Anything that
+ * is not an array gives none. */
 export function parseLampList(value: unknown, lampCount: number): number[] {
   if (!Array.isArray(value)) return [];
   const lamps: number[] = [];
-  for (const lamp of value.slice(0, lampCount)) {
+  for (let i = 0; i < value.length && i < LAMP_SYNC_MAX_SCAN && lamps.length < lampCount; i++) {
+    const lamp: unknown = value[i];
     if (Number.isInteger(lamp) && (lamp as number) >= 0 && (lamp as number) < lampCount) lamps.push(lamp as number);
   }
   return lamps;

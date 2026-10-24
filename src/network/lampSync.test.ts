@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LAMP_SYNC_INTERVAL, LampSyncTracker, parseLampList } from './lampSync.ts';
+import { LAMP_SYNC_INTERVAL, LAMP_SYNC_MAX_SCAN, LampSyncTracker, parseLampList } from './lampSync.ts';
 import { isNetworkMessage } from './protocol.ts';
 import { RELAYABLE_MESSAGE_TYPES } from './MatchMessageRouter.ts';
 
@@ -7,8 +7,10 @@ describe('lamp sync', () => {
   it('keeps only integer lamp indices within the lamp count, capped at the lamp count', () => {
     expect(parseLampList([0, 3, 2], 4)).toEqual([0, 3, 2]);
     expect(parseLampList([1, -1, 4, 2.5, '2', null, 3], 8)).toEqual([1, 4, 3]);
-    // Capped before filtering, so a huge list costs at most lampCount checks.
-    expect(parseLampList([1, -1, 4, 2.5, 3], 4)).toEqual([1]);
+    // Invalid entries are skipped before the cap, so junk padding cannot hide valid lamps.
+    expect(parseLampList([-1, 'x', null, 9, 1, 3], 4)).toEqual([1, 3]);
+    // Only the first LAMP_SYNC_MAX_SCAN entries are read.
+    expect(parseLampList([...Array.from({ length: LAMP_SYNC_MAX_SCAN }, () => -1), 2], 4)).toEqual([]);
     expect(parseLampList(Array.from({ length: 1000 }, () => 1), 4)).toEqual([1, 1, 1, 1]);
     expect(parseLampList('0,1', 4)).toEqual([]);
     expect(parseLampList(undefined, 4)).toEqual([]);
