@@ -19,6 +19,7 @@ import { pickGunGameUpgrade } from '../core/gameModes.ts';
 import { GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
 import { type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import type { ActiveMultiplayer } from './multiplayerMatchTypes.ts';
+import { acceptsSnapshot, afterStateEvent } from './stateOrder.ts';
 import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
 
 /** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
@@ -146,7 +147,10 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // RemotePlayer in any 3+ player match. Confirmed bug, fixed in the 2026-07-10 review.
       const opponent = activeMultiplayer.opponents.get(message.senderSlot);
       if (!opponent) break; // disconnected/unknown slot - a relay-hop race, not an error
-      opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw);
+      // Snapshots ride the unreliable fast channel: a late one is older than what is shown already.
+      if (!acceptsSnapshot(opponent.lastStateSentAt, message.t)) break;
+      if (message.t !== undefined) opponent.lastStateSentAt = message.t;
+      opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
       opponent.health = message.health;
       // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
       // they're alive again, even if their respawnEvent was somehow missed.
@@ -185,7 +189,11 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
         applyPlayerDied(ctx.scoreboard, ctx.deathCounts, message);
       }
       const victim = activeMultiplayer.opponents.get(message.victimSlot);
-      if (victim) victim.isDead = true;
+      if (victim) {
+        victim.isDead = true;
+        victim.remotePlayer.stopPrediction();
+        victim.lastStateSentAt = afterStateEvent(victim.lastStateSentAt, message.t);
+      }
       if (message.victimSlot !== activeMultiplayer.session.ownSlot) {
         const victimName = activeMultiplayer.usernames.get(message.victimSlot) ?? 'A player';
         const killerName = message.killerSlot !== null ? activeMultiplayer.usernames.get(message.killerSlot) : null;
@@ -260,8 +268,14 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // message.senderSlot - see playerSnapshot's own comment on why the transport slot is
       // wrong here for a guest receiving a relayed message.
       const opponent = activeMultiplayer.opponents.get(message.senderSlot);
-      opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
-      if (opponent) opponent.isDead = false;
+      // A respawn that arrives after snapshots sent later than it (they ride the unordered fast
+      // channel and already snapped the player there) must not pull them back to the spawn point.
+      const alreadyPast = opponent?.lastStateSentAt !== undefined && message.t !== undefined && opponent.lastStateSentAt > message.t;
+      if (!alreadyPast) opponent?.remotePlayer.teleportTo(message.x, message.y, message.z);
+      if (opponent) {
+        opponent.isDead = false;
+        opponent.lastStateSentAt = afterStateEvent(opponent.lastStateSentAt, message.t);
+      }
       break;
     }
     case 'footstepEvent': {

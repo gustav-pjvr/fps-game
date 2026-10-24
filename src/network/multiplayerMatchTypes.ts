@@ -26,6 +26,9 @@ export interface RemoteOpponent {
    * geese kept chasing and exploding on that corpse, and ammo crates anchored to (and were picked up
    * by) it. */
   isDead: boolean;
+  /** The sender clock (`t`) of the newest snapshot, death or respawn applied from this player; see
+   * acceptsSnapshot in MatchMessageRouter.ts. Unset until the first one carrying a `t`. */
+  lastStateSentAt?: number;
 }
 
 /** Everything Game tracks about an in-progress multiplayer match beyond the MultiplayerSession it

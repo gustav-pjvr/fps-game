@@ -7,19 +7,13 @@ import { HEADSHOT_MULTIPLIER, PLAYER_HEIGHT } from '../core/config.ts';
 import { createHitColliders, PLAYER_HIT_SHAPE, yawRotation } from './characterHitbox.ts';
 import { instantiateCharacter, PLAYER_CHARACTER } from './characterModels.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
+import { RemoteMotion } from './remoteMotion.ts';
 
-/** How quickly the visual mesh catches up to the latest received snapshot (MathUtils.damp's rate
- * parameter - larger closes the gap faster). Deliberately a damped follow rather than true
- * interpolation between the last two snapshots: with a 30Hz send rate, a snapshot arrives roughly
- * every 2 render frames, and dampening toward whatever the latest one is reads smoothly enough
- * without needing a second snapshot buffered and timestamped - a reasonable v1 simplification per
- * MULTIPLAYER_PLAN.md §7 (true interpolation is a documented possible refinement, not required to
- * prove movement sync works). Raised from 12 to 18 alongside the snapshot-rate increase (see
- * PLAYER_SNAPSHOT_SEND_INTERVAL's comment) - damping itself adds lag on top of the network delay
- * (it only ever asymptotically approaches the target, never instantly reaching it), and that stacked
- * with the old, slower snapshot rate was part of why hits against a moving target - especially at
- * sniper range - frequently missed a target that looked like it was standing right there. */
-const POSITION_DAMP_RATE = 18;
+/** Dead reckoning uses recent horizontal speed to damp toward where the opponent likely is now.
+ * Capped lead limits overshoot when movement changes, and stale snapshots stop prediction.
+ * Vertical movement still follows the last received height to avoid predicting jumps or falls. */
+const POSITION_DAMP_RATE = 25;
+const VERTICAL_DAMP_RATE = 18;
 const ROTATION_DAMP_RATE = 18;
 
 
@@ -55,7 +49,8 @@ export class RemotePlayer implements Entity, Damageable {
   private readonly walkAction: THREE.AnimationAction | undefined;
   private isMoving = false;
 
-  private targetPosition: THREE.Vector3;
+  private readonly motion: RemoteMotion;
+  private readonly predictedPosition = new THREE.Vector3();
   private targetYaw: number;
 
   private constructor(
@@ -78,7 +73,7 @@ export class RemotePlayer implements Entity, Damageable {
     this.walkAction = walkAction;
     this.idleAction?.play();
 
-    this.targetPosition = initialPosition.clone();
+    this.motion = new RemoteMotion(initialPosition.x, initialPosition.y, initialPosition.z);
     this.targetYaw = 0;
 
     // Kinematic, not simulated - this body only ever gets pushed to wherever the mesh already is
@@ -136,27 +131,41 @@ export class RemotePlayer implements Entity, Damageable {
    * assumes), so applying the raw camera yaw directly showed the model facing exactly backwards -
    * the model's face turned away from wherever the real player was actually looking. The +π offset
    * corrects for that mismatch. */
-  applySnapshot(x: number, y: number, z: number, yaw: number): void {
-    this.targetPosition.set(x, y, z);
+  applySnapshot(x: number, y: number, z: number, yaw: number, sentAtMs?: number, snap = false): void {
+    const teleported = this.motion.push(x, y, z, sentAtMs, performance.now());
     this.targetYaw = yaw + Math.PI;
+    // Snapshots can overtake a respawnEvent (they travel on the unordered fast channel): a jump no
+    // one could run, or the first snapshot of a player still shown dead, snaps like a respawn
+    // instead of sliding the body and its hitbox across the map.
+    if (teleported || snap) this.teleportTo(x, y, z);
+  }
+
+  /** A player who just died: stop drawing them ahead of their last snapshot. */
+  stopPrediction(): void {
+    this.motion.stop();
   }
 
   /** Snaps instantly instead of smoothing - for the moment a match starts or a player respawns:
    * the opponent didn't "walk" to their spawn point, they just appeared there, and damping across
    * that whole-map distance would read as a bizarre high-speed slide. */
   teleportTo(x: number, y: number, z: number): void {
-    this.targetPosition.set(x, y, z);
+    this.motion.reset(x, y, z);
     this.mesh.position.set(x, y, z);
     this.rigidBody.setNextKinematicTranslation({ x, y, z });
+  }
+
+  setLeadSeconds(seconds: number): void {
+    this.motion.setLeadSeconds(seconds);
   }
 
   update(dt: number): void {
     const previousX = this.mesh.position.x;
     const previousZ = this.mesh.position.z;
 
-    this.mesh.position.x = THREE.MathUtils.damp(this.mesh.position.x, this.targetPosition.x, POSITION_DAMP_RATE, dt);
-    this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, this.targetPosition.y, POSITION_DAMP_RATE, dt);
-    this.mesh.position.z = THREE.MathUtils.damp(this.mesh.position.z, this.targetPosition.z, POSITION_DAMP_RATE, dt);
+    const predicted = this.motion.predict(performance.now(), this.predictedPosition);
+    this.mesh.position.x = THREE.MathUtils.damp(this.mesh.position.x, predicted.x, POSITION_DAMP_RATE, dt);
+    this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, predicted.y, VERTICAL_DAMP_RATE, dt);
+    this.mesh.position.z = THREE.MathUtils.damp(this.mesh.position.z, predicted.z, POSITION_DAMP_RATE, dt);
     this.mesh.rotation.y = THREE.MathUtils.damp(this.mesh.rotation.y, this.targetYaw, ROTATION_DAMP_RATE, dt);
     this.rigidBody.setNextKinematicTranslation(this.mesh.position);
     this.rigidBody.setNextKinematicRotation(yawRotation(this.mesh.rotation.y));

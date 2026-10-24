@@ -10,7 +10,21 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.1.0 (current)
+## v4.2.0 (current)
+
+Smoother multiplayer, 2026-10-24.
+
+- **Less rubber-banding.** Player positions now travel on their own fast channel that never waits
+  for a lost packet to be resent; a lost update is simply replaced by the next one. Kills, damage,
+  pickups and score stay on the guaranteed channel. A late position update can no longer pull a
+  player back to where they died.
+- **Other players are shown closer to where they really are.** Their recent movement and the
+  measured ping are used to draw them a little ahead (at most 0.12 s), so moving targets are easier
+  to hit.
+- **Ping on the HUD.** Under the room code: your ping to the host (the host sees its slowest
+  player), with "relay" added when the connection goes through the relay server.
+
+## v4.1.0
 
 The world redesign, 2026-10-24: new towers, houses and terrain, and simpler menu text. The full
 record is in `docs/world-redesign.md`.
