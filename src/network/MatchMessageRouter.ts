@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import type { Player } from '../entities/Player.ts';
 import type { GooseManager } from '../entities/GooseManager.ts';
@@ -163,10 +164,14 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // with real positioning) here too.
       const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
       const end = new THREE.Vector3(message.endX, message.endY, message.endZ);
-      ctx.tracers.spawn(origin, end);
-      ctx.muzzleFlash.spawn(origin);
       const distance = origin.distanceTo(ctx.player.position);
       const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
+      if (WEAPON_DEFINITIONS[message.weaponId]?.kind === 'melee') {
+        ctx.sound.playKnifeSwing(multiplayerGunshotVolume(distance), pan);
+        break;
+      }
+      ctx.tracers.spawn(origin, end);
+      ctx.muzzleFlash.spawn(origin);
       ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance), pan);
       break;
     }

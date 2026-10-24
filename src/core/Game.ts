@@ -788,6 +788,7 @@ export class Game {
             game.lastHitConfirmTick = game.tickCount;
             hitMarker.trigger();
             sound.playHitConfirm();
+            if (WEAPON_DEFINITIONS[game.weaponManager.activeWeaponId]?.kind === 'melee') sound.playKnifeHit();
           }
         },
         (start, end) => {
@@ -810,7 +811,23 @@ export class Game {
             weaponId: game.weaponManager.activeWeaponId,
           });
         },
-        (weaponId) => sound.playGunshot(weaponId),
+        (origin, weaponId) => {
+          sound.playKnifeSwing();
+          multiplayer?.connection.send({
+            type: 'fireEvent',
+            senderSlot: multiplayer.ownSlot,
+            originX: origin.x,
+            originY: origin.y,
+            originZ: origin.z,
+            endX: origin.x,
+            endY: origin.y,
+            endZ: origin.z,
+            weaponId,
+          });
+        },
+        (weaponId) => {
+          if (WEAPON_DEFINITIONS[weaponId]?.kind !== 'melee') sound.playGunshot(weaponId);
+        },
         (weaponId) => sound.playReloadClick(weaponId),
         (distance) => longShotCallout.show(distance),
         (point, weaponId) => {

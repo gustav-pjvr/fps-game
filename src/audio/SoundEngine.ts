@@ -201,6 +201,15 @@ export class SoundEngine {
     }
   }
 
+  playKnifeSwing(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.18, 3600, 'bandpass', 0.28 * volumeScale, pan, 0, 650, 0.025);
+  }
+
+  playKnifeHit(): void {
+    this.tone(95, 0.09, 0.35, 'sine');
+    this.noiseBurst(0.025, 2200, 'highpass', 0.16);
+  }
+
   playReloadClick(weaponId: string): void {
     if (this.playBuffer(`${weaponId}_reload`)) return;
     this.noiseBurst(0.03, 3000, 'highpass', 0.18);
@@ -413,7 +422,7 @@ export class SoundEngine {
     return true;
   }
 
-  private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number, pan = 0, wet = 0): void {
+  private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number, pan = 0, wet = 0, endFilterFreq?: number, attack = 0): void {
     const bufferSize = Math.floor(this.ctx.sampleRate * duration);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -425,9 +434,14 @@ export class SoundEngine {
     const filter = this.ctx.createBiquadFilter();
     filter.type = filterType;
     filter.frequency.value = filterFreq;
+    if (endFilterFreq !== undefined) {
+      filter.frequency.setValueAtTime(filterFreq, this.ctx.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(endFilterFreq, this.ctx.currentTime + duration);
+    }
 
     const envelope = this.ctx.createGain();
-    envelope.gain.setValueAtTime(gain, this.ctx.currentTime);
+    envelope.gain.setValueAtTime(attack > 0 ? 0 : gain, this.ctx.currentTime);
+    if (attack > 0) envelope.gain.linearRampToValueAtTime(gain, this.ctx.currentTime + attack);
     envelope.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
 
     source.connect(filter).connect(envelope).connect(this.outputNode(pan, wet));
