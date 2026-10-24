@@ -935,6 +935,33 @@ export const TRACER_LENGTH = 4.5;
 /** The player's own tracer glow: warm amber around a white core, the dusk palette's accent light. */
 export const TRACER_COLOR = 0xffb45a;
 
+/** Facility grid cell width in metres. */
+export const FACILITY_CELL = 1.5;
+/** Facility grid width and depth in cells. */
+export const FACILITY_GRID = 56;
+/** Independent random stream for the indoor layout. */
+export const FACILITY_SEED_OFFSET = 307;
+/** Atrium ceiling height in metres. */
+export const FACILITY_ATRIUM_CEILING = 7.5;
+/** Minimum hall ceiling height in metres. */
+export const FACILITY_HALL_CEILING_MIN = 6;
+/** Maximum hall ceiling height in metres. */
+export const FACILITY_HALL_CEILING_MAX = 7;
+/** Storage ceiling height in metres. */
+export const FACILITY_STORAGE_CEILING = 4.5;
+/** Plant room ceiling height in metres. */
+export const FACILITY_PLANT_CEILING = 5;
+/** Office ceiling height in metres. */
+export const FACILITY_OFFICE_CEILING = 3.5;
+/** Corridor ceiling height in metres. */
+export const FACILITY_CORRIDOR_CEILING = 3.2;
+/** Warm ceiling panel colour. */
+export const FACILITY_LAMP_WARM = 0xffd2a0;
+/** Cool plant room panel colour. */
+export const FACILITY_LAMP_COOL = 0xcfe2ff;
+/** Dark room and emergency lamp colour. */
+export const FACILITY_LAMP_AMBER = 0xffa040;
+
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;
 
