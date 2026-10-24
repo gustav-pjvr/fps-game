@@ -28,8 +28,10 @@ async function waitForMatchReady(page: Page): Promise<void> {
 test('pausing does not grant invincibility in multiplayer - damage still applies and kills while paused', async ({ browser }) => {
   // Measured 2026-10-23 on SwiftShader with the v4 characters: creating, joining and starting the
   // match alone takes about 50 s here on Low graphics (a click 5 to 10 s, the second page's load
-  // 7 s), and a 90 s budget ran out with every step still advancing (docs/testing.md).
-  test.setTimeout(180000);
+  // 7 s), and a 90 s budget ran out with every step still advancing (docs/testing.md). Alone it
+  // takes 2.7 to 2.9 minutes; late in a 49-minute full run the same steps reached 180 s at the very
+  // last check (2026-10-24), so it gets four minutes.
+  test.setTimeout(240000);
 
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();
