@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
@@ -127,6 +129,12 @@ describe('Facility material and world ownership', () => {
       const lampShader = { fragmentShader: '#include <emissivemap_fragment>' };
       (lamps.material as THREE.Material).onBeforeCompile(lampShader as THREE.WebGLProgramParametersWithUniforms, {} as THREE.WebGLRenderer);
       expect(lampShader.fragmentShader).toContain('totalEmissiveRadiance *= vColor.rgb');
+      // The tint must sit behind a define three actually sets in the fragment shader, or a shot-out
+      // lamp keeps glowing white (it did in 4.3.0 behind USE_INSTANCING_COLOR, a vertex-only define).
+      const guard = /#ifdef (\w+)\n totalEmissiveRadiance \*= vColor\.rgb/.exec(lampShader.fragmentShader)?.[1];
+      const programSource = readFileSync(fileURLToPath(import.meta.resolve('three/src/renderers/webgl/WebGLProgram.js')), 'utf8');
+      const fragmentPrefixes = programSource.split('prefixFragment = [').slice(1).map(chunk => chunk.slice(0, chunk.indexOf('].')));
+      expect(fragmentPrefixes.some(prefix => prefix.includes(`instancingColor ? '#define ${guard}'`))).toBe(true);
       expect(scene.getObjectByName('facility-shafts')).toBeDefined();
       const dust = scene.getObjectByName('facility-dust') as THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
       const dustDisposed = vi.fn(); dust.material.map!.addEventListener('dispose', dustDisposed);

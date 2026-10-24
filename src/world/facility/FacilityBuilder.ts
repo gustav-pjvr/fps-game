@@ -111,12 +111,15 @@ export class FacilityWorld {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const material = new THREE.MeshStandardMaterial({ name: 'facility-lamps', color: 0xffffff,
       emissive: 0xffffff, emissiveIntensity: 6, roughness: 0.6, toneMapped: false });
-    // Three's instance colour normally affects diffuse only. Tint the emitted light as well.
+    // Three's instance colour normally affects diffuse only. Tint the emitted light as well, so a
+    // dead lamp's black instance colour turns its glow off. The fragment shader only gets USE_COLOR
+    // for instance colours (USE_INSTANCING_COLOR is a vertex-shader define), and this material has
+    // no vertex colours, so USE_COLOR here means the instance colour.
     material.onBeforeCompile = shader => {
       shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\n#ifdef USE_INSTANCING_COLOR\n totalEmissiveRadiance *= vColor.rgb;\n#endif');
+        '#include <emissivemap_fragment>\n#ifdef USE_COLOR\n totalEmissiveRadiance *= vColor.rgb;\n#endif');
     };
-    material.customProgramCacheKey = () => 'facility-lamp-instance-emissive-v1';
+    material.customProgramCacheKey = () => 'facility-lamp-instance-emissive-v2';
     this.geometries.add(geometry); this.materials.add(material);
     const mesh = new THREE.InstancedMesh(geometry, material, panels.length);
     mesh.name = 'facility-lamps';

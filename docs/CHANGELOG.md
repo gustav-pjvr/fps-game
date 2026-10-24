@@ -10,7 +10,16 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.3.0 (current)
+## v4.3.1 (current)
+
+Facility lamp fix, 2026-10-24.
+
+- **A shot-out lamp stops glowing.** Its light already left the room, but the lamp itself kept
+  glowing white: the tint that dims each lamp's glow sat behind a shader define three.js only sets
+  in the vertex shader, so it never ran. Lamps now go black when shot out, and live lamps show
+  their warm or cool tint instead of plain white. A unit test checks the define against three.js.
+
+## v4.3.0
 
 The Facility, 2026-10-24. The full design is in `docs/facility-map.md`.
 
