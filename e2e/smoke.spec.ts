@@ -476,7 +476,7 @@ test('Escape opens the pause menu and freezes the game; Resume continues it', as
   const pauseMenu = page.getByTestId('pause-menu');
   await expect(pauseMenu.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
   await expect(pauseMenu.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
-  await expect(pauseMenu.getByRole('button', { name: 'Reset Play', exact: true })).toBeVisible();
+  await expect(pauseMenu.getByRole('button', { name: 'Restart', exact: true })).toBeVisible();
   await expect(pauseMenu.getByRole('button', { name: 'Return to Lobby', exact: true })).toBeVisible();
 
   // Capture position only once pause has actually taken effect (not before openPauseMenu resolves) -
@@ -495,7 +495,7 @@ test('Escape opens the pause menu and freezes the game; Resume continues it', as
   expect(afterResume).not.toEqual(duringPauseAfter);
 });
 
-test('Reset Play in the pause menu resets the match and resumes play', async ({ page }) => {
+test('Restart in the pause menu resets the match and resumes play', async ({ page }) => {
   test.setTimeout(60000);
   await useLoadout(page, STANDARD_LOADOUT);
   await page.goto('/');
@@ -509,7 +509,7 @@ test('Reset Play in the pause menu resets the match and resumes play', async ({ 
 
   await openPauseMenu(page);
   const pauseMenu = page.getByTestId('pause-menu');
-  await pauseMenu.getByRole('button', { name: 'Reset Play', exact: true }).click();
+  await pauseMenu.getByRole('button', { name: 'Restart', exact: true }).click();
 
   await page.waitForFunction((full) => window.__gameDebug?.getAmmo() === full, PISTOL_MAGAZINE, { timeout: SLOW_POLL_TIMEOUT });
   expect(await page.evaluate(() => window.__gameDebug?.getScore())).toBe(0);
@@ -517,7 +517,7 @@ test('Reset Play in the pause menu resets the match and resumes play', async ({ 
   await page.waitForFunction((count) => window.__gameDebug?.getEntityCount() === count, DEFAULT_MATCH_ENTITY_COUNT, {
     timeout: SLOW_POLL_TIMEOUT,
   });
-  // Reset Play re-requests pointer lock, same as the death screen's Respawn button. Timeout
+  // Restart re-requests pointer lock, same as the death screen's Respawn button. Timeout
   // widened from 3000 - now that vegetation density is much higher everywhere (not just inside
   // forest zones, per user request), the extra InstancedMesh/collider churn measurably slows
   // pointer-lock re-acquisition in this software-rendered sandbox specifically; the reset logic

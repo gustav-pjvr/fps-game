@@ -12,8 +12,7 @@ import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, creat
  * (including one relayed through TURN) completes in a few seconds. */
 const JOIN_TIMEOUT_MS = 25_000;
 const JOIN_TIMEOUT_MESSAGE =
-  "Couldn't reach the host. Check the room is still open on their screen. If it is, one of your " +
-  'networks is blocking peer-to-peer play, so try a different network (a phone hotspot usually works).';
+  "Couldn’t reach the host. Check their room is still open. If it is, a network is blocking online play: try another one (a phone hotspot usually works).";
 
 /** Guest side of the room-code flow: type in a code someone gave you, connect, verify the
  * connection with a `hello`/`welcome` exchange (see HostRoster.ts), then wait on a live roster for
@@ -77,7 +76,7 @@ export class JoinRoomScreen {
     panel.appendChild(createPanelTitle('JOIN ROOM'));
 
     const usernameLabel = document.createElement('div');
-    usernameLabel.textContent = 'Your name:';
+    usernameLabel.textContent = 'Name';
     usernameLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     panel.appendChild(usernameLabel);
 
@@ -87,7 +86,7 @@ export class JoinRoomScreen {
     panel.appendChild(this.usernameInput);
 
     const label = document.createElement('div');
-    label.textContent = 'Enter the room code the other player gave you:';
+    label.textContent = 'Room code';
     label.style.cssText = `${LABEL_CSS} margin-bottom:10px;`;
     panel.appendChild(label);
 
@@ -122,7 +121,7 @@ export class JoinRoomScreen {
     this.lobbyView = document.createElement('div');
     this.lobbyView.style.cssText = 'display:none; margin-top:14px;';
     const lobbyLabel = document.createElement('div');
-    lobbyLabel.textContent = 'Players in this room:';
+    lobbyLabel.textContent = 'Players';
     lobbyLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
     this.playerList = document.createElement('div');
     this.playerList.style.cssText =
@@ -188,10 +187,10 @@ export class JoinRoomScreen {
     this.playerList.replaceChildren(
       ...roster.map((entry) => {
         const name = entry.slot === this.ownSlot ? `${entry.username} (you)` : entry.username;
-        const readyTag = this.readySlots.has(entry.slot) ? ' — ✓ Ready' : ' — Not Ready';
+        const readyTag = this.readySlots.has(entry.slot) ? ' · ready' : ' · not ready';
         return createPlayerRow(`${name}${readyTag}`);
       }),
-      ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for a player to join…', true)),
+      ...Array.from({ length: Math.max(0, MULTIPLAYER_MAX_PLAYERS - roster.length) }, () => createPlayerRow('Waiting for players…', true)),
     );
   }
 
@@ -302,7 +301,7 @@ export class JoinRoomScreen {
           this.joinButton.style.display = 'none';
           this.lobbyView.style.display = 'block';
           this.renderPlayerRows(message.roster);
-          this.setStatus(message.isRejoin ? 'Reconnected. Waiting for the host to start the match…' : 'Connected. Waiting for the host to start the match…');
+          this.setStatus(message.isRejoin ? 'Reconnected. Waiting for the host…' : 'Connected. Waiting for the host…');
         }
         if (message.type === 'rosterUpdate') this.renderPlayerRows(message.roster);
         if (message.type === 'lobbyReadyUpdate') {
@@ -311,7 +310,7 @@ export class JoinRoomScreen {
         }
         if (message.type === 'roomFull') {
           this.rejectedAsFull = true;
-          this.setStatus('That room is full (4 players max).');
+          this.setStatus('That room is full.');
           this.joinButton.disabled = false;
         }
         if (message.type === 'matchStart') {
@@ -346,7 +345,7 @@ export class JoinRoomScreen {
       // strictly additive safety net regardless of what turns out to actually cause a given failure.
       if (generation !== this.joinGeneration) return;
       this.clearJoinTimeout();
-      this.setStatus(error instanceof Error ? error.message : 'Failed to join room - try again.');
+      this.setStatus(error instanceof Error ? error.message : 'Couldn’t join. Try again.');
       this.joinButton.disabled = false;
     });
   }

@@ -1516,7 +1516,7 @@ export class Game {
 
     // A mid-match Loadout change (see handleLoadoutScreenClosed) takes effect right here - the
     // single-player equivalent of "the next respawn" (both an actual death-respawn and a manual
-    // "Reset Play" restart count, since both put the player back at a fresh spawn point). Awaited
+    // "Restart" restart count, since both put the player back at a fresh spawn point). Awaited
     // before resetAllAmmo() below so that call always targets the *current* WeaponManager, not one
     // about to be disposed.
     await this.applyPendingLoadoutIfNeeded();

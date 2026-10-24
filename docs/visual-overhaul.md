@@ -101,7 +101,7 @@ Release as v4.0.0 once all seven pass, then a check on Gustav's own hardware.
 - **pmndrs `postprocessing` 6.39.5 and `n8ao` 2.0.1** for the post stack (three 0.185 is inside postprocessing's peer range). Picked over three's own `EffectComposer` because it merges effects into one fullscreen pass, which matters for the low-end machines this browser game runs on.
 - **Weapon ids, stats and names unchanged**, so the network protocol and saved loadouts need no migration.
 - **Low quality skips the composer**: palette and ACES only.
-- **Houses and towers in the Opus station style (Gustav, 2026-10-23), after the current phases:** exteriors first, with colliders built from the same boxes; enterable buildings at a later stage. The watch towers are rebuilt in the same pass, stairs above all: the current flights were the weakest part of an earlier build. Not started yet.
+- **Houses and towers in the Opus station style (Gustav, 2026-10-23), after the current phases:** exteriors first, with colliders built from the same boxes; enterable buildings at a later stage. The watch towers are rebuilt in the same pass, stairs above all: the current flights were the weakest part of an earlier build. Done in v4.1.0 with the terrain: `docs/world-redesign.md`.
 
 ## Build log
 

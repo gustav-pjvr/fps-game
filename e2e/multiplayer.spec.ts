@@ -33,8 +33,8 @@ test('creating and joining a room establishes a working connection', async ({ br
   // The guest sends `hello` once connected, and only reports back once the host's `welcome` reply
   // (assigning it a slot and the current roster) actually arrives - proves the DataChannel works
   // in both directions, not just that a connection object exists.
-  await expect(hostPage.getByText('Connection verified. Ready when you are.')).toBeVisible({ timeout: 20000 });
-  await expect(guestPage.getByText('Connected. Waiting for the host to start the match…')).toBeVisible({ timeout: 20000 });
+  await expect(hostPage.getByText('Everyone is connected. Start when ready.')).toBeVisible({ timeout: 20000 });
+  await expect(guestPage.getByText('Connected. Waiting for the host…')).toBeVisible({ timeout: 20000 });
 
   await hostContext.close();
   await guestContext.close();

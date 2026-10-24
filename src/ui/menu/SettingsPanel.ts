@@ -209,7 +209,7 @@ export class SettingsPanel {
     for (const [code, action] of Object.entries(Settings.getKeyBindings())) codeByAction.set(action, code);
     for (const [action, button] of this.keyButtons) {
       const code = codeByAction.get(action);
-      button.textContent = code ? formatKeyCode(code) : '—';
+      button.textContent = code ? formatKeyCode(code) : 'None';
     }
   }
 

@@ -141,7 +141,7 @@ export class ModeExplanationScreen {
     }
     this.skipButton.textContent = `Skip (${ready}/${total})`;
     this.waitingNote.textContent =
-      ready >= total ? 'Everyone is ready - starting now...' : `Waiting on the rest of your squad to skip (${ready}/${total} ready)`;
+      ready >= total ? 'Everyone is ready. Starting…' : `Waiting for everyone (${ready}/${total})`;
   }
 
   hide(): void {
