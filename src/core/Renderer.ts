@@ -172,13 +172,14 @@ export class Renderer {
   }
 
   /** Puts everything parented to the camera on the view-model layer and lets every top-level light
-   * reach that layer too (three filters lights by camera layers as well), then points the
+   * reach that layer too (three filters lights by camera layers as well), except lights marked
+   * `userData.worldOnly` (the torch: it sits centimetres from the gun and flared it white), then points the
    * view-model camera like the main camera, keeping its own fixed lens. Cheap: the camera has a
    * handful of children and the scene's top level is small. */
   private syncViewModelLayer(): void {
     for (const child of this.camera.children) child.traverse(setViewModelLayer);
     for (const child of this.scene.children) {
-      if ((child as THREE.Light).isLight) child.layers.enable(VIEW_MODEL_LAYER);
+      if ((child as THREE.Light).isLight && !child.userData.worldOnly) child.layers.enable(VIEW_MODEL_LAYER);
     }
     syncViewModelCamera(this.viewModelCamera, this.camera);
   }

@@ -39,6 +39,9 @@ export function torchPose(
 function createTorchLight(): THREE.SpotLight {
   const light = new THREE.SpotLight(TORCH_COLOR, TORCH_INTENSITY, TORCH_RANGE, TORCH_ANGLE, TORCH_PENUMBRA, TORCH_DECAY);
   light.name = 'torch';
+  // Lights the world only (see Renderer.syncViewModelLayer): from the front of the gun it would
+  // light the gun itself at point-blank range and flare it white through the bloom.
+  light.userData.worldOnly = true;
   return light;
 }
 
