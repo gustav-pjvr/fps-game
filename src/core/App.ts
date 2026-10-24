@@ -9,7 +9,7 @@ import { CreateRoomScreen } from '../ui/menu/CreateRoomScreen.ts';
 import { JoinRoomScreen } from '../ui/menu/JoinRoomScreen.ts';
 import { MatchEndScreen, type MultiplayerMatchEndResult, type RematchSettings } from '../ui/matchEndScreen.ts';
 import { Game } from './Game.ts';
-import { DEFAULT_ENEMY_COUNT, DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
+import { DEFAULT_ENEMY_COUNT, DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, DEFAULT_MATCH_MAP, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 import { generateMultiplayerSeed } from './worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from './multiplayerSpawn.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
@@ -104,6 +104,7 @@ export class App {
         enemyCount: DEFAULT_ENEMY_COUNT,
         targetCount: DEFAULT_TARGET_COUNT,
         gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
+        map: DEFAULT_MATCH_MAP,
         hordeMode: false,
         directorMode: false,
         missionMode: false,
@@ -164,7 +165,7 @@ export class App {
       // gooseDifficulty here is unused - multiplayer reads it from the session (params.gooseDifficulty)
       // instead, see Game.ts's ActiveMultiplayer.gooseDifficulty. Present only to satisfy MatchConfig's
       // shape, same reasoning as the enemyCount/targetCount zeros above.
-      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, hordeMode: false, directorMode: false, missionMode: false },
+      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, map: params.map, hordeMode: false, directorMode: false, missionMode: false },
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
       () => void this.returnToLobby(),
       { connection, role, ...params },
@@ -215,6 +216,7 @@ export class App {
     const gooseDifficulty = settings.gooseDifficulty;
     const gameMode = settings.gameMode;
     const weather = settings.weather;
+    const map = settings.map;
     // The host's *current* roster (whoever's actually still connected, including anyone who
     // rejoined since the last match started) rather than the original match-start roster, which
     // could still list a slot that's since disconnected for good.
@@ -223,13 +225,14 @@ export class App {
     const roster = hostRoster?.connectedRoster() ?? this.currentMultiplayerSession.roster;
     const points = pickMultiplayerSpawnPoints(roster.length);
     const spawns = roster.map((entry, i) => ({ slot: entry.slot, x: points[i]!.x, z: points[i]!.z }));
-    connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, spawns, roster });
+    connection.send({ type: 'matchStart', seed, killLimit, gooseDifficulty, gameMode, weather, map, spawns, roster });
     void this.restartMultiplayerMatch(connection, role, {
       seed,
       killLimit,
       gooseDifficulty,
       gameMode,
       weather,
+      map,
       ownSlot,
       spawns: spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
       roster,

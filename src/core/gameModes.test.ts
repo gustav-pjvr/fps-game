@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, WEAPON_CATEGORIES } from './gameModes.ts';
+import { resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, isModeAllowedOnMap, isSinglePlayerModeAllowedOnMap, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
 import type { PlayerLoadout } from './gameModes.ts';
+
+describe('isModeAllowedOnMap', () => {
+  const facilityModes = ['default', 'oneShotOneKill', 'sniperDuel', 'gunGame', 'knifeOnly'];
+
+  it.each(GAME_MODES)('checks %s on both maps', (mode) => {
+    expect(isModeAllowedOnMap(mode, 'valley')).toBe(true);
+    expect(isModeAllowedOnMap(mode, 'facility')).toBe(facilityModes.includes(mode));
+  });
+});
+
+describe('isSinglePlayerModeAllowedOnMap', () => {
+  it.each([
+    ['elimination', true],
+    ['director', true],
+    ['horde', false],
+    ['mission', false],
+  ] as const)('checks %s on both maps', (mode, facilityAllowed) => {
+    expect(isSinglePlayerModeAllowedOnMap(mode, 'valley')).toBe(true);
+    expect(isSinglePlayerModeAllowedOnMap(mode, 'facility')).toBe(facilityAllowed);
+  });
+});
 
 describe('modeUsesCustomLoadout', () => {
   it('is true only for the three unrestricted modes', () => {

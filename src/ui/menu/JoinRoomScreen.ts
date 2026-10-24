@@ -4,7 +4,7 @@ import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSessi
 import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { getOrCreateRejoinToken } from '../../core/multiplayerRejoin.ts';
-import { MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
+import { DEFAULT_MATCH_MAP, MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
 import { createPlayerRow } from './CreateRoomScreen.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
@@ -284,6 +284,7 @@ export class JoinRoomScreen {
               gooseDifficulty: message.activeMatch.gooseDifficulty,
               gameMode: message.activeMatch.gameMode,
               weather: message.activeMatch.weather,
+              map: message.activeMatch.map ?? DEFAULT_MATCH_MAP,
               ownSlot: message.yourSlot,
               spawns: [{ slot: message.yourSlot, point: message.activeMatch.spawnPoint }],
               roster: message.roster,
@@ -320,6 +321,7 @@ export class JoinRoomScreen {
             gooseDifficulty: message.gooseDifficulty,
             gameMode: message.gameMode,
             weather: message.weather,
+            map: message.map ?? DEFAULT_MATCH_MAP,
             ownSlot: this.ownSlot ?? 0,
             spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
             roster: message.roster,

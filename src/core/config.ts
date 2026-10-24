@@ -197,6 +197,19 @@ export const WEAPON_SWAY_MAX = 0.06;
 export const WEAPON_SWAY_DAMP = 12;
 export const WEAPON_BOB_AMPLITUDE = 0.015;
 
+/** Picked before a match, shared through the same multiplayer messages as weather. */
+export type MatchMap = 'valley' | 'facility';
+export const DEFAULT_MATCH_MAP: MatchMap = 'valley';
+export const MATCH_MAPS: readonly MatchMap[] = ['valley', 'facility'];
+export const MATCH_MAP_LABELS: Record<MatchMap, string> = {
+  valley: 'Valley',
+  facility: 'Facility',
+};
+export const MATCH_MAP_DESCRIPTIONS: Record<MatchMap, string> = {
+  valley: 'Open valley, towns and towers',
+  facility: 'Indoor complex, a new layout every match',
+};
+
 /** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'day' in single-player - purely
  * cosmetic/atmospheric, mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
  * sites: MatchStartMessage, WelcomeMessage.activeMatch, MultiplayerSession,

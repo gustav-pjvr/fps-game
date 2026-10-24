@@ -4,7 +4,7 @@
  * the host; the host relays gameplay messages between guests (see PeerConnection.ts/Game.ts's
  * relay logic) transparently, unchanged, tagged with the ORIGINAL sender's own slot. */
 
-import type { GooseExplosionDifficulty, MatchWeather } from '../core/config.ts';
+import type { GooseExplosionDifficulty, MatchMap, MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
@@ -52,6 +52,8 @@ export interface WelcomeMessage {
     gooseDifficulty: GooseExplosionDifficulty;
     gameMode: GameMode;
     weather: MatchWeather;
+    /** Missing on older builds, defaults to Valley. */
+    map?: MatchMap;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
   };
@@ -117,6 +119,8 @@ export interface MatchStartMessage {
   gooseDifficulty: GooseExplosionDifficulty;
   gameMode: GameMode;
   weather: MatchWeather;
+  /** Missing on older builds, defaults to Valley. */
+  map?: MatchMap;
   spawns: { slot: PlayerSlot; x: number; z: number }[];
   roster: RosterEntry[];
 }

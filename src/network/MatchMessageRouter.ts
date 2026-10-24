@@ -17,7 +17,7 @@ import type { SoundEngine } from '../audio/SoundEngine.ts';
 import { computeStereoPan, enemyGunshotVolume, multiplayerGunshotVolume } from '../core/positionalAudio.ts';
 import { applyPlayerDied } from '../core/multiplayerScoring.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
-import { GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
+import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
 import { type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import type { ActiveMultiplayer } from './multiplayerMatchTypes.ts';
 import { acceptsSnapshot, afterStateEvent } from './stateOrder.ts';
@@ -126,6 +126,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
         gooseDifficulty: message.gooseDifficulty,
         gameMode: message.gameMode,
         weather: message.weather,
+        map: message.map ?? DEFAULT_MATCH_MAP,
         ownSlot: activeMultiplayer.session.ownSlot,
         spawns: message.spawns.map((s) => ({ slot: s.slot, point: { x: s.x, z: s.z } })),
         roster: message.roster,

@@ -124,6 +124,7 @@ import {
   HORDE_WAVE_TABLE_MULTIPLAYER,
   KOTH_POINTS_TO_WIN,
   type MatchWeather,
+  type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
   MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
@@ -223,6 +224,7 @@ export interface MatchConfig {
   enemyCount: number;
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
+  map: MatchMap;
   /** Single-player only (see PlaySetupModal) - multiplayer's equivalent is gameMode==='gooseHorde'
    * instead (unused/false here for a multiplayer match, same as enemyCount/targetCount's zeros). */
   hordeMode: boolean;
@@ -1129,6 +1131,7 @@ export class Game {
         gooseDifficulty: multiplayer.gooseDifficulty,
         gameMode: multiplayer.gameMode,
         weather: multiplayer.weather,
+        map: multiplayer.map,
         hostRoster: multiplayer.role === 'host' ? multiplayer.hostRoster ?? null : null,
         snapshotAccumulator: 0,
         hostSweepAccumulator: 0,
@@ -1388,6 +1391,7 @@ export class Game {
                 gooseDifficulty: activeMultiplayer.gooseDifficulty,
                 gameMode: activeMultiplayer.gameMode,
                 weather: activeMultiplayer.weather,
+                map: activeMultiplayer.map,
                 // Only slots in the roster handed over above: the joiner learns usernames from that
                 // roster alone, so a reserved or departed slot's score would sit in its scoreboard with
                 // no name and silently drop off its podium (which iterates known usernames).
@@ -2883,6 +2887,7 @@ export class Game {
       gooseDifficulty: this.multiplayer.gooseDifficulty,
       gameMode: this.multiplayer.gameMode,
       weather: this.multiplayer.weather,
+      map: this.multiplayer.map,
       role: this.multiplayer.session.role,
       connection: this.multiplayer.session.connection,
     });
