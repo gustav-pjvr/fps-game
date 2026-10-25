@@ -188,6 +188,60 @@ describe('Weapon reserve ammo (Goose Horde multiplayer only)', () => {
   });
 });
 
+describe('Weapon ammo box (pickups)', () => {
+  const MAX_RESERVE_MAGAZINES = 6;
+
+  it('tops up a part-used magazine when reloads are unlimited, and then has nothing to give', () => {
+    const weapon = new Weapon(PISTOL);
+    expect(weapon.ammoPickupWouldGive(MAX_RESERVE_MAGAZINES)).toBe(false);
+    weapon.tryFire();
+    expect(weapon.ammoPickupWouldGive(MAX_RESERVE_MAGAZINES)).toBe(true);
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(true);
+    expect(weapon.ammo).toBe(PISTOL.magazineSize);
+    expect(weapon.reserve).toBeNull();
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(false);
+  });
+
+  it('leaves a weapon that is already reloading to its reload (unlimited reserve)', () => {
+    const weapon = new Weapon(PISTOL);
+    weapon.tryFire();
+    weapon.startReload();
+    expect(weapon.ammoPickupWouldGive(MAX_RESERVE_MAGAZINES)).toBe(false);
+  });
+
+  it('adds one magazine to a finite reserve', () => {
+    const weapon = new Weapon(PISTOL, undefined, PISTOL.magazineSize);
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(true);
+    expect(weapon.reserve).toBe(PISTOL.magazineSize * 2);
+    expect(weapon.ammo).toBe(PISTOL.magazineSize);
+  });
+
+  it('stops at the cap: clamps the last box and refuses once the reserve is full', () => {
+    const cap = PISTOL.magazineSize * MAX_RESERVE_MAGAZINES;
+    const weapon = new Weapon(PISTOL, undefined, cap - 3);
+    expect(weapon.ammoPickupWouldGive(MAX_RESERVE_MAGAZINES)).toBe(true);
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(true);
+    expect(weapon.reserve).toBe(cap);
+    expect(weapon.ammoPickupWouldGive(MAX_RESERVE_MAGAZINES)).toBe(false);
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(false);
+    expect(weapon.reserve).toBe(cap);
+  });
+
+  it('takes an empty reserve up by a magazine', () => {
+    const weapon = new Weapon(PISTOL, undefined, 0);
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(true);
+    expect(weapon.reserve).toBe(PISTOL.magazineSize);
+  });
+
+  it('never gives a melee weapon anything', () => {
+    const knife = Object.values(WEAPON_DEFINITIONS).find((definition) => definition?.kind === 'melee');
+    expect(knife).toBeDefined();
+    const weapon = new Weapon(knife!);
+    expect(weapon.ammoPickupWouldGive(MAX_RESERVE_MAGAZINES)).toBe(false);
+    expect(weapon.grantAmmoPickup(1, MAX_RESERVE_MAGAZINES)).toBe(false);
+  });
+});
+
 describe('Weapon effectiveDamage', () => {
   it('uses the definition damage when no override is set', () => {
     const weapon = new Weapon(PISTOL);
