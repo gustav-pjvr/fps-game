@@ -1,5 +1,6 @@
 import { Settings } from '../settings/Settings.ts';
 import { WEAPON_SOUND_PATHS } from './weaponSounds.ts';
+import { DEAF_CUTOFF_OPEN, flashDeafness, RING_FREQUENCY } from './flashDeafness.ts';
 import { heartbeatFor, MUSIC_SILENT, musicMix, reverbSendFor, valleyImpulse, type MusicMix, type PacingPhase } from './ambience.ts';
 
 async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, AudioBuffer>> {
@@ -89,6 +90,12 @@ interface MusicNodes {
 export class SoundEngine {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
+  /** A flash grenade's muffle (flashDeafness.ts): a low-pass between the master bus and the output,
+   * wide open until a flash closes it. */
+  private readonly deafFilter: BiquadFilterNode;
+  /** The flash ring, made on the first flash and kept running at zero gain after. */
+  private ring: { oscillator: OscillatorNode; gain: GainNode } | null = null;
+  private deafLevel = 0;
   private readonly buffers: Map<string, AudioBuffer>;
   private keepAliveOscillator: OscillatorNode | null = null;
   /** The valley reverb (phase 6): sounds send into this, it returns into master. */
@@ -105,7 +112,10 @@ export class SoundEngine {
     this.buffers = buffers;
     this.master = ctx.createGain();
     this.master.gain.value = Settings.getMasterVolume();
-    this.master.connect(this.ctx.destination);
+    this.deafFilter = ctx.createBiquadFilter();
+    this.deafFilter.type = 'lowpass';
+    this.deafFilter.frequency.value = DEAF_CUTOFF_OPEN;
+    this.master.connect(this.deafFilter).connect(this.ctx.destination);
     this.startKeepAlive();
 
     this.reverbSend = ctx.createGain();
@@ -152,6 +162,8 @@ export class SoundEngine {
   dispose(): void {
     this.keepAliveOscillator?.stop();
     this.keepAliveOscillator = null;
+    this.ring?.oscillator.stop();
+    this.ring = null;
     for (const oscillator of this.music?.oscillators ?? []) oscillator.stop();
     this.music = null;
     void this.ctx.close();
@@ -159,6 +171,29 @@ export class SoundEngine {
 
   setMasterVolume(value: number): void {
     this.master.gain.value = Math.max(0, Math.min(1, value));
+  }
+
+  /** A flash grenade's white-out, 0 to 1 (GrenadeSystem.blindLevel), per frame: muffles everything
+   * through the master low-pass and rings over it, both following the level (flashDeafness.ts). */
+  setFlashDeafness(level: number): void {
+    const clamped = Math.max(0, Math.min(1, level));
+    if (clamped === this.deafLevel) return;
+    this.deafLevel = clamped;
+    const { cutoff, ringGain } = flashDeafness(clamped);
+    const now = this.ctx.currentTime;
+    this.deafFilter.frequency.setTargetAtTime(cutoff, now, 0.03);
+    if (!this.ring && ringGain > 0) {
+      const oscillator = this.ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = RING_FREQUENCY;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      // After the muffle, so the ring stays clear; scaled by the volume setting by hand instead.
+      oscillator.connect(gain).connect(this.ctx.destination);
+      oscillator.start();
+      this.ring = { oscillator, gain };
+    }
+    this.ring?.gain.gain.setTargetAtTime(ringGain * this.master.gain.value, now, 0.05);
   }
 
   /** AudioContext starts suspended until a user gesture - call from any click/keydown handler. */

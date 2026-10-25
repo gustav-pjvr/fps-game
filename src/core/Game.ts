@@ -1513,7 +1513,7 @@ export class Game {
         }
       },
     });
-    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot });
+    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot, sound });
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
@@ -3275,6 +3275,7 @@ export class Game {
     }
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
+    this.grenadeEffects?.afterRender(this.renderer.webgl.domElement);
     this.perfLogger.endSection('render', renderStart);
     this.perfLogger.maybeEmit(this.perfContext);
   };
