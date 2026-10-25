@@ -11,7 +11,7 @@ export const GROUPS = {
   ui: { files: ['e2e/ui-qa.spec.ts'] },
   world: { files: ['e2e/world-bounds.spec.ts'] },
   // The indoor map (docs/facility-map.md), solo and two-player.
-  facility: { files: ['e2e/facility.spec.ts', 'e2e/multiplayer-facility.spec.ts'] },
+  facility: { files: ['e2e/facility.spec.ts', 'e2e/facility-doors.spec.ts', 'e2e/multiplayer-facility.spec.ts'] },
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
