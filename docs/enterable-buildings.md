@@ -13,11 +13,14 @@
 - **Spawns**: `BuildingManager.isPointInsideBuilding` already tests each design's full footprint (eaves included) plus the clearance, which contains every interior, and enemy position picks use the same check. No pickup placement exists on this branch.
 - **Testing aids**: `?weather=night` (or fog) gives a solo match that weather (`core/devWeather.ts`). Debug API: `getValleyHouses()`, `setValleyDoor(id, open)`, `getHouseLights()`.
 
-## Part 2 must do
+## Part 2, as built
 
-- **Enemies and doors**: on the Valley call `setEnemyDoorGate(interaction.enemyGate)` (Game.ts, the Valley branch next to the Facility one); `ValleyDoors.closedDoorAhead` is ready. A walk grid per house from `HOUSE_LAYOUTS` (rooms, `wallPieces`, furniture, `layout.door`, `stair`), and an enemy whose target is inside goes to the door first. Closed doors should block enemy sight (their collider already blocks shots).
-- **Cover points inside**: from `layout.furniture` and wall corners, in world space with `houseToWorld`; register with the `ObstacleRegistry` in `BuildingManager.placeForChunk`.
-- **Minimap interiors once entered**: rooms, walls and openings from the layout; door state from `ValleyDoors.state`.
-- **Lamp sync**: `HouseLights.killLamp(id, effect)`, `deadLampIds()`, `isDead(id)`; ids are `houseObjectId(houseKey(ref), roomIndex)`. Send on break (like `lampDestroyed`) and in the welcome, and apply `killLamp(id, false)` for late joiners.
-- **Browser test**: an e2e spec using the debug hooks above (find a house, open its door, walk in, shoot a lamp, a guest sees the door state).
-- Open: a frame-rate reading on real hardware (the headless run's numbers were taken right after teleports, while chunks streamed and shaders compiled).
+- **Enemies open doors**: the Valley branch of Game.ts sets the enemy door gate, so enemies stop at a shut house door and open it, synced like a player toggle.
+- **Enemies go inside**: `houseWalkGrid.ts` builds a 0.5 m walk grid per design (walls, furniture, the block stair as a ramp); `HouseNavigator.ts` routes an enemy round the house to its door, through it and along the grid, up and down the stair, and back out. A move that never touches a house is unchanged. An enemy chasing the player gets the player height to pick the floor; patrol, search and cover moves assume the ground floor.
+- **Cover**: `houseCover.ts` adds spots beside tall furniture and ground-floor windows (bunkhouse 5 furniture, block 7 plus 1 window, workshop 17 plus 4), on each house cover obstacle. Ground floor only: the tactics system works with flat points.
+- **Minimap**: `valleyHouseMapLayer.ts` draws an entered house ground-floor walls, windows and door (amber shut, faint open) and zooms to 14 m while inside. Solo Valley has no minimap, so this shows in multiplayer only.
+- **Lamp sync**: shot-out house lamps ride the existing `lampDestroyed`, `lampSync` and welcome `deadLamps` with house lamp ids; ids from the network are checked against real lamps of real houses.
+- **Fix found on the way**: a guest first snapshot never triggered the host door-state resend on the Valley (an early return for any map but the Facility).
+- **Debug hooks**: `commandEnemy(index, target)` and `shootLamp` with house lamp ids.
+- **Browser test**: `e2e/houses.spec.ts`, group `houses`: walk through a house, and a commanded enemy opens the shut door and gets inside.
+- **Open**: enemies sometimes zig-zag briefly on the block stair landing; a frame-rate reading on real hardware.
