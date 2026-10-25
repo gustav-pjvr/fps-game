@@ -6,21 +6,15 @@ import { getStructureMaterials, STRUCTURE_TILE_METRES, type StructureMaterialKey
 import type { FacilityWorld } from './FacilityBuilder.ts';
 import { cellCentre, isWalkable, type FacilityLayout } from './facilityLayout.ts';
 import type { FacilityNav } from './facilityNav.ts';
-import {
-  bodyInDoorway, doorCrossings, doorPickBox, facilityDoors, rayBoxDistance, segmentCrossesDoor,
-  type Box3, type FacilityDoor,
-} from './facilityDoors.ts';
+import { doorCrossings, facilityDoors, type FacilityDoor } from './facilityDoors.ts';
+import { bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, segmentCrossesDoor, type Box3 } from '../doors/doorGeometry.ts';
+import type { InteractiveWorldObjects } from '../doors/interactiveObjects.ts';
+import { SlidingDoorView, type SlidingDoorLook } from '../doors/SlidingDoorView.ts';
 import { facilityPower, type FacilityBreaker, type FacilityPower } from './facilityPower.ts';
 import {
-  FacilityObjectState, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
+  FacilityObjectState, parseWorldObjectWire, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
 } from './facilityObjectState.ts';
 
-/** Leaf thickness and how far the leaves sit toward the corridor, so an open leaf is inside the
- * corridor's wall mass rather than proud of the room's wall. */
-const LEAF_DEPTH = 0.06;
-const LEAF_SHIFT = 0.04;
-/** Half the thickness of a closed door's collider. */
-const COLLIDER_HALF_DEPTH = 0.08;
 /** Breaker panel size (m) and its pick box, a little larger so it is easy to aim at. */
 const PANEL = { width: 0.5, height: 0.7, depth: 0.12 } as const;
 const PANEL_PICK_HALF = { along: 0.3, up: 0.4, out: 0.12 } as const;
@@ -28,14 +22,6 @@ const PANEL_PICK_HALF = { along: 0.3, up: 0.4, out: 0.12 } as const;
 const ENEMY_DOOR_LOOKAHEAD = 1.6;
 const LAMP_GREEN = 0x3dff6a;
 const LAMP_RED = 0xff3326;
-
-interface DoorView {
-  readonly leaves: [THREE.Object3D, THREE.Object3D];
-  readonly lamps: THREE.Mesh[];
-  readonly collider: RAPIER.Collider;
-  /** 0 open to 1 shut, easing toward the state at FACILITY_DOOR_SLIDE_SECONDS for a full travel. */
-  progress: number;
-}
 
 interface BreakerView {
   readonly lever: THREE.Object3D;
@@ -53,14 +39,15 @@ interface ObjectsOptions {
  * enemy flow field's door costs and the lamps each breaker powers. Gameplay rules (who may flip what,
  * sync, sound) live in core/facilityInteraction.ts; this class only shows and applies a state.
  */
-export class FacilityObjects {
+export class FacilityObjects implements InteractiveWorldObjects {
   readonly doors: readonly FacilityDoor[];
   readonly power: FacilityPower;
   readonly state: FacilityObjectState;
   private readonly group = new THREE.Group();
   private readonly geometries = new Set<THREE.BufferGeometry>();
   private readonly materials = new Set<THREE.Material>();
-  private readonly doorViews: DoorView[] = [];
+  /** The leaves ease toward their state at FACILITY_DOOR_SLIDE_SECONDS for a full travel. */
+  private readonly doorViews: SlidingDoorView[] = [];
   private readonly breakerViews: BreakerView[] = [];
   private readonly breakerBoxes: Box3[];
   private body: RAPIER.RigidBody | null = null;
@@ -125,47 +112,20 @@ export class FacilityObjects {
   }
 
   private addDoor(door: FacilityDoor): void {
-    const shared = getStructureMaterials(), closed = door.startsClosed;
-    const root = new THREE.Group();
-    root.name = `facility-door-${door.id}`;
-    root.position.set(door.x, 0, door.z);
-    // Local x runs along the opening and local z across it, toward the room on +side.
-    if (door.axis === 'x') root.rotation.y = Math.PI / 2;
-    const toRoom = door.side;
-    const leafWidth = door.width / 2 + 0.02;
-    const leafGeometry = this.box(leafWidth, door.height, LEAF_DEPTH, 'steel');
-    const stripeGeometry = this.box(leafWidth, 0.28, LEAF_DEPTH + 0.008, 'hazard');
-    const makeLeaf = (end: number): THREE.Object3D => {
-      const leaf = new THREE.Group();
-      const panel = new THREE.Mesh(leafGeometry, shared.steel);
-      panel.position.y = door.height / 2;
-      const stripe = new THREE.Mesh(stripeGeometry, shared.hazard);
-      stripe.position.y = 0.14;
-      for (const mesh of [panel, stripe]) { mesh.castShadow = true; mesh.receiveShadow = true; }
-      leaf.add(panel, stripe);
-      leaf.position.set(end * door.width / 4, 0, -toRoom * LEAF_SHIFT);
-      leaf.userData.end = end;
-      root.add(leaf);
-      return leaf;
+    const shared = getStructureMaterials();
+    const look: SlidingDoorLook = {
+      box: (width, height, depth, key) => this.box(width, height, depth, key),
+      statusLamp: () => {
+        const geometry = new THREE.BoxGeometry(0.16, 0.05, 0.02);
+        this.geometries.add(geometry);
+        return geometry;
+      },
+      steel: shared.steel, hazard: shared.hazard, green: this.lampMaterials!.green, red: this.lampMaterials!.red,
     };
-    const leaves: [THREE.Object3D, THREE.Object3D] = [makeLeaf(-1), makeLeaf(1)];
-    // A small status lamp on each face of the header: green open, red closed.
-    const lampGeometry = new THREE.BoxGeometry(0.16, 0.05, 0.02);
-    this.geometries.add(lampGeometry);
-    const lamps = [-1, 1].map(face => {
-      const lamp = new THREE.Mesh(lampGeometry, closed ? this.lampMaterials!.red : this.lampMaterials!.green);
-      lamp.position.set(0, door.height + 0.06, face * 0.09);
-      root.add(lamp);
-      return lamp;
-    });
-    const desc = RAPIER.ColliderDesc.cuboid(door.axis === 'x' ? COLLIDER_HALF_DEPTH : door.width / 2, door.height / 2,
-      door.axis === 'x' ? door.width / 2 : COLLIDER_HALF_DEPTH).setTranslation(door.x, door.height / 2, door.z);
-    const collider = this.options.physics.world.createCollider(desc, this.body!);
-    collider.setEnabled(closed);
-    const view: DoorView = { leaves, lamps, collider, progress: closed ? 1 : 0 };
+    const view = new SlidingDoorView(door, look, this.options.physics.world, this.body!, door.startsClosed);
+    view.root.name = `facility-door-${door.id}`;
     this.doorViews.push(view);
-    this.placeLeaves(door, view);
-    this.group.add(root);
+    this.group.add(view.root);
   }
 
   private addBreaker(breaker: FacilityBreaker): void {
@@ -193,15 +153,6 @@ export class FacilityObjects {
     const view: BreakerView = { lever: pivot, lamp };
     this.breakerViews.push(view);
     this.showBreaker(breaker.id);
-  }
-
-  private placeLeaves(door: FacilityDoor, view: DoorView): void {
-    // Shut, each leaf covers its half of the opening; open, it has slid a half width into the wall.
-    const t = view.progress * view.progress * (3 - 2 * view.progress);
-    for (const leaf of view.leaves) {
-      const end = leaf.userData.end as number;
-      leaf.position.x = end * (door.width / 4 + (1 - t) * door.width / 2);
-    }
   }
 
   private showBreaker(id: number): void {
@@ -233,11 +184,9 @@ export class FacilityObjects {
       });
       return;
     }
-    const door = this.doors[id]!, view = this.doorViews[id]!, closed = !this.state.isActive('door', id);
-    view.collider.setEnabled(closed);
+    const closed = !this.state.isActive('door', id);
+    this.doorViews[id]!.show(closed, instant);
     this.nav?.setDoorClosed(id, closed);
-    for (const lamp of view.lamps) lamp.material = closed ? this.lampMaterials!.red : this.lampMaterials!.green;
-    if (instant) { view.progress = closed ? 1 : 0; this.placeLeaves(door, view); }
   }
 
   /** Adopts a whole state (the host's worldObjectState, a welcome). Returns what changed. */
@@ -262,6 +211,10 @@ export class FacilityObjects {
     return this.state.encode();
   }
 
+  parseWire(value: unknown): WorldObjectWire | null {
+    return parseWorldObjectWire(value, this.doors.length, this.power.breakers.length);
+  }
+
   /** Where a door or panel sits: the door's centre at mid height, or the panel's centre. */
   position(kind: WorldObjectKind, id: number): THREE.Vector3 | null {
     if (!this.state.has(kind, id)) return null;
@@ -274,9 +227,7 @@ export class FacilityObjects {
   distanceTo(kind: WorldObjectKind, id: number, x: number, z: number): number {
     if (!this.state.has(kind, id)) return Infinity;
     if (kind === 'breaker') { const breaker = this.power.breakers[id]!; return Math.hypot(x - breaker.x, z - breaker.z); }
-    const door = this.doors[id]!, across = door.axis === 'x';
-    const u = (across ? x : z) - (across ? door.x : door.z), v = (across ? z : x) - (across ? door.z : door.x);
-    return Math.hypot(u, Math.max(0, Math.abs(v) - door.width / 2));
+    return distanceToDoor(this.doors[id]!, x, z);
   }
 
   /** The nearest door or breaker panel a ray crosses within maxDistance, or null. */
@@ -363,12 +314,7 @@ export class FacilityObjects {
   update(dt: number): void {
     if (this.disposed) return;
     const step = (Number.isFinite(dt) ? Math.max(0, dt) : 0) / FACILITY_DOOR_SLIDE_SECONDS;
-    this.doors.forEach((door, id) => {
-      const view = this.doorViews[id]!, target = this.state.isActive('door', id) ? 0 : 1;
-      if (view.progress === target) return;
-      view.progress = target > view.progress ? Math.min(target, view.progress + step) : Math.max(target, view.progress - step);
-      this.placeLeaves(door, view);
-    });
+    for (const view of this.doorViews) view.update(step);
   }
 
   dispose(): void {

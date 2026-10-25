@@ -7,10 +7,10 @@ import type { ActiveMultiplayer } from '../network/multiplayerMatchTypes.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Hud } from '../ui/hud.ts';
-import type { FacilityObjects } from '../world/facility/FacilityObjects.ts';
+import type { InteractiveWorldObjects } from '../world/doors/interactiveObjects.ts';
 import { EnemyDoorWaits } from '../world/facility/facilityDoors.ts';
 import {
-  interactPrompt, parseWorldObjectWire, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
+  interactPrompt, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
 } from '../world/facility/facilityObjectState.ts';
 import { FACILITY_INTERACT_REACH, PLAYER_RADIUS } from './config.ts';
 import { computeStereoPan, facilityObjectVolume } from './positionalAudio.ts';
@@ -22,7 +22,8 @@ const GUEST_REACH_SLACK = 1.5;
 const PICK_TOLERANCE = 0.2;
 
 interface InteractionDeps {
-  readonly objects: FacilityObjects;
+  /** The Facility's doors and breakers, or the Valley houses' doors. */
+  readonly objects: InteractiveWorldObjects;
   readonly physics: PhysicsWorld;
   readonly camera: THREE.Camera;
   readonly player: Player;
@@ -36,7 +37,9 @@ interface InteractionDeps {
  * Facility doors and breaker switches as gameplay (docs/facility-map.md, section 12): the look-at
  * prompt and the interact press, who decides (solo applies locally; in multiplayer the host is the
  * authority and broadcasts worldObjectState, a guest asks with worldInteract), enemies opening doors,
- * and the positional sounds. The world side (meshes, colliders, light) is FacilityObjects.
+ * and the positional sounds. The world side (meshes, colliders, light) is FacilityObjects, or on the
+ * Valley the houses' doors (world/houses/ValleyDoors.ts, docs/enterable-buildings.md), through the
+ * same InteractiveWorldObjects interface and the same worldInteract / worldObjectState messages.
  */
 export class FacilityInteraction {
   private readonly waits = new EnemyDoorWaits();
@@ -135,18 +138,19 @@ export class FacilityInteraction {
     this.apply(kind, id, !objects.state.isActive(kind, id));
   }
 
-  /** Guest: the host's doors and breakers. Changes slide and sound as if seen happening. */
-  receiveState(doors: string, breakers: string): void {
+  /** Guest: the host's doors and breakers (and on the Valley the list of open house doors).
+   * Changes slide and sound as if seen happening. */
+  receiveState(doors: string, breakers: string, valleyDoors?: readonly number[]): void {
     if (this.authority) return;
     const { objects } = this.deps;
-    const wire = parseWorldObjectWire({ doors, breakers }, objects.doors.length, objects.power.breakers.length);
+    const wire = objects.parseWire(valleyDoors ? { doors, breakers, valleyDoors } : { doors, breakers });
     if (wire) this.playSounds(objects.applyWire(wire));
   }
 
   /** A late joiner's state from the welcome, applied at once and quietly. */
   applyInitial(value: unknown): void {
     const { objects } = this.deps;
-    const wire = parseWorldObjectWire(value, objects.doors.length, objects.power.breakers.length);
+    const wire = objects.parseWire(value);
     if (wire) objects.applyWire(wire, true);
   }
 

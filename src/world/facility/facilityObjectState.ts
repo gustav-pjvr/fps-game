@@ -5,10 +5,13 @@
 
 export type WorldObjectKind = 'door' | 'breaker';
 
-/** On the wire: one character per door ('1' open) and per breaker ('1' on), in id order. */
+/** On the wire: one character per door ('1' open) and per breaker ('1' on), in id order. On the
+ * Valley both strings are empty and `valleyDoors` lists the ids of the open house doors (the houses
+ * stream in and out, so their doors are not a fixed list; docs/enterable-buildings.md). */
 export interface WorldObjectWire {
   doors: string;
   breakers: string;
+  valleyDoors?: number[];
 }
 
 /** What changed when a state was applied, by id. */
