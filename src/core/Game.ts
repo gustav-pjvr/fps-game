@@ -31,7 +31,9 @@ import {
   type FacilityLayout,
 } from '../world/facility/facilityLayout.ts';
 import { FacilityNav } from '../world/facility/facilityNav.ts';
-import { Enemy, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
+import { FacilityInteraction } from './facilityInteraction.ts';
+import { Enemy, setEnemyDoorGate, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -248,6 +250,8 @@ interface FacilityMatch {
   readonly mapLayer: FacilityMapLayer;
   /** Sparks and glass from shot-out lamps (section 11). */
   readonly lampBreak: LampBreakEffect;
+  /** Doors and breaker panels (section 12). */
+  readonly objects: FacilityObjects;
 }
 /** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
 const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
@@ -397,6 +401,8 @@ export class Game {
   private soloMinimap: Minimap | null = null;
   /** Health, ammo and grenade pickups (docs/pickups.md); assigned in create() once the Game exists. */
   private pickups: PickupSystem | null = null;
+  /** The Facility's doors and breakers as gameplay (core/facilityInteraction.ts); null on the Valley. */
+  private facilityInteraction: FacilityInteraction | null = null;
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
   private connectionPollAccumulator = 0;
@@ -607,6 +613,7 @@ export class Game {
   private noteOpponentInMatch(slot: PlayerSlot): void {
     const facility = this.facility;
     if (!facility) return;
+    this.facilityInteraction?.opponentInMatch(slot);
     const lamps = this.lampSync.opponentSnapshot(slot, () => facility.world.deadLampIndices());
     if (lamps) this.sendLampSync(lamps);
   }
@@ -749,8 +756,14 @@ export class Game {
           vertexCount: world.vertexCount,
           torchOn: this.torch?.isOn ?? false,
           deadLamps: world.deadLampIndices().length,
+          ...this.facility.objects.counts(),
         };
       },
+      facilityDoor: (index) => this.facility?.objects.debugDoor(index) ?? null,
+      setFacilityDoor: (index, open) => this.facilityInteraction?.requestState('door', index, open) ?? false,
+      facilityBreaker: (index) => this.facility?.objects.debugBreaker(index) ?? null,
+      setFacilityBreaker: (index, on) => this.facilityInteraction?.requestState('breaker', index, on) ?? false,
+      facilityLookTarget: () => this.facilityInteraction?.lookTarget() ?? null,
       shootLamp: (index) => this.destroyFacilityLamp(index, true),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
       getPickups: () => this.pickups?.views() ?? [],
@@ -860,13 +873,15 @@ export class Game {
         lightShafts: quality.postProcessing,
         dust: quality.postProcessing,
       });
+      const objects = FacilityObjects.build(layout, world, nav, { scene: renderer.scene, physics });
       // Single-player starts in a room other than the atrium; plain Math.random like the other
       // single-player spawn picks (nobody else has to agree on it).
       facility = {
+        objects,
         world,
         layout,
         start: playerStart(layout, Math.random),
-        mapLayer: new FacilityMapLayer(layout),
+        mapLayer: new FacilityMapLayer(layout, objects),
         lampBreak: new LampBreakEffect(renderer.scene),
       };
       // A late joiner starts with the lamps the others already shot out (section 11), quietly.
@@ -877,6 +892,7 @@ export class Game {
       // A failed Facility create could have left these set; the Valley always runs without them.
       setHeightOverride(null);
       setEnemyNavigator(null);
+      setEnemyDoorGate(null);
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
@@ -1500,6 +1516,13 @@ export class Game {
     if (facility && !activeMultiplayer) {
       game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
     }
+    // Doors and breakers (docs/facility-map.md, section 12): a late joiner starts with the host's.
+    if (facility) {
+      const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      interaction.applyInitial(multiplayer?.worldObjects);
+      setEnemyDoorGate(interaction.enemyGate);
+      game.facilityInteraction = interaction;
+    }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
     // Per-mode controllers (see core/modeControllers/) - each mode gets at most one, matching its
@@ -1579,6 +1602,8 @@ export class Game {
         get pickups() {
           return game.pickups;
         },
+        worldInteract: (slot, kind, id) => game.facilityInteraction?.receiveInteract(slot, kind, id),
+        worldObjectState: (doors, breakers) => game.facilityInteraction?.receiveState(doors, breakers),
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1670,7 +1695,7 @@ export class Game {
                   roster.some((rosterEntry) => rosterEntry.slot === entry.slot),
                 ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
-                ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices() } : {}),
+                ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices(), worldObjects: game.facility.objects.wire() } : {}),
               },
             };
           }
@@ -1754,11 +1779,14 @@ export class Game {
     // GPU resources. The height override and the enemy navigator are module-level, and the lobby
     // samples the valley again after this match.
     this.facility?.world.dispose();
+    this.facility?.objects.dispose();
+    this.facilityInteraction?.dispose();
     this.facility?.lampBreak.dispose();
     this.torch?.dispose();
     this.remoteTorches?.dispose();
     setHeightOverride(null);
     setEnemyNavigator(null);
+    setEnemyDoorGate(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();
@@ -1879,6 +1907,7 @@ export class Game {
     this.tracers.clear();
     // Every lamp shot out in the last run is lit again (section 11).
     this.facility?.world.relightAll();
+    this.facilityInteraction?.reset();
     this.facility?.lampBreak.clear();
     this.pickups?.resetAll();
     this.scoreState.value = 0;
@@ -2380,6 +2409,9 @@ export class Game {
 
     this.secondsSinceShot += dt;
     const freezeLocalPlayer = this.player.isDead || isPaused || this.missionWon;
+    // Facility doors and breakers (section 12): before the mode controllers, which only see an
+    // interact press this did not take (it takes one only while a door or panel is looked at).
+    this.facilityInteraction?.update(dt, freezeLocalPlayer ? null : this.input);
     if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause.
@@ -3172,6 +3204,7 @@ export class Game {
     this.kingOfTheHillController?.dropLocallyIfCarrying(slot, opponent.remotePlayer.position.clone());
     // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
     this.lampSync.forget(slot);
+    this.facilityInteraction?.forget(slot);
     opponent.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);

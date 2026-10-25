@@ -5,6 +5,8 @@ import { ObstacleRegistry } from '../../entities/enemies/tactics/obstacleRegistr
 import * as structureMaterials from '../structureMaterials.ts';
 import { generateFacilityLayout, OPEN, type FacilityLayout } from './facilityLayout.ts';
 import { FacilityWorld } from './FacilityBuilder.ts';
+import { facilityPower } from './facilityPower.ts';
+import type { FacilityBakeState } from './facilityBake.ts';
 
 function hall(): FacilityLayout {
   const size = 8, kinds = new Uint8Array(size * size).fill(OPEN);
@@ -45,6 +47,40 @@ describe('Facility lamps', () => {
     facility?.dispose(); facility = undefined; physics.dispose(); mock.mockRestore();
     Object.values(shared).forEach(material => material.dispose());
   });
+
+  it.each(['power then shoot', 'shoot then power'])('rebakes %s to the same arrays as a fresh build with only L shot', order => {
+    const layout = generateFacilityLayout(1), power = facilityPower(layout);
+    const lamp = layout.lamps.findIndex(l => l.kind === 'panel'), zone = power.lampZone[lamp]!;
+    const zoneLamps = layout.lamps.flatMap((l, index) => l.kind !== 'emergency' && power.lampZone[index] === zone ? [index] : []);
+    expect(lamp).toBeGreaterThanOrEqual(0); expect(zoneLamps.length).toBeGreaterThan(1);
+    const build = (): FacilityWorld => FacilityWorld.build(layout, { scene, physics, obstacles, lightShafts: false, dust: false });
+    const snapshot = (): Record<'light' | 'probes' | 'direct' | 'fill', Float32Array> => {
+      const bake = (facility as unknown as { bake: FacilityBakeState }).bake;
+      return { light: bake.light.slice(), probes: bake.probes.slice(), direct: bake.direct.slice(), fill: bake.fill.slice() };
+    };
+    facility = build(); facility.killLamp(lamp); facility.flushLampRebakes();
+    const expected = snapshot();
+    facility.dispose(); facility = build();
+    const powerZone = (on: boolean): void => {
+      for (const index of zoneLamps) facility!.setLampPowered(index, on);
+      facility!.flushLampRebakes(); expect(facility!.pendingRebakes).toBe(0);
+    };
+    if (order === 'power then shoot') {
+      powerZone(false); powerZone(true); facility.killLamp(lamp);
+    } else {
+      facility.killLamp(lamp); facility.flushLampRebakes(); powerZone(false); powerZone(true);
+    }
+    facility.flushLampRebakes();
+    expect(facility.deadLampIndices()).toEqual([lamp]);
+    for (const index of zoneLamps) expect(facility.isLampLit(index)).toBe(index !== lamp);
+    const actual = snapshot();
+    for (const key of ['light', 'probes', 'direct', 'fill'] as const) {
+      expect(actual[key].length).toBe(expected[key].length);
+      let maxDifference = 0;
+      actual[key].forEach((value, index) => { maxDifference = Math.max(maxDifference, Math.abs(value - expected[key][index]!)); });
+      expect(maxDifference, key).toBeLessThanOrEqual(1e-5);
+    }
+  }, 30000);
 
   it('hits the nearest live lamp box along a ray and misses beside or beyond it', () => {
     facility = FacilityWorld.build(hall(), { scene, physics, obstacles, lightShafts: false, dust: false });

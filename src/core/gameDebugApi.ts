@@ -120,7 +120,33 @@ export interface GameDebugApi {
     torchOn: boolean;
     /** Lamps shot out so far (docs/facility-map.md, section 11). */
     deadLamps: number;
+    /** Doors, how many are shut, breakers and how many are off (section 12). */
+    doors: number;
+    closedDoors: number;
+    breakers: number;
+    breakersOff: number;
   } | null;
+  /** Facility only (section 12): door `index`, its state, whether its collider is in the physics
+   * world, and a walkable spot 2 m out on its corridor side (null if that spot is not walkable);
+   * null for no such door. */
+  facilityDoor(index: number): {
+    x: number; z: number; axis: 'x' | 'z'; width: number; height: number; open: boolean; collider: boolean;
+    front: { x: number; z: number } | null;
+  } | null;
+  /** Test-only, Facility only: asks for door `index` open or shut through the interact key's own
+   * path (authority, sync, sound). False when it already is, there is no such door, or a player
+   * stands in its way. */
+  setFacilityDoor(index: number, open: boolean): boolean;
+  /** Facility only: breaker `index` (one per power zone), whether it is on, and its zone's panel and
+   * emergency lamps with how many of each are lit now; null for no such breaker. */
+  facilityBreaker(index: number): {
+    x: number; y: number; z: number; on: boolean;
+    panelLamps: number; panelLampsLit: number; emergencyLamps: number; emergencyLampsLit: number;
+  } | null;
+  /** Test-only, Facility only: like setFacilityDoor, for a breaker. */
+  setFacilityBreaker(index: number, on: boolean): boolean;
+  /** Facility only: the door or breaker panel the player looks at within reach, or null. */
+  facilityLookTarget(): { kind: 'door' | 'breaker'; id: number } | null;
   /** Test-only, Facility only: shoots out lamp `index` exactly like a hit (light, effect, sound and,
    * in multiplayer, the lampDestroyed send). False when there is no such live lamp. */
   shootLamp(index: number): boolean;

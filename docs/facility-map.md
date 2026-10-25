@@ -227,3 +227,51 @@ dark and players then rely on their torches.
 - **Resets:** a single-player Restart relights every lamp. A rematch builds a new facility anyway.
 - **Debug API:** `getFacilityDebug()` gains `deadLamps: number` and a test-only
   `shootLamp(index)`; plus `lampPosition(index)` so an e2e test can aim at one.
+
+## 12. Doors and breaker switches
+
+`facilityDoors.ts` merges adjacent doorway cells with the same axis, room and side into one
+opening. A seeded draw (`FACILITY_DOOR_SEED_OFFSET = 613`) gives each eligible opening a door
+with `FACILITY_DOOR_CHANCE = 0.6`; eligible openings into dark rooms always get doors and start
+closed. Other doors start open. `FACILITY_DOOR_MAX_CELLS = 3`: openings wider than 3 cells
+(4.5 m) get no door, so a dark room with one is not sealed.
+
+`FacilityObjects.ts` builds two painted steel sliding leaves, a hazard stripe and red closed or
+green open status lamps. Leaves are 6 cm thick and sit 4 cm toward the corridor so they slide
+inside the wall mass. `FACILITY_DOOR_SLIDE_SECONDS = 0.6`; colliders change immediately with
+state, independently of the visual slide. Closed doors block players, bullets, grenades and
+enemy sight. Doors refuse to close on a player. Door changes do not recompute the light bake.
+
+Look at a door or breaker within `FACILITY_INTERACT_REACH = 2.2` m and press interact (E or pad B)
+to toggle it. A nearer physics hit blocks the prompt, with 0.2 m tolerance for a door's own
+collider. `facilityInteraction.ts` owns prompts, authority, positional slide and breaker sounds,
+and the enemy gate. The cost-ordered flow field treats closed door crossings as passable with
+`FACILITY_DOOR_NAV_COST = 4` extra steps: short detours win, long ones lead through the door.
+Enemies stop within a 1.6 m lookahead, wait `FACILITY_ENEMY_DOOR_WAIT = 0.8` seconds at the same
+door, then open it. They never close doors.
+
+`facilityPower.ts` groups rooms by position into 4 to 6 seeded zones, using farthest-point room
+seeds and nearest-seed membership. Corridor lamps join the nearest room's zone. Each zone has
+one panel on a perimeter wall beside walkable floor inside a room, never in the atrium (room 0).
+Its floor cell stays at least 3 cells (Chebyshev distance) from every doorway. The panel centre
+is 1.45 m high, stands 0.06 m off the wall and has a lever and red or green status lamp. A zone
+without panel space joins its nearest neighbour. All breakers start on.
+
+Switching off darkens that zone's panel lamps; emergency lamps stay lit on battery. Switching on
+relights every lamp that was not shot out. `FacilityWorld` tracks shot-out and unpowered lamps
+separately. Visuals change immediately; the rebake queue recomputes light from the current union
+of dark lamps, one queued lamp per update, for both cuts and relights. `flushLampRebakes()` drains
+the queue for tests. The final vertex light, direct light, fill and probe arrays are independent
+of the order of power changes and lamp shots. Restart restores lamps, initial doors and breakers.
+
+The minimap draws closed doors as short bars. A panel shows on the minimap once its room is
+entered. Multiplayer is host-authoritative: guests send `worldInteract { kind, id }`, where kind
+is `door` or `breaker` and id is a non-negative integer. The host validates the object and guest
+reach (2.2 m plus 1.5 m latency slack), applies the change and broadcasts `worldObjectState`.
+`facilityObjectState.ts` encodes `doors` and `breakers` as bit strings in id order: 1 means open
+or on. Network validation limits each string to 4096 binary characters; layout parsing requires
+the exact expected counts. Welcome and first-snapshot resync carry the full state for late joiners.
+
+Debug hooks: `facilityDoor`, `setFacilityDoor`, `facilityBreaker`, `setFacilityBreaker`,
+`facilityLookTarget` and the door and breaker counts in `getFacilityDebug()`. Debug setters use
+the interaction rules, including refusing to close on players.

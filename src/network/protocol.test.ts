@@ -135,3 +135,29 @@ describe('pickup message validation', () => {
     expect(isNetworkMessage({ type: 'pickupGift', id: 1 })).toBe(false);
   });
 });
+
+describe('Facility object messages', () => {
+  it('accepts interactions and compact object state after a JSON round trip', () => {
+    for (const message of [
+      { type: 'worldInteract', kind: 'door', id: 0 },
+      { type: 'worldInteract', kind: 'breaker', id: 5 },
+      { type: 'worldObjectState', doors: '0101', breakers: '110' },
+      { type: 'worldObjectState', doors: '', breakers: '' },
+      { type: 'worldObjectState', doors: '1'.repeat(4096), breakers: '0'.repeat(4096) },
+    ]) expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
+  });
+
+  it('rejects invalid interaction kinds and ids', () => {
+    for (const kind of [undefined, null, 'lamp', 0]) expect(isNetworkMessage({ type: 'worldInteract', kind, id: 0 })).toBe(false);
+    for (const id of [undefined, null, -1, 0.5, NaN, Infinity, '0']) {
+      expect(isNetworkMessage({ type: 'worldInteract', kind: 'door', id })).toBe(false);
+    }
+  });
+
+  it('rejects missing, non-binary, oversized or non-string object state', () => {
+    for (const bad of [undefined, null, 0, [], '2', 'true', '0\n', '1'.repeat(4097)]) {
+      expect(isNetworkMessage({ type: 'worldObjectState', doors: bad, breakers: '1' })).toBe(false);
+      expect(isNetworkMessage({ type: 'worldObjectState', doors: '1', breakers: bad })).toBe(false);
+    }
+  });
+});

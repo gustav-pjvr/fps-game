@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../utils/rng.ts';
 import { generateFacilityLayout, OPEN, SOLID, PROP, cellCentre, cellOf, isWalkable, type FacilityLayout } from './facilityLayout.ts';
-import { FacilityNav, segmentClear } from './facilityNav.ts';
+import { FacilityNav, flowField, segmentClear } from './facilityNav.ts';
+import { doorCrossings, type FacilityDoor } from './facilityDoors.ts';
+import { FACILITY_DOOR_NAV_COST } from '../../core/config.ts';
 
 function emptyLayout(): FacilityLayout {
   const kinds = new Uint8Array(56 * 56).fill(SOLID);
@@ -10,6 +12,34 @@ function emptyLayout(): FacilityLayout {
 }
 
 describe('Facility navigation', () => {
+  it.each([1, 5])('prices a closed door against a detour %i cells deep', depth => {
+    const layout = emptyLayout(), size = layout.size, total = size * size;
+    layout.kinds.fill(SOLID);
+    for (let i = 20; i <= 24; i++) {
+      layout.kinds[20 * size + i] = OPEN;
+      layout.kinds[(20 + depth) * size + i] = OPEN;
+    }
+    for (let j = 20; j <= 20 + depth; j++) {
+      layout.kinds[j * size + 20] = OPEN; layout.kinds[j * size + 24] = OPEN;
+    }
+    const start = 20 * size + 20, target = 20 * size + 24;
+    const door: FacilityDoor = { id: 0, room: 0, axis: 'x', side: 1,
+      cells: [20 * size + 21], roomCells: [20 * size + 22],
+      x: -9, z: -11.25, width: 1.5, height: 3, startsClosed: true };
+    const crossings = doorCrossings([door], size);
+    expect(FACILITY_DOOR_NAV_COST).toBe(4);
+    const field = flowField(layout, target, (from, to) => crossings.has(from * total + to) ? FACILITY_DOOR_NAV_COST : 0);
+    let id = start, crossed = false, steps = 0;
+    while (id !== target && steps++ < total) {
+      const next = field[id]!;
+      expect(next).toBeGreaterThanOrEqual(0);
+      crossed ||= crossings.has(id * total + next); id = next;
+    }
+    expect(id).toBe(target);
+    expect(crossed).toBe(depth === 5);
+    if (depth === 5) expect(steps).toBe(4);
+  });
+
   it.each([1, 2, 3, 4, 5])('reaches 30 targets from each of 30 starts on seed %i', seed => {
     const layout = generateFacilityLayout(seed), nav = new FacilityNav(layout), rng = mulberry32(seed + 100);
     const points = Array.from(layout.kinds, (kind, id) => kind === OPEN ? cellCentre(id % layout.size, Math.floor(id / layout.size)) : null)

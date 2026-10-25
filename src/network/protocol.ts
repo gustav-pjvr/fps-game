@@ -70,6 +70,9 @@ export interface WelcomeMessage {
     /** Facility only: the lamps already shot out (indices into the layout's lamps), so a late
      * joiner sees the same dark rooms. Missing means none (and on older builds). */
     deadLamps?: number[];
+    /** Facility only: which doors are open and which breakers are on (docs/facility-map.md,
+     * section 12), so a late joiner starts with the same ones. Missing means the match's start. */
+    worldObjects?: { doors: string; breakers: string };
   };
 }
 
@@ -199,6 +202,25 @@ export interface LampSyncMessage {
   type: 'lampSync';
   senderSlot: PlayerSlot;
   lamps: number[];
+}
+
+/** Guest -> host only, never relayed: this guest pressed interact on a Facility door or breaker
+ * panel (docs/facility-map.md, section 12). `id` indexes the layout's doors or zones, identical on
+ * every client. The host is the authority: it flips the object if the id is valid and the guest
+ * stands within reach of it, then broadcasts the result as worldObjectState. Older hosts drop it. */
+export interface WorldInteractMessage {
+  type: 'worldInteract';
+  kind: 'door' | 'breaker';
+  id: number;
+}
+
+/** Host -> everyone (host-authored broadcast, never relayed): every Facility door ('1' open) and
+ * breaker ('1' on) in id order, sent on each change and to each guest on its first playerSnapshot
+ * (it may have been loading when a change went past). Guests adopt it whole. */
+export interface WorldObjectStateMessage {
+  type: 'worldObjectState';
+  doors: string;
+  breakers: string;
 }
 
 /** Sent by the shooter (`senderSlot`, the attacker) when their own hitscan registers a hit on a
@@ -669,6 +691,8 @@ export type NetworkMessage =
   | FireEventMessage
   | LampDestroyedMessage
   | LampSyncMessage
+  | WorldInteractMessage
+  | WorldObjectStateMessage
   | DamageEventMessage
   | PlayerDiedMessage
   | RespawnEventMessage
@@ -724,6 +748,8 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'fireEvent',
   'lampDestroyed',
   'lampSync',
+  'worldInteract',
+  'worldObjectState',
   'damageEvent',
   'playerDied',
   'respawnEvent',
@@ -773,6 +799,16 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (typeof value !== 'object' || value === null) return false;
   const type = (value as { type?: unknown }).type;
   if (typeof type !== 'string' || !MESSAGE_TYPES.has(type as NetworkMessage['type'])) return false;
+  // The Facility's doors and breakers (section 12) are checked whole here, so a malformed one never
+  // reaches the host's authority or a guest's world.
+  if (type === 'worldInteract') {
+    const { kind, id } = value as { kind?: unknown; id?: unknown };
+    return (kind === 'door' || kind === 'breaker') && Number.isInteger(id) && (id as number) >= 0;
+  }
+  if (type === 'worldObjectState') {
+    const { doors, breakers } = value as { doors?: unknown; breakers?: unknown };
+    return [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
+  }
   return type.startsWith('pickup') ? hasValidPickupFields(value as Record<string, unknown>) : true;
 }
 
