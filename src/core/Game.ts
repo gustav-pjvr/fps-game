@@ -2903,7 +2903,7 @@ export class Game {
           // while whichever client is still alive keeps waiting on a count that can now never be
           // satisfied, which is exactly what "waves never end" looks like from that client's side.
           if (this.multiplayer.gameMode === 'gooseHorde' && this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
-          if (!isOpponentSilent(now, opponent.lastMessageAt, opponent.firstSnapshotAt)) continue;
+          if (!isOpponentSilent(now, opponent.lastMessageAt, opponent.firstSnapshotAt, opponent.isDead)) continue;
           this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
           // Actually close their connection too. A silent tab (typically backgrounded, which halts
           // its requestAnimationFrame loop) used to stay connected: removed from everyone's match,

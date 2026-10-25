@@ -18,6 +18,15 @@ describe('isOpponentSilent', () => {
     expect(isOpponentSilent(1000 + MULTIPLAYER_LOADING_TIMEOUT_MS - 1, 1000, null)).toBe(false);
   });
 
+  it('waits out a dead player that sends nothing until its respawn, but not forever', () => {
+    // Settled, then killed: silent past the connection timeout while its respawn timer runs.
+    const now = MULTIPLAYER_SETTLE_MS + 100_000;
+    const last = now - MULTIPLAYER_CONNECTION_TIMEOUT_MS - 5_000;
+    expect(isOpponentSilent(now, last, 0, true)).toBe(false);
+    expect(isOpponentSilent(now, last, 0, false)).toBe(true);
+    expect(isOpponentSilent(last + MULTIPLAYER_LOADING_TIMEOUT_MS, last, 0, true)).toBe(true);
+  });
+
   it('still gives up on a player that never settles', () => {
     expect(isOpponentSilent(1000 + MULTIPLAYER_LOADING_TIMEOUT_MS, 1000, null)).toBe(true);
     expect(isOpponentSilent(1000 + MULTIPLAYER_LOADING_TIMEOUT_MS, 1000, 900)).toBe(true);
