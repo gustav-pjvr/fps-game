@@ -78,6 +78,9 @@ export class Goose implements Entity, Damageable {
      * to "has a hit-report callback" so every existing follower call site (GooseManager's and
      * BonusGooseManager's applyRemoteSpawn) keeps its exact behaviour - see the class comment. */
     private readonly isFollower: boolean = onRemoteHitReport !== undefined,
+    /** Indoors (the Facility): whether a straight wander from one point to another is clear of
+     * walls and crates. A wander destination must pass it; absent outdoors, where any will do. */
+    private readonly canWander?: (fromX: number, fromZ: number, toX: number, toZ: number) => boolean,
   ) {
     this.spawnPosition = position.clone();
     this.destination = position.clone();
@@ -128,7 +131,7 @@ export class Goose implements Entity, Damageable {
     this.repathTimer -= dt;
     const distanceToDestination = horizontalDistance(current, this.destination);
     if (this.repathTimer <= 0 || distanceToDestination <= GOOSE_PATROL_STOP_DISTANCE) {
-      this.repath();
+      this.repath(current.x, current.z);
     }
 
     if (horizontalDistance(current, this.destination) > GOOSE_PATROL_STOP_DISTANCE) {
@@ -142,10 +145,18 @@ export class Goose implements Entity, Damageable {
     this.waddlePhase += dt * WADDLE_BOB_SPEED * (this.isMoving ? 1 : 0.35);
   }
 
-  private repath(): void {
-    const angle = this.patrolRng() * Math.PI * 2;
-    const radius = this.patrolRng() * GOOSE_ROAM_RADIUS;
-    this.destination = new THREE.Vector3(this.spawnPosition.x + Math.cos(angle) * radius, 0, this.spawnPosition.z + Math.sin(angle) * radius);
+  /** A fresh random destination around the spawn point. Indoors a few tries for one in clear straight
+   * line; with none the goose waits where it is until the next repath. */
+  private repath(fromX: number, fromZ: number): void {
+    this.destination = new THREE.Vector3(fromX, 0, fromZ);
+    for (let attempt = 0; attempt < (this.canWander ? 4 : 1); attempt++) {
+      const angle = this.patrolRng() * Math.PI * 2;
+      const radius = this.patrolRng() * GOOSE_ROAM_RADIUS;
+      const x = this.spawnPosition.x + Math.cos(angle) * radius, z = this.spawnPosition.z + Math.sin(angle) * radius;
+      if (this.canWander && !this.canWander(fromX, fromZ, x, z)) continue;
+      this.destination = new THREE.Vector3(x, 0, z);
+      break;
+    }
     this.repathTimer = GOOSE_PATROL_REPATH_MIN + this.patrolRng() * (GOOSE_PATROL_REPATH_MAX - GOOSE_PATROL_REPATH_MIN);
   }
 

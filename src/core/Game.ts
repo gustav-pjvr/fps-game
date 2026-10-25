@@ -31,6 +31,7 @@ import {
   type FacilityLayout,
 } from '../world/facility/facilityLayout.ts';
 import { FacilityNav } from '../world/facility/facilityNav.ts';
+import { facilityBlocksThrow, facilityGoosePlacement, facilityHordeSite } from '../world/facility/facilityModes.ts';
 import { setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
@@ -1176,13 +1177,16 @@ export class Game {
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseExploded', id, x, y, z }) : undefined,
       onLocalHitReported:
         multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
-    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT);
+    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT,
+    // Indoors every goose lands on clear floor (docs/facility-map.md, "Modes on the Facility").
+    facility ? facilityGoosePlacement(facility.layout) : null);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
     // part of the wave") - the ambient wandering flock is a different mode's feature entirely.
-    // No ambient flock on the Facility either (docs/facility-map.md, section 1).
-    if (!facility && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
+    // No ambient flock on the Facility either (docs/facility-map.md, section 1), except Goose Toss's
+    // pickups, which are the whole mode.
+    if ((!facility || multiplayer?.gameMode === 'gooseToss') && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
@@ -1246,6 +1250,8 @@ export class Game {
           ownSpawn.y,
           hordeWaveTable,
           !multiplayer || multiplayer.role === 'host',
+          // Indoors they come in through rooms away from every player (docs/facility-map.md).
+          facility ? facilityHordeSite(facility.layout) : null,
         )
       : null;
 
@@ -2816,6 +2822,9 @@ export class Game {
       let hitPosition: THREE.Vector3 | null = null;
       if (thrown.position.y <= groundY + GOOSE_RADIUS) {
         hitPosition = new THREE.Vector3(thrown.position.x, groundY, thrown.position.z);
+      } else if (this.facility && facilityBlocksThrow(this.facility.layout, thrown.position.x, thrown.position.y, thrown.position.z, GOOSE_RADIUS)) {
+        // Indoors a throw bursts on the first wall, crate or ceiling it meets.
+        hitPosition = thrown.position.clone();
       } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
         hitPosition = thrown.position.clone();
       } else if (this.multiplayer) {
