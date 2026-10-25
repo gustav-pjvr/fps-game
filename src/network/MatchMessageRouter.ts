@@ -133,7 +133,12 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
   // message at all counts, not just playerSnapshot, so this stays fresh even during a brief
   // gap in position updates.
   const liveOpponent = activeMultiplayer.opponents.get(senderSlot);
-  if (liveOpponent) liveOpponent.lastMessageAt = performance.now();
+  if (liveOpponent) {
+    liveOpponent.lastMessageAt = performance.now();
+    // Only a snapshot starts the "playing" clock: the connection layer talks (mesh hellos, link
+    // reports) while the world is still being built, which says nothing about the main thread.
+    if (message.type === 'playerSnapshot') liveOpponent.firstSnapshotAt ??= performance.now();
+  }
 
   switch (message.type) {
     case 'matchStart':

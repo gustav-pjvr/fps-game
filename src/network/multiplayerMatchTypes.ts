@@ -21,6 +21,11 @@ export interface RemoteOpponent {
    * every message received from this slot, not just playerSnapshot. Unused on a guest's own client
    * (guests never run the staleness sweep - see updateMultiplayer). */
   lastMessageAt: number;
+  /** When this slot's first playerSnapshot arrived, null until then. Before it and for
+   * MULTIPLAYER_SETTLE_MS after it the player may still be building its world or compiling its first
+   * frames, and the host's staleness sweep allows it MULTIPLAYER_LOADING_TIMEOUT_MS
+   * (core/opponentLiveness.ts). */
+  firstSnapshotAt: number | null;
   /** Set by their relayed playerDied, cleared by their respawnEvent or next playerSnapshot. A dead
    * player stops sending snapshots, so their avatar freezes where they fell; without this, horde
    * geese kept chasing and exploding on that corpse, and ammo crates anchored to (and were picked up

@@ -23,7 +23,15 @@ describe('e2e spec selection', () => {
   });
 
   it('network code runs only the multiplayer specs', () => {
-    expect(groupsForFiles(['src/network/PeerConnection.ts', 'src/entities/RemotePlayer.ts']).groups).toEqual(['mp']);
+    expect(groupsForFiles(['src/network/fastChannel.ts', 'src/entities/RemotePlayer.ts']).groups).toEqual(['mp']);
+  });
+
+  it('the 3 to 4 player network files also run the four-player spec; other network files do not', () => {
+    expect(groupsForFiles(['src/network/GuestMesh.ts']).groups).toEqual(['mp', 'mp4']);
+    expect(groupsForFiles(['src/network/PeerConnection.ts']).groups).toEqual(['mp', 'mp4']);
+    expect(groupsForFiles(['src/network/fastChannel.ts']).groups).toEqual(['mp']);
+    expect(playwrightRuns({ groups: ['mp4'], specs: [] })).toEqual([{ files: ['e2e/multiplayer-four.spec.ts'] }]);
+    expect(GROUPS.quick.files).not.toContain('e2e/multiplayer-four.spec.ts');
   });
 
   it('what every spec shares runs the full suite, without perf', () => {

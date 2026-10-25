@@ -140,7 +140,6 @@ import {
   type MatchWeather,
   type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
-  MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
@@ -158,6 +157,7 @@ import {
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
+import { isOpponentSilent } from './opponentLiveness.ts';
 import { DEFAULT_GAME_MODE, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
 import { loadStoredLoadout } from './loadout.ts';
@@ -1349,7 +1349,7 @@ export class Game {
           (amount) =>
             multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount, weaponId: game.weaponManager.activeWeaponId }),
         );
-        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), isDead: false });
+        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), firstSnapshotAt: null, isDead: false });
         usernames.set(entry.slot, entry.username);
         minimap.addDot(entry.slot);
         multiplayerHud.addOpponentRow(entry.slot, entry.username);
@@ -2676,7 +2676,7 @@ export class Game {
           // while whichever client is still alive keeps waiting on a count that can now never be
           // satisfied, which is exactly what "waves never end" looks like from that client's side.
           if (this.multiplayer.gameMode === 'gooseHorde' && this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
-          if (now - opponent.lastMessageAt < MULTIPLAYER_CONNECTION_TIMEOUT_MS) continue;
+          if (!isOpponentSilent(now, opponent.lastMessageAt, opponent.firstSnapshotAt)) continue;
           this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
           // Actually close their connection too. A silent tab (typically backgrounded, which halts
           // its requestAnimationFrame loop) used to stay connected: removed from everyone's match,
@@ -3106,7 +3106,7 @@ export class Game {
       remotePlayer.dispose(this.renderer.scene);
       return;
     }
-    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), isDead: false });
+    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), firstSnapshotAt: null, isDead: false });
     this.multiplayer.usernames.set(slot, username);
     this.multiplayer.minimap.addDot(slot);
     this.multiplayer.multiplayerHud.addOpponentRow(slot, username);

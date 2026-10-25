@@ -87,6 +87,27 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(ctx.weaponManager.replaceActiveWeapon).toHaveBeenCalledTimes(1);
   });
 
+  it("starts an opponent's playing clock on its first playerSnapshot only", () => {
+    const ctx = makeContext({ role: 'host', ownSlot: 0 });
+    const opponent = {
+      lastMessageAt: 0,
+      firstSnapshotAt: null as number | null,
+      isDead: false,
+      health: 100,
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn() },
+    };
+    ctx.multiplayer.opponents.set(3, opponent);
+    // The connection layer talks while the world is still being built: that is not "playing".
+    route(ctx, { type: 'meshStatus', senderSlot: 3, linked: [1] }, 3);
+    expect(opponent.lastMessageAt).toBeGreaterThan(0);
+    expect(opponent.firstSnapshotAt).toBeNull();
+    route(ctx, { type: 'playerSnapshot', senderSlot: 3, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 3);
+    const first = opponent.firstSnapshotAt;
+    expect(first).not.toBeNull();
+    route(ctx, { type: 'playerSnapshot', senderSlot: 3, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 3);
+    expect(opponent.firstSnapshotAt).toBe(first);
+  });
+
   it('rosterSync adds missing opponents and removes departed ones', () => {
     const ctx = makeContext({ ownSlot: 2 });
     ctx.multiplayer.opponents.set(0, {});
