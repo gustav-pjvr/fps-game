@@ -34,7 +34,7 @@ import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
 import { soloWeatherFromUrl } from './devWeather.ts';
-import { setEnemyDoorGate, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { setEnemyDoorGate, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -894,6 +894,7 @@ export class Game {
       setHeightOverride(null);
       setEnemyNavigator(null);
       setEnemyDoorGate(null);
+      setEnemyFloor(null);
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
@@ -917,6 +918,9 @@ export class Game {
         },
       });
       buildings = valleyBuildings;
+      // Enemies walk into and out of the houses on their walk grids (docs/enterable-buildings.md).
+      setEnemyNavigator(valleyBuildings.houses.nav.navigate);
+      setEnemyFloor(valleyBuildings.houses.nav.floorAt);
       watchTowers = valleyTowers;
       isSpawnBlocked = makeSpawnBlockedCheck(valleyBuildings);
     }
@@ -1767,6 +1771,7 @@ export class Game {
     setHeightOverride(null);
     setEnemyNavigator(null);
     setEnemyDoorGate(null);
+    setEnemyFloor(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();

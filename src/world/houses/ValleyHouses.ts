@@ -4,6 +4,7 @@ import type { DoorPlane } from '../doors/doorGeometry.ts';
 import { HOUSE_DESIGNS } from '../houseDesigns.ts';
 import { doorToWorld, houseToWorld } from './houseLayout.ts';
 import { HouseLights } from './HouseLights.ts';
+import { HouseNavigator } from './HouseNavigator.ts';
 import { houseKey, houseObjectId, parseHouseObjectId, type HouseRef } from './valleyHouseIds.ts';
 import { ValleyDoors } from './ValleyDoors.ts';
 
@@ -41,6 +42,8 @@ export const FRONT_DOOR_SLOT = 0;
 export class ValleyHouses {
   readonly doors: ValleyDoors;
   readonly lights: HouseLights;
+  /** The streamed-in houses' walk grids for the enemies (HouseNavigator.ts). */
+  readonly nav = new HouseNavigator();
   private readonly loaded = new Map<string, LoadedHouse>();
   private readonly cameraPosition = new THREE.Vector3();
 
@@ -73,6 +76,7 @@ export class ValleyHouses {
       return id;
     });
     this.loaded.set(name, { placement, key, interior, lampIds, doorId });
+    this.nav.add(name, placement);
   }
 
   houseRemoved(name: string): void {
@@ -81,6 +85,7 @@ export class ValleyHouses {
     this.doors.removeDoor(house.doorId);
     for (const id of house.lampIds) this.lights.removeLamp(id);
     this.loaded.delete(name);
+    this.nav.remove(name);
   }
 
   /** Per frame, after the camera has moved. (Door leaves slide in the interaction's update.) */
@@ -125,5 +130,6 @@ export class ValleyHouses {
     this.doors.dispose();
     this.lights.dispose();
     this.loaded.clear();
+    this.nav.clear();
   }
 }

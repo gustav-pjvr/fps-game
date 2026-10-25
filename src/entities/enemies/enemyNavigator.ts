@@ -1,7 +1,10 @@
 /** Where an enemy should head next on its way from one point to another. A Facility match sets one
  * from its grid navigation (world/facility/facilityNav.ts) so enemies path through doors instead of
- * walking into walls; the Valley leaves it unset and enemies steer straight at their target. */
-export type EnemyNavigator = (fromX: number, fromZ: number, toX: number, toZ: number) => { x: number; z: number };
+ * walking into walls; the Valley sets the houses' (world/houses/HouseNavigator.ts), which leaves any
+ * move that never touches a house unchanged. `fromY` and `toY` are body centre heights when known (a
+ * house's upper floor); `direct` on the answer means the straight way to it is known clear, so the
+ * enemy walks it without whisker steering. */
+export type EnemyNavigator = (fromX: number, fromZ: number, toX: number, toZ: number, fromY?: number, toY?: number) => { x: number; z: number; direct?: boolean };
 
 let navigator: EnemyNavigator | null = null;
 
@@ -13,11 +16,11 @@ export function setEnemyNavigator(fn: EnemyNavigator | null): void {
 
 /** The point a move from (fromX, fromZ) toward (toX, toZ) should steer at this tick: the navigator's
  * next waypoint when one is set, otherwise the target itself. */
-export function resolveMoveTarget(fromX: number, fromZ: number, toX: number, toZ: number): { x: number; z: number } {
-  return navigator ? navigator(fromX, fromZ, toX, toZ) : { x: toX, z: toZ };
+export function resolveMoveTarget(fromX: number, fromZ: number, toX: number, toZ: number, fromY?: number, toY?: number): { x: number; z: number; direct?: boolean } {
+  return navigator ? navigator(fromX, fromZ, toX, toZ, fromY, toY) : { x: toX, z: toZ };
 }
 
-/** True while a navigator is set (a Facility match). */
+/** True while a navigator is set (a Facility or Valley match). */
 export function hasEnemyNavigator(): boolean {
   return navigator !== null;
 }
@@ -37,4 +40,20 @@ export function setEnemyDoorGate(fn: EnemyDoorGate | null): void {
 /** True when a door gate holds this enemy where it stands this tick; always false without one. */
 export function heldAtDoor(enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number): boolean {
   return doorGate ? doorGate(enemyId, x, z, dirX, dirZ, dt) : false;
+}
+
+/** The floor under an enemy whose feet are at feetY: a Valley house's floor, stair or upper floor
+ * (world/houses/HouseNavigator.ts), or null where the terrain is the floor. */
+export type EnemyFloor = (x: number, z: number, feetY: number) => number | null;
+
+let floor: EnemyFloor | null = null;
+
+/** Module-level like the navigator: set by a Valley match, cleared on its dispose. */
+export function setEnemyFloor(fn: EnemyFloor | null): void {
+  floor = fn;
+}
+
+/** The floor height at (x, z) for feet at feetY, or null for the terrain (always null unset). */
+export function enemyFloorAt(x: number, z: number, feetY: number): number | null {
+  return floor ? floor(x, z, feetY) : null;
 }
