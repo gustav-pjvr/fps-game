@@ -1524,15 +1524,18 @@ export class Game {
         hordeGooseManager,
         bonusGooseManager,
         ammoDropManager,
-        applyNetworkDamage: (amount, sourceSlot) => {
+        applyNetworkDamage: (amount, sourceSlot, weaponId) => {
           game.pendingNetworkDamage += amount;
           activeMultiplayer.lastDamageSourceSlot = sourceSlot;
           activeMultiplayer.lastDamageSourceAt = performance.now();
+          activeMultiplayer.lastDamageSourceWeaponId = weaponId;
         },
         healLocalPlayerToFull: () => game.healLocalPlayerToFull(),
         applyHostMatchEnd: (winnerSlot, scoreboard) => game.applyHostMatchEnd(winnerSlot, scoreboard),
         endedMatchVerdict: () => game.endedMatchVerdict(),
         checkHordeAllEliminated: () => game.checkHordeAllEliminated(),
+        matchHasEnded: () => game.multiplayerMatchState.hasEnded,
+        endLostHordeRun: () => game.endMultiplayerMatch(false, 'hordeWipe'),
         receiveModeExplanationReady: (slot) => game.receiveModeExplanationReady(slot),
         removeMultiplayerOpponent: (slot) => game.removeMultiplayerOpponent(slot),
         addMultiplayerOpponent: (slot, username) => game.addMultiplayerOpponent(slot, username),

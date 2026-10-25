@@ -823,6 +823,12 @@ function hasValidSquadShape(value: Record<string, unknown>): boolean {
       return Array.isArray(value.links) && value.links.every(isLinkEntry);
     case 'goldenGooseState':
       return (value.carrierSlot === null || isPlayerSlot(value.carrierSlot)) && [value.x, value.y, value.z].every((n) => typeof n === 'number');
+    case 'hordeSyncState':
+      return (
+        typeof value.wave === 'number' &&
+        (value.eliminated === undefined || (Array.isArray(value.eliminated) && value.eliminated.every(isPlayerSlot))) &&
+        (value.result === undefined || value.result === 'cleared' || value.result === 'wiped')
+      );
     default:
       return true;
   }
