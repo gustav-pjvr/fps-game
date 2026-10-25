@@ -47,12 +47,13 @@ describe('standard mapping and lifecycle', () => {
     input.beginFrame(); input.poll();
     expect(getGamepads).toHaveBeenCalledTimes(2);
   });
-  it('maps buttons with one edge per press and leaves bumpers unbound', () => {
+  it('maps buttons with one edge per press, RB to the grenade throw and LB to nothing', () => {
     const input = new GamepadInput();
     const controller = pad([], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14, 15]);
     expect(input.poll([controller]).justPressed).toEqual(new Set(Object.values(GAMEPAD_ACTIONS)));
     expect(input.poll([controller]).justPressed.size).toBe(0);
-    expect(input.poll([pad([], [4, 5])]).actions.size).toBe(0);
+    expect(input.poll([pad([], [4])]).actions.size).toBe(0);
+    expect(input.poll([pad([], [5])]).actions).toEqual(new Set(['grenadeFrag']));
     input.poll([pad()]);
     expect(input.poll([pad([], [7])]).justPressed.has('fire')).toBe(true);
   });
