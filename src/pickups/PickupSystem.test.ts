@@ -48,7 +48,7 @@ function makeRecipient(state = { current: 50, max: 100 }) {
   return { recipient, log, state };
 }
 
-function visualsOf(system: PickupSystem): Map<number, boolean> {
+function visualsOf(_system: PickupSystem): Map<number, boolean> {
   // The mock registered itself by instance; the system's own is the one created last.
   return [...shown.values()].at(-1)!;
 }
