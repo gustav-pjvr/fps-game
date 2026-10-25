@@ -160,6 +160,7 @@ import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
 import { DEFAULT_GAME_MODE, grenadesEnabled, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
 import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
+import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
 import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
 import { loadStoredLoadout } from './loadout.ts';
@@ -429,6 +430,8 @@ export class Game {
   private gooseTossController: GooseTossController | null = null;
   /** Frag and flash grenades (combat/grenades/GrenadeSystem.ts); set in create(). */
   grenades: GrenadeSystem | null = null;
+  /** The grenades' view-model arm, arc preview, HUD marks, white-out and deafness; set in create(). */
+  private grenadeEffects: GrenadeEffects | null = null;
   /** King of the Hill's own claim/drop/scoring controller (see
    * modeControllers/KingOfTheHillController.ts). Null for every mode but King of the Hill. */
   private kingOfTheHillController: KingOfTheHillController | null = null;
@@ -1510,6 +1513,7 @@ export class Game {
         }
       },
     });
+    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera });
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
@@ -1768,6 +1772,7 @@ export class Game {
     this.modeExplanationScreen?.dispose();
     this.loadoutScreen?.dispose();
     this.explosionEffect.dispose();
+    this.grenadeEffects?.dispose();
     this.grenades?.dispose();
     this.glintMarkers.dispose();
     this.gooseManager.dispose();
@@ -3261,6 +3266,7 @@ export class Game {
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);
     this.worldMarkers?.update(this.renderer.camera);
+    this.grenadeEffects?.update(hudDt, this.weaponManager);
     if (this.facility) {
       this.updateFacilityLight(hudDt);
       this.updateTorches();

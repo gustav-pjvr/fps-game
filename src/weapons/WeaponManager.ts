@@ -375,6 +375,11 @@ export class WeaponManager {
     return this.throwPoseAmount;
   }
 
+  /** 0 to 1 through the throw animation after a grenade leaves the hand, or null when none plays. */
+  get throwProgress(): number | null {
+    return this.throwLowerTime > 0 ? 1 - this.throwLowerTime / GRENADE_THROW_ANIMATION_SECONDS : null;
+  }
+
   private get handsBusy(): boolean {
     return this.grenadeInHand || this.throwLowerTime > 0;
   }
