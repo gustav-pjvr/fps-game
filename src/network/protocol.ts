@@ -71,8 +71,9 @@ export interface WelcomeMessage {
      * joiner sees the same dark rooms. Missing means none (and on older builds). */
     deadLamps?: number[];
     /** Facility only: which doors are open and which breakers are on (docs/facility-map.md,
-     * section 12), so a late joiner starts with the same ones. Missing means the match's start. */
-    worldObjects?: { doors: string; breakers: string };
+     * section 12), so a late joiner starts with the same ones; on the Valley the open house doors
+     * (`valleyDoors`, docs/enterable-buildings.md). Missing means the match's start. */
+    worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
   };
 }
 
@@ -216,11 +217,14 @@ export interface WorldInteractMessage {
 
 /** Host -> everyone (host-authored broadcast, never relayed): every Facility door ('1' open) and
  * breaker ('1' on) in id order, sent on each change and to each guest on its first playerSnapshot
- * (it may have been loading when a change went past). Guests adopt it whole. */
+ * (it may have been loading when a change went past). Guests adopt it whole. On the Valley both
+ * strings are empty and `valleyDoors` lists the open house doors' ids (world/houses/valleyHouseIds.ts,
+ * docs/enterable-buildings.md); worldInteract carries those same ids. */
 export interface WorldObjectStateMessage {
   type: 'worldObjectState';
   doors: string;
   breakers: string;
+  valleyDoors?: number[];
 }
 
 /** Sent by the shooter (`senderSlot`, the attacker) when their own hitscan registers a hit on a
@@ -753,8 +757,10 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
     return (kind === 'door' || kind === 'breaker') && Number.isInteger(id) && (id as number) >= 0;
   }
   if (type === 'worldObjectState') {
-    const { doors, breakers } = value as { doors?: unknown; breakers?: unknown };
-    return [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
+    const { doors, breakers, valleyDoors } = value as { doors?: unknown; breakers?: unknown; valleyDoors?: unknown };
+    const validDoors = valleyDoors === undefined ||
+      (Array.isArray(valleyDoors) && valleyDoors.length <= 4096 && valleyDoors.every(id => Number.isSafeInteger(id) && (id as number) >= 0));
+    return validDoors && [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
   }
   return true;
 }

@@ -33,6 +33,7 @@ import {
 import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
+import { soloWeatherFromUrl } from './devWeather.ts';
 import { setEnemyDoorGate, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
@@ -574,7 +575,15 @@ export class Game {
   /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
    * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. */
   private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number): void {
-    if (!this.facility) return;
+    if (!this.facility) {
+      // A Valley house's ceiling lamp (docs/enterable-buildings.md): broken locally for now.
+      const lamp = this.buildings?.houses.shootRay(origin, direction, distance);
+      if (lamp) {
+        const at = new THREE.Vector3(lamp.x, lamp.y, lamp.z), volume = lampBreakVolume(at.distanceTo(this.player.position));
+        if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, at));
+      }
+      return;
+    }
     const lamp = this.facility.world.rayHitLamp(origin, direction, distance);
     if (lamp >= 0) this.destroyFacilityLamp(lamp, true);
   }
@@ -757,6 +766,9 @@ export class Game {
       facilityBreaker: (index) => this.facility?.objects.debugBreaker(index) ?? null,
       setFacilityBreaker: (index, on) => this.facilityInteraction?.requestState('breaker', index, on) ?? false,
       facilityLookTarget: () => this.facilityInteraction?.lookTarget() ?? null,
+      getValleyHouses: () => this.buildings?.houses.debugHouses() ?? [],
+      setValleyDoor: (id, open) => (this.buildings ? this.facilityInteraction?.requestState('door', id, open) ?? false : false),
+      getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
       shootLamp: (index) => this.destroyFacilityLamp(index, true),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
       setPlayerInvulnerable: (invulnerable) => {
@@ -828,7 +840,7 @@ export class Game {
     // Renderer.setMatchWeather. The lights then take the same look.
     // The Facility (docs/facility-map.md) is indoors: weather does not apply, it has its own look.
     const isFacility = (multiplayer?.map ?? matchConfig.map) === 'facility';
-    const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
+    const matchWeather: MatchWeather = multiplayer?.weather ?? soloWeatherFromUrl() ?? DEFAULT_MATCH_WEATHER;
     if (isFacility) renderer.setMatchLook(FACILITY_LOOK);
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
@@ -885,7 +897,8 @@ export class Game {
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
-      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles);
+      // Houses' ceiling lamps are lit at Night and in Fog (docs/enterable-buildings.md).
+      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles, { lampsOn: matchWeather !== 'day' });
       const roads = RoadManager.create(renderer.scene, valleyBuildings);
       const valleyTowers = WatchTowerManager.create(renderer.scene, physics);
 
@@ -1488,6 +1501,12 @@ export class Game {
       interaction.applyInitial(multiplayer?.worldObjects);
       setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;
+    } else if (buildings) {
+      // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
+      // messages. Enemies opening them is part 2 (no enemy door gate on the Valley yet).
+      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      interaction.applyInitial(multiplayer?.worldObjects);
+      game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
@@ -1565,7 +1584,7 @@ export class Game {
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
         worldInteract: (slot, kind, id) => game.facilityInteraction?.receiveInteract(slot, kind, id),
-        worldObjectState: (doors, breakers) => game.facilityInteraction?.receiveState(doors, breakers),
+        worldObjectState: (doors, breakers, valleyDoors) => game.facilityInteraction?.receiveState(doors, breakers, valleyDoors),
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1654,6 +1673,7 @@ export class Game {
                 ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
                 ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices(), worldObjects: game.facility.objects.wire() } : {}),
+                ...(game.buildings ? { worldObjects: game.buildings.houses.doors.wire() } : {}),
               },
             };
           }
@@ -1739,6 +1759,7 @@ export class Game {
     this.facility?.world.dispose();
     this.facility?.objects.dispose();
     this.facilityInteraction?.dispose();
+    this.buildings?.houses.dispose();
     this.facility?.lampBreak.dispose();
     this.facility?.torch.dispose();
     this.facility?.remoteTorches?.dispose();
@@ -2358,6 +2379,7 @@ export class Game {
     // Facility doors and breakers (section 12): before the mode controllers, which only see an
     // interact press this did not take (it takes one only while a door or panel is looked at).
     this.facilityInteraction?.update(dt, freezeLocalPlayer ? null : this.input);
+    this.buildings?.houses.update(dt, this.renderer.camera);
     if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause.

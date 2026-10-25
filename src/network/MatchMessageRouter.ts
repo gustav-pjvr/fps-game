@@ -98,11 +98,11 @@ export interface MatchMessageContext {
   /** Facility only: a playerSnapshot from this slot arrived (they are in the match and listening),
    * the cue to send them this client's dead-lamp set the first time (see network/lampSync.ts). */
   opponentInMatch(slot: PlayerSlot): void;
-  /** Facility only, host only (a no-op elsewhere): guest `slot` pressed interact on a door or
-   * breaker panel (docs/facility-map.md, section 12). The host checks and applies it. */
+  /** Host only (a no-op elsewhere): guest `slot` pressed interact on a door or breaker panel
+   * (docs/facility-map.md, section 12), or on the Valley a house door. The host checks and applies it. */
   worldInteract(slot: PlayerSlot, kind: 'door' | 'breaker', id: number): void;
-  /** Facility only, guest only: the host's doors and breakers, adopted whole. */
-  worldObjectState(doors: string, breakers: string): void;
+  /** Guest only: the host's doors and breakers (on the Valley the open house doors), adopted whole. */
+  worldObjectState(doors: string, breakers: string, valleyDoors?: number[]): void;
 }
 
 /** Routes one inbound network message to its local side effects. Takes over from the room screen's
@@ -211,7 +211,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       break;
     case 'worldObjectState':
       // Host-authored and never relayed; the host applied it itself before sending.
-      if (activeMultiplayer.session.role === 'guest') ctx.worldObjectState(message.doors, message.breakers);
+      if (activeMultiplayer.session.role === 'guest') ctx.worldObjectState(message.doors, message.breakers, message.valleyDoors);
       break;
     case 'damageEvent':
       // This client is authoritative over its own player's health - the attacker only ever
