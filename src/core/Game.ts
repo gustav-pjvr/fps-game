@@ -1503,9 +1503,10 @@ export class Game {
       game.facilityInteraction = interaction;
     } else if (buildings) {
       // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
-      // messages. Enemies opening them is part 2 (no enemy door gate on the Valley yet).
+      // messages; enemies open them through the same gate as the Facility's.
       const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
       interaction.applyInitial(multiplayer?.worldObjects);
+      setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
