@@ -21,3 +21,20 @@ export function resolveMoveTarget(fromX: number, fromZ: number, toX: number, toZ
 export function hasEnemyNavigator(): boolean {
   return navigator !== null;
 }
+
+/** Whether an enemy at (x, z) about to walk along the unit direction (dirX, dirZ) must stand still
+ * this tick: a Facility match's closed door in the way (docs/facility-map.md, section 12). The gate
+ * itself counts the wait and opens the door. */
+export type EnemyDoorGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number) => boolean;
+
+let doorGate: EnemyDoorGate | null = null;
+
+/** Module-level like the navigator: set by a Facility match, cleared on its dispose. */
+export function setEnemyDoorGate(fn: EnemyDoorGate | null): void {
+  doorGate = fn;
+}
+
+/** True when a door gate holds this enemy where it stands this tick; always false without one. */
+export function heldAtDoor(enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number): boolean {
+  return doorGate ? doorGate(enemyId, x, z, dirX, dirZ, dt) : false;
+}

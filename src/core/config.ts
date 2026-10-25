@@ -646,6 +646,9 @@ export const KNIFE_SWING_FULL_VOLUME_RANGE = 5;
 export const KNIFE_SWING_AUDIBLE_RANGE = 15;
 /** A Facility lamp breaking: full volume as near as a gunshot is, fading to silence at 40 m. */
 export const LAMP_BREAK_AUDIBLE_RANGE = 40;
+/** Facility doors sliding and breakers thrown: full volume within 8 m, silent beyond 30 m. */
+export const FACILITY_OBJECT_FULL_VOLUME_RANGE = 8;
+export const FACILITY_OBJECT_AUDIBLE_RANGE = 30;
 
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
@@ -1004,6 +1007,24 @@ export const FACILITY_LAMP_FALLOFF_M2 = 1.2;
  * the 7 m atrium is lit like a 3.5 m office instead of fading to black under the tight falloff. */
 export const FACILITY_LAMP_REFERENCE_HEIGHT = 3.4;
 export const FACILITY_LAMP_HEIGHT_EXPONENT = 1.6;
+/** Facility doors and breaker switches (docs/facility-map.md, section 12). Independent random
+ * streams for which openings get a door and for the power zones, clear of the other offsets. */
+export const FACILITY_DOOR_SEED_OFFSET = 613;
+export const FACILITY_POWER_SEED_OFFSET = 617;
+/** Share of openings that get a door (dark rooms' openings always do). */
+export const FACILITY_DOOR_CHANCE = 0.6;
+/** Openings wider than this many cells stay open archways: a corridor running along a room's wall
+ * opens into it over its whole length, which no sliding door spans. */
+export const FACILITY_DOOR_MAX_CELLS = 3;
+/** Seconds a door's leaves take to slide fully open or shut. */
+export const FACILITY_DOOR_SLIDE_SECONDS = 0.6;
+/** How far (m) a player reaches to work a door or a breaker panel. */
+export const FACILITY_INTERACT_REACH = 2.2;
+/** Extra flow-field cost (in cell steps) of crossing a closed door: enemies take a slightly longer
+ * open route, but not a long detour, over stopping to open one. */
+export const FACILITY_DOOR_NAV_COST = 4;
+/** Seconds an enemy stands at a closed door before it opens it. */
+export const FACILITY_ENEMY_DOOR_WAIT = 0.8;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;

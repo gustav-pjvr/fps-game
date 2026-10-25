@@ -39,8 +39,13 @@ export class FacilityWorld {
   private readonly lightRanges: LightRange[] = [];
   /** The light, probes, direct and fill of the full bake, so relightAll restores them exactly. */
   private readonly original: { light: Float32Array; probes: Float32Array; direct: Float32Array; fill: Float32Array };
+  /** Lamps shot out (section 11): dead for the rest of the match, whatever their breaker does. */
   private readonly dead = new Set<number>();
-  /** Dead lamps whose light is still in the bake: update rebakes one per frame, oldest first. */
+  /** Lamps whose zone's breaker is off (section 12), tracked apart from `dead` so each restores
+   * correctly: power back on relights only the lamps that were not shot out. */
+  private readonly unpowered = new Set<number>();
+  /** Lamps whose light went out or came back but whose bake has not caught up: update rebakes one
+   * per frame, oldest first. */
   private readonly rebakeQueue: number[] = [];
   private lampMesh: THREE.InstancedMesh | null = null;
   private shaftMesh: THREE.InstancedMesh | null = null;
@@ -190,6 +195,9 @@ export class FacilityWorld {
 
   isLampDead(index: number): boolean { return this.dead.has(index); }
 
+  /** Neither shot out nor without power. */
+  isLampLit(index: number): boolean { return !this.dead.has(index) && !this.unpowered.has(index); }
+
   deadLampIndices(): number[] { return [...this.dead].sort((a, b) => a - b); }
 
   /**
@@ -202,10 +210,31 @@ export class FacilityWorld {
   killLamp(index: number): { x: number; y: number; z: number } | null {
     const position = this.lampPosition(index);
     if (this.disposed || !position || this.dead.has(index)) return null;
+    // A lamp without power is already dark: it still breaks, but its light needs no rebake.
+    const wasLit = this.isLampLit(index);
     this.dead.add(index);
-    this.setLampLit(index, false);
-    this.rebakeQueue.push(index);
+    if (wasLit) this.lightChanged(index);
     return position;
+  }
+
+  /**
+   * Cuts or restores a lamp's power (its zone's breaker, section 12). A lamp that is not shot out
+   * goes dark or relights at once and its light leaves or rejoins the bake through the same queued
+   * rebake as killLamp; a shot-out lamp stays dark either way. True when the lamp's light changed.
+   */
+  setLampPowered(index: number, powered: boolean): boolean {
+    if (this.disposed || !this.lampPosition(index) || this.unpowered.has(index) === !powered) return false;
+    const wasLit = this.isLampLit(index);
+    if (powered) this.unpowered.delete(index); else this.unpowered.add(index);
+    if (wasLit === this.isLampLit(index)) return false;
+    this.lightChanged(index);
+    return true;
+  }
+
+  /** The panel turns dark or lit now; the bake follows on a later frame. */
+  private lightChanged(index: number): void {
+    this.setLampLit(index, this.isLampLit(index));
+    if (!this.rebakeQueue.includes(index)) this.rebakeQueue.push(index);
   }
 
   /** Kills every listed lamp that is still lit (a late joiner's dead set, a resync). Returns those. */
@@ -215,7 +244,7 @@ export class FacilityWorld {
     return killed;
   }
 
-  /** Dead lamps whose rebake has not run yet. */
+  /** Lamps whose rebake has not run yet. */
   get pendingRebakes(): number { return this.rebakeQueue.length; }
 
   /** Runs every queued rebake now (tests, and anything that must see the final light at once). */
@@ -223,14 +252,18 @@ export class FacilityWorld {
     while (this.rebakeNext());
   }
 
-  /** Takes one lamp's light out of the bake. False when the queue was empty. */
+  /** Brings one lamp's share of the bake up to date: out while it is dark, back in while it is lit.
+   * The rebake around a lamp recomputes every vertex and probe it reaches from all the lamps lit
+   * now, so the order of kills, power cuts and relights never matters. False when the queue was
+   * empty. */
   private rebakeNext(): boolean {
     const index = this.rebakeQueue.shift();
     if (index === undefined) return false;
     const position = this.lampPosition(index);
-    if (this.disposed || !position || !this.dead.has(index)) return true;
+    if (this.disposed || !position) return true;
     const start = performance.now();
-    const { vertices } = rebakeFacilityAround(this.bake, this.dead, position.x, position.y, position.z, index);
+    const unlit = new Set([...this.dead, ...this.unpowered]);
+    const { vertices } = rebakeFacilityAround(this.bake, unlit, position.x, position.y, position.z, index);
     // Changed vertices are ascending and the materials are in order, so one walk finds each range.
     let k = 0;
     for (const range of this.lightRanges) {
@@ -247,9 +280,9 @@ export class FacilityWorld {
     return true;
   }
 
-  /** Relights every lamp and restores the full bake exactly. */
+  /** Relights every lamp, shot out or without power, and restores the full bake exactly. */
   relightAll(): void {
-    if (this.disposed || !this.dead.size) return;
+    if (this.disposed || (!this.dead.size && !this.unpowered.size)) return;
     this.rebakeQueue.length = 0;
     const { bake, original } = this;
     bake.light.set(original.light); bake.probes.set(original.probes);
@@ -258,8 +291,9 @@ export class FacilityWorld {
       range.attribute.clearUpdateRanges();
       range.attribute.needsUpdate = true;
     }
-    for (const index of this.dead) this.setLampLit(index, true);
+    for (const index of [...this.dead, ...this.unpowered]) this.setLampLit(index, true);
     this.dead.clear();
+    this.unpowered.clear();
   }
 
   /**

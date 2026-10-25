@@ -242,6 +242,24 @@ export class SoundEngine {
     this.tone(120, 0.3, 0.06 * volumeScale, 'sawtooth', pan);
   }
 
+  /** A Facility door's two steel leaves sliding (docs/facility-map.md, section 12): a filtered
+   * rumble over the 0.6 s travel, a low motor whine, and a thud as the leaves meet or stop.
+   * `volumeScale`/`pan` follow the same convention as `playGunshot`. */
+  playDoorSlide(closing: boolean, volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.6, 900, 'bandpass', 0.2 * volumeScale, pan, 0, 420, 0.08);
+    this.sweep(closing ? 110 : 80, closing ? 80 : 110, 0.55, 0.05 * volumeScale, 'sawtooth', pan);
+    this.tone(closing ? 55 : 70, 0.16, 0.22 * volumeScale, 'sine', pan, 0.56);
+  }
+
+  /** A breaker lever thrown (section 12): a heavy clunk, then mains hum winding down when the zone
+   * loses power or up when it comes back. Same `volumeScale`/`pan` convention. */
+  playBreakerSwitch(on: boolean, volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.08, 650, 'lowpass', 0.45 * volumeScale, pan);
+    this.tone(90, 0.12, 0.28 * volumeScale, 'square', pan);
+    if (on) this.sweep(35, 100, 0.7, 0.07 * volumeScale, 'sawtooth', pan, 0.05);
+    else this.sweep(100, 30, 1.4, 0.08 * volumeScale, 'sawtooth', pan, 0.05);
+  }
+
   playHitConfirm(): void {
     this.tone(1100, 0.06, 0.22, 'sine');
   }
@@ -480,6 +498,24 @@ export class SoundEngine {
     envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
 
     oscillator.connect(envelope).connect(this.outputNode(pan, wet));
+    oscillator.start(start);
+    oscillator.stop(start + duration);
+  }
+
+  /** Like `tone`, with the pitch gliding from `from` to `to` Hz over the duration. */
+  private sweep(from: number, to: number, duration: number, gain: number, type: OscillatorType, pan = 0, delay = 0): void {
+    const oscillator = this.ctx.createOscillator();
+    oscillator.type = type;
+    const start = this.ctx.currentTime + delay;
+    oscillator.frequency.setValueAtTime(from, start);
+    oscillator.frequency.exponentialRampToValueAtTime(to, start + duration);
+
+    const envelope = this.ctx.createGain();
+    envelope.gain.setValueAtTime(0.001, start);
+    envelope.gain.linearRampToValueAtTime(gain, start + Math.min(0.08, duration / 4));
+    envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
+
+    oscillator.connect(envelope).connect(this.outputNode(pan));
     oscillator.start(start);
     oscillator.stop(start + duration);
   }

@@ -3,6 +3,8 @@ import {
   ENEMY_GUNSHOT_AUDIBLE_RANGE,
   ENEMY_GUNSHOT_FULL_VOLUME_RANGE,
   ENEMY_GUNSHOT_MIN_VOLUME,
+  FACILITY_OBJECT_AUDIBLE_RANGE,
+  FACILITY_OBJECT_FULL_VOLUME_RANGE,
   KNIFE_SWING_AUDIBLE_RANGE,
   KNIFE_SWING_FULL_VOLUME_RANGE,
   LAMP_BREAK_AUDIBLE_RANGE,
@@ -43,6 +45,12 @@ export function knifeSwingVolume(distance: number): number {
  * LAMP_BREAK_AUDIBLE_RANGE. */
 export function lampBreakVolume(distance: number): number {
   return distanceGainFalloff(distance, MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE, LAMP_BREAK_AUDIBLE_RANGE, 0);
+}
+
+/** A Facility door sliding or a breaker thrown (docs/facility-map.md, section 12): full within
+ * FACILITY_OBJECT_FULL_VOLUME_RANGE, silent from FACILITY_OBJECT_AUDIBLE_RANGE. */
+export function facilityObjectVolume(distance: number): number {
+  return distanceGainFalloff(distance, FACILITY_OBJECT_FULL_VOLUME_RANGE, FACILITY_OBJECT_AUDIBLE_RANGE, 0);
 }
 
 /** Stereo pan (-1 full left .. 1 full right) for a sound at `sourcePosition`, from the perspective
