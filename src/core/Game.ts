@@ -31,7 +31,7 @@ import {
   type FacilityLayout,
 } from '../world/facility/facilityLayout.ts';
 import { FacilityNav } from '../world/facility/facilityNav.ts';
-import { facilityBlocksThrow, facilityGoosePlacement, facilityHordeSite } from '../world/facility/facilityModes.ts';
+import { facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
@@ -42,8 +42,9 @@ import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
 import { DamageArcs } from '../ui/damageArcs.ts';
 import { WorldMarkers } from '../ui/worldMarkers.ts';
-import { MissionState, type MissionView } from './mission/missionState.ts';
+import { MissionState, missionMapMarkers, type MissionView } from './mission/missionState.ts';
 import { UplinkBeacons } from '../world/UplinkBeacons.ts';
+import { FACILITY_CONSOLE_HEIGHT } from '../world/facility/facilityConsoles.ts';
 import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
@@ -728,6 +729,8 @@ export class Game {
         const view = this.mission.view(this.player.position);
         return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
       },
+      getHordeDebug: () =>
+        this.hordeGooseManager ? { wave: this.hordeGooseManager.currentWave, geese: this.hordeGooseManager.listForSync() } : null,
       getFacilityDebug: () => {
         if (!this.facility) return null;
         const { layout, world } = this.facility;
@@ -1983,10 +1986,15 @@ export class Game {
     this.worldMarkers?.remove('extract');
 
     const position = this.player.position;
-    const mission = new MissionState(getWatchTowerPositions(), { x: position.x, z: position.z });
+    // On the Facility four rooms' consoles stand in for the watch towers (docs/facility-map.md).
+    const facility = this.facility;
+    const points = facility ? facilityMissionObjectives(facility.layout, facility.start) : getWatchTowerPositions();
+    const mission = new MissionState(points, { x: position.x, z: position.z });
     this.mission = mission;
     const view = mission.view(position);
-    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view);
+    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view, facility
+      ? { physics: this.physics, ceilingAt: (x, z) => facilityCeilingAt(facility.layout, x, z) }
+      : null);
     for (const uplink of view.uplinks) {
       this.hud.compass.addMarker(`uplink-${uplink.label}`, () => bearingDeg(uplink.x - this.player.position.x, uplink.z - this.player.position.z));
     }
@@ -2079,12 +2087,14 @@ export class Game {
     }
     hud.setPrompt('E', this.missionWon ? null : view.prompt);
     this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
+    // Only the Facility has a single-player map.
+    this.soloMinimap?.setMarkers(missionMapMarkers(view));
 
     const markers = this.worldMarkers;
     if (!markers) return;
     for (const uplink of view.uplinks) {
       if (uplink.status === 'online') continue;
-      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + WATCH_TOWER_ROOF_TOP + 3, uplink.z);
+      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : WATCH_TOWER_ROOF_TOP + 3), uplink.z);
       markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
     }
     if (view.phase === 'extract') {
@@ -2555,6 +2565,8 @@ export class Game {
     // tick's hitscan can fire (see that call site's comment) - this just reads the already-updated
     // positions for the minimap.
     const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
+    // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
+    if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions());
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
     this.multiplayer.multiplayerHud.update(

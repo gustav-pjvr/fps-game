@@ -20,6 +20,13 @@ export interface MinimapLayer {
   draw(context: CanvasRenderingContext2D): void;
 }
 
+/** A mode's objective on the map (the King of the Hill goose, an uplink, the extraction). */
+export interface MinimapMarker {
+  readonly id: string;
+  readonly x: number;
+  readonly z: number;
+}
+
 export interface MinimapOptions {
   /** World metres from the centre to the rim; MINIMAP_WORLD_RADIUS by default. */
   readonly worldRadius?: number;
@@ -72,6 +79,8 @@ export class Minimap {
   private readonly itemDots = new Map<string, HTMLDivElement>();
   /** Single-player Facility enemies (docs/facility-map.md, section 8), keyed by entity id. */
   private readonly enemyDots = new Map<number, { dot: HTMLDivElement; lastMovedAt: number }>();
+  /** Mode objectives (setMarkers), keyed by marker id. */
+  private readonly markers = new Map<string, { dot: HTMLDivElement; x: number; z: number }>();
   private readonly worldRadius: number;
   private readonly layer: MinimapLayer | null;
   private readonly layerCanvas: HTMLCanvasElement | null = null;
@@ -146,6 +155,33 @@ export class Minimap {
     this.itemDots.delete(id);
   }
 
+  /** The mode's objectives, replacing the last set: a cyan diamond each, held at the rim like the
+   * other dots while out of range, placed by update(). */
+  setMarkers(markers: readonly MinimapMarker[]): void {
+    const seen = new Set<string>();
+    for (const { id, x, z } of markers) {
+      seen.add(id);
+      let entry = this.markers.get(id);
+      if (!entry) {
+        const dot = document.createElement('div');
+        dot.dataset.testid = `minimap-marker-${id}`;
+        dot.style.cssText =
+          `position:absolute; width:${DOT_SIZE_PX - 1}px; height:${DOT_SIZE_PX - 1}px; background:${ACCENT};` +
+          ` border:1px solid ${SURFACE}; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%) rotate(45deg);`;
+        this.root.insertBefore(dot, this.forwardWedge);
+        entry = { dot, x, z };
+        this.markers.set(id, entry);
+      }
+      entry.x = x;
+      entry.z = z;
+    }
+    for (const [id, entry] of this.markers) {
+      if (seen.has(id)) continue;
+      entry.dot.remove();
+      this.markers.delete(id);
+    }
+  }
+
   /** `localPosition`/positions in `opponents` are full world positions (Y ignored - this is a
    * top-down XZ projection). `localFacingYaw` is the local player's current yaw
    * (Player.facingYaw) - each opponent's world-space offset is rotated by -yaw so the player's
@@ -183,6 +219,8 @@ export class Minimap {
       if (!opponentPosition) continue;
       placeDot(dot, localPosition, opponentPosition, yawQuat, this.worldRadius);
     }
+
+    for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.worldRadius);
 
     if (!items) return;
     for (const [id, dot] of this.itemDots) {
