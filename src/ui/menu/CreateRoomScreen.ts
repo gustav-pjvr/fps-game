@@ -436,11 +436,11 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onHostHello: (username, rejoinToken, features) => {
+      onHostHello: (username, rejoinToken, features, peerId) => {
         if (!this.hostRoster) return 'full';
         // An older build would load the Valley inside a Facility room: turned away before it takes a slot.
         if (!helloSupportsMap(features, this.mapSelect.value as MatchMap)) return 'outdated';
-        const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
+        const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
         if (outcome.outcome === 'full') return 'full';
         // A rejoin may take over a slot whose stale connection was still marked ready. The player on
         // the new connection hasn't readied, so they must click Ready again.

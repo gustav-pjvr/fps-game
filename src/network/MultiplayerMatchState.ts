@@ -1,4 +1,4 @@
-import { applyPlayerDied } from '../core/multiplayerScoring.ts';
+import { applyMatchDeath } from '../core/multiplayerScoring.ts';
 import { KOTH_POINTS_TO_WIN } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 import type { PlayerSlot } from './protocol.ts';
@@ -62,12 +62,10 @@ export class MultiplayerMatchState {
 
   /** Applies one death's kill-credit to both maps - Goose Horde is co-op, so per explicit user
    * request nobody scores off a teammate's death (accidental friendly fire or otherwise), and this
-   * mode has no kill-limit win condition anyway (see findWinner). Mirrors the exact gate
-   * MatchMessageRouter's 'playerDied' case and Game's own local-death broadcast both used to apply
-   * inline before this extraction. */
-  applyDeath(gameMode: GameMode, payload: { victimSlot: PlayerSlot; killerSlot: PlayerSlot | null }): void {
-    if (gameMode === 'gooseHorde') return;
-    applyPlayerDied(this.scoreboard, this.deathCounts, payload);
+   * mode has no kill-limit win condition anyway (see findWinner); Gun Game's winning kill needs the
+   * launcher. The same rules MatchMessageRouter's 'playerDied' case applies (applyMatchDeath). */
+  applyDeath(gameMode: GameMode, killLimit: number, payload: { victimSlot: PlayerSlot; killerSlot: PlayerSlot | null; killerWeaponId?: string }): void {
+    applyMatchDeath(this.scoreboard, this.deathCounts, gameMode, killLimit, payload);
   }
 
   /** The win threshold for `gameMode`/`killLimit`, or null if this mode has no scoreboard-based win

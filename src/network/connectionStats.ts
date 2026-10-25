@@ -39,46 +39,50 @@ export function readConnectionQuality(report: Pick<RTCStatsReport, 'forEach' | '
   return { rttMs: typeof rtt === 'number' ? Math.round(rtt * 1000) : null, route };
 }
 
+/** A guest's round trip to another guest it has no direct link to: its own link to the host plus
+ * the host's measured link to that guest (LinkQualityMessage), unknown until both are known. Their
+ * updates cross both links, so the sum is what they actually travel. */
+export function combineRelayedQuality(hostLink: ConnectionQuality, hostToGuest: { rttMs: number | null; relay: boolean }): ConnectionQuality {
+  const rttMs = hostLink.rttMs !== null && hostToGuest.rttMs !== null ? hostLink.rttMs + hostToGuest.rttMs : null;
+  const route: ConnectionRoute | null = hostLink.route === 'relay' || hostToGuest.relay ? 'relay' : hostLink.route;
+  return { rttMs, route };
+}
+
 /** What the HUD shows and how far ahead each opponent is predicted (RemotePlayer.setLeadSeconds),
- * from one round of measurements. Only direct links can be measured: a guest measures the host,
- * the host measures every guest. */
+ * from one round of measurements (PeerConnection.connectionQuality: one entry per opponent, over
+ * the path their snapshots actually take). */
 export interface ConnectionSummary {
-  /** Guest: its link to the host. Host: its slowest guest, and relay if any guest is relayed. */
-  readonly shown: ConnectionQuality;
-  /** Seconds of network delay to make up for each opponent, by slot. */
+  /** Each opponent's round trip, by slot; unknown where nothing was measured yet. */
+  readonly perOpponent: ReadonlyMap<number, ConnectionQuality>;
+  /** Seconds of network delay to make up for each opponent, by slot: half their round trip. */
   readonly leadSeconds: ReadonlyMap<number, number>;
 }
 
-export function summarizeConnection(
-  role: 'host' | 'guest',
-  hostSlot: number,
-  measured: ReadonlyMap<number, ConnectionQuality>,
-  opponentSlots: Iterable<number>,
-): ConnectionSummary {
+export function summarizeConnection(measured: ReadonlyMap<number, ConnectionQuality>, opponentSlots: Iterable<number>): ConnectionSummary {
+  const perOpponent = new Map<number, ConnectionQuality>();
   const leadSeconds = new Map<number, number>();
-  if (role === 'guest') {
-    const host = measured.get(hostSlot) ?? UNKNOWN_QUALITY;
-    const oneWay = host.rttMs === null ? 0 : host.rttMs / 2000;
-    // Another guest's updates cross two links, theirs to the host and the host's to here; with only
-    // this side measured, assume theirs is about the same.
-    for (const slot of opponentSlots) leadSeconds.set(slot, slot === hostSlot ? oneWay : oneWay * 2);
-    return { shown: host, leadSeconds };
-  }
-  let worst: number | null = null;
-  let relayed = false;
-  let anyRoute = false;
   for (const slot of opponentSlots) {
     const quality = measured.get(slot) ?? UNKNOWN_QUALITY;
+    perOpponent.set(slot, quality);
     leadSeconds.set(slot, quality.rttMs === null ? 0 : quality.rttMs / 2000);
-    if (quality.rttMs !== null) worst = Math.max(worst ?? 0, quality.rttMs);
-    if (quality.route !== null) anyRoute = true;
-    if (quality.route === 'relay') relayed = true;
   }
-  return { shown: { rttMs: worst, route: relayed ? 'relay' : anyRoute ? 'direct' : null }, leadSeconds };
+  return { perOpponent, leadSeconds };
 }
 
 /** The HUD line: "Ping 42 ms", "Ping 120 ms, relay", or "Ping --" before the first measurement. */
 export function formatConnection(quality: ConnectionQuality): string {
   const ping = quality.rttMs === null ? 'Ping --' : `Ping ${quality.rttMs} ms`;
   return quality.route === 'relay' ? `${ping}, relay` : ping;
+}
+
+/** The HUD line with several opponents, one round trip each: "Ping Ann 42 ms, Bob 61 ms relay,
+ * Cat --". With one opponent it is formatConnection's line, as in a two-player match. */
+export function formatOpponentPings(entries: readonly { name: string; quality: ConnectionQuality }[]): string {
+  if (entries.length === 0) return formatConnection(UNKNOWN_QUALITY);
+  if (entries.length === 1) return formatConnection(entries[0]!.quality);
+  const parts = entries.map(({ name, quality }) => {
+    const ping = quality.rttMs === null ? `${name} --` : `${name} ${quality.rttMs} ms`;
+    return quality.route === 'relay' ? `${ping} relay` : ping;
+  });
+  return `Ping ${parts.join(', ')}`;
 }

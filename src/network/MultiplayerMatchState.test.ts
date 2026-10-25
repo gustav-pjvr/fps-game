@@ -54,13 +54,13 @@ describe('MultiplayerMatchState.findWinner - win-condition threshold scan', () =
 describe('MultiplayerMatchState.applyDeath', () => {
   it('credits the killer for a normal PvP mode', () => {
     const state = new MultiplayerMatchState();
-    state.applyDeath('default', { victimSlot: 1, killerSlot: 0 });
+    state.applyDeath('default', 5, { victimSlot: 1, killerSlot: 0 });
     expect(state.scoreboard.get(0)).toBe(1);
   });
 
   it('never credits anyone in Goose Horde (co-op, no friendly-fire scoring)', () => {
     const state = new MultiplayerMatchState();
-    state.applyDeath('gooseHorde', { victimSlot: 1, killerSlot: 0 });
+    state.applyDeath('gooseHorde', 5, { victimSlot: 1, killerSlot: 0 });
     expect(state.scoreboard.size).toBe(0);
     expect(state.deathCounts.size).toBe(0);
   });

@@ -6,6 +6,23 @@ import type { MultiplayerMatchState } from '../../network/MultiplayerMatchState.
 import type { PlayerSlot } from '../../network/protocol.ts';
 import { GOOSE_PICKUP_RADIUS, KOTH_POINT_INTERVAL_SECONDS } from '../config.ts';
 
+/** Whether another player's relayed claim takes the golden goose from `carrier` (this client's
+ * view). Claims are not arbitrated, so two players pressing E within one round trip each see the
+ * other's claim arrive: a claim only displaces a carrier with a HIGHER slot, and every client
+ * applies the same rule to the same pair, so all of them settle on the lowest-numbered claimant. */
+export function acceptsGoldenGooseClaim(carrier: PlayerSlot | null, claimant: PlayerSlot): boolean {
+  return carrier === null || claimant < carrier;
+}
+
+/** Whether another player's relayed drop applies: only from the carrier this client knows. A
+ * claimant who lost the tie-break above may drop (or die) before it hears it lost; that drop used
+ * to clear the real carrier everywhere but on the carrier's own client, so carriers diverged. Each
+ * player's claim and drop reach everyone in order on the reliable channel, so the real carrier's
+ * own drop always finds it still recorded as the carrier. */
+export function acceptsGoldenGooseDrop(carrier: PlayerSlot | null, dropper: PlayerSlot): boolean {
+  return carrier === dropper;
+}
+
 /** King of the Hill's own input handling (claim via 'interact', drop via 'fire') and the
  * continuous points-per-second-held scoring while carrying - split out of Game.ts's update(),
  * which previously kept the hold-time accumulator as a separate Game field alongside this same
