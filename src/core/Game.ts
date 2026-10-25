@@ -31,7 +31,7 @@ import {
   type FacilityLayout,
 } from '../world/facility/facilityLayout.ts';
 import { FacilityNav } from '../world/facility/facilityNav.ts';
-import { setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { Enemy, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -930,6 +930,7 @@ export class Game {
     const spawnY = sampleHeight(ownSpawn.x, ownSpawn.y) + SPAWN_HEIGHT_OFFSET;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(ownSpawn.x, spawnY, ownSpawn.y), {
       onDamaged: (sourcePosition) => {
+        input.vibrate('damage');
         sound.playPlayerHurt();
         damageVignette.trigger();
         if (sourcePosition) {
@@ -1043,6 +1044,7 @@ export class Game {
           });
         },
         (weaponId) => {
+          input.vibrate(WEAPON_DEFINITIONS[weaponId]?.automatic ? 'automatic' : 'fire');
           if (WEAPON_DEFINITIONS[weaponId]?.kind !== 'melee') sound.playGunshot(weaponId);
         },
         (weaponId) => sound.playReloadClick(weaponId),
@@ -1162,6 +1164,7 @@ export class Game {
     const gooseManager = new GooseManager(renderer.scene, physics, {
       onGooseSpawned: () => gooseAnnouncement.show('A goose has appeared!'),
       onExplosion: (position, radius) => {
+        if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
         explosionEffect.spawn(position, radius);
         // Same distance-attenuation/stereo-pan convention as enemy/opponent gunshots (see
         // enemyGunshotVolume/computeStereoPan below) - a goose exploding across the map shouldn't
@@ -1208,6 +1211,7 @@ export class Game {
             onWaveStart: (wave) => gooseAnnouncement.show(`Wave ${wave} of ${hordeWaveTable.length} incoming...`),
             onCleared: () => gooseAnnouncement.show('The horde has been cleared - you survived!'),
             onExplosion: (position) => {
+              if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
               explosionEffect.spawn(position, HORDE_GOOSE_EXPLOSION_RADIUS);
               const distance = position.distanceTo(player.position);
               sound.playExplosion(enemyGunshotVolume(distance), computeStereoPan(player.position, player.facingYaw, position));
@@ -1386,7 +1390,7 @@ export class Game {
     const pauseMenu = new PauseMenu(
       hudRoot,
       {
-        onResume: () => input.requestPointerLock(),
+        onResume: () => input.resume(),
         onSettings: () => settingsPanel.show(),
         onResetPlay: () => void gameRef.current?.resetPlay(),
         onReturnToLobby: () => onReturnToLobby?.(),
@@ -1578,7 +1582,11 @@ export class Game {
         onError: (_message, kind) => {
           if (activeMultiplayer.session.role === 'guest' && kind !== 'brokerLost') game.endMultiplayerMatch(false, 'opponentDisconnected');
         },
-        onMessage: (message, senderSlot) => routeMatchMessage(routerContext, message, senderSlot),
+        onMessage: (message, senderSlot) => {
+          if (message.type === 'gooseThrowExploded'
+            && player.position.distanceTo(new THREE.Vector3(message.x, message.y, message.z)) <= 10) input.vibrate('explosion');
+          routeMatchMessage(routerContext, message, senderSlot);
+        },
         // Host-only - resolves a mid-match join/rejoin's hello into the exact reply to send back,
         // and (for anything past a normal pre-match lobby join, i.e. isMatchInProgress) performs
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
@@ -1695,7 +1703,7 @@ export class Game {
     // A locked pointer hides the OS cursor - the player couldn't actually see/click the mode
     // briefing's Skip button if it were requested here while worldBriefingActive is still true.
     // dismissModeExplanation() requests it instead, once the briefing actually closes.
-    if (!this.worldBriefingActive) this.input.requestPointerLock();
+    if (!this.worldBriefingActive) this.input.resume();
   }
 
   /** Tears down everything this Game instance owns - WebGL context, DOM-appended HUD/menu
@@ -1841,7 +1849,7 @@ export class Game {
     this.deathScreen.hide();
     this.deathScreenVisible = false;
     this.pendingDeathScreenReveal = false;
-    this.input.requestPointerLock();
+    this.input.resume();
   }
 
   /** The hemisphere fill is always created (so applyGraphicsQuality can toggle its intensity live)
@@ -2237,8 +2245,18 @@ export class Game {
     report('Ready');
   }
 
+  private readonly crosshairOverEnemy = (): boolean => {
+    const camera = this.renderer.camera;
+    const hit = castHitscan(this.physics, camera.position, camera.getWorldDirection(new THREE.Vector3()), 60, this.player.ownCollider);
+    if (!hit) return false;
+    const entity = this.physics.getEntity(hit.colliderHandle);
+    return (entity instanceof Enemy || entity instanceof RemotePlayer) && !entity.isDead;
+  };
+
   private readonly update = (dt: number): void => {
     this.tickCount++;
+    this.input.update(dt, this.worldBriefingActive || this.deathScreenVisible || this.multiplayerMatchState.hasEnded, this.crosshairOverEnemy);
+    if (this.deathScreenVisible && !this.multiplayerMatchState.hasEnded && this.input.consumeJustPressed('resetPlay')) void this.resetPlay();
     // Match end (MULTIPLAYER_PLAN.md §7 phase 4) freezes simulation permanently for the rest of
     // this Game instance, unlike a single death - MatchEndScreen (shown by App, not Game) is what
     // the player sees, and it stays alive underneath until Rematch/Return to Lobby is clicked.
@@ -2259,13 +2277,12 @@ export class Game {
       return;
     }
 
-    // Pointer lock is the single source of truth for "paused": pressing Escape forces the browser
-    // to release it (can't be prevented), and a freshly loaded match starts unlocked too - both
-    // cases should show the pause menu and freeze simulation. Death has its own overlay instead -
+    // Mouse play needs pointer lock; controller play uses explicit pause state.
+    // Death has its own overlay instead -
     // gated on `deathScreenVisible`, not `player.isDead` directly, so a death detected while
     // already paused (multiplayer only) doesn't auto-hide the pause menu before the player has
     // actually chosen to resume (see pendingDeathScreenReveal's own comment).
-    const isPaused = !this.input.isLocked && !this.deathScreenVisible;
+    const isPaused = !this.input.isEngaged && !this.deathScreenVisible;
     this.pauseMenu.setVisible(isPaused);
     this.pauseMenu.update();
 
@@ -2533,7 +2550,7 @@ export class Game {
     this.sound.updateAmbience({
       healthRatio: this.player.currentHealth / this.player.maxHealth,
       director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
-      active: this.input.isLocked && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
+      active: this.input.isEngaged && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
     });
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
@@ -2734,11 +2751,11 @@ export class Game {
     // before clearing deathScreenVisible/pendingDeathScreenReveal below, since those flags are
     // exactly what distinguishes "pause menu open" from "death screen was showing" while input is
     // unlocked either way (see the main isPaused formula in update()).
-    const pauseMenuCurrentlyOpen = !this.input.isLocked && !this.deathScreenVisible;
+    const pauseMenuCurrentlyOpen = !this.input.isEngaged && !this.deathScreenVisible;
     this.deathScreen.hide();
     this.deathScreenVisible = false;
     this.pendingDeathScreenReveal = false;
-    if (!pauseMenuCurrentlyOpen) this.input.requestPointerLock();
+    if (!pauseMenuCurrentlyOpen) this.input.resume();
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z, t: this.sendClock() });
   }
 
@@ -2860,6 +2877,7 @@ export class Game {
     const knockbackStrength = source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH : GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH;
 
     this.explosionEffect.spawn(position, radius);
+    if (position.distanceTo(this.player.position) <= 10) this.input.vibrate('explosion');
     this.sound.playExplosion(
       enemyGunshotVolume(position.distanceTo(this.player.position)),
       computeStereoPan(this.player.position, this.player.facingYaw, position),
@@ -2964,7 +2982,7 @@ export class Game {
   private dismissModeExplanation(): void {
     this.worldBriefingActive = false;
     this.modeExplanationScreen?.hide();
-    this.input.requestPointerLock();
+    this.input.resume();
     // One last readiness broadcast on the way out: the slowest player may have finished loading only
     // moments ago, after this client's periodic resends had already stopped mattering to anyone else.
     if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'modeExplanationReady', slot: this.multiplayer.session.ownSlot });
@@ -3180,6 +3198,10 @@ export class Game {
   private endMultiplayerMatch(won: boolean, reason: MultiplayerMatchEndResult['reason']): void {
     if (this.multiplayerMatchState.hasEnded || !this.multiplayer) return;
     this.multiplayerMatchState.markEnded();
+    this.pauseMenu.setVisible(false);
+    this.settingsPanel.hide();
+    this.loadoutScreen?.hide();
+    this.deathScreen.hide();
     this.input.releasePointerLock();
     const ownSlot = this.multiplayer.session.ownSlot;
     const placements = this.multiplayerMatchState.buildPlacements(this.multiplayer.usernames, ownSlot);

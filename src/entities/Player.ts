@@ -230,17 +230,11 @@ export class Player implements Entity {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(yawQuat);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(yawQuat);
 
-    const movingForward = input.isActionActive('moveForward');
-    const movingBackward = input.isActionActive('moveBackward');
+    const move = input.getMoveVector();
 
     const currentBeforeMove = this.rigidBody.translation();
 
-    const moveDir = new THREE.Vector3();
-    if (movingForward) moveDir.add(forward);
-    if (movingBackward) moveDir.sub(forward);
-    if (input.isActionActive('moveRight')) moveDir.add(right);
-    if (input.isActionActive('moveLeft')) moveDir.sub(right);
-    if (moveDir.lengthSq() > 0) moveDir.normalize();
+    const moveDir = forward.multiplyScalar(-move.y).addScaledVector(right, move.x);
 
     const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
     moveDir.multiplyScalar(speed * dt);

@@ -1,4 +1,5 @@
 import { ACCENT, HAIRLINE, INK, INK_DIM, MONO_FONT, SANS_FONT, TEXT_SHADOW } from './theme.ts';
+import { setDeviceHint } from '../input/GamepadInput.ts';
 
 const SLOT_STYLE = `display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:2px solid transparent; font-family:${SANS_FONT}; font-size:11px; text-transform:uppercase; color:${INK_DIM};`;
 
@@ -19,7 +20,7 @@ export class Hotbar {
       el.style.cssText = SLOT_STYLE;
       const key = document.createElement('span');
       key.style.cssText = `font-family:${MONO_FONT}; font-size:10px; border:1px solid ${HAIRLINE}; padding:3px 5px;`;
-      key.textContent = String(index + 1);
+      setDeviceHint(key, String(index + 1), 'Y / Triangle');
       const label = document.createElement('span');
       label.textContent = name;
       el.append(key, label);

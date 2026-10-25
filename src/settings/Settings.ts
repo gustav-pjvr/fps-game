@@ -8,6 +8,10 @@ interface StoredSettings {
   masterVolume: number;
   musicVolume: number;
   mouseSensitivity: number;
+  controllerSensitivity: number;
+  controllerInvertY: boolean;
+  controllerAimAssist: boolean;
+  controllerVibration: boolean;
   keyBindings: Record<string, Action>;
   graphicsQuality: GraphicsQuality;
   fov: number;
@@ -18,6 +22,10 @@ function defaults(): StoredSettings {
     masterVolume: 0.5,
     musicVolume: 0.6,
     mouseSensitivity: 1,
+    controllerSensitivity: 1,
+    controllerInvertY: false,
+    controllerAimAssist: true,
+    controllerVibration: true,
     keyBindings: { ...DEFAULT_KEY_BINDINGS },
     // Matches what this project's own e2e suite is verified against - see the comment on
     // GRAPHICS_QUALITY_PRESETS in graphicsQuality.ts for why Medium, not High, is the safe default.
@@ -60,6 +68,11 @@ function loadFromStorage(): StoredSettings {
       masterVolume: typeof parsed.masterVolume === 'number' ? parsed.masterVolume : base.masterVolume,
       musicVolume: typeof parsed.musicVolume === 'number' ? Math.max(0, Math.min(1, parsed.musicVolume)) : base.musicVolume,
       mouseSensitivity: typeof parsed.mouseSensitivity === 'number' ? parsed.mouseSensitivity : base.mouseSensitivity,
+      controllerSensitivity: typeof parsed.controllerSensitivity === 'number' && Number.isFinite(parsed.controllerSensitivity)
+        ? Math.max(0.3, Math.min(3, parsed.controllerSensitivity)) : base.controllerSensitivity,
+      controllerInvertY: typeof parsed.controllerInvertY === 'boolean' ? parsed.controllerInvertY : base.controllerInvertY,
+      controllerAimAssist: typeof parsed.controllerAimAssist === 'boolean' ? parsed.controllerAimAssist : base.controllerAimAssist,
+      controllerVibration: typeof parsed.controllerVibration === 'boolean' ? parsed.controllerVibration : base.controllerVibration,
       keyBindings:
         parsed.keyBindings && typeof parsed.keyBindings === 'object'
           ? mergeKeyBindings(parsed.keyBindings)
@@ -85,6 +98,17 @@ function persist(): void {
 /** Persisted (localStorage) user settings: volume, mouse sensitivity, key bindings. Module-level
  * singleton, not a class - there's exactly one settings state for the whole app. */
 export const Settings = {
+  getControllerSensitivity(): number { return state.controllerSensitivity; },
+  setControllerSensitivity(value: number): void {
+    state.controllerSensitivity = Number.isFinite(value) ? Math.max(0.3, Math.min(3, value)) : 1;
+    persist();
+  },
+  getControllerInvertY(): boolean { return state.controllerInvertY; },
+  setControllerInvertY(value: boolean): void { state.controllerInvertY = value; persist(); },
+  getControllerAimAssist(): boolean { return state.controllerAimAssist; },
+  setControllerAimAssist(value: boolean): void { state.controllerAimAssist = value; persist(); },
+  getControllerVibration(): boolean { return state.controllerVibration; },
+  setControllerVibration(value: boolean): void { state.controllerVibration = value; persist(); },
   getMasterVolume(): number {
     return state.masterVolume;
   },

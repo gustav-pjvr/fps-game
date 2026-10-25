@@ -1,4 +1,5 @@
 import { Compass, bearingDeg } from './compass.ts';
+import { setDeviceHint } from '../input/GamepadInput.ts';
 import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, INK_FAINT, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_SHADOW, THREAT } from './theme.ts';
 
 export class Hud {
@@ -149,7 +150,7 @@ export class Hud {
       this.prompt.style.display = 'none';
       return;
     }
-    this.promptKey.textContent = key;
+    setDeviceHint(this.promptKey, key, key === 'E' ? 'B (Circle)' : key === 'F' ? 'D-pad up' : key);
     this.promptText.textContent = text;
     this.prompt.style.display = 'flex';
   }
