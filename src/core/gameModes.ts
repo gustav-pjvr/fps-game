@@ -62,6 +62,17 @@ export interface PlayerLoadout {
   primary: string | null;
   secondary: string | null;
   melee: string | null;
+  /** The grenade thrown with Q (pad RB). Absent in loadouts saved before the Loadout page offered
+   * one; loadStoredLoadout (core/loadout.ts) fills it with LOADOUT_GRENADE_DEFAULT. */
+  grenade?: GrenadeKind;
+}
+
+export type GrenadeKind = 'frag' | 'flash';
+export const GRENADE_KINDS: readonly GrenadeKind[] = ['frag', 'flash'];
+export const LOADOUT_GRENADE_DEFAULT: GrenadeKind = 'frag';
+
+export function isGrenadeKind(value: unknown): value is GrenadeKind {
+  return value === 'frag' || value === 'flash';
 }
 
 export const LOADOUT_SLOT_DEFAULTS: Readonly<Record<'primary' | 'secondary' | 'melee', string>> = {

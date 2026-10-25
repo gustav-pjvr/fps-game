@@ -1,7 +1,7 @@
 import { MONO_FONT } from '../theme.ts';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-export type StatIconKind = 'damage' | 'fireRate' | 'magazine' | 'reload' | 'scope';
+export type StatIconKind = 'damage' | 'fireRate' | 'magazine' | 'reload' | 'scope' | 'radius' | 'fuse' | 'blind' | 'reach';
 
 function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string>): SVGElementTagNameMap[K] {
   const el = document.createElementNS(SVG_NS, tag);
@@ -59,6 +59,41 @@ function buildIcon(kind: StatIconKind): SVGSVGElement {
         svgEl('line', { x1: '8', y1: '12', x2: '8', y2: '15', 'stroke-width': '1.3' }),
         svgEl('line', { x1: '1', y1: '8', x2: '4', y2: '8', 'stroke-width': '1.3' }),
         svgEl('line', { x1: '12', y1: '8', x2: '15', y2: '8', 'stroke-width': '1.3' }),
+      );
+      break;
+    }
+    case 'radius': {
+      // Blast radius: a ring around a solid centre.
+      svg.append(
+        svgEl('circle', { cx: '8', cy: '8', r: '6', 'stroke-width': '1.3', 'stroke-dasharray': '2.4 1.6' }),
+        svgEl('circle', { cx: '8', cy: '8', r: '2', fill: 'currentColor', stroke: 'none' }),
+      );
+      break;
+    }
+    case 'fuse': {
+      // Stopwatch: a dial with one hand and a crown on top.
+      svg.append(
+        svgEl('circle', { cx: '8', cy: '9', r: '5.5', 'stroke-width': '1.3' }),
+        svgEl('line', { x1: '8', y1: '9', x2: '8', y2: '5.5', 'stroke-width': '1.3' }),
+        svgEl('line', { x1: '6', y1: '1.5', x2: '10', y2: '1.5', 'stroke-width': '1.3' }),
+        svgEl('line', { x1: '8', y1: '1.5', x2: '8', y2: '3.5', 'stroke-width': '1.3' }),
+      );
+      break;
+    }
+    case 'blind': {
+      // An eye: two arcs and a pupil.
+      svg.append(
+        svgEl('path', { d: 'M 1.5 8 Q 8 1.5 14.5 8 Q 8 14.5 1.5 8 Z', 'stroke-width': '1.3' }),
+        svgEl('circle', { cx: '8', cy: '8', r: '2', fill: 'currentColor', stroke: 'none' }),
+      );
+      break;
+    }
+    case 'reach': {
+      // Range: a start tick and an arrow pointing away from it.
+      svg.append(
+        svgEl('line', { x1: '2', y1: '4.5', x2: '2', y2: '11.5', 'stroke-width': '1.3' }),
+        svgEl('line', { x1: '2', y1: '8', x2: '11', y2: '8', 'stroke-width': '1.3' }),
+        svgEl('polygon', { points: '10,4.5 14.5,8 10,11.5', fill: 'currentColor', stroke: 'none' }),
       );
       break;
     }
