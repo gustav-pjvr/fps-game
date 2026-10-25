@@ -86,3 +86,71 @@ describe('hello features', () => {
     expect(helloSupportsMap([...CLIENT_FEATURES], 'facility')).toBe(true);
   });
 });
+
+describe('squad message validation', () => {
+  const accepts = (message: unknown) => isNetworkMessage(JSON.parse(JSON.stringify(message)));
+
+  it('meshHello needs a guest slot and a room code string', () => {
+    expect(accepts({ type: 'meshHello', slot: 2, roomCode: 'ABCDEF' })).toBe(true);
+    expect(accepts({ type: 'meshHello', slot: 4, roomCode: 'ABCDEF' })).toBe(false);
+    expect(accepts({ type: 'meshHello', slot: -1, roomCode: 'ABCDEF' })).toBe(false);
+    expect(accepts({ type: 'meshHello', slot: '2', roomCode: 'ABCDEF' })).toBe(false);
+    expect(accepts({ type: 'meshHello', slot: 2 })).toBe(false);
+    expect(accepts({ type: 'meshHello', slot: 2, roomCode: 7 })).toBe(false);
+  });
+
+  it('meshStatus needs a sender slot and a list of slots', () => {
+    expect(accepts({ type: 'meshStatus', senderSlot: 1, linked: [2, 3] })).toBe(true);
+    expect(accepts({ type: 'meshStatus', senderSlot: 1, linked: [] })).toBe(true);
+    expect(accepts({ type: 'meshStatus', senderSlot: 1 })).toBe(false);
+    expect(accepts({ type: 'meshStatus', senderSlot: 1, linked: 2 })).toBe(false);
+    expect(accepts({ type: 'meshStatus', senderSlot: 1, linked: [2, 9] })).toBe(false);
+    expect(accepts({ type: 'meshStatus', senderSlot: 7, linked: [] })).toBe(false);
+  });
+
+  it('rosterSync needs a list of roster entries, each with a slot and a name, and a string peer id if any', () => {
+    expect(accepts({ type: 'rosterSync', roster: [{ slot: 0, username: 'Host' }, { slot: 2, username: 'Dee', peerId: 'p2' }] })).toBe(true);
+    expect(accepts({ type: 'rosterSync', roster: [] })).toBe(true);
+    expect(accepts({ type: 'rosterSync' })).toBe(false);
+    expect(accepts({ type: 'rosterSync', roster: [{ slot: 5, username: 'X' }] })).toBe(false);
+    expect(accepts({ type: 'rosterSync', roster: [{ slot: 1 }] })).toBe(false);
+    expect(accepts({ type: 'rosterSync', roster: [{ slot: 1, username: 'X', peerId: 3 }] })).toBe(false);
+    expect(accepts({ type: 'rosterSync', roster: [null] })).toBe(false);
+  });
+
+  it('linkQuality needs a round trip (or null) and a relay flag per link', () => {
+    expect(accepts({ type: 'linkQuality', links: [{ slot: 1, rttMs: 40, relay: false }, { slot: 2, rttMs: null, relay: true }] })).toBe(true);
+    expect(accepts({ type: 'linkQuality', links: [] })).toBe(true);
+    expect(accepts({ type: 'linkQuality' })).toBe(false);
+    expect(accepts({ type: 'linkQuality', links: [{ slot: 1, rttMs: '40', relay: false }] })).toBe(false);
+    expect(accepts({ type: 'linkQuality', links: [{ slot: 1, rttMs: 40 }] })).toBe(false);
+    expect(accepts({ type: 'linkQuality', links: [{ slot: 9, rttMs: 40, relay: false }] })).toBe(false);
+  });
+
+  it('goldenGooseState needs a carrier slot or null and three numbers', () => {
+    expect(accepts({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 })).toBe(true);
+    expect(accepts({ type: 'goldenGooseState', carrierSlot: null, x: 1, y: 2, z: 3 })).toBe(true);
+    expect(accepts({ type: 'goldenGooseState', x: 1, y: 2, z: 3 })).toBe(false);
+    expect(accepts({ type: 'goldenGooseState', carrierSlot: 4, x: 1, y: 2, z: 3 })).toBe(false);
+    expect(accepts({ type: 'goldenGooseState', carrierSlot: null, x: 1, y: '2', z: 3 })).toBe(false);
+    expect(accepts({ type: 'goldenGooseState', carrierSlot: null, x: 1, y: 2 })).toBe(false);
+  });
+
+  it('hordeSyncState needs a wave, a slot list if any, and a known result if any', () => {
+    expect(accepts({ type: 'hordeSyncState', wave: 3 })).toBe(true);
+    expect(accepts({ type: 'hordeSyncState', wave: 3, eliminated: [0, 2], result: 'wiped' })).toBe(true);
+    expect(accepts({ type: 'hordeSyncState', wave: 3, result: 'cleared' })).toBe(true);
+    expect(accepts({ type: 'hordeSyncState' })).toBe(false);
+    expect(accepts({ type: 'hordeSyncState', wave: '3' })).toBe(false);
+    expect(accepts({ type: 'hordeSyncState', wave: 3, eliminated: [0, 8] })).toBe(false);
+    expect(accepts({ type: 'hordeSyncState', wave: 3, eliminated: 'all' })).toBe(false);
+    expect(accepts({ type: 'hordeSyncState', wave: 3, result: 'won' })).toBe(false);
+  });
+
+  it('still drops anything that is not an object or has an unknown type', () => {
+    expect(isNetworkMessage(null)).toBe(false);
+    expect(isNetworkMessage('meshHello')).toBe(false);
+    expect(isNetworkMessage({ type: 'meshGoodbye' })).toBe(false);
+    expect(isNetworkMessage({})).toBe(false);
+  });
+});

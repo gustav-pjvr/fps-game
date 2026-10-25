@@ -1,4 +1,8 @@
+import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
+import { ThrownGoose } from '../entities/ThrownGoose.ts';
+import { HostRoster } from './HostRoster.ts';
+import { buildMatchSync } from './matchSync.ts';
 import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import { isNetworkMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 
@@ -33,7 +37,7 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
   return ctx;
 }
 
-function route(ctx: ReturnType<typeof makeContext>, message: NetworkMessage, senderSlot: PlayerSlot = 0): void {
+function route(ctx: object, message: NetworkMessage, senderSlot: PlayerSlot = 0): void {
   const decoded: unknown = JSON.parse(JSON.stringify(message));
   if (!isNetworkMessage(decoded)) throw new Error(`rejected ${message.type}`);
   routeMatchMessage(ctx as unknown as MatchMessageContext, decoded, senderSlot);
@@ -108,5 +112,137 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(isNetworkMessage({ type: 'hordeSyncState', wave: 1, eliminated: ['x'] })).toBe(false);
     expect(isNetworkMessage({ type: 'hordeSyncState', wave: 1, result: 'won' })).toBe(false);
     expect(isNetworkMessage({ type: 'hordeSyncState', wave: 1 })).toBe(true);
+  });
+});
+
+const thrown = (id: string, senderSlot: PlayerSlot = 2): NetworkMessage => ({
+  type: 'gooseThrown',
+  senderSlot,
+  id,
+  originX: 1,
+  originY: 2,
+  originZ: 3,
+  velX: 0,
+  velY: 1,
+  velZ: -4,
+  source: 'gooseToss',
+});
+
+describe('routeMatchMessage, thrown geese', () => {
+  it('adds a thrown goose once, however many times its id arrives (live, then in a late join sync)', () => {
+    const scene = { add: vi.fn(), remove: vi.fn() };
+    const ctx = { ...makeContext({ ownSlot: 1 }), scene };
+    route(ctx, thrown('t1'));
+    route(ctx, thrown('t1'));
+    expect(ctx.thrownGeese.size).toBe(1);
+    expect(scene.add).toHaveBeenCalledTimes(1);
+    route(ctx, thrown('t2', 3));
+    expect(ctx.thrownGeese.size).toBe(2);
+    expect(scene.add).toHaveBeenCalledTimes(2);
+    expect(ctx.thrownGeese.get('t1')?.throwerSlot).toBe(2);
+    expect(ctx.thrownGeese.get('t2')?.throwerSlot).toBe(3);
+  });
+});
+
+describe('routeMatchMessage, the host answers a sync request', () => {
+  /** A host in a running match with two guests, and what its managers hold. */
+  function hostContext(gameMode: string) {
+    const hostRoster = new HostRoster('Host');
+    hostRoster.handleHello('Bob', 'tb', 0, 'peer-bob');
+    hostRoster.handleHello('Cara', 'tc', 0, 'peer-cara');
+    hostRoster.startMatch();
+    const base = makeContext({ role: 'host', ownSlot: 0, gameMode });
+    const multiplayer = { ...base.multiplayer, hostRoster };
+    multiplayer.hordeEliminatedSlots.add(2);
+    const horde = { currentWave: 4, isCleared: false, listForSync: vi.fn(() => []), applyWaveStarted: vi.fn(), applyCleared: vi.fn() };
+    const verdict = { winnerSlot: 1 as PlayerSlot, scoreboard: [{ slot: 1 as PlayerSlot, score: 10 }] };
+    const ctx = {
+      ...base,
+      multiplayer,
+      gooseManager: { listForSync: vi.fn(() => [{ id: 'g1', x: 1, y: 0, z: 2, killerSlot: null }]) },
+      hordeGooseManager: gameMode === 'gooseHorde' ? horde : null,
+      goldenGooseManager: gameMode === 'kingOfTheHill' ? { carrierSlot: 1 as PlayerSlot | null, position: { x: 5, y: 6, z: 7 }, claim: vi.fn(), drop: vi.fn() } : null,
+      bonusGooseManager: null,
+      ammoDropManager: null,
+      matchHasEnded: vi.fn(() => false),
+      endedMatchVerdict: vi.fn<() => typeof verdict | null>(() => null),
+    };
+    ctx.thrownGeese.set('t9', new ThrownGoose('t9', 1, 'gooseLauncher', new THREE.Vector3(1, 2, 3), new THREE.Vector3(4, 5, 6)));
+    const expected = (verdictOverride: typeof verdict | null = null) =>
+      buildMatchSync({
+        roster: hostRoster.connectedRoster(),
+        goldenGoose: ctx.goldenGooseManager ? { carrierSlot: ctx.goldenGooseManager.carrierSlot, position: ctx.goldenGooseManager.position } : null,
+        geese: ctx.gooseManager.listForSync(),
+        horde: gameMode === 'gooseHorde' ? { wave: 4, eliminated: [2], result: undefined, geese: [] } : null,
+        ammoDrops: [],
+        bonusGeese: [],
+        thrownGeese: ctx.thrownGeese.values(),
+        verdict: verdictOverride,
+      });
+    return { ctx, expected, verdict };
+  }
+
+  const sentMessages = (ctx: ReturnType<typeof hostContext>['ctx']) => ctx.multiplayer.session.connection.sendTo.mock.calls.map(([, message]) => message as NetworkMessage);
+
+  it('sends each buildMatchSync message to the requester only, for a gooseSyncRequest', () => {
+    const { ctx, expected } = hostContext('default');
+    route(ctx, { type: 'gooseSyncRequest', senderSlot: 2 }, 2);
+    expect(ctx.multiplayer.session.connection.sendTo.mock.calls.every(([slot]) => slot === 2)).toBe(true);
+    const messages = sentMessages(ctx);
+    expect(messages).toEqual(expected());
+    const types = messages.map((message) => message.type);
+    expect(types[0]).toBe('rosterSync');
+    expect(types).toContain('gooseSpawned');
+    expect(types).toContain('gooseThrown');
+    expect(types).not.toContain('hordeSyncState');
+  });
+
+  it('answers a hordeSyncRequest with the same kind of full sync, with the horde state in it', () => {
+    const { ctx, expected } = hostContext('gooseHorde');
+    route(ctx, { type: 'hordeSyncRequest', senderSlot: 1 }, 1);
+    expect(ctx.multiplayer.session.connection.sendTo.mock.calls.every(([slot]) => slot === 1)).toBe(true);
+    const messages = sentMessages(ctx);
+    expect(messages).toEqual(expected());
+    expect(messages).toContainEqual({ type: 'hordeSyncState', wave: 4, eliminated: [2] });
+  });
+
+  it('both requests give a joiner the same sync', () => {
+    const { ctx } = hostContext('default');
+    route(ctx, { type: 'gooseSyncRequest', senderSlot: 2 }, 2);
+    const first = sentMessages(ctx);
+    ctx.multiplayer.session.connection.sendTo.mockClear();
+    route(ctx, { type: 'hordeSyncRequest', senderSlot: 2 }, 2);
+    expect(sentMessages(ctx)).toEqual(first);
+  });
+
+  it('includes the golden goose in King of the Hill and the result once the match has ended', () => {
+    const { ctx, expected, verdict } = hostContext('kingOfTheHill');
+    ctx.endedMatchVerdict.mockReturnValue(verdict);
+    route(ctx, { type: 'gooseSyncRequest', senderSlot: 3 }, 3);
+    const messages = sentMessages(ctx);
+    expect(messages).toEqual(expected(verdict));
+    expect(messages).toContainEqual({ type: 'goldenGooseState', carrierSlot: 1, x: 5, y: 6, z: 7 });
+    expect(messages[messages.length - 1]).toEqual({ type: 'matchEnded', ...verdict });
+  });
+
+  it('lists only connected players in the roster it sends', () => {
+    const { ctx } = hostContext('default');
+    ctx.multiplayer.hostRoster.handleDisconnect(1, 1000);
+    route(ctx, { type: 'gooseSyncRequest', senderSlot: 2 }, 2);
+    expect(sentMessages(ctx).find((message) => message.type === 'rosterSync')).toEqual({
+      type: 'rosterSync',
+      roster: [
+        { slot: 0, username: 'Host' },
+        { slot: 2, username: 'Cara', peerId: 'peer-cara' },
+      ],
+    });
+  });
+
+  it('a guest never answers a sync request', () => {
+    const { ctx } = hostContext('default');
+    ctx.multiplayer.session.role = 'guest';
+    route(ctx, { type: 'gooseSyncRequest', senderSlot: 2 }, 2);
+    route(ctx, { type: 'hordeSyncRequest', senderSlot: 2 }, 2);
+    expect(ctx.multiplayer.session.connection.sendTo).not.toHaveBeenCalled();
   });
 });

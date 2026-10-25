@@ -1621,6 +1621,10 @@ export class Game {
             otherPositions.push({ x: player.position.x, z: player.position.z });
             const spawnPoint = pickRandomRespawnPoint(otherPositions, game.isSpawnBlocked);
             await game.addMultiplayerOpponent(outcome.slot, username);
+            // A joiner whose connection dropped while its model loaded: removeMultiplayerOpponent
+            // cancelled the add and already sent playerLeft, so announcing it now would give the
+            // other guests a ghost for a player who is gone.
+            if (!activeMultiplayer.opponents.has(outcome.slot)) return 'full';
             // Read after the await: another player joining while this one's model loaded is in the
             // roster now, though its playerJoinedMatch went out before this player was connected.
             // Connected slots only: a slot in its rejoin grace period would be a frozen ghost here.
