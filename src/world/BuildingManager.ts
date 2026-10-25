@@ -9,6 +9,7 @@ import { isPointNearFootprint } from './houseFootprint.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { HOUSE_DESIGNS, type HouseDesign } from './houseDesigns.ts';
 import { createBoxCollider, createHullCollider } from './structureKit.ts';
+import { houseCoverSlotsInWorld } from './houses/houseCover.ts';
 import { ValleyHouses, type HousePlacement } from './houses/ValleyHouses.ts';
 import type { HouseRef } from './houses/valleyHouseIds.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
@@ -154,6 +155,7 @@ export class BuildingManager {
               halfDepth: preset.footprintDepth / 2,
               rotationY: placement.rotationY,
             },
+            interior: houseCoverSlotsInWorld(placement.presetIndex, worldX, worldZ, placement.rotationY),
           });
         });
       }
