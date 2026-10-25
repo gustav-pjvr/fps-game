@@ -170,6 +170,9 @@ const ARC_MAX_TIME = 3;
 const MAX_THROWER_SPEED = 15;
 /** A thrown grenade tumbles end over end this fast (radians a second); each bounce halves it. */
 const SPIN_RATE = 14;
+/** Live grenades are drawn this much bigger than life (the view-model hand's copy is not): at true
+ * size one was a speck a few metres off. */
+const WORLD_MODEL_SCALE = 1.35;
 /** Bounce clinks: none for a contact slower than this (m/s, a grenade rolling or settling), and at
  * most one per grenade per CLINK_INTERVAL seconds. */
 const CLINK_MIN_SPEED = 1.2;
@@ -531,6 +534,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
 
   private addLive(id: string, kind: GrenadeKind, own: boolean, origin: Vec3, velocity: Vec3, fuseLeft: number, sentAt: number): void {
     const mesh = this.modelPool[kind].pop() ?? buildGrenadeModel(kind);
+    mesh.scale.setScalar(WORLD_MODEL_SCALE);
     mesh.position.set(origin.x, origin.y, origin.z);
     // Pin end first along the throw, tumbling end over end about the horizontal axis across it.
     const spinAxis = new THREE.Vector3(velocity.x, velocity.y, velocity.z).cross(UP);

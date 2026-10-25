@@ -8,11 +8,14 @@ import type { MeleePose } from './meleeSwing.ts';
  * comes back up.
  */
 
-export const GRENADE_ARM_HIDDEN: MeleePose = { px: 0.28, py: -0.58, pz: -0.3, rx: 0.5, ry: 0, rz: 0 };
-/** Cocked beside the head, the grenade up where the player can see which one it is. */
-export const GRENADE_ARM_HOLD: MeleePose = { px: 0.19, py: -0.1, pz: -0.32, rx: 0.4, ry: -0.25, rz: 0.2 };
-const GRENADE_ARM_RELEASE: MeleePose = { px: 0.03, py: -0.15, pz: -0.6, rx: -0.85, ry: 0.3, rz: -0.1 };
-const GRENADE_ARM_FOLLOW: MeleePose = { px: -0.06, py: -0.62, pz: -0.45, rx: -1.4, ry: 0.4, rz: -0.2 };
+export const GRENADE_ARM_HIDDEN: MeleePose = { px: 0.28, py: -0.62, pz: -0.5, rx: 0.5, ry: 0, rz: 0 };
+/** Cocked up on the right, about as far out as the gun, the grenade where the player can see which
+ * one it is. */
+export const GRENADE_ARM_HOLD: MeleePose = { px: 0.21, py: -0.13, pz: -0.52, rx: 0.3, ry: -0.25, rz: 0.2 };
+/** Pushed forward and in. The forearm stays sloping down to the elbow: tilting it the other way
+ * swung the sleeve up across the view. */
+const GRENADE_ARM_RELEASE: MeleePose = { px: 0.05, py: -0.12, pz: -0.8, rx: 0.15, ry: 0.3, rz: -0.1 };
+const GRENADE_ARM_FOLLOW: MeleePose = { px: -0.03, py: -0.64, pz: -0.62, rx: 0.9, ry: 0.4, rz: -0.2 };
 /** Throw progress at which the arm is fully forward. */
 const RELEASE_AT = 0.3;
 /** The grenade shows in the hand this far into the throw: by then the world copy has left it. */
