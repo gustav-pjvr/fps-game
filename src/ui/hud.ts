@@ -13,6 +13,7 @@ export class Hud {
   private readonly healthFillElement: HTMLDivElement;
   private readonly healthTextElement: HTMLSpanElement;
   private readonly healthStatus: HTMLDivElement;
+  private readonly lightMeter: HTMLSpanElement;
   private readonly weaponNameElement: HTMLDivElement;
   private readonly magazine: HTMLSpanElement;
   private readonly capacity: HTMLSpanElement;
@@ -70,7 +71,12 @@ export class Hud {
     const percent = document.createElement('span');
     percent.style.cssText = `font-family:${MONO_FONT}; font-size:11px; color:${INK_DIM}; margin-left:7px;`;
     percent.textContent = '%';
-    healthReading.append(this.healthTextElement, percent);
+    this.lightMeter = document.createElement('span');
+    this.lightMeter.style.cssText = `display:none; margin-left:18px; color:${ACCENT}; vertical-align:middle;`;
+    this.lightMeter.title = 'Visibility to enemies';
+    this.lightMeter.setAttribute('role', 'img');
+    this.lightMeter.innerHTML = '<svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 8 Q11 -4 21 8 Q11 20 1 8Z"/><circle cx="11" cy="8" r="3"/></svg>';
+    healthReading.append(this.healthTextElement, percent, this.lightMeter);
     const track = document.createElement('div');
     track.style.cssText = `height:3px; background:${HAIRLINE};`;
     this.healthFillElement = document.createElement('div');
@@ -168,6 +174,13 @@ export class Hud {
     this.healthFillElement.style.background = ratio < 0.25 ? THREAT : ratio < 0.5 ? AMBER : ACCENT;
     this.healthTextElement.textContent = String(Math.ceil(ratio * 100));
     this.healthStatus.textContent = ratio < 0.25 ? 'CRITICAL' : ratio < 0.5 ? 'WOUNDED' : 'STABLE';
+  }
+
+  setVisibility(value: number | null): void {
+    this.lightMeter.style.display = value === null ? 'none' : 'inline-block';
+    if (value === null) return;
+    this.lightMeter.style.opacity = String(value);
+    this.lightMeter.setAttribute('aria-label', `Visibility to enemies: ${Math.round(value * 100)}%`);
   }
 
   setScoreVisible(visible: boolean): void {

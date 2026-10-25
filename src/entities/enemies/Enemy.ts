@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { allocateEntityId, type Entity } from '../Entity.ts';
 import type { Player } from '../Player.ts';
+import type { PlayerVisibility } from './playerVisibility.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
@@ -265,11 +266,11 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.brain.dispatchToward(position);
   }
 
-  update(dt: number, player: Player): void {
+  update(dt: number, player: Player, visibility?: PlayerVisibility): void {
     if (this.dead) return;
     this.moving = false;
     this.moveSpeed = 0;
-    this.brain.update(dt, player);
+    this.brain.update(dt, player, visibility);
     this.updateBaseAnimation();
     // The hit shapes sit forward of the centre line where the model carries its head and chest,
     // so the body turns with the model.

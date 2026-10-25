@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Player } from '../Player.ts';
+import { visibilityForEnemy, type PlayerVisibility } from './playerVisibility.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { hasLineOfSight, horizontalDistance, pickPatrolDestination } from './enemySteering.ts';
 import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
@@ -94,6 +95,7 @@ export class EnemyBrain {
   private hasLineOfSightToPlayer = false;
   /** 0 (oblivious) to 1 (detected) - see perception.ts. */
   private awareness = 0;
+  private playerVisibility = 1;
   private readonly combat: CombatBehaviour;
 
   /** `patrolRng` is a seeded per-enemy stream (EntityManager derives it from the world seed and
@@ -247,19 +249,20 @@ export class EnemyBrain {
     this.enterSearchToward(killerPosition, false);
   }
 
-  update(dt: number, player: Player): void {
+  update(dt: number, player: Player, visibility?: PlayerVisibility): void {
     this.combat.tickCooldowns(dt);
 
     const current = this.body.position;
+    this.playerVisibility = visibility ? visibilityForEnemy(visibility, headOf(current)) : 1;
     const distanceToPlayer = horizontalDistance(current, player.position);
 
     this.losCheckTimer -= dt;
     if (this.losCheckTimer <= 0) {
       this.losCheckTimer = ENEMY_LOS_CHECK_INTERVAL;
-      // No ray once the player's beyond leash range (no state cares about LOS there), nor for an
+      // No ray beyond the visible detection range, nor for an
       // oblivious enemy facing the other way - it could not start noticing the player anyway.
       this.hasLineOfSightToPlayer =
-        distanceToPlayer <= this.body.archetype.leashRange &&
+        distanceToPlayer <= this.body.archetype.detectionRange * this.playerVisibility &&
         this.isWorthLooking(current, player) &&
         this.computeLineOfSight(current, player);
       if (this.hasLineOfSightToPlayer) this.lastSeenPosition.copy(player.position);
@@ -318,7 +321,7 @@ export class EnemyBrain {
    * suspicious or engaged it keeps looking wherever the player is. */
   private isWorthLooking(current: EnemyPosition, player: Player): boolean {
     if (this.state !== 'idle' || this.awareness > 0) return true;
-    return isInViewCone(current, this.body.facingYaw, player.position, this.body.archetype.detectionRange);
+    return isInViewCone(current, this.body.facingYaw, player.position, this.body.archetype.detectionRange * this.playerVisibility);
   }
 
   private computeLineOfSight(current: EnemyPosition, player: Player): boolean {
@@ -331,9 +334,9 @@ export class EnemyBrain {
    * the view cone or beyond detection range. */
   private sightFactor(current: EnemyPosition, player: Player, distanceToPlayer: number): number {
     if (!this.hasLineOfSightToPlayer) return 0;
-    const detectionRange = this.body.archetype.detectionRange;
+    const detectionRange = this.body.archetype.detectionRange * this.playerVisibility;
     if (!isInViewCone(current, this.body.facingYaw, player.position, detectionRange)) return 0;
-    return visibilityFactor(distanceToPlayer, detectionRange, player.movementBobStrength);
+    return visibilityFactor(distanceToPlayer, detectionRange, player.movementBobStrength) * this.playerVisibility;
   }
 
   /** Tells the squad's callout director what this enemy just did (step 5). */
@@ -388,7 +391,7 @@ export class EnemyBrain {
         }
         break;
       case 'search':
-        if (distanceToPlayer <= archetype.detectionRange && this.hasLineOfSightToPlayer) {
+        if (distanceToPlayer <= archetype.detectionRange * this.playerVisibility && this.hasLineOfSightToPlayer) {
           this.state = 'chase';
           this.awareness = 1;
           this.reportSighting(player);
