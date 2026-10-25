@@ -54,4 +54,6 @@ Every spec runs on SwiftShader here, at about 2 frames a second once a match is 
 Playwright default of 30 s is often too short. Long tests set their own budget with a comment that
 records the measured time. A timeout with every step still advancing is a budget problem, not a
 hang: read the trace's step times before changing code. Two pages at once (the multiplayer specs)
-are slower still. Run one Playwright chain at a time, since they share port 5173.
+are slower still. Run one Playwright chain at a time per checkout. A second checkout (a git
+worktree) running at the same time sets its own port, `E2E_PORT=5181 npm run test:e2e:group -- ...`,
+so it starts its own dev server instead of reusing the other checkout's on 5173.

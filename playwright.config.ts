@@ -10,6 +10,10 @@ import { defineConfig, devices } from '@playwright/test';
  * that quality instead.
  */
 const graphics = process.env.E2E_GRAPHICS ?? 'low';
+// E2E_PORT lets two checkouts (git worktrees) run their suites side by side: each gets its own dev
+// server, where a shared 5173 would let one checkout's tests silently reuse the other's server.
+const port = Number(process.env.E2E_PORT ?? 5173);
+const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -25,18 +29,18 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL,
     storageState: {
       cookies: [],
-      origins: [{ origin: 'http://localhost:5173', localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: graphics }) }] }],
+      origins: [{ origin: baseURL, localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: graphics }) }] }],
     },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
+    command: `npm run dev -- --port ${port} --strictPort`,
+    url: baseURL,
     reuseExistingServer: true,
     timeout: 30000,
   },
