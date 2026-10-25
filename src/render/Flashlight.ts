@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { EYE_OFFSET } from '../core/config.ts';
+import { EYE_OFFSET, type MatchMap, type MatchWeather } from '../core/config.ts';
+
+export function torchAvailable(map: MatchMap, weather: MatchWeather): boolean {
+  return map === 'facility' || weather !== 'day';
+}
+
+export function torchOnByDefault(map: MatchMap, weather: MatchWeather): boolean {
+  return map === 'facility' || weather === 'night';
+}
 
 /** Camera-local spot of the torch at the front of a ranged gun, near its muzzle at the hip pose. */
 export const TORCH_GUN_OFFSET = new THREE.Vector3(0.18, -0.16, -0.35);
@@ -52,7 +60,7 @@ export interface TorchMount {
   readonly muzzle: THREE.Vector3;
 }
 
-/** The player's torch on the Facility (docs/facility-map.md, section 7). The SpotLight is a
+/** The player's torch on the Facility and in Valley night or fog. The SpotLight is a
  * top-level scene object placed from the camera every frame, never a camera child: Renderer moves
  * everything under the camera onto the view-model layer, where a light no longer reaches the world.
  * Toggling only changes the intensity (and whether the shadow map updates): adding, removing or
@@ -151,7 +159,7 @@ export interface RemoteTorchSource {
   readonly on: boolean;
 }
 
-/** Other players' torches on the Facility: a fixed pool of shadowless spotlights created at match
+/** Other players' torches: a fixed pool of shadowless spotlights created at match
  * start, so the light count (and with it every shader) never changes mid-match. Each frame the
  * first sources take the first lights; a light with no source, an unlit torch or a dead player
  * just goes to intensity 0. */

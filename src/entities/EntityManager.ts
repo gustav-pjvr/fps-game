@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Player } from './Player.ts';
+import type { PlayerVisibility } from './enemies/playerVisibility.ts';
 import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
 import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks, type EnemyDebugRecord } from './enemies/Enemy.ts';
 import { createArchetypePicker } from './enemies/archetypes.ts';
@@ -91,7 +92,7 @@ interface ManagedEntity {
   readonly debugState?: string;
   readonly debugArchetype?: string;
   dispose(): void;
-  update?(dt: number, player: Player): void;
+  update?(dt: number, player: Player, visibility?: PlayerVisibility): void;
   /** Both Target and Enemy implement Damageable; optional here only so the interface stays honest
    * about what EntityManager actually relies on. */
   takeDamage?(amount: number, hitColliderHandle: number, sourcePosition?: THREE.Vector3): void;
@@ -287,7 +288,7 @@ export class EntityManager {
     }
   }
 
-  update(dt: number, player: Player): void {
+  update(dt: number, player: Player, visibility?: PlayerVisibility): void {
     this.killedThisTick.length = 0;
     this.knowledge.advance(dt);
     this.updateCoordinator();
@@ -298,7 +299,7 @@ export class EntityManager {
       const entity = this.entities[i];
       if (!entity) continue;
 
-      entity.update?.(dt, player);
+      entity.update?.(dt, player, visibility);
 
       if (entity.isDead) {
         const deathPosition = entity.mesh.position.clone();

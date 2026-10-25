@@ -176,7 +176,8 @@ import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
-import { Flashlight, RemoteTorches } from '../render/Flashlight.ts';
+import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
+import { visibility } from '../entities/enemies/playerVisibility.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -240,11 +241,6 @@ interface FacilityMatch {
   readonly world: FacilityWorld;
   readonly layout: FacilityLayout;
   readonly start: { x: number; z: number };
-  /** The player's torch (section 7). */
-  readonly torch: Flashlight;
-  /** Other players' torches, null in single-player. Created with the match so the light count never
-   * changes mid-match. */
-  readonly remoteTorches: RemoteTorches | null;
   /** The minimap's plan of the layout (section 8). */
   readonly mapLayer: FacilityMapLayer;
   /** Sparks and glass from shot-out lamps (section 11). */
@@ -382,6 +378,8 @@ export class Game {
    * to build the mid-match Loadout page lazily, the first time the pause menu opens it. */
   private hudRoot: HTMLElement | null = null;
   private readonly hudForward = new THREE.Vector3();
+  private secondsSinceShot = Infinity;
+  private readonly playerVisibility = { value: 1, torchOn: false, eye: new THREE.Vector3(), aim: new THREE.Vector3() };
   private loadoutScreenLoading = false;
   private disposed = false;
   /** See makeSpawnBlockedCheck on the Valley; the layout's own check on the Facility. Built in
@@ -484,6 +482,9 @@ export class Game {
     private readonly watchTowers: WatchTowerManager | null,
     /** Null on the Valley. */
     private readonly facility: FacilityMatch | null,
+    private readonly torch: Flashlight | null,
+    private readonly remoteTorches: RemoteTorches | null,
+    private readonly matchWeather: MatchWeather,
     isSpawnBlocked: SpawnBlockedCheck,
     private readonly entityManager: EntityManager,
     // Mutable, not readonly: a mid-match Loadout change rebuilds this entirely at the player's next
@@ -633,11 +634,12 @@ export class Game {
     this.fillLight.intensity = look.hemiIntensity * peak;
   }
 
-  /** The Facility's torches (docs/facility-map.md, section 7), after the camera's interpolation:
+  /** The match's torches, after the camera's interpolation:
    * the player's own on the gun (its body on the active ranged view model) or the shoulder, and one
    * pooled light per opponent, dark while their torch is off or they are dead. */
   private updateTorches(): void {
-    const { torch, remoteTorches } = this.facility!;
+    const { torch, remoteTorches } = this;
+    if (!torch) return;
     const mount = this.weaponManager.torchMount;
     torch.mountBody(mount);
     torch.update(this.renderer.camera, mount !== null);
@@ -740,7 +742,7 @@ export class Game {
           lamps: layout.lamps.length,
           bakeMs: world.bakeMs,
           vertexCount: world.vertexCount,
-          torchOn: this.facility.torch.isOn,
+          torchOn: this.torch?.isOn ?? false,
           deadLamps: world.deadLampIndices().length,
         };
       },
@@ -819,6 +821,10 @@ export class Game {
     if (isFacility) renderer.setMatchLook(FACILITY_LOOK);
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
+    const map = isFacility ? 'facility' : 'valley';
+    const torch = torchAvailable(map, matchWeather) ? new Flashlight(renderer.scene, quality.shadowsEnabled) : null;
+    torch?.setOn(torchOnByDefault(map, matchWeather));
+    const remoteTorches = torch && multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
 
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
     // here as their chunks load (the Facility's crates and pillars once, when it is built), and
@@ -853,8 +859,6 @@ export class Game {
         world,
         layout,
         start: playerStart(layout, Math.random),
-        torch: new Flashlight(renderer.scene, quality.shadowsEnabled),
-        remoteTorches: multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null,
         mapLayer: new FacilityMapLayer(layout),
         lampBreak: new LampBreakEffect(renderer.scene),
       };
@@ -1051,6 +1055,7 @@ export class Game {
         (distance) => longShotCallout.show(distance),
         (point, weaponId) => {
           muzzleFlash.spawn(point);
+          game.secondsSinceShot = 0;
           // Threat perception (2026-07-10 review, enemy AI phase A): a real gunshot alerts nearby
           // idle enemies toward roughly where it came from, same as a real firefight - previously
           // enemies had no hearing at all, only reacting once the player walked inside their much
@@ -1418,6 +1423,9 @@ export class Game {
       buildings,
       watchTowers,
       facility,
+      torch,
+      remoteTorches,
+      matchWeather,
       isSpawnBlocked,
       entityManager,
       weaponManager,
@@ -1721,8 +1729,8 @@ export class Game {
     // samples the valley again after this match.
     this.facility?.world.dispose();
     this.facility?.lampBreak.dispose();
-    this.facility?.torch.dispose();
-    this.facility?.remoteTorches?.dispose();
+    this.torch?.dispose();
+    this.remoteTorches?.dispose();
     setHeightOverride(null);
     setEnemyNavigator(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
@@ -1899,7 +1907,7 @@ export class Game {
     // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
     if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled && !this.facility;
-    this.facility?.torch.setCastShadow(quality.shadowsEnabled);
+    this.torch?.setCastShadow(quality.shadowsEnabled);
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
       this.sun.shadow.map?.dispose();
@@ -2312,9 +2320,9 @@ export class Game {
       void this.resetPlay();
     }
 
-    // The torch (docs/facility-map.md, section 7). Consumed on the Valley too, where F does nothing.
-    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.facility) {
-      const torch = this.facility.torch;
+    // Consume the toggle even in Valley day, where no torch is available.
+    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.torch) {
+      const torch = this.torch;
       torch.setOn(!torch.isOn);
       this.sound.playTorchClick(torch.isOn);
     }
@@ -2342,6 +2350,7 @@ export class Game {
       for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.update(dt);
     }
 
+    this.secondsSinceShot += dt;
     const freezeLocalPlayer = this.player.isDead || isPaused || this.missionWon;
     if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
@@ -2363,6 +2372,20 @@ export class Game {
       this.weaponManager.update(dt, this.input, this.player);
     }
 
+    const probe = this.facility?.world.probeAt(this.player.position.x, this.player.position.z);
+    this.playerVisibility.value = visibility({
+      map: this.facility ? 'facility' : 'valley',
+      weather: this.matchWeather,
+      probeLuma: probe ? probe[0] * 0.2126 + probe[1] * 0.7152 + probe[2] * 0.0722 : undefined,
+      secondsSinceShot: this.secondsSinceShot,
+      torchOn: this.torch?.isOn ?? false,
+      enemyInTorchBeam: false,
+    });
+    this.playerVisibility.torchOn = this.torch?.isOn ?? false;
+    this.playerVisibility.eye.copy(this.renderer.camera.position);
+    this.renderer.camera.getWorldDirection(this.playerVisibility.aim);
+    this.hud.setVisibility(this.torch ? this.playerVisibility.value : null);
+
     // The shared world - physics (including every RemotePlayer/goose collider), and the
     // host-authoritative goose simulation - must keep advancing regardless of THIS client's own
     // pause/death state in multiplayer (per user request: pausing/dying must never freeze anything
@@ -2378,7 +2401,7 @@ export class Game {
       sectionStart = this.perfLogger.endSection('physics', sectionStart);
       this.chunkManager?.update(this.player.position.x, this.player.position.z);
       sectionStart = this.perfLogger.endSection('world', sectionStart);
-      this.entityManager.update(dt, this.player);
+      this.entityManager.update(dt, this.player, this.playerVisibility);
       this.updateDirector(dt);
       this.updateMission(dt);
       this.perfLogger.endSection('ai', sectionStart);
@@ -2706,7 +2729,7 @@ export class Game {
         pitch: this.player.facingPitch,
         health: this.player.currentHealth,
         t: this.sendClock(),
-        ...(this.facility ? { torch: this.facility.torch.isOn } : {}),
+        ...(this.torch ? { torch: this.torch.isOn } : {}),
       });
     }
   }
@@ -3248,10 +3271,10 @@ export class Game {
     this.worldMarkers?.update(this.renderer.camera);
     if (this.facility) {
       this.updateFacilityLight(hudDt);
-      this.updateTorches();
     } else {
       this.updateSunFollow();
     }
+    this.updateTorches();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
     this.perfLogger.endSection('render', renderStart);
