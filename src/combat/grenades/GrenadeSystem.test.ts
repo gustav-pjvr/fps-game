@@ -36,7 +36,7 @@ function fixedCuboid(physics: PhysicsWorld, x: number, y: number, z: number, hx:
   return physics.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z));
 }
 
-async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: number } = {}): Promise<Rig> {
+async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: number; friendlyFire?: boolean } = {}): Promise<Rig> {
   const physics = await PhysicsWorld.create();
   // Floor: top surface at y = 0.
   fixedCuboid(physics, 0, -0.5, 0, 60, 0.5, 60);
@@ -92,6 +92,7 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
     network: options.network
       ? { ownSlot: 0 as PlayerSlot, send: (message) => sent.push(message), opponents: () => opponents }
       : null,
+    friendlyFire: options.friendlyFire,
     canStartThrow: () => canStart.value,
     onHandChange: (state) => hand.push(state),
     shootLampsNear: lamps,
@@ -207,6 +208,16 @@ describe('GrenadeSystem frag', () => {
     expect(r.targets.notifyGunshot).toHaveBeenCalledWith(expect.anything(), 'frag');
     expect(r.lamps).toHaveBeenCalledWith(expect.anything(), 4);
     expect(r.system.cameraShake).toBeGreaterThan(0);
+  });
+
+  it('never hurts a teammate in co-op (no friendly fire), still the thrower and the enemies', async () => {
+    const r = await rig({ network: true, friendlyFire: false });
+    r.opponents.push({ slot: 1, position: new THREE.Vector3(0, PLAYER_HEIGHT / 2, -2), entity: {}, isDead: false });
+    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.frag + DT);
+    expect(r.sent.filter((m) => m.type === 'damageEvent')).toHaveLength(0);
+    expect(r.player.takeDamage).toHaveBeenCalledTimes(1);
+    expect(r.targets.applyBlast).toHaveBeenCalledTimes(1);
   });
 
   it('is stopped by a wall between the blast and the target', async () => {

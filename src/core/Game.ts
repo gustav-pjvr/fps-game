@@ -162,6 +162,7 @@ import { DEFAULT_GAME_MODE, grenadesEnabled, resolveWeaponLoadout, modeUsesCusto
 import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
 import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
 import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
+import { withBlastTargets } from '../combat/grenades/grenadeTargets.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
 import { loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
@@ -1500,8 +1501,10 @@ export class Game {
       enabled: grenadesEnabled(currentGameMode),
       explosionEffect,
       sound,
-      targets: entityManager,
+      targets: withBlastTargets(entityManager, hordeGooseManager),
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
+      // Goose Horde is co-op: a frag never hurts a teammate.
+      friendlyFire: currentGameMode !== 'gooseHorde',
       floor: facility ? undefined : sampleHeight,
       canStartThrow: () => game.weaponManager.canStartThrow,
       onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),

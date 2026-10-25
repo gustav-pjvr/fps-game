@@ -94,6 +94,9 @@ export interface GrenadeSystemOptions {
   readonly targets: GrenadeTargets;
   /** Null in single-player. */
   readonly network: GrenadeNetwork | null;
+  /** False in co-op (Goose Horde): a frag hurts no other player, only enemies, geese and the
+   * thrower. Default true. */
+  readonly friendlyFire?: boolean;
   /** The terrain height, where a world has one (the Valley): a last floor under streamed-out ground. */
   readonly floor?: (x: number, z: number) => number;
   /** False while WeaponManager refuses a throw (a reload, a knife swing). */
@@ -615,7 +618,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     targets.applyBlast(blast, computeFragDamage, (center, entity, exclude) =>
       blastReaches(blast, center, (from, to) => this.rayClear(from, to, entity, exclude)),
     );
-    if (network) {
+    if (network && this.options.friendlyFire !== false) {
       for (const opponent of network.opponents()) {
         if (opponent.isDead) continue;
         const amount = computeFragDamage(opponent.position.distanceTo(blast));
