@@ -18,6 +18,7 @@ import {
 import { createStatBadge, type StatIconKind } from './statIcons.ts';
 import { getCachedWeaponThumbnail, releaseThumbnailRenderer, renderWeaponThumbnail } from './weaponThumbnail.ts';
 import { buildGrenadeThumbnailModel } from './grenadeThumbnailModel.ts';
+import { FLASH_MAX_RANGE, FLASH_PLAYER_MAX_SECONDS, FRAG_MAX_DAMAGE, FRAG_RADIUS, GRENADE_FUSE } from '../../combat/grenades/grenadeTuning.ts';
 import { WEAPON_CATEGORIES, GRENADE_KINDS, type WeaponCategory, type PlayerLoadout, type GrenadeKind } from '../../core/gameModes.ts';
 import {
   loadStoredLoadout,
@@ -51,9 +52,8 @@ const CATEGORY_DISPLAY_ORDER: Record<WeaponCategory, readonly string[]> = {
   special: ['gooseLauncher'],
 };
 
-/** What the Loadout page says about each grenade. The numbers are the grenades design's
- * (docs/squad-arsenal-night.md, section 3); when the grenades branch merges, these should read its
- * tuning table instead of repeating it. */
+/** What the Loadout page says about each grenade. The numbers come from the grenades' own tuning
+ * table (combat/grenades/grenadeTuning.ts), so the page and the game never disagree. */
 interface GrenadeChoice {
   readonly name: string;
   readonly description: string;
@@ -63,12 +63,12 @@ const GRENADE_CHOICES: Readonly<Record<GrenadeKind, GrenadeChoice>> = {
   frag: {
     name: 'Frag Grenade',
     description: 'A shrapnel burst, deadliest close to the blast.',
-    stats: [['damage', '130 near'], ['radius', '7 m radius'], ['fuse', '3.0 s fuse']],
+    stats: [['damage', `${FRAG_MAX_DAMAGE} near`], ['radius', `${FRAG_RADIUS} m radius`], ['fuse', `${GRENADE_FUSE.frag.toFixed(1)} s fuse`]],
   },
   flash: {
     name: 'Flash Grenade',
     description: 'A blinding burst that whites out anyone facing it.',
-    stats: [['blind', 'Blinds up to 3.5 s'], ['reach', '22 m reach'], ['fuse', '1.6 s fuse']],
+    stats: [['blind', `Blinds up to ${FLASH_PLAYER_MAX_SECONDS} s`], ['reach', `${FLASH_MAX_RANGE} m reach`], ['fuse', `${GRENADE_FUSE.flash.toFixed(1)} s fuse`]],
   },
 };
 
