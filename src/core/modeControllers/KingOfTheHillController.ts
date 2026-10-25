@@ -5,6 +5,7 @@ import type { MultiplayerSession } from '../../network/MultiplayerSession.ts';
 import type { MultiplayerMatchState } from '../../network/MultiplayerMatchState.ts';
 import type { PlayerSlot } from '../../network/protocol.ts';
 import { GOOSE_PICKUP_RADIUS, KOTH_POINT_INTERVAL_SECONDS } from '../config.ts';
+import type { MinimapMarker } from '../../ui/minimap.ts';
 
 /** King of the Hill's own input handling (claim via 'interact', drop via 'fire') and the
  * continuous points-per-second-held scoring while carrying - split out of Game.ts's update(),
@@ -22,6 +23,12 @@ export class KingOfTheHillController {
     private readonly session: MultiplayerSession,
     private readonly matchState: MultiplayerMatchState,
   ) {}
+
+  /** The goose on the minimap while it lies free; a carrier already shows as a player. */
+  minimapMarkers(): MinimapMarker[] {
+    const goose = this.goldenGooseManager;
+    return goose.isHeld ? [] : [{ id: 'hill', x: goose.position.x, z: goose.position.z }];
+  }
 
   /** Runs before weaponManager.update() so a drop's 'fire' press is consumed here first, mirroring
    * GooseTossController's ordering, but only while actually carrying (see Game.update()'s call

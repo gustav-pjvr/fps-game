@@ -1,7 +1,6 @@
 import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED } from '../theme.ts';
 import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
 import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, MATCH_MAPS, MATCH_MAP_LABELS, MATCH_MAP_DESCRIPTIONS, type GooseExplosionDifficulty, type MatchMap } from '../../core/config.ts';
-import { isSinglePlayerModeAllowedOnMap } from '../../core/gameModes.ts';
 
 export interface MatchSetupConfig {
   enemyCount: number;
@@ -85,28 +84,7 @@ export class PlaySetupModal {
         updateCountInputs();
       });
     }
-    const valleyOnlyModes = [
-      { mode: 'horde', checkbox: this.hordeModeCheckbox },
-      { mode: 'mission', checkbox: this.missionModeCheckbox },
-    ] as const;
-    const valleyOnlyNotes = valleyOnlyModes.map(({ checkbox }) => {
-      const note = document.createElement('span');
-      note.textContent = 'Valley only';
-      note.style.cssText = 'font-size:0.75rem; opacity:0.7;';
-      checkbox.parentElement?.appendChild(note);
-      return note;
-    });
-    const updateMapOptions = () => {
-      const map = this.mapSelect.value as MatchMap;
-      valleyOnlyModes.forEach(({ mode, checkbox }, index) => {
-        checkbox.disabled = !isSinglePlayerModeAllowedOnMap(mode, map);
-        if (checkbox.disabled) checkbox.checked = false;
-        valleyOnlyNotes[index]!.style.display = checkbox.disabled ? '' : 'none';
-      });
-      updateCountInputs();
-    };
-    this.mapSelect.addEventListener('change', updateMapOptions);
-    updateMapOptions();
+    updateCountInputs();
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';

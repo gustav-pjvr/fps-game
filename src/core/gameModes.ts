@@ -1,4 +1,4 @@
-import { PLAYER_HEALTH, type MatchMap } from './config.ts';
+import { PLAYER_HEALTH } from './config.ts';
 
 /** Multiplayer-only, host-picked pre-match (per explicit user request - single-player never has a
  * mode, always the unrestricted default loadout). Threaded alongside `gooseDifficulty`/`killLimit`
@@ -33,17 +33,6 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
  * with its mode table when it merges; until grenades exist no mode has them, so no crate is placed. */
 export function areGrenadesOnInMode(_mode: GameMode): boolean {
   return false;
-}
-
-export function isModeAllowedOnMap(mode: GameMode, map: MatchMap): boolean {
-  return map === 'valley' || (mode !== 'gooseToss' && mode !== 'kingOfTheHill' && mode !== 'gooseHorde');
-}
-
-export function isSinglePlayerModeAllowedOnMap(
-  mode: 'elimination' | 'director' | 'horde' | 'mission',
-  map: MatchMap,
-): boolean {
-  return map === 'valley' || mode === 'elimination' || mode === 'director';
 }
 
 /** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user

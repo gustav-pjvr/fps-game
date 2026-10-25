@@ -24,7 +24,7 @@ import {
   type MatchMap,
   type MatchWeather,
 } from '../../core/config.ts';
-import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, isModeAllowedOnMap, type GameMode } from '../../core/gameModes.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../../core/gameModes.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, MOTION_EASE, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
@@ -271,14 +271,6 @@ export class CreateRoomScreen {
       mapDescription.textContent = MATCH_MAP_DESCRIPTIONS[map];
       this.weatherSelect.disabled = map === 'facility';
       weatherLabel.textContent = map === 'facility' ? 'Indoor' : 'Weather';
-      for (const option of this.gameModeSelect.options) {
-        const mode = option.value as GameMode;
-        option.disabled = !isModeAllowedOnMap(mode, map);
-        option.textContent = GAME_MODE_LABELS[mode] + (option.disabled ? ' (Valley only)' : '');
-      }
-      if (!isModeAllowedOnMap(this.gameModeSelect.value as GameMode, map)) {
-        this.gameModeSelect.value = DEFAULT_GAME_MODE;
-      }
     };
     this.mapSelect.addEventListener('change', updateMapOptions);
     updateMapOptions();

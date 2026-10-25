@@ -34,6 +34,7 @@ import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
 import { Enemy, setEnemyDoorGate, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -43,8 +44,9 @@ import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
 import { DamageArcs } from '../ui/damageArcs.ts';
 import { WorldMarkers } from '../ui/worldMarkers.ts';
-import { MissionState, type MissionView } from './mission/missionState.ts';
+import { MissionState, missionMapMarkers, type MissionView } from './mission/missionState.ts';
 import { UplinkBeacons } from '../world/UplinkBeacons.ts';
+import { FACILITY_CONSOLE_HEIGHT } from '../world/facility/facilityConsoles.ts';
 import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
@@ -741,6 +743,8 @@ export class Game {
         const view = this.mission.view(this.player.position);
         return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
       },
+      getHordeDebug: () =>
+        this.hordeGooseManager ? { wave: this.hordeGooseManager.currentWave, geese: this.hordeGooseManager.listForSync() } : null,
       getFacilityDebug: () => {
         if (!this.facility) return null;
         const { layout, world } = this.facility;
@@ -1207,13 +1211,16 @@ export class Game {
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseExploded', id, x, y, z }) : undefined,
       onLocalHitReported:
         multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
-    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT);
+    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT,
+    // Indoors every goose lands on clear floor (docs/facility-map.md, "Modes on the Facility").
+    facility ? facilityGoosePlacement(facility.layout) : null);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
     // part of the wave") - the ambient wandering flock is a different mode's feature entirely.
-    // No ambient flock on the Facility either (docs/facility-map.md, section 1).
-    if (!facility && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
+    // No ambient flock on the Facility either (docs/facility-map.md, section 1), except Goose Toss's
+    // pickups, which are the whole mode.
+    if ((!facility || multiplayer?.gameMode === 'gooseToss') && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
@@ -1278,6 +1285,8 @@ export class Game {
           ownSpawn.y,
           hordeWaveTable,
           !multiplayer || multiplayer.role === 'host',
+          // Indoors they come in through rooms away from every player (docs/facility-map.md).
+          facility ? facilityHordeSite(facility.layout) : null,
         )
       : null;
 
@@ -2050,10 +2059,15 @@ export class Game {
     this.worldMarkers?.remove('extract');
 
     const position = this.player.position;
-    const mission = new MissionState(getWatchTowerPositions(), { x: position.x, z: position.z });
+    // On the Facility four rooms' consoles stand in for the watch towers (docs/facility-map.md).
+    const facility = this.facility;
+    const points = facility ? facilityMissionObjectives(facility.layout, facility.start) : getWatchTowerPositions();
+    const mission = new MissionState(points, { x: position.x, z: position.z });
     this.mission = mission;
     const view = mission.view(position);
-    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view);
+    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view, facility
+      ? { physics: this.physics, ceilingAt: (x, z) => facilityCeilingAt(facility.layout, x, z) }
+      : null);
     for (const uplink of view.uplinks) {
       this.hud.compass.addMarker(`uplink-${uplink.label}`, () => bearingDeg(uplink.x - this.player.position.x, uplink.z - this.player.position.z));
     }
@@ -2146,12 +2160,14 @@ export class Game {
     }
     hud.setPrompt('E', this.missionWon ? null : view.prompt);
     this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
+    // Only the Facility has a single-player map.
+    this.soloMinimap?.setMarkers(missionMapMarkers(view));
 
     const markers = this.worldMarkers;
     if (!markers) return;
     for (const uplink of view.uplinks) {
       if (uplink.status === 'online') continue;
-      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + WATCH_TOWER_ROOF_TOP + 3, uplink.z);
+      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : WATCH_TOWER_ROOF_TOP + 3), uplink.z);
       markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
     }
     if (view.phase === 'extract') {
@@ -2653,6 +2669,8 @@ export class Game {
     // tick's hitscan can fire (see that call site's comment) - this just reads the already-updated
     // positions for the minimap.
     const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
+    // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
+    if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions());
     this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
@@ -2927,6 +2945,9 @@ export class Game {
       let hitPosition: THREE.Vector3 | null = null;
       if (thrown.position.y <= groundY + GOOSE_RADIUS) {
         hitPosition = new THREE.Vector3(thrown.position.x, groundY, thrown.position.z);
+      } else if (this.facility && facilityBlocksThrow(this.facility.layout, thrown.position.x, thrown.position.y, thrown.position.z, GOOSE_RADIUS)) {
+        // Indoors a throw bursts on the first wall, crate or ceiling it meets.
+        hitPosition = thrown.position.clone();
       } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
         hitPosition = thrown.position.clone();
       } else if (this.multiplayer) {

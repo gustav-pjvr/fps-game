@@ -3,6 +3,7 @@ import {
   EXTRACTION_HOLD,
   EXTRACTION_RADIUS,
   MissionState,
+  missionMapMarkers,
   UPLINK_DURATION,
   UPLINK_HOLD_RADIUS,
   UPLINK_START_RADIUS,
@@ -140,5 +141,22 @@ describe('MissionState', () => {
     expect(mission.update({ dt: 0.1, player: SPAWN, interactPressed: false, playerDead: true })).toEqual([{ kind: 'lost' }]);
     expect(mission.view(SPAWN).phase).toBe('lost');
     expect(mission.update({ dt: 0.1, player: SPAWN, interactPressed: true, playerDead: true })).toEqual([]);
+  });
+});
+
+describe('missionMapMarkers', () => {
+  it('marks the uplinks not yet online, then the extraction once open', () => {
+    const mission = new MissionState(TOWERS, SPAWN);
+    expect(missionMapMarkers(mission.view(SPAWN)).map((m) => m.id)).toEqual(['uplink-A', 'uplink-B', 'uplink-C']);
+    const first = mission.view(SPAWN).uplinks[0]!;
+    press(mission, first);
+    run(mission, first, UPLINK_DURATION);
+    expect(missionMapMarkers(mission.view(SPAWN)).map((m) => m.id)).toEqual(['uplink-B', 'uplink-C']);
+    for (const uplink of mission.view(SPAWN).uplinks.filter((u) => u.status !== 'online')) {
+      press(mission, uplink);
+      run(mission, uplink, UPLINK_DURATION);
+    }
+    const markers = missionMapMarkers(mission.view(SPAWN));
+    expect(markers).toEqual([{ id: 'extract', x: mission.extraction.x, z: mission.extraction.z }]);
   });
 });

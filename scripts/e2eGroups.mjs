@@ -10,8 +10,8 @@ export const GROUPS = {
   mission: { files: ['e2e/mission.spec.ts'] },
   ui: { files: ['e2e/ui-qa.spec.ts'] },
   world: { files: ['e2e/world-bounds.spec.ts'] },
-  // The indoor map (docs/facility-map.md), solo and two-player.
-  facility: { files: ['e2e/facility.spec.ts', 'e2e/facility-doors.spec.ts', 'e2e/multiplayer-facility.spec.ts', 'e2e/pickups.spec.ts'] },
+  // The indoor map (docs/facility-map.md), solo and two-player, and the modes on it.
+  facility: { files: ['e2e/facility.spec.ts', 'e2e/facility-doors.spec.ts', 'e2e/facility-modes.spec.ts', 'e2e/multiplayer-facility.spec.ts', 'e2e/pickups.spec.ts'] },
   // Health, ammo and grenade pickups (docs/pickups.md).
   pickups: { files: ['e2e/pickups.spec.ts'] },
   mp: {

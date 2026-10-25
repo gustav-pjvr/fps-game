@@ -5,6 +5,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Damageable } from '../combat/damage.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { steerWithAvoidance } from './enemies/enemySteering.ts';
+import { resolveMoveTarget } from './enemies/enemyNavigator.ts';
 import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import {
   GOOSE_HEIGHT,
@@ -21,6 +22,10 @@ export type HordeGooseFlavor = 'walker' | 'jumper' | 'flyer';
 
 const WADDLE_BOB_SPEED = 11;
 const WADDLE_ROCK_ANGLE = 0.22;
+/** Indoors a flyer dives from its flight height onto its target over this last stretch (m). */
+const INDOOR_DIVE_DISTANCE = 5;
+/** How fast an indoor flyer climbs or sinks toward the height it wants (m/s). */
+const INDOOR_CLIMB_SPEED = 3;
 
 /** How far a horde goose must move horizontally before its ground height is resampled - same
  * value and reasoning as Goose.ts/Enemy.ts's identical constant (`sampleHeight` is a 4-octave fBm
@@ -94,13 +99,20 @@ export class HordeGoose implements Entity, Damageable {
      * via snapTo, and a local hit reports itself here instead of self-adjudicating - same pattern
      * as Goose.ts's onRemoteHitReport. */
     private readonly onRemoteHitReport?: () => void,
+    /** Indoors (the Facility): the flight height over a point, under the local ceiling. A flyer then
+     * flies in through the rooms instead of dropping from the sky (see updateIndoorFlight). */
+    private readonly indoorFlightHeight?: (x: number, z: number) => number,
   ) {
     this.flavor = flavor;
     this.flyerTargetX = position.x;
     this.flyerTargetZ = position.z;
 
     this.mesh = buildGooseMesh();
-    const spawnY = flavor === 'flyer' ? sampleHeight(position.x, position.z) + HORDE_FLYER_SPAWN_HEIGHT : position.y;
+    const spawnY = flavor !== 'flyer'
+      ? position.y
+      : indoorFlightHeight
+        ? indoorFlightHeight(position.x, position.z)
+        : sampleHeight(position.x, position.z) + HORDE_FLYER_SPAWN_HEIGHT;
     this.mesh.position.set(position.x, spawnY, position.z);
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(position.x, spawnY, position.z);
@@ -153,6 +165,10 @@ export class HordeGoose implements Entity, Damageable {
   update(dt: number, targetPosition: THREE.Vector3): void {
     if (this.dead || this.onRemoteHitReport) return;
 
+    if (this.flavor === 'flyer' && this.indoorFlightHeight) {
+      this.updateIndoorFlight(dt, targetPosition, this.indoorFlightHeight);
+      return;
+    }
     if (this.flavor === 'flyer' && !this.flyerLanded) {
       this.updateFlyerDescent(dt, targetPosition);
       return;
@@ -190,6 +206,36 @@ export class HordeGoose implements Entity, Damageable {
     }
   }
 
+  /** Indoors a flyer follows the enemies' navigation through the rooms and doors at its flight
+   * height (never above the local ceiling minus its gap), then dives onto its target over the last
+   * INDOOR_DIVE_DISTANCE. No avoidance steering: the waypoints already keep it off the walls, and
+   * it flies over everything a walker would have to go around. */
+  private updateIndoorFlight(dt: number, targetPosition: THREE.Vector3, flightHeight: (x: number, z: number) => number): void {
+    const current = this.rigidBody.translation();
+    const distance = Math.hypot(targetPosition.x - current.x, targetPosition.z - current.z);
+    if (distance <= HORDE_GOOSE_CONTACT_RADIUS) {
+      this.reachedTarget = true;
+      this.dead = true;
+      return;
+    }
+    const waypoint = resolveMoveTarget(current.x, current.z, targetPosition.x, targetPosition.z);
+    const wx = waypoint.x - current.x;
+    const wz = waypoint.z - current.z;
+    const waypointDistance = Math.hypot(wx, wz);
+    const step = Math.min(waypointDistance, this.chaseSpeed * dt);
+    const nextX = waypointDistance > 1e-4 ? current.x + (wx / waypointDistance) * step : current.x;
+    const nextZ = waypointDistance > 1e-4 ? current.z + (wz / waypointDistance) * step : current.z;
+    const ceilingY = flightHeight(nextX, nextZ);
+    const lowY = Math.max(targetPosition.y, GOOSE_HEIGHT / 2);
+    const wantY = lowY + (ceilingY - lowY) * Math.min(1, distance / INDOOR_DIVE_DISTANCE);
+    const climb = INDOOR_CLIMB_SPEED * dt;
+    const y = Math.min(ceilingY, current.y + Math.max(-climb, Math.min(climb, wantY - current.y)));
+    this.rigidBody.setNextKinematicTranslation({ x: nextX, y, z: nextZ });
+    this.mesh.position.set(nextX, y, nextZ);
+    if (waypointDistance > 1e-4) this.mesh.rotation.y = Math.atan2(wx, wz);
+    this.mesh.rotation.x = distance < INDOOR_DIVE_DISTANCE ? -Math.PI / 5 : 0;
+  }
+
   private updateChase(dt: number, targetPosition: THREE.Vector3): void {
     const current = this.rigidBody.translation();
     const dx = targetPosition.x - current.x;
@@ -211,7 +257,14 @@ export class HordeGoose implements Entity, Damageable {
       speed *= HORDE_JUMPER_BURST_MULTIPLIER;
     }
 
-    const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
+    // Through the doors on the Facility (the enemies' navigator); straight at the target outdoors.
+    const waypoint = resolveMoveTarget(current.x, current.z, targetPosition.x, targetPosition.z);
+    const wx = waypoint.x - current.x;
+    const wz = waypoint.z - current.z;
+    const waypointDistance = Math.hypot(wx, wz);
+    const desiredDir = waypointDistance > 1e-4
+      ? new THREE.Vector3(wx / waypointDistance, 0, wz / waypointDistance)
+      : new THREE.Vector3(dx / distance, 0, dz / distance);
     const chestPos = new THREE.Vector3(current.x, current.y, current.z);
     const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
 

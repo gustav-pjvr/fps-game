@@ -1,31 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { areGrenadesOnInMode, resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, isModeAllowedOnMap, isSinglePlayerModeAllowedOnMap, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
+import { areGrenadesOnInMode, resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
 import type { PlayerLoadout } from './gameModes.ts';
 
 describe('areGrenadesOnInMode', () => {
   it('is off in every mode until the grenades branch fills in its table (so no grenade crate is placed)', () => {
     for (const mode of GAME_MODES) expect(areGrenadesOnInMode(mode)).toBe(false);
-  });
-});
-
-describe('isModeAllowedOnMap', () => {
-  const facilityModes = ['default', 'oneShotOneKill', 'sniperDuel', 'gunGame', 'knifeOnly'];
-
-  it.each(GAME_MODES)('checks %s on both maps', (mode) => {
-    expect(isModeAllowedOnMap(mode, 'valley')).toBe(true);
-    expect(isModeAllowedOnMap(mode, 'facility')).toBe(facilityModes.includes(mode));
-  });
-});
-
-describe('isSinglePlayerModeAllowedOnMap', () => {
-  it.each([
-    ['elimination', true],
-    ['director', true],
-    ['horde', false],
-    ['mission', false],
-  ] as const)('checks %s on both maps', (mode, facilityAllowed) => {
-    expect(isSinglePlayerModeAllowedOnMap(mode, 'valley')).toBe(true);
-    expect(isSinglePlayerModeAllowedOnMap(mode, 'facility')).toBe(facilityAllowed);
   });
 });
 
