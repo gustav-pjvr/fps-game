@@ -168,6 +168,26 @@ describe('GrenadeSystem flight', () => {
 });
 
 describe('GrenadeSystem frag', () => {
+  it('shakes only the rendered camera position, never its aim, and never accumulates', async () => {
+    const r = await rig();
+    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.frag + DT);
+    expect(r.system.cameraShake).toBeGreaterThan(0);
+    const base = r.camera.position.clone();
+    const aim = r.camera.quaternion.clone();
+    let moved = 0;
+    for (const t of [0.01, 0.02, 0.03, 0.04]) {
+      // As Game.render: the interpolation rewrites the position, then the shake offsets it.
+      r.camera.position.copy(base);
+      r.system.applyCameraShake(r.camera, t);
+      const offset = r.camera.position.distanceTo(base);
+      expect(offset).toBeLessThanOrEqual(r.system.cameraShake * 1.2 + 1e-9);
+      moved = Math.max(moved, offset);
+      expect(r.camera.quaternion.equals(aim)).toBe(true);
+    }
+    expect(moved).toBeGreaterThan(0);
+  });
+
   it('damages and knocks back its own thrower in range, and damages opponents through damageEvent', async () => {
     const r = await rig({ network: true });
     const opponentCenter = new THREE.Vector3(0, PLAYER_HEIGHT / 2, -3);
