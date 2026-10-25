@@ -22,6 +22,7 @@ import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSIO
 import { HOST_SLOT, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import type { ActiveMultiplayer } from './multiplayerMatchTypes.ts';
 import { acceptsSnapshot, afterStateEvent } from './stateOrder.ts';
+import { buildMatchSync } from './matchSync.ts';
 import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
 
 /** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
@@ -505,22 +506,25 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
 }
 
 /** Host: the answer to either sync request (gooseSyncRequest, hordeSyncRequest), sent to that one
- * guest only: who is in the match, the shared world state it missed, and the result if the match is
- * already over. */
+ * guest only (see matchSync.ts for what it holds and in which order). */
 function sendFullSync(ctx: MatchMessageContext, slot: PlayerSlot): void {
-  const { connection } = ctx.multiplayer.session;
-  if (ctx.multiplayer.hostRoster) connection.sendTo(slot, { type: 'rosterSync', roster: ctx.multiplayer.hostRoster.connectedRoster() });
-  for (const goose of ctx.gooseManager.listForSync()) connection.sendTo(slot, { type: 'gooseSpawned', ...goose });
-  if (ctx.hordeGooseManager) {
-    const result = ctx.matchHasEnded() ? (ctx.hordeGooseManager.isCleared ? 'cleared' : 'wiped') : undefined;
-    connection.sendTo(slot, {
-      type: 'hordeSyncState',
-      wave: ctx.hordeGooseManager.currentWave,
-      eliminated: [...ctx.multiplayer.hordeEliminatedSlots],
-      result,
-    });
-    for (const goose of ctx.hordeGooseManager.listForSync()) connection.sendTo(slot, { type: 'hordeGooseSpawned', ...goose });
-  }
-  const verdict = ctx.endedMatchVerdict();
-  if (verdict) connection.sendTo(slot, { type: 'matchEnded', ...verdict });
+  const { multiplayer, hordeGooseManager, goldenGooseManager } = ctx;
+  const messages = buildMatchSync({
+    roster: multiplayer.hostRoster?.connectedRoster() ?? null,
+    goldenGoose: goldenGooseManager ? { carrierSlot: goldenGooseManager.carrierSlot, position: goldenGooseManager.position } : null,
+    geese: ctx.gooseManager.listForSync(),
+    horde: hordeGooseManager
+      ? {
+          wave: hordeGooseManager.currentWave,
+          eliminated: multiplayer.hordeEliminatedSlots,
+          result: ctx.matchHasEnded() ? (hordeGooseManager.isCleared ? 'cleared' : 'wiped') : undefined,
+          geese: hordeGooseManager.listForSync(),
+        }
+      : null,
+    ammoDrops: ctx.ammoDropManager?.listForSync() ?? [],
+    bonusGeese: ctx.bonusGooseManager?.listForSync() ?? [],
+    thrownGeese: ctx.thrownGeese.values(),
+    verdict: ctx.endedMatchVerdict(),
+  });
+  for (const message of messages) multiplayer.session.connection.sendTo(slot, message);
 }
