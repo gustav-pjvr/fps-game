@@ -753,6 +753,7 @@ export class Game {
       getLiveEnemyDebug: () => this.entityManager.getLiveEnemyDebug(),
       getSquadDebug: () => this.entityManager.getSquadDebug(),
       placeEnemy: (index, x, z) => this.entityManager.placeEnemy(index, x, z),
+      commandEnemy: (index, target) => this.entityManager.commandEnemy(index, target),
       getCoverNear: (x, z, radius) => this.entityManager.getCoverNear(x, z, radius),
       damageEnemy: (index, amount) => this.entityManager.damageEnemy(index, amount),
       getDirectorDebug: () =>

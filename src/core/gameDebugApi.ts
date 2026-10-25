@@ -81,6 +81,9 @@ export interface GameDebugApi {
   /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground and
    * makes that its patrol home, so a behaviour test can stage a known layout that stays put. */
   placeEnemy(index: number, x: number, z: number): void;
+  /** Test-only: live enemy `index` stops thinking and walks to `target` (a body centre point) through
+   * the houses' navigator and doors; null lets it think again. */
+  commandEnemy(index: number, target: { x: number; y: number; z: number } | null): void;
   /** Enemy AI v2: registered cover (tree trunks, houses) within `radius` of (x, z), by centre. */
   getCoverNear(x: number, z: number, radius: number): { kind: string; x: number; z: number }[];
   /** Test-only, like damagePlayer: real damage to the live enemy at `index` through takeDamage. */

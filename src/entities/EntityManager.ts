@@ -102,6 +102,7 @@ interface ManagedEntity {
   /** Enemy-only debug hooks (enemy AI v2 e2e checks). */
   debugRecord?(): EnemyDebugRecord;
   debugPlace?(x: number, z: number): void;
+  debugCommand?(target: { x: number; y: number; z: number } | null): void;
   /** Enemy-only: its entry on the combat coordinator's roster, or null when not fighting. */
   combatCandidate?(): RoleCandidate | null;
   /** Enemy-only: position picking (step 3). */
@@ -674,6 +675,12 @@ export class EntityManager {
    * through its normal takeDamage path (no attacker position, so it only flinches or staggers). */
   damageEnemy(index: number, amount: number): void {
     this.entities[index]?.takeDamage?.(amount, -1);
+  }
+
+  /** Test-only - the live entity at `index` (an enemy) stops thinking and walks to (x, y, z), a body
+   * centre point, through the houses' navigator and doors (the houses e2e); null lets it think again. */
+  commandEnemy(index: number, target: { x: number; y: number; z: number } | null): void {
+    this.entities[index]?.debugCommand?.(target);
   }
 
   /** Test-only - instantly moves the live entity at `index` (an enemy) to (x, z) on the ground. */

@@ -222,6 +222,12 @@ export class Enemy implements Entity, Damageable, EnemyBody {
    * layout that stays put. Moving only the body let a placed enemy walk back toward where it
    * spawned, near the player: the hearing check's "enemy 36 m away reacted to a pistol" was that
    * enemy walking home and seeing the player (checkpoint E). Never called by gameplay code. */
+  /** Test-only: the point a commanded enemy walks to (body centre height y), or null to think again. */
+  private debugTarget: { x: number; y: number; z: number } | null = null;
+  debugCommand(target: { x: number; y: number; z: number } | null): void {
+    this.debugTarget = target;
+  }
+
   debugPlace(x: number, z: number): void {
     this.heightSampleX = Number.NaN;
     this.heightSampleZ = Number.NaN;
@@ -269,7 +275,10 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     if (this.dead) return;
     this.moving = false;
     this.moveSpeed = 0;
-    this.brain.update(dt, player);
+    // Test-only: a commanded enemy walks to its point (navigator, door gate and floors included)
+    // instead of thinking.
+    if (this.debugTarget) this.moveToward(this.debugTarget.x, this.debugTarget.z, this.archetype.moveSpeed, dt, this.debugTarget.y);
+    else this.brain.update(dt, player);
     this.updateBaseAnimation();
     // The hit shapes sit forward of the centre line where the model carries its head and chest,
     // so the body turns with the model.
