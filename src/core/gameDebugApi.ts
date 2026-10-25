@@ -81,6 +81,9 @@ export interface GameDebugApi {
   /** Test-only, like teleport: instantly moves the live enemy at `index` to (x, z) on the ground and
    * makes that its patrol home, so a behaviour test can stage a known layout that stays put. */
   placeEnemy(index: number, x: number, z: number): void;
+  /** Test-only: live enemy `index` stops thinking and walks to `target` (a body centre point) through
+   * the houses' navigator and doors; null lets it think again. */
+  commandEnemy(index: number, target: { x: number; y: number; z: number } | null): void;
   /** Enemy AI v2: registered cover (tree trunks, houses) within `radius` of (x, z), by centre. */
   getCoverNear(x: number, z: number, radius: number): { kind: string; x: number; z: number }[];
   /** Test-only, like damagePlayer: real damage to the live enemy at `index` through takeDamage. */
@@ -152,8 +155,20 @@ export interface GameDebugApi {
   setFacilityBreaker(index: number, on: boolean): boolean;
   /** Facility only: the door or breaker panel the player looks at within reach, or null. */
   facilityLookTarget(): { kind: 'door' | 'breaker'; id: number } | null;
-  /** Test-only, Facility only: shoots out lamp `index` exactly like a hit (light, effect, sound and,
-   * in multiplayer, the lampDestroyed send). False when there is no such live lamp. */
+  /** The Valley's streamed-in houses (docs/enterable-buildings.md): design, placement, front door id
+   * and state, ceiling lamps, whether the interior is drawn, and each room's middle at floor level. */
+  getValleyHouses(): {
+    name: string; design: string; x: number; y: number; z: number; rotationY: number;
+    doorId: number; doorOpen: boolean; lamps: { id: number; lit: boolean }[]; interiorVisible: boolean;
+    rooms: { name: string; x: number; y: number; z: number }[];
+  }[];
+  /** Asks for a Valley house door to be open or shut through the same rules as a key press. */
+  setValleyDoor(id: number, open: boolean): boolean;
+  /** The houses' lamps: how many are streamed in, lit and shot out, and the light pool. */
+  getHouseLights(): { lamps: number; lit: number; dead: number; lights: { x: number; y: number; z: number; on: boolean }[] } | null;
+  /** Test-only: shoots out lamp `index` exactly like a hit (light, effect, sound and, in multiplayer,
+   * the lampDestroyed send); on the Valley `index` is a house lamp id (getValleyHouses' lamps).
+   * False when there is no such live lamp. */
   shootLamp(index: number): boolean;
   /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
   lampPosition(index: number): { x: number; y: number; z: number } | null;

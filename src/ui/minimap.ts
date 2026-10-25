@@ -10,7 +10,8 @@ const DOT_SIZE_PX = 10;
 /** An enemy blip stays up this long after the enemy stops, so a stop-start walk does not flicker. */
 const BLIP_LINGER_MS = 500;
 
-/** Something drawn under the dots (docs/facility-map.md, section 8): the Facility's plan. */
+/** Something drawn under the dots (docs/facility-map.md, section 8): the Facility's plan, or the
+ * Valley houses' plans once entered (ui/valleyHouseMapLayer.ts). */
 export interface MinimapLayer {
   /** data-testid of the canvas the layer is drawn on. */
   readonly testId: string;
@@ -19,6 +20,9 @@ export interface MinimapLayer {
   /** Draws in world metres (x to the right, z down the image); the minimap has already set the
    * transform that puts the player at the centre with their forward up (see minimapTransform). */
   draw(context: CanvasRenderingContext2D): void;
+  /** A closer world radius the map should show for now (inside a Valley house, whose plan is a
+   * few pixels at the Valley's radius), or null for the map's own. Asked after update. */
+  zoomRadius?(): number | null;
 }
 
 /** A mode's objective on the map (the King of the Hill goose, an uplink, the extraction). */
@@ -101,6 +105,8 @@ export class Minimap {
   /** Mode objectives (setMarkers), keyed by marker id. */
   private readonly markers = new Map<string, { dot: HTMLDivElement; x: number; z: number }>();
   private readonly worldRadius: number;
+  /** This update's radius: the map's own, or the layer's zoom. */
+  private radius: number;
   private readonly layer: MinimapLayer | null;
   private readonly layerCanvas: HTMLCanvasElement | null = null;
   private readonly layerContext: CanvasRenderingContext2D | null = null;
@@ -108,6 +114,7 @@ export class Minimap {
 
   constructor(hudRoot: HTMLElement, options: MinimapOptions = {}) {
     this.worldRadius = options.worldRadius ?? MINIMAP_WORLD_RADIUS;
+    this.radius = this.worldRadius;
     this.layer = options.layer ?? null;
     this.root = document.createElement('div');
     this.root.style.cssText =
@@ -222,11 +229,12 @@ export class Minimap {
 
     if (this.layer && this.layerCanvas && this.layerContext) {
       this.layer.update(localPosition.x, localPosition.z);
+      this.radius = this.layer.zoomRadius?.() ?? this.worldRadius;
       const context = this.layerContext;
       const pixelRatio = this.layerCanvas.width / MAP_DIAMETER_PX;
       context.setTransform(1, 0, 0, 1, 0, 0);
       context.clearRect(0, 0, this.layerCanvas.width, this.layerCanvas.height);
-      const [a, b, c, d, e, f] = minimapTransform(localPosition.x, localPosition.z, localFacingYaw, MAP_RADIUS_PX / this.worldRadius, MAP_RADIUS_PX);
+      const [a, b, c, d, e, f] = minimapTransform(localPosition.x, localPosition.z, localFacingYaw, MAP_RADIUS_PX / this.radius, MAP_RADIUS_PX);
       context.setTransform(a * pixelRatio, b * pixelRatio, c * pixelRatio, d * pixelRatio, e * pixelRatio, f * pixelRatio);
       this.layer.draw(context);
     }
@@ -236,7 +244,7 @@ export class Minimap {
     for (const [slot, dot] of this.dots) {
       const opponentPosition = opponents.get(slot);
       if (!opponentPosition) continue;
-      placeDot(dot, localPosition, opponentPosition, yawQuat, this.worldRadius);
+      placeDot(dot, localPosition, opponentPosition, yawQuat, this.radius);
     }
 
     for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.worldRadius);
@@ -245,7 +253,7 @@ export class Minimap {
     for (const [id, dot] of this.itemDots) {
       const itemPosition = items.get(id);
       if (!itemPosition) continue;
-      placeDot(dot, localPosition, itemPosition, yawQuat, this.worldRadius);
+      placeDot(dot, localPosition, itemPosition, yawQuat, this.radius);
     }
   }
 
@@ -295,10 +303,10 @@ export class Minimap {
         this.enemyDots.set(enemy.id, entry);
       }
       if (enemy.moving) entry.lastMovedAt = now;
-      const inRange = Math.hypot(enemy.x - localPosition.x, enemy.z - localPosition.z) <= this.worldRadius;
+      const inRange = Math.hypot(enemy.x - localPosition.x, enemy.z - localPosition.z) <= this.radius;
       const shown = inRange && now - entry.lastMovedAt <= BLIP_LINGER_MS;
       entry.dot.style.display = shown ? '' : 'none';
-      if (shown) placeDot(entry.dot, localPosition, enemy, yawQuat, this.worldRadius);
+      if (shown) placeDot(entry.dot, localPosition, enemy, yawQuat, this.radius);
     }
     for (const [id, entry] of this.enemyDots) {
       if (seen.has(id)) continue;

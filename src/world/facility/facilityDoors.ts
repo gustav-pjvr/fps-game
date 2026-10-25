@@ -6,9 +6,11 @@ import { OPEN, cellCentre, type FacilityLayout } from './facilityLayout.ts';
 
 /**
  * Facility doors (docs/facility-map.md, section 12), pure: which doorway cells form one opening,
- * which openings get a door, where each door stands, and the small geometric tests the runtime
- * needs (a ray picking a door or panel, a walk crossing a closed door, a player standing in one).
+ * which openings get a door and where each door stands. The small geometric tests the runtime needs
+ * (a ray picking a door or panel, a walk crossing a closed door, a player standing in one) are
+ * shared with the Valley houses' doors in world/doors/doorGeometry.ts.
  */
+export { bodyInDoorway, doorPickBox, rayBoxDistance, segmentCrossesDoor, type Box3 } from '../doors/doorGeometry.ts';
 
 /** Adjacent doorway cells on the same axis that open into the same room from the same side. */
 export interface FacilityOpening {
@@ -40,13 +42,8 @@ export interface FacilityDoor {
   readonly startsClosed: boolean;
 }
 
-/** An axis-aligned box by centre and half extents. */
-export interface Box3 { cx: number; cy: number; cz: number; hx: number; hy: number; hz: number }
-
 /** The frame's header (FacilityBuilder geometry) is this thick; a door stops under it. */
 const HEADER = 0.12;
-/** Half the thickness of the box a ray must cross to pick a door, open or closed. */
-const DOOR_PICK_HALF_DEPTH = 0.15;
 
 /** Merges the layout's doorway cells into openings, in a fixed order (by the first cell's position
  * in the layout's doorway list), so every client numbers them the same. */
@@ -117,48 +114,6 @@ export function facilityDoors(layout: FacilityLayout): FacilityDoor[] {
     });
   }
   return doors;
-}
-
-/** The box a look ray must cross to pick a door: the doorway's plane, slightly thickened. */
-export function doorPickBox(door: FacilityDoor): Box3 {
-  const across = door.axis === 'x';
-  return { cx: door.x, cy: door.height / 2, cz: door.z,
-    hx: across ? DOOR_PICK_HALF_DEPTH : door.width / 2, hy: door.height / 2, hz: across ? door.width / 2 : DOOR_PICK_HALF_DEPTH };
-}
-
-/** Where along a ray (origin + t * unit direction) it enters the box, or Infinity if it misses it
- * within maxDistance. A ray starting inside enters at 0. */
-export function rayBoxDistance(box: Box3, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDistance: number): number {
-  let lo = 0, hi = maxDistance;
-  for (const [o, d, c, h] of [[ox, dx, box.cx, box.hx], [oy, dy, box.cy, box.hy], [oz, dz, box.cz, box.hz]] as const) {
-    if (Math.abs(d) < 1e-12) {
-      if (o < c - h || o > c + h) return Infinity;
-      continue;
-    }
-    const a = (c - h - o) / d, b = (c + h - o) / d;
-    lo = Math.max(lo, Math.min(a, b)); hi = Math.min(hi, Math.max(a, b));
-    if (lo > hi) return Infinity;
-  }
-  return lo;
-}
-
-/** Whether the walk from (ax, az) to (bx, bz) crosses the door's plane inside the opening. */
-export function segmentCrossesDoor(door: FacilityDoor, ax: number, az: number, bx: number, bz: number): boolean {
-  // In the door's frame: u across the plane, v along it.
-  const across = door.axis === 'x';
-  const ua = (across ? ax : az) - (across ? door.x : door.z), ub = (across ? bx : bz) - (across ? door.x : door.z);
-  if (ua === ub || (Math.sign(ua) === Math.sign(ub) && ua !== 0 && ub !== 0)) return false;
-  const t = ua / (ua - ub);
-  const va = (across ? az : ax) - (across ? door.z : door.x), vb = (across ? bz : bx) - (across ? door.z : door.x);
-  return Math.abs(va + (vb - va) * t) <= door.width / 2;
-}
-
-/** Whether a body of `radius` at (x, z) overlaps the closed door's leaves. */
-export function bodyInDoorway(door: FacilityDoor, x: number, z: number, radius: number): boolean {
-  const across = door.axis === 'x';
-  const u = Math.abs((across ? x : z) - (across ? door.x : door.z));
-  const v = Math.abs((across ? z : x) - (across ? door.z : door.x));
-  return u < radius + 0.1 && v < door.width / 2 + radius;
 }
 
 /** The flow-field edges a door blocks while closed: every move (straight or diagonal) between one

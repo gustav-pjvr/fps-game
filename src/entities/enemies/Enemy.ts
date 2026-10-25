@@ -9,7 +9,7 @@ import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import type { EnemyArchetype } from './archetypes.ts';
 import { steerWithAvoidance } from './enemySteering.ts';
-import { hasEnemyNavigator, heldAtDoor, resolveMoveTarget } from './enemyNavigator.ts';
+import { enemyFloorAt, hasEnemyNavigator, heldAtDoor, resolveMoveTarget } from './enemyNavigator.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
@@ -24,7 +24,7 @@ import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHO
 import { ENEMY_HEIGHT, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
-export { setEnemyDoorGate, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
+export { setEnemyDoorGate, setEnemyFloor, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
 
 export const ENEMY_MODEL_PATH = ENEMY_CHARACTER.path;
 
@@ -223,6 +223,12 @@ export class Enemy implements Entity, Damageable, EnemyBody {
    * layout that stays put. Moving only the body let a placed enemy walk back toward where it
    * spawned, near the player: the hearing check's "enemy 36 m away reacted to a pistol" was that
    * enemy walking home and seeing the player (checkpoint E). Never called by gameplay code. */
+  /** Test-only: the point a commanded enemy walks to (body centre height y), or null to think again. */
+  private debugTarget: { x: number; y: number; z: number } | null = null;
+  debugCommand(target: { x: number; y: number; z: number } | null): void {
+    this.debugTarget = target;
+  }
+
   debugPlace(x: number, z: number): void {
     this.heightSampleX = Number.NaN;
     this.heightSampleZ = Number.NaN;
@@ -270,7 +276,10 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     if (this.dead) return;
     this.moving = false;
     this.moveSpeed = 0;
-    this.brain.update(dt, player, visibility);
+    // Test-only: a commanded enemy walks to its point (navigator, door gate and floors included)
+    // instead of thinking.
+    if (this.debugTarget) this.moveToward(this.debugTarget.x, this.debugTarget.z, this.archetype.moveSpeed, dt, this.debugTarget.y);
+    else this.brain.update(dt, player, visibility);
     this.updateBaseAnimation();
     // The hit shapes sit forward of the centre line where the model carries its head and chest,
     // so the body turns with the model.
@@ -284,10 +293,12 @@ export class Enemy implements Entity, Damageable, EnemyBody {
    * moving state (patrol, search, and chase - chase used to beeline without avoidance, which let
    * chasers clip through tree trunks/rocks whose colliders block the ground path even when the
    * head-height LOS ray clears past them). With a navigator set (a Facility match) it steers at the
-   * navigator's next waypoint instead of the raw target. */
-  moveToward(targetX: number, targetZ: number, speed: number, dt: number): void {
+   * navigator's next waypoint instead of the raw target, and walks straight at it without the
+   * whiskers when the navigator says the way is clear (a Valley house's walk grid). `targetY`, the
+   * target's body centre height when known, tells a house's floors apart. */
+  moveToward(targetX: number, targetZ: number, speed: number, dt: number, targetY?: number): void {
     const current = this.rigidBody.translation();
-    const waypoint = resolveMoveTarget(current.x, current.z, targetX, targetZ);
+    const waypoint = resolveMoveTarget(current.x, current.z, targetX, targetZ, current.y, targetY);
     const dx = waypoint.x - current.x;
     const dz = waypoint.z - current.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
@@ -300,7 +311,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
 
     const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
     const chestPos = new THREE.Vector3(current.x, current.y, current.z);
-    const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
+    const steeredDir = waypoint.direct ? desiredDir : steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
 
     const step = Math.min(distance, speed * dt);
     const nextX = current.x + steeredDir.x * step;
@@ -402,6 +413,13 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   /** Cached terrain height - resampled only after HEIGHT_RESAMPLE_DISTANCE of horizontal movement,
    * not every frame (see the constant's comment for the cost/accuracy reasoning). */
   private groundHeightAt(x: number, z: number): number {
+    // In a Valley house the floor under the feet (ground floor, stair or upper floor), uncached; the
+    // terrain is resampled on the way out.
+    const floor = enemyFloorAt(x, z, this.mesh.position.y - ENEMY_HEIGHT / 2);
+    if (floor !== null) {
+      this.heightSampleX = Number.NaN;
+      return floor;
+    }
     const dx = x - this.heightSampleX;
     const dz = z - this.heightSampleZ;
     if (!(dx * dx + dz * dz < HEIGHT_RESAMPLE_DISTANCE_SQ)) {

@@ -161,3 +161,13 @@ describe('Facility object messages', () => {
     }
   });
 });
+
+describe('Valley house doors on the wire (docs/enterable-buildings.md)', () => {
+  it('accept a worldObjectState with a list of open house door ids, and reject a malformed list', () => {
+    expect(isNetworkMessage({ type: 'worldObjectState', doors: '', breakers: '', valleyDoors: [4, 4099] })).toBe(true);
+    expect(isNetworkMessage({ type: 'worldObjectState', doors: '01', breakers: '1' })).toBe(true);
+    for (const valleyDoors of [[-1], [1.5], ['4'], 'x', Array.from({ length: 5000 }, (_, i) => i)]) {
+      expect(isNetworkMessage({ type: 'worldObjectState', doors: '', breakers: '', valleyDoors })).toBe(false);
+    }
+  });
+});

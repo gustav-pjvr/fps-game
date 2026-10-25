@@ -9,6 +9,9 @@ import { isPointNearFootprint, type HouseFootprint } from './houseFootprint.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { HOUSE_DESIGNS, type HouseDesign } from './houseDesigns.ts';
 import { createBoxCollider, createHullCollider } from './structureKit.ts';
+import { houseCoverSlotsInWorld } from './houses/houseCover.ts';
+import { ValleyHouses, type HousePlacement } from './houses/ValleyHouses.ts';
+import type { HouseRef } from './houses/valleyHouseIds.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { getFlatZoneSite, radiusOfFlatZoneAtAngle, type FlatZoneSite } from './ZoneMap.ts';
 import {
@@ -27,6 +30,8 @@ import {
 interface BuildingPreset {
   design: HouseDesign;
   template: THREE.Group;
+  /** The rooms' contents, hidden at a distance (ValleyHouses). */
+  interiorTemplate: THREE.Group;
   footprintWidth: number;
   footprintDepth: number;
 }
@@ -46,6 +51,8 @@ interface TownLayout {
 
 interface PlacedBuilding {
   group: THREE.Object3D;
+  /** Child of `group`: the interior, hidden at a distance. */
+  interior: THREE.Object3D;
   rigidBodyHandle: number;
   /** One collider per solid part of the design, all attached to rigidBodyHandle's body. */
   colliderHandles: number[];
@@ -67,6 +74,8 @@ export class BuildingManager {
   private readonly townLayoutCache = new Map<string, TownLayout>();
   private readonly activeBuildings = new Map<string, PlacedBuilding>();
   private readonly chunkOwnedBuildingIds = new Map<string, string[]>();
+  /** The houses' doors, ceiling lamps and interior culling (docs/enterable-buildings.md). */
+  readonly houses: ValleyHouses;
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -75,17 +84,33 @@ export class BuildingManager {
     /** Where enemies look for cover (enemy AI v2 step 3): each placed house's footprint is
      * registered per chunk and dropped when the chunk unloads. */
     private readonly obstacles?: ObstacleRegistry,
-  ) {}
+    lampsOn = false,
+  ) {
+    this.houses = new ValleyHouses(scene, physics.world, (ref) => this.houseAt(ref), lampsOn);
+  }
 
-  static async create(scene: THREE.Scene, physics: PhysicsWorld, obstacles?: ObstacleRegistry): Promise<BuildingManager> {
+  /** `lampsOn`: the houses' ceiling lamps are lit (a Night or Fog match). */
+  static async create(scene: THREE.Scene, physics: PhysicsWorld, obstacles?: ObstacleRegistry, options: { lampsOn?: boolean } = {}): Promise<BuildingManager> {
     // Built in code, so nothing loads; kept async so the match setup awaits it as before.
     const presets: BuildingPreset[] = HOUSE_DESIGNS.map((design) => ({
       design,
       template: design.build(),
+      interiorTemplate: design.buildInterior(),
       footprintWidth: design.footprintWidth,
       footprintDepth: design.footprintDepth,
     }));
-    return new BuildingManager(scene, physics, presets, obstacles);
+    return new BuildingManager(scene, physics, presets, obstacles, options.lampsOn ?? false);
+  }
+
+  /** Where house `ref` stands in the world, streamed in or not (the same memoized town layout
+   * placement uses), or null when there is no such house. */
+  houseAt(ref: HouseRef): HousePlacement | null {
+    const site = getFlatZoneSite(ref.gx, ref.gz);
+    if (!site) return null;
+    const placement = this.getTownLayout(ref.gx, ref.gz, site).buildings[ref.index];
+    if (!placement || !this.presets[placement.presetIndex]) return null;
+    const x = site.siteX + placement.localX, z = site.siteZ + placement.localZ;
+    return { ref, design: placement.presetIndex, x, groundY: sampleHeight(x, z), z, rotationY: placement.rotationY };
   }
 
   /** Called by ChunkManager's onChunkLoaded hook. */
@@ -116,6 +141,9 @@ export class BuildingManager {
           const placed = this.createBuilding(worldX, worldZ, placement.rotationY, preset);
           this.activeBuildings.set(id, placed);
           ownedIds.push(id);
+          this.houses.housePlaced(id, {
+            ref: { gx, gz, index }, design: placement.presetIndex, x: worldX, groundY: placed.group.position.y, z: worldZ, rotationY: placement.rotationY,
+          }, placed.interior);
           this.obstacles?.add(chunkKey(cx, cz), {
             kind: 'house',
             footprint: {
@@ -127,6 +155,7 @@ export class BuildingManager {
               halfDepth: preset.footprintDepth / 2,
               rotationY: placement.rotationY,
             },
+            interior: houseCoverSlotsInWorld(placement.presetIndex, worldX, worldZ, placement.rotationY),
           });
         });
       }
@@ -146,6 +175,7 @@ export class BuildingManager {
       if (!building) continue;
 
       this.scene.remove(building.group);
+      this.houses.houseRemoved(id);
 
       // Every collider goes explicitly before its body, the same order the single-box version
       // used, so no stored handle outlives the collider it names.
@@ -313,6 +343,9 @@ export class BuildingManager {
     contactShadow.position.y = CONTACT_SHADOW_LIFT;
     contactShadow.renderOrder = -1;
     group.add(contactShadow);
+    const interior = preset.interiorTemplate.clone();
+    interior.name = 'house-interior';
+    group.add(interior);
     this.scene.add(group);
 
     // The design's solids and gable fills, in its local frame, on a body given exactly the visual
@@ -330,6 +363,7 @@ export class BuildingManager {
 
     return {
       group,
+      interior,
       rigidBodyHandle: rigidBody.handle,
       colliderHandles,
     };

@@ -35,8 +35,9 @@ export interface EnemyBody {
   /** Which way the enemy faces, in the mesh's convention (rotation.y = atan2(dx, dz), so forward is
    * (sin, cos)) - the centre of its view cone. */
   readonly facingYaw: number;
-  /** Steps toward the target with whisker avoidance, facing the direction of travel. */
-  moveToward(targetX: number, targetZ: number, speed: number, dt: number): void;
+  /** Steps toward the target with whisker avoidance, facing the direction of travel. `targetY` is the
+   * target's body centre height when known (a house's upper floor, see enemyNavigator.ts). */
+  moveToward(targetX: number, targetZ: number, speed: number, dt: number, targetY?: number): void;
   /** Steps directly away from the threat with whisker avoidance while facing it (the kiting
    * retreat). Returns the new position, or null when standing exactly on the threat. */
   retreatFrom(threatX: number, threatZ: number, speed: number, dt: number): EnemyPosition | null;

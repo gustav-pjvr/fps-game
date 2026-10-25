@@ -61,7 +61,7 @@ export interface MultiplayerSession {
   deadLamps?: number[];
   /** Facility only, a late join/rejoin only: the doors and breakers as the host has them
    * (docs/facility-map.md, section 12), applied once the facility is built. */
-  worldObjects?: { doors: string; breakers: string };
+  worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
 }
 
 /** Everything a matchStart message carries beyond the connection/role itself - used as one bundle
@@ -87,5 +87,5 @@ export interface MultiplayerMatchStartParams {
   deadLamps?: number[];
   /** Facility only, a late join/rejoin only: the doors and breakers as the host has them
    * (docs/facility-map.md, section 12), applied once the facility is built. */
-  worldObjects?: { doors: string; breakers: string };
+  worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
 }

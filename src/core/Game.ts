@@ -33,7 +33,7 @@ import {
 import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
-import { Enemy, setEnemyDoorGate, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { Enemy, setEnemyDoorGate, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
@@ -62,6 +62,7 @@ import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
+import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
 import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
@@ -583,7 +584,12 @@ export class Game {
   /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
    * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. */
   private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number): void {
-    if (!this.facility) return;
+    if (!this.facility) {
+      // A Valley house's ceiling lamp (docs/enterable-buildings.md), synced like a Facility lamp.
+      const lamp = this.buildings?.houses.shootRay(origin, direction, distance);
+      if (lamp) this.houseLampBroken(lamp.id, lamp, true);
+      return;
+    }
     const lamp = this.facility.world.rayHitLamp(origin, direction, distance);
     if (lamp >= 0) this.destroyFacilityLamp(lamp, true);
   }
@@ -604,20 +610,48 @@ export class Game {
     return true;
   }
 
+  /** Shoots out Valley house lamp `id` (another player's lampDestroyed, or the debug API): dark for
+   * good, with sparks and its sound when streamed in. False when it is no lamp or already dark. */
+  private destroyHouseLamp(id: number, broadcast: boolean): boolean {
+    const houses = this.buildings?.houses;
+    if (!houses || !houses.isLampId(id) || houses.lights.isDead(id)) return false;
+    this.houseLampBroken(id, houses.lights.killLamp(id), broadcast);
+    return true;
+  }
+
+  /** A house lamp just broke (`at` where it hangs, null when not streamed in): its sound, and for
+   * this player's own shot the lampDestroyed send. */
+  private houseLampBroken(id: number, at: { x: number; y: number; z: number } | null, broadcast: boolean): void {
+    if (at) {
+      const position = new THREE.Vector3(at.x, at.y, at.z), volume = lampBreakVolume(position.distanceTo(this.player.position));
+      if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, position));
+    }
+    if (broadcast && this.multiplayer) {
+      this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp: id });
+    }
+  }
+
+  /** This map's shot-out lamps as lampSync carries them: Facility indices, or Valley house lamp ids. */
+  private readonly deadLampIds = (): readonly number[] =>
+    this.facility?.world.deadLampIndices() ?? this.buildings?.houses.lights.deadLampIds() ?? [];
+
   /** Another player's whole dead-lamp set (lampSync): every listed lamp still lit goes dark
    * quietly, with no sparks or sound (it broke a while ago, out of this client's hearing). */
   private syncFacilityLamps(lamps: unknown): void {
-    if (!this.facility) return;
+    if (!this.facility) {
+      this.buildings?.houses.killLampsQuietly(lamps);
+      return;
+    }
     this.facility.world.killLamps(parseLampList(lamps, this.facility.world.lampCount));
   }
 
-  /** A playerSnapshot from `slot` on the Facility: the first one sends them this client's dead
-   * lamps, which they may have missed while loading (see network/lampSync.ts). */
+  /** A playerSnapshot from `slot` on the Facility or the Valley: the first one sends them the doors
+   * (host) and this client's dead lamps, which they may have missed while loading (see
+   * network/lampSync.ts). */
   private noteOpponentInMatch(slot: PlayerSlot): void {
-    const facility = this.facility;
-    if (!facility) return;
+    if (!this.facility && !this.buildings) return;
     this.facilityInteraction?.opponentInMatch(slot);
-    const lamps = this.lampSync.opponentSnapshot(slot, () => facility.world.deadLampIndices());
+    const lamps = this.lampSync.opponentSnapshot(slot, this.deadLampIds);
     if (lamps) this.sendLampSync(lamps);
   }
 
@@ -728,6 +762,7 @@ export class Game {
       getLiveEnemyDebug: () => this.entityManager.getLiveEnemyDebug(),
       getSquadDebug: () => this.entityManager.getSquadDebug(),
       placeEnemy: (index, x, z) => this.entityManager.placeEnemy(index, x, z),
+      commandEnemy: (index, target) => this.entityManager.commandEnemy(index, target),
       getCoverNear: (x, z, radius) => this.entityManager.getCoverNear(x, z, radius),
       damageEnemy: (index, amount) => this.entityManager.damageEnemy(index, amount),
       getDirectorDebug: () =>
@@ -770,7 +805,10 @@ export class Game {
       facilityBreaker: (index) => this.facility?.objects.debugBreaker(index) ?? null,
       setFacilityBreaker: (index, on) => this.facilityInteraction?.requestState('breaker', index, on) ?? false,
       facilityLookTarget: () => this.facilityInteraction?.lookTarget() ?? null,
-      shootLamp: (index) => this.destroyFacilityLamp(index, true),
+      getValleyHouses: () => this.buildings?.houses.debugHouses() ?? [],
+      setValleyDoor: (id, open) => (this.buildings ? this.facilityInteraction?.requestState('door', id, open) ?? false : false),
+      getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
+      shootLamp: (index) => (this.facility ? this.destroyFacilityLamp(index, true) : this.destroyHouseLamp(index, true)),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
       getPickups: () => this.pickups?.views() ?? [],
       setPickupRespawnSeconds: (seconds) => this.pickups?.setRespawnSeconds(seconds),
@@ -899,10 +937,12 @@ export class Game {
       setHeightOverride(null);
       setEnemyNavigator(null);
       setEnemyDoorGate(null);
+      setEnemyFloor(null);
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
-      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles);
+      // Houses' ceiling lamps are lit at Night and in Fog (docs/enterable-buildings.md).
+      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles, { lampsOn: matchWeather !== 'day' });
       const roads = RoadManager.create(renderer.scene, valleyBuildings);
       const valleyTowers = WatchTowerManager.create(renderer.scene, physics);
 
@@ -921,6 +961,11 @@ export class Game {
         },
       });
       buildings = valleyBuildings;
+      // A late joiner starts with the house lamps the others already shot out, quietly.
+      valleyBuildings.houses.killLampsQuietly(multiplayer?.deadLamps);
+      // Enemies walk into and out of the houses on their walk grids (docs/enterable-buildings.md).
+      setEnemyNavigator(valleyBuildings.houses.nav.navigate);
+      setEnemyFloor(valleyBuildings.houses.nav.floorAt);
       watchTowers = valleyTowers;
       isSpawnBlocked = makeSpawnBlockedCheck(valleyBuildings);
     }
@@ -1363,7 +1408,9 @@ export class Game {
       const roomCode = multiplayer.roomCode;
       const opponents = new Map<PlayerSlot, RemoteOpponent>();
       const usernames = new Map<PlayerSlot, string>([[multiplayer.ownSlot, ownUsername]]);
-      const minimap = new Minimap(hudRoot, facility ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer } : undefined);
+      const minimap = new Minimap(hudRoot, facility
+        ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer }
+        : buildings ? { layer: new ValleyHouseMapLayer(buildings.houses) } : undefined);
       const multiplayerHud = new MultiplayerHud(hudRoot, multiplayer.ownSlot, ownUsername, roomCode);
 
       for (const entry of multiplayer.roster) {
@@ -1533,6 +1580,13 @@ export class Game {
       interaction.applyInitial(multiplayer?.worldObjects);
       setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;
+    } else if (buildings) {
+      // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
+      // messages; enemies open them through the same gate as the Facility's.
+      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      interaction.applyInitial(multiplayer?.worldObjects);
+      setEnemyDoorGate(interaction.enemyGate);
+      game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
@@ -1606,7 +1660,7 @@ export class Game {
         addMultiplayerOpponent: (slot, username) => game.addMultiplayerOpponent(slot, username),
         onRematchReceived: (params) => game.onMultiplayerRematchReceived?.(params),
         onOpponentLeftRoom: () => game.onOpponentLeftRoom?.(),
-        destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
+        destroyLamp: (lamp) => void (game.facility ? game.destroyFacilityLamp(lamp, false) : game.destroyHouseLamp(lamp, false)),
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
         // Getter: assigned right after construction, before any message can arrive.
@@ -1614,7 +1668,7 @@ export class Game {
           return game.pickups;
         },
         worldInteract: (slot, kind, id) => game.facilityInteraction?.receiveInteract(slot, kind, id),
-        worldObjectState: (doors, breakers) => game.facilityInteraction?.receiveState(doors, breakers),
+        worldObjectState: (doors, breakers, valleyDoors) => game.facilityInteraction?.receiveState(doors, breakers, valleyDoors),
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1707,6 +1761,7 @@ export class Game {
                 ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
                 ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices(), worldObjects: game.facility.objects.wire() } : {}),
+                ...(game.buildings ? { deadLamps: game.buildings.houses.lights.deadLampIds(), worldObjects: game.buildings.houses.doors.wire() } : {}),
               },
             };
           }
@@ -1792,12 +1847,14 @@ export class Game {
     this.facility?.world.dispose();
     this.facility?.objects.dispose();
     this.facilityInteraction?.dispose();
+    this.buildings?.houses.dispose();
     this.facility?.lampBreak.dispose();
     this.torch?.dispose();
     this.remoteTorches?.dispose();
     setHeightOverride(null);
     setEnemyNavigator(null);
     setEnemyDoorGate(null);
+    setEnemyFloor(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();
@@ -2430,6 +2487,7 @@ export class Game {
     // Facility doors and breakers (section 12): before the mode controllers, which only see an
     // interact press this did not take (it takes one only while a door or panel is looked at).
     this.facilityInteraction?.update(dt, freezeLocalPlayer ? null : this.input);
+    this.buildings?.houses.update(dt, this.renderer.camera);
     if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause.
@@ -2705,11 +2763,10 @@ export class Game {
       }
     }
 
-    // A periodic resync of this client's dead Facility lamps, for anyone who was loading when a
-    // lampDestroyed went past (see network/lampSync.ts).
-    if (this.facility) {
-      const facility = this.facility;
-      const lamps = this.lampSync.update(dt, () => facility.world.deadLampIndices());
+    // A periodic resync of this client's dead lamps (Facility or Valley houses), for anyone who was
+    // loading when a lampDestroyed went past (see network/lampSync.ts).
+    if (this.facility || this.buildings) {
+      const lamps = this.lampSync.update(dt, this.deadLampIds);
       if (lamps) this.sendLampSync(lamps);
     }
 

@@ -99,7 +99,10 @@ export function scoreCandidates(
   for (const candidate of candidates) {
     if (request.requireCover && !candidate.cover) continue;
     const target = candidate.cover ?? candidate.peek;
-    if (isBlocked(candidate.peek.x, candidate.peek.z) || (candidate.cover && isBlocked(candidate.cover.x, candidate.cover.z))) continue;
+    // A house's interior spots stand inside its footprint, which isBlocked refuses; they are on its
+    // walk grid already.
+    const checkBlocked = candidate.source !== 'houseInterior';
+    if (checkBlocked && (isBlocked(candidate.peek.x, candidate.peek.z) || (candidate.cover && isBlocked(candidate.cover.x, candidate.cover.z)))) continue;
 
     const range = distance(candidate.peek, request.threat);
     if (range < request.minRange || range > request.maxRange) continue;

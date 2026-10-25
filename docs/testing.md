@@ -29,6 +29,7 @@ Add `--dry` to see the plan without running it, and `--base <ref>` to compare wi
 | world | `world-bounds.spec.ts` | `src/world/` |
 | facility | `facility.spec.ts`, `facility-doors.spec.ts`, `facility-modes.spec.ts`, `multiplayer-facility.spec.ts`, `pickups.spec.ts`, `solo-weather.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
 | pickups | `pickups.spec.ts` | `src/pickups/` |
+| houses | `houses.spec.ts` | `src/world/houses/`, `src/world/doors/`, the house plan on the minimap |
 | mp | the six `multiplayer*.spec.ts` | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
 | perf | `perf-log.spec.ts`, `performance-check.spec.ts` | never by a change: measurements, run by name before a release or after render work |
 

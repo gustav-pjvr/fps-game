@@ -1,4 +1,5 @@
 import type { HouseFootprint } from '../../../world/houseFootprint.ts';
+import type { InteriorCoverSlot } from '../../../world/houses/houseCover.ts';
 
 /**
  * Where the cover is (enemy AI v2, step 3 - docs/enemy-ai-v2.md). The world managers register
@@ -17,7 +18,12 @@ import type { HouseFootprint } from '../../../world/houseFootprint.ts';
 
 export type Obstacle =
   | { readonly kind: 'trunk'; readonly x: number; readonly z: number; readonly radius: number }
-  | { readonly kind: 'house'; readonly footprint: HouseFootprint };
+  | {
+    readonly kind: 'house';
+    readonly footprint: HouseFootprint;
+    /** An enterable house's cover spots inside, in the world (world/houses/houseCover.ts). */
+    readonly interior?: readonly InteriorCoverSlot[];
+  };
 
 export interface ObstacleQuery {
   /** Every registered obstacle whose own extent reaches within `radius` of (x, z). */

@@ -1,4 +1,5 @@
 import type { HouseFootprint } from '../../../world/houseFootprint.ts';
+import type { InteriorCoverSlot } from '../../../world/houses/houseCover.ts';
 import type { PlanarPoint } from '../perception.ts';
 import type { Obstacle } from './obstacleRegistry.ts';
 import {
@@ -21,7 +22,9 @@ import {
  * Pure geometry, no rays: tacticalQuery.ts confirms each spot with one ray before it is trusted.
  */
 
-export type CoverSource = 'trunk' | 'tower' | 'houseCorner' | 'open';
+/** `houseInterior`: beside furniture or a window inside an enterable house; its spots are inside a
+ * building's footprint, which position picks otherwise refuse. */
+export type CoverSource = 'trunk' | 'tower' | 'houseCorner' | 'houseInterior' | 'open';
 
 export interface CoverCandidate {
   readonly cover: PlanarPoint | null;
@@ -105,9 +108,25 @@ export function houseCoverCandidates(footprint: HouseFootprint, threat: PlanarPo
   return candidates;
 }
 
+/** Cover inside an enterable house (world/houses/houseCover.ts): the slots whose face points away
+ * from the threat, so the furniture or the wall beside a window stands between them. */
+export function interiorCoverCandidates(slots: readonly InteriorCoverSlot[], threat: PlanarPoint): CoverCandidate[] {
+  const candidates: CoverCandidate[] = [];
+  for (const slot of slots) {
+    const awayX = slot.cover.x - threat.x;
+    const awayZ = slot.cover.z - threat.z;
+    const awayLength = Math.hypot(awayX, awayZ);
+    if (awayLength < 1e-6) continue;
+    if ((slot.normal.x * awayX + slot.normal.z * awayZ) / awayLength < ENEMY_COVER_FACE_MIN_DOT) continue;
+    candidates.push({ cover: slot.cover, peek: slot.peek, source: 'houseInterior' });
+  }
+  return candidates;
+}
+
 export function obstacleCoverCandidates(obstacle: Obstacle, threat: PlanarPoint): CoverCandidate[] {
   if (obstacle.kind === 'trunk') return circleCoverCandidates(obstacle.x, obstacle.z, obstacle.radius, threat, 'trunk');
-  return houseCoverCandidates(obstacle.footprint, threat);
+  const outside = houseCoverCandidates(obstacle.footprint, threat);
+  return obstacle.interior ? [...outside, ...interiorCoverCandidates(obstacle.interior, threat)] : outside;
 }
 
 /** Open firing spots on rings around the enemy, at a seeded angular offset per ring, for when no

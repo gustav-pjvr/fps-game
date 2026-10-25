@@ -67,12 +67,14 @@ export interface WelcomeMessage {
     map?: MatchMap;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
-    /** Facility only: the lamps already shot out (indices into the layout's lamps), so a late
-     * joiner sees the same dark rooms. Missing means none (and on older builds). */
+    /** The lamps already shot out, so a late joiner sees the same dark rooms: on the Facility
+     * indices into the layout's lamps, on the Valley house lamp ids (world/houses/valleyHouseIds.ts).
+     * Missing means none (and on older builds). */
     deadLamps?: number[];
     /** Facility only: which doors are open and which breakers are on (docs/facility-map.md,
-     * section 12), so a late joiner starts with the same ones. Missing means the match's start. */
-    worldObjects?: { doors: string; breakers: string };
+     * section 12), so a late joiner starts with the same ones; on the Valley the open house doors
+     * (`valleyDoors`, docs/enterable-buildings.md). Missing means the match's start. */
+    worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
   };
 }
 
@@ -187,7 +189,8 @@ export interface FireEventMessage {
 
 /** Self-reported, relayed (see MatchMessageRouter's RELAYABLE_MESSAGE_TYPES): `senderSlot` shot out
  * a Facility lamp (docs/facility-map.md, section 11). `lamp` indexes the layout's lamps, whose order
- * is identical on every client. Receivers kill that lamp the same way, if it is still lit. Older
+ * is identical on every client; on the Valley it is a house lamp id (house key and room,
+ * world/houses/valleyHouseIds.ts). Receivers kill that lamp the same way, if it is still lit. Older
  * builds drop the unknown type. */
 export interface LampDestroyedMessage {
   type: 'lampDestroyed';
@@ -195,7 +198,8 @@ export interface LampDestroyedMessage {
   lamp: number;
 }
 
-/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out Facility lamps, re-broadcast
+/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out lamps (Facility indices or Valley
+ * house lamp ids), re-broadcast
  * so a client that was still loading when a lampDestroyed went past catches up (see
  * network/lampSync.ts for when it is sent). Receivers kill any listed lamp still lit, quietly. */
 export interface LampSyncMessage {
@@ -216,11 +220,14 @@ export interface WorldInteractMessage {
 
 /** Host -> everyone (host-authored broadcast, never relayed): every Facility door ('1' open) and
  * breaker ('1' on) in id order, sent on each change and to each guest on its first playerSnapshot
- * (it may have been loading when a change went past). Guests adopt it whole. */
+ * (it may have been loading when a change went past). Guests adopt it whole. On the Valley both
+ * strings are empty and `valleyDoors` lists the open house doors' ids (world/houses/valleyHouseIds.ts,
+ * docs/enterable-buildings.md); worldInteract carries those same ids. */
 export interface WorldObjectStateMessage {
   type: 'worldObjectState';
   doors: string;
   breakers: string;
+  valleyDoors?: number[];
 }
 
 /** Sent by the shooter (`senderSlot`, the attacker) when their own hitscan registers a hit on a
@@ -806,8 +813,10 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
     return (kind === 'door' || kind === 'breaker') && Number.isInteger(id) && (id as number) >= 0;
   }
   if (type === 'worldObjectState') {
-    const { doors, breakers } = value as { doors?: unknown; breakers?: unknown };
-    return [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
+    const { doors, breakers, valleyDoors } = value as { doors?: unknown; breakers?: unknown; valleyDoors?: unknown };
+    const validDoors = valleyDoors === undefined ||
+      (Array.isArray(valleyDoors) && valleyDoors.length <= 4096 && valleyDoors.every(id => Number.isSafeInteger(id) && (id as number) >= 0));
+    return validDoors && [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
   }
   return type.startsWith('pickup') ? hasValidPickupFields(value as Record<string, unknown>) : true;
 }

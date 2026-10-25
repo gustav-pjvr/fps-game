@@ -14,6 +14,8 @@ export const GROUPS = {
   facility: { files: ['e2e/facility.spec.ts', 'e2e/facility-doors.spec.ts', 'e2e/facility-modes.spec.ts', 'e2e/multiplayer-facility.spec.ts', 'e2e/pickups.spec.ts', 'e2e/solo-weather.spec.ts'] },
   // Health, ammo and grenade pickups (docs/pickups.md).
   pickups: { files: ['e2e/pickups.spec.ts'] },
+  // The enterable Valley houses (docs/enterable-buildings.md): doors, interiors, enemies inside.
+  houses: { files: ['e2e/houses.spec.ts'] },
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
@@ -29,7 +31,7 @@ export const GROUPS = {
 };
 
 /** Every group a full run covers (everything but perf). */
-export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'mp'];
+export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'houses', 'mp'];
 
 /**
  * Path rules, checked in order; every matching rule adds its groups, except that a `stop` rule
@@ -49,6 +51,7 @@ export const RULES = [
 
   // Game areas.
   { match: /^src\/pickups\//, groups: ['pickups'] },
+  { match: /^src\/world\/(houses|doors)\/|^src\/ui\/valleyHouseMapLayer\.ts$/, groups: ['houses'] },
   { match: /^src\/world\/facility\/|^src\/render\/Flashlight\.ts$|^src\/ui\/(minimap|facilityMapLayer)\.ts$/, groups: ['facility'] },
   { match: /^src\/entities\/characterHitbox\.ts$|^public\/assets\/models\/characters\//, groups: ['quick', 'ai', 'mp'] },
   { match: /^src\/entities\/(enemies\/|EntityManager\.ts$|Target\.ts$)/, groups: ['quick', 'ai'] },
