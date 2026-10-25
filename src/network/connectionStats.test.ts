@@ -54,26 +54,25 @@ describe('readConnectionQuality', () => {
 });
 
 describe('summarizeConnection', () => {
-  it('a guest shows its link to the host and doubles the lead for other guests', () => {
-    const summary = summarizeConnection('guest', 0, new Map([[0, { rttMs: 80, route: 'direct' as const }]]), [0, 2]);
-    expect(summary.shown).toEqual({ rttMs: 80, route: 'direct' });
-    expect(summary.leadSeconds.get(0)).toBeCloseTo(0.04);
-    expect(summary.leadSeconds.get(2)).toBeCloseTo(0.08);
-  });
-
-  it('the host shows its slowest guest and flags a relay', () => {
+  it('gives every opponent its own round trip and half of it as lead', () => {
     const summary = summarizeConnection(
-      'host',
-      0,
       new Map([
         [1, { rttMs: 30, route: 'direct' as const }],
         [2, { rttMs: 140, route: 'relay' as const }],
       ]),
-      [1, 2, 3],
+      [1, 2],
     );
-    expect(summary.shown).toEqual({ rttMs: 140, route: 'relay' });
+    expect(summary.perOpponent.get(1)).toEqual({ rttMs: 30, route: 'direct' });
+    expect(summary.perOpponent.get(2)).toEqual({ rttMs: 140, route: 'relay' });
     expect(summary.leadSeconds.get(1)).toBeCloseTo(0.015);
+    expect(summary.leadSeconds.get(2)).toBeCloseTo(0.07);
+  });
+
+  it('an opponent with no measurement yet is unknown with no lead, and unlisted slots are left out', () => {
+    const summary = summarizeConnection(new Map([[5, { rttMs: 50, route: 'direct' as const }]]), [0, 3]);
+    expect(summary.perOpponent.get(3)).toEqual({ rttMs: null, route: null });
     expect(summary.leadSeconds.get(3)).toBe(0);
+    expect([...summary.perOpponent.keys()]).toEqual([0, 3]);
   });
 
   it('formats the HUD line', () => {

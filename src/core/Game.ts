@@ -2485,8 +2485,9 @@ export class Game {
         // adjudicated by anyone else, same trust model this protocol already uses for health.
         const recentlyDamaged = performance.now() - this.multiplayer.lastDamageSourceAt <= MULTIPLAYER_KILL_CREDIT_WINDOW_MS;
         const killerSlot = recentlyDamaged ? this.multiplayer.lastDamageSourceSlot : null;
+        const killerWeaponId = killerSlot === null ? undefined : this.multiplayer.lastDamageSourceWeaponId;
         const ownSlot = this.multiplayer.session.ownSlot;
-        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, t: this.sendClock() });
+        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, killerWeaponId, t: this.sendClock() });
         // Goose Horde is co-op - per explicit user request, nobody should score points off a
         // teammate's death (accidental friendly fire or otherwise), and there's no kill-limit win
         // condition for this mode anyway (see updateMultiplayer's own gooseHorde skip). Every other
@@ -2495,7 +2496,7 @@ export class Game {
         // and a guest's message never loops back to it either).
         // applyDeath itself already skips Goose Horde internally (see its own comment) - this mode
         // has no kill-limit win condition anyway (see updateMultiplayer's own gooseHorde skip).
-        this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, { victimSlot: ownSlot, killerSlot });
+        this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, this.multiplayer.killLimit, { victimSlot: ownSlot, killerSlot, killerWeaponId });
         // Goose Horde's limited-lives rule (per explicit user request): each player gets
         // HORDE_MAX_RESPAWNS respawns before this exact death permanently eliminates them instead
         // of auto-respawning (see updateMultiplayer's own gate on this). Self-authoritative and
@@ -2569,8 +2570,8 @@ export class Game {
         this.connectionPollInFlight = true;
         void this.multiplayer.session.connection.connectionQuality().then((measured) => {
           if (!this.multiplayer) return;
-          const summary = summarizeConnection(this.multiplayer.session.role, HOST_SLOT, measured, this.multiplayer.opponents.keys());
-          this.multiplayer.multiplayerHud.setConnection(summary.shown);
+          const summary = summarizeConnection(measured, this.multiplayer.opponents.keys());
+          this.multiplayer.multiplayerHud.setConnection(summary.perOpponent);
           for (const [slot, opponent] of this.multiplayer.opponents) {
             opponent.remotePlayer.setLeadSeconds(summary.leadSeconds.get(slot) ?? 0);
           }

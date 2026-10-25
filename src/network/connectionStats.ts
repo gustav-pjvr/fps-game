@@ -51,16 +51,16 @@ export function combineRelayedQuality(hostLink: ConnectionQuality, hostToGuest: 
 /** What the HUD shows and how far ahead each opponent is predicted (RemotePlayer.setLeadSeconds),
  * from one round of measurements (PeerConnection.connectionQuality: one entry per opponent, over
  * the path their snapshots actually take). */
-export interface ConnectionSummary {
+export interface ConnectionSummary<Slot extends number = number> {
   /** Each opponent's round trip, by slot; unknown where nothing was measured yet. */
-  readonly perOpponent: ReadonlyMap<number, ConnectionQuality>;
+  readonly perOpponent: ReadonlyMap<Slot, ConnectionQuality>;
   /** Seconds of network delay to make up for each opponent, by slot: half their round trip. */
-  readonly leadSeconds: ReadonlyMap<number, number>;
+  readonly leadSeconds: ReadonlyMap<Slot, number>;
 }
 
-export function summarizeConnection(measured: ReadonlyMap<number, ConnectionQuality>, opponentSlots: Iterable<number>): ConnectionSummary {
-  const perOpponent = new Map<number, ConnectionQuality>();
-  const leadSeconds = new Map<number, number>();
+export function summarizeConnection<Slot extends number>(measured: ReadonlyMap<number, ConnectionQuality>, opponentSlots: Iterable<Slot>): ConnectionSummary<Slot> {
+  const perOpponent = new Map<Slot, ConnectionQuality>();
+  const leadSeconds = new Map<Slot, number>();
   for (const slot of opponentSlots) {
     const quality = measured.get(slot) ?? UNKNOWN_QUALITY;
     perOpponent.set(slot, quality);

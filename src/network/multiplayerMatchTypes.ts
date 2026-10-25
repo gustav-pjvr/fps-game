@@ -82,6 +82,10 @@ export interface ActiveMultiplayer {
    * goose explosion (or your own blast) long after someone last shot you no longer hands them a
    * free kill. */
   lastDamageSourceAt: number;
+  /** The weapon id that damageEvent carried (protocol.ts's DamageEventMessage.weaponId), sent on
+   * as playerDied.killerWeaponId so every client applies Gun Game's launcher-only winning kill the
+   * same way. Undefined when the sender did not say. */
+  lastDamageSourceWeaponId?: string;
   /** Goose Horde co-op only (per explicit user request): this client's own count of respawns
    * already used, out of HORDE_MAX_RESPAWNS - self-authoritative, same trust model as everything
    * else this client alone decides about itself. Once it reaches HORDE_MAX_RESPAWNS, the next
