@@ -3,7 +3,8 @@ import type { Player } from '../Player.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { hasLineOfSight, horizontalDistance, pickPatrolDestination } from './enemySteering.ts';
 import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
-import type { EnemyCombatHooks } from './enemyCombat.ts';
+import { fireWideShot, type EnemyCombatHooks } from './enemyCombat.ts';
+import { FlashBlindState } from './flashBlind.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { CombatBehaviour, type PickDebug } from './combatBehaviour.ts';
 import { awarenessLevel, hearingRangeFor, isInViewCone, stepAwareness, visibilityFactor, type PlanarPoint } from './perception.ts';
@@ -15,6 +16,7 @@ import {
   ENEMY_AWARENESS_SUSPICIOUS,
   ENEMY_COMBAT_BLIND_GRACE,
   ENEMY_DEATH_ALERT_RADIUS,
+  ENEMY_FLASH_FIRE_SPREAD_DEG,
   ENEMY_KNOWLEDGE_SHARE_MAX_AGE,
   ENEMY_KNOWLEDGE_SHARE_RADIUS,
   ENEMY_LOS_CHECK_INTERVAL,
@@ -43,6 +45,8 @@ export interface EnemyBrainDebug {
   readonly searchTarget: PlanarPoint | null;
   /** Knocked off balance by a heavy hit right now (step 5). */
   readonly staggered: boolean;
+  /** Seconds of flash-grenade blindness left (0 when it can see). */
+  readonly blindSeconds: number;
 }
 
 function headOf(position: EnemyPosition): THREE.Vector3 {
@@ -95,6 +99,9 @@ export class EnemyBrain {
   /** 0 (oblivious) to 1 (detected) - see perception.ts. */
   private awareness = 0;
   private readonly combat: CombatBehaviour;
+  /** Grenades: blinded by a flash (flashBlind.ts). */
+  private readonly flashBlind = new FlashBlindState();
+  private readonly combatHooks: EnemyCombatHooks;
 
   /** `patrolRng` is a seeded per-enemy stream (EntityManager derives it from the world seed and
    * spawn order) - patrol destinations, repath timers, and the LOS-check phase offset all draw
@@ -118,6 +125,7 @@ export class EnemyBrain {
     this.lastSeenPosition = spawnPosition.clone();
     this.patrolStuck = new StuckDetector(spawnPosition);
     this.combat = new CombatBehaviour(body, physics, coordinator, knowledge, intents, combatHooks, tacticsRng, spawnPosition);
+    this.combatHooks = combatHooks;
     this.losCheckTimer = this.patrolRng() * ENEMY_LOS_CHECK_INTERVAL;
   }
 
@@ -135,6 +143,7 @@ export class EnemyBrain {
       pick: inCombat ? this.combat.pickDebug : null,
       searchTarget: this.state === 'search' ? this.searchTarget : null,
       staggered: this.combat.isStaggered,
+      blindSeconds: this.flashBlind.secondsLeft,
     };
   }
 
@@ -228,6 +237,23 @@ export class EnemyBrain {
     this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
   }
 
+  /** Blinded by a flash grenade for `seconds` (grenades): it loses its target and its awareness
+   * and staggers; then, if it had a target, it stands firing wide at where it last saw the player
+   * until it can see again (updateBlind), and searches there after. */
+  onFlashed(seconds: number): void {
+    if (!(seconds > 0)) return;
+    const hadTarget = this.state !== 'idle';
+    if (this.state === 'chase') {
+      this.combat.standDown();
+      this.knowledge.reportLost(this.body.id);
+    }
+    this.combat.onHeavyHit(Number.POSITIVE_INFINITY);
+    this.awareness = 0;
+    this.hasLineOfSightToPlayer = false;
+    this.flashBlind.blind(seconds, hadTarget);
+    this.enterSearchToward(this.lastSeenPosition, false);
+  }
+
   /** Sent in by the pacing director (step 6): a reinforcement comes looking for the player, roughly
    * toward where they are and already suspicious, instead of patrolling where it arrived. */
   dispatchToward(position: THREE.Vector3): void {
@@ -249,6 +275,10 @@ export class EnemyBrain {
 
   update(dt: number, player: Player): void {
     this.combat.tickCooldowns(dt);
+    if (this.flashBlind.active) {
+      this.updateBlind(dt, player);
+      return;
+    }
 
     const current = this.body.position;
     const distanceToPlayer = horizontalDistance(current, player.position);
@@ -287,6 +317,24 @@ export class EnemyBrain {
       default:
         this.updatePatrol(dt, current);
     }
+  }
+
+  /** Flash-blinded: no perception and no moving. Once the stagger ends it faces where it last saw
+   * the player and, with a gun and a target before the flash, fires wide there. The search toward
+   * that spot starts in full when it can see again. */
+  private updateBlind(dt: number, player: Player): void {
+    const archetype = this.body.archetype;
+    const fire = this.flashBlind.update(dt, archetype.rangedRange > 0 && !this.combat.isStaggered);
+    this.awareness = 0;
+    this.hasLineOfSightToPlayer = false;
+    this.searchTimer = ENEMY_SEARCH_DURATION;
+    if (this.combat.isStaggered) return;
+    this.body.faceToward(this.lastSeenPosition.x, this.lastSeenPosition.z);
+    if (!fire) return;
+    const target = this.lastSeenPosition.clone();
+    target.y += EYE_OFFSET;
+    fireWideShot(this.physics, headOf(this.body.position), target, ENEMY_FLASH_FIRE_SPREAD_DEG, player, archetype, this.body.excludeRigidBody, this.combatHooks);
+    this.body.onFired?.();
   }
 
   /** Gives up this enemy's role and its place among the squad's watchers - called from the shell's
