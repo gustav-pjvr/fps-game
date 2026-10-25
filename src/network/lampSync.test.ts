@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LAMP_SYNC_INTERVAL, LAMP_SYNC_MAX_SCAN, LampSyncTracker, parseLampList } from './lampSync.ts';
+import { LAMP_SYNC_INTERVAL, LAMP_SYNC_MAX_SCAN, LampSyncTracker, parseHouseLampList, parseLampList } from './lampSync.ts';
+import { houseKey, houseObjectId, parseHouseObjectId } from '../world/houses/valleyHouseIds.ts';
 import { isNetworkMessage } from './protocol.ts';
 import { RELAYABLE_MESSAGE_TYPES } from './MatchMessageRouter.ts';
 
@@ -51,5 +52,17 @@ describe('lamp sync', () => {
     dead = [3, 5, 6];
     expect(tracker.opponentSnapshot(1, read)).toEqual([3, 5, 6]);
     expect(tracker.update(LAMP_SYNC_INTERVAL, read)).toBeNull();
+  });
+
+  it('carries Valley house lamp ids (house key and room) as plain integers, kept once each when real', () => {
+    const lamp = houseObjectId(houseKey({ gx: -3, gz: 12, index: 7 }), 1);
+    expect(Number.isSafeInteger(lamp) && lamp >= 0).toBe(true);
+    expect(parseHouseObjectId(JSON.parse(JSON.stringify(lamp)))).toMatchObject({ house: { gx: -3, gz: 12, index: 7 }, slot: 1 });
+    const isLamp = (id: number) => id === lamp || id === 5;
+    expect(parseHouseLampList([lamp, 5, lamp, -5, 2.5, '5', null, 6, Number.MAX_SAFE_INTEGER + 2], isLamp)).toEqual([lamp, 5]);
+    expect(parseHouseLampList([...Array.from({ length: LAMP_SYNC_MAX_SCAN }, () => -1), 5], isLamp)).toEqual([]);
+    expect(parseHouseLampList({ 0: 5 }, isLamp)).toEqual([]);
+    expect(isNetworkMessage({ type: 'lampDestroyed', senderSlot: 2, lamp })).toBe(true);
+    expect(isNetworkMessage({ type: 'lampSync', senderSlot: 2, lamps: [lamp] })).toBe(true);
   });
 });

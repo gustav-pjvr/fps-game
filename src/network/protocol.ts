@@ -67,8 +67,9 @@ export interface WelcomeMessage {
     map?: MatchMap;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
-    /** Facility only: the lamps already shot out (indices into the layout's lamps), so a late
-     * joiner sees the same dark rooms. Missing means none (and on older builds). */
+    /** The lamps already shot out, so a late joiner sees the same dark rooms: on the Facility
+     * indices into the layout's lamps, on the Valley house lamp ids (world/houses/valleyHouseIds.ts).
+     * Missing means none (and on older builds). */
     deadLamps?: number[];
     /** Facility only: which doors are open and which breakers are on (docs/facility-map.md,
      * section 12), so a late joiner starts with the same ones; on the Valley the open house doors
@@ -188,7 +189,8 @@ export interface FireEventMessage {
 
 /** Self-reported, relayed (see MatchMessageRouter's RELAYABLE_MESSAGE_TYPES): `senderSlot` shot out
  * a Facility lamp (docs/facility-map.md, section 11). `lamp` indexes the layout's lamps, whose order
- * is identical on every client. Receivers kill that lamp the same way, if it is still lit. Older
+ * is identical on every client; on the Valley it is a house lamp id (house key and room,
+ * world/houses/valleyHouseIds.ts). Receivers kill that lamp the same way, if it is still lit. Older
  * builds drop the unknown type. */
 export interface LampDestroyedMessage {
   type: 'lampDestroyed';
@@ -196,7 +198,8 @@ export interface LampDestroyedMessage {
   lamp: number;
 }
 
-/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out Facility lamps, re-broadcast
+/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out lamps (Facility indices or Valley
+ * house lamp ids), re-broadcast
  * so a client that was still loading when a lampDestroyed went past catches up (see
  * network/lampSync.ts for when it is sent). Receivers kill any listed lamp still lit, quietly. */
 export interface LampSyncMessage {

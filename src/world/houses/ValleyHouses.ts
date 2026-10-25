@@ -5,6 +5,7 @@ import { HOUSE_DESIGNS } from '../houseDesigns.ts';
 import { doorToWorld, houseToWorld } from './houseLayout.ts';
 import { HouseLights } from './HouseLights.ts';
 import { HouseNavigator } from './HouseNavigator.ts';
+import { parseHouseLampList } from '../../network/lampSync.ts';
 import { houseKey, houseObjectId, parseHouseObjectId, type HouseRef } from './valleyHouseIds.ts';
 import { ValleyDoors } from './ValleyDoors.ts';
 
@@ -97,6 +98,22 @@ export class ValleyHouses {
       house.interior.visible = dx * dx + dz * dz < far;
     }
     this.lights.update(dt, this.cameraPosition);
+  }
+
+  /** Whether `id` names a ceiling lamp of a house in this world, streamed in or not (a lamp id from
+   * the network is checked with it). */
+  isLampId(id: number): boolean {
+    const parsed = parseHouseObjectId(id);
+    if (!parsed) return false;
+    const placement = this.houseAt(parsed.house);
+    const layout = placement ? HOUSE_DESIGNS[placement.design]?.layout : undefined;
+    return layout !== undefined && parsed.slot < layout.rooms.length;
+  }
+
+  /** Another player's dead lamps (lampSync, or a late joiner's welcome): each listed real lamp
+   * goes dark, quietly. */
+  killLampsQuietly(value: unknown): void {
+    for (const id of parseHouseLampList(value, (lamp) => this.isLampId(lamp))) this.lights.killLamp(id, false);
   }
 
   /** A player's own pellet: the streamed-in lamp it breaks before its physics hit, if any. Returns

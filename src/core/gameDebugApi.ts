@@ -158,8 +158,9 @@ export interface GameDebugApi {
   setValleyDoor(id: number, open: boolean): boolean;
   /** The houses' lamps: how many are streamed in, lit and shot out, and the light pool. */
   getHouseLights(): { lamps: number; lit: number; dead: number; lights: { x: number; y: number; z: number; on: boolean }[] } | null;
-  /** Test-only, Facility only: shoots out lamp `index` exactly like a hit (light, effect, sound and,
-   * in multiplayer, the lampDestroyed send). False when there is no such live lamp. */
+  /** Test-only: shoots out lamp `index` exactly like a hit (light, effect, sound and, in multiplayer,
+   * the lampDestroyed send); on the Valley `index` is a house lamp id (getValleyHouses' lamps).
+   * False when there is no such live lamp. */
   shootLamp(index: number): boolean;
   /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
   lampPosition(index: number): { x: number; y: number; z: number } | null;

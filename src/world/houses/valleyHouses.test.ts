@@ -167,4 +167,29 @@ describe('Valley house lamps', () => {
     expect(houses.lights.debug()).toMatchObject({ lamps: 135, lit: 135 });
     expect(houses.lights.rayHitLamp(new THREE.Vector3(249, 0, 5), new THREE.Vector3(0, 1, 0), 10)).toBe(249);
   });
+
+  it('take lamp ids from the network only for real lamps of real houses, and kill them quietly', () => {
+    const { houses, place } = setup(true);
+    place(0);
+    const bunkhouse = houseKey(PLACEMENTS[0]!.ref), block = houseKey(PLACEMENTS[1]!.ref);
+    // The bunkhouse has two rooms, so lamps 0 and 1; the block (not streamed in) two as well.
+    expect(houses.isLampId(houseObjectId(bunkhouse, 0))).toBe(true);
+    expect(houses.isLampId(houseObjectId(bunkhouse, 1))).toBe(true);
+    expect(houses.isLampId(houseObjectId(bunkhouse, 2))).toBe(false);
+    expect(houses.isLampId(houseObjectId(block, 1))).toBe(true);
+    expect(houses.isLampId(houseObjectId(houseKey({ gx: 9, gz: 9, index: 0 }), 0))).toBe(false);
+    expect(houses.isLampId(-1)).toBe(false);
+    // The wire is plain JSON numbers: a late joiner's welcome or a lampSync, with junk mixed in.
+    const wire = JSON.parse(JSON.stringify([houseObjectId(bunkhouse, 1), 'x', -3, 2.5, houseObjectId(bunkhouse, 3), houseObjectId(block, 0), houseObjectId(bunkhouse, 1)]));
+    houses.killLampsQuietly(wire);
+    expect(houses.lights.deadLampIds()).toEqual([houseObjectId(block, 0), houseObjectId(bunkhouse, 1)].sort((a, b) => a - b));
+    expect(houses.lights.isLit(houseObjectId(bunkhouse, 1))).toBe(false);
+    expect(houses.lights.isLit(houseObjectId(bunkhouse, 0))).toBe(true);
+    // The block streams in later with its lamp already dark.
+    place(1);
+    expect(houses.lights.isLit(houseObjectId(block, 0))).toBe(false);
+    expect(houses.lights.isLit(houseObjectId(block, 1))).toBe(true);
+    houses.killLampsQuietly('not a list');
+    expect(houses.lights.deadLampIds()).toHaveLength(2);
+  });
 });

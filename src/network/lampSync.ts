@@ -1,4 +1,6 @@
-/** Facility lamp state across clients (docs/facility-map.md, section 11). Each lampDestroyed is
+/** Lamp state across clients: the Facility's lamps (docs/facility-map.md, section 11), and on the
+ * Valley the houses' ceiling lamps (docs/enterable-buildings.md), whose ids (house key and room,
+ * world/houses/valleyHouseIds.ts) ride the same messages in place of lamp indices. Each lampDestroyed is
  * sent once, and a client still loading (inside Game.create, a rematch, or a late joiner between
  * the host's welcome and the end of its load) drops it, so every client also re-broadcasts its full
  * dead-lamp set as one lampSync message: once when it first sees each opponent's playerSnapshot
@@ -25,6 +27,19 @@ export function parseLampList(value: unknown, lampCount: number): number[] {
     if (Number.isInteger(lamp) && (lamp as number) >= 0 && (lamp as number) < lampCount) lamps.push(lamp as number);
   }
   return lamps;
+}
+
+/** A received list of Valley house lamp ids: the safe non-negative integers `isLamp` accepts (a
+ * real lamp of a real house in this world), each once, in order. Only the first LAMP_SYNC_MAX_SCAN
+ * entries are read. Anything that is not an array gives none. */
+export function parseHouseLampList(value: unknown, isLamp: (id: number) => boolean): number[] {
+  if (!Array.isArray(value)) return [];
+  const lamps = new Set<number>();
+  for (let i = 0; i < value.length && i < LAMP_SYNC_MAX_SCAN; i++) {
+    const id: unknown = value[i];
+    if (Number.isSafeInteger(id) && (id as number) >= 0 && isLamp(id as number)) lamps.add(id as number);
+  }
+  return [...lamps];
 }
 
 /** Decides when this client broadcasts its dead-lamp set. Pure bookkeeping: the caller sends. */
