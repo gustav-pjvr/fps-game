@@ -61,6 +61,7 @@ import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
+import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
 import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
 import { MultiplayerHud } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
@@ -1353,7 +1354,9 @@ export class Game {
       const roomCode = multiplayer.roomCode;
       const opponents = new Map<PlayerSlot, RemoteOpponent>();
       const usernames = new Map<PlayerSlot, string>([[multiplayer.ownSlot, ownUsername]]);
-      const minimap = new Minimap(hudRoot, facility ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer } : undefined);
+      const minimap = new Minimap(hudRoot, facility
+        ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer }
+        : buildings ? { layer: new ValleyHouseMapLayer(buildings.houses) } : undefined);
       const multiplayerHud = new MultiplayerHud(hudRoot, multiplayer.ownSlot, ownUsername, roomCode);
 
       for (const entry of multiplayer.roster) {

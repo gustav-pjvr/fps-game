@@ -107,6 +107,14 @@ export class ValleyHouses {
     return at ? { id, ...at } : null;
   }
 
+  /** The minimap's houses (ui/valleyHouseMapLayer.ts): every streamed-in house with its door state. */
+  *mapHouses(): Iterable<{ key: number; design: number; x: number; z: number; rotationY: number; doorOpen: boolean }> {
+    for (const house of this.loaded.values()) {
+      const { placement } = house;
+      yield { key: house.key, design: placement.design, x: placement.x, z: placement.z, rotationY: placement.rotationY, doorOpen: this.doors.state.isActive('door', house.doorId) };
+    }
+  }
+
   /** Debug API: every streamed-in house with its design, placement, door and lamps. */
   debugHouses(): {
     name: string; design: string; x: number; y: number; z: number; rotationY: number;
