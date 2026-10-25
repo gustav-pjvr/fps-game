@@ -156,6 +156,30 @@ export function fireRangedShot(
   hooks.onRangedShotFired(origin, tracerEnd, hitPlayer);
 }
 
+/** A flash-blinded enemy's shot (grenades): at `target` (where it last saw the player's eyes) through
+ * a cone of `spreadDeg`, no aim settling. Still a real hitscan, so it hits whoever stands there. */
+export function fireWideShot(
+  physics: PhysicsWorld,
+  origin: THREE.Vector3,
+  target: THREE.Vector3,
+  spreadDeg: number,
+  player: Player,
+  archetype: EnemyArchetype,
+  excludeRigidBody: RAPIER.RigidBody,
+  hooks: EnemyCombatHooks,
+): void {
+  const direction = target.clone().sub(origin);
+  if (direction.lengthSq() < 1e-6) return;
+  direction.normalize();
+  applySpreadCone(direction, THREE.MathUtils.degToRad(spreadDeg));
+  const maxRange = archetype.rangedRange + 5;
+  const hit = castHitscan(physics, origin, direction, maxRange, undefined, excludeRigidBody);
+  const tracerEnd = hit ? hit.point : origin.clone().add(direction.multiplyScalar(maxRange));
+  const hitPlayer = hit?.colliderHandle === player.ownCollider.handle;
+  if (hitPlayer && !player.isDead) player.takeDamage(archetype.rangedDamage, origin);
+  hooks.onRangedShotFired(origin, tracerEnd, hitPlayer);
+}
+
 /** Universal melee fallback (Phase D) - a real fan-raycast swing mirroring the player's own knife
  * (same spread-by-two-axis-angle technique, ENEMY_MELEE_SWING_COUNT rays instead of one). Can
  * genuinely miss if none of the swing's rays connect - a player hugging the very edge of

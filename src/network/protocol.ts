@@ -6,6 +6,7 @@
 
 import type { GooseExplosionDifficulty, MatchMap, MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
+import { isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
  * the host, slots 1-3 are assigned to guests in join order by the host (see HostRoster.ts) and are
@@ -242,7 +243,43 @@ export interface DamageEventMessage {
   senderSlot: PlayerSlot;
   targetSlot: PlayerSlot;
   amount: number;
+  /** What did the damage, when it was not the attacker's held weapon: 'frag' for a frag grenade.
+   * Optional; older builds send none. */
+  weaponId?: string;
 }
+
+/** Grenades (docs/grenades.md, design: docs/squad-arsenal-night.md section 3). Relayed like
+ * gooseThrown: the thrower is authoritative. `senderSlot` threw grenade `id` (unique per thrower):
+ * every other client flies its own copy from `origin` at `velocity` (the game's gravity, the same
+ * sweep), purely for visuals, with `fuseLeft` seconds left (it may have been cooked). `t` is the
+ * sender's performance.now() when sent. The same message is re-sent for each still-live grenade
+ * when an opponent is first seen in the match (late joiners), from where it is at that moment. */
+export interface GrenadeThrownMessage {
+  type: 'grenadeThrown';
+  senderSlot: PlayerSlot;
+  id: string;
+  kind: GrenadeKind;
+  origin: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  fuseLeft: number;
+  t: number;
+}
+
+/** The thrower's copy of grenade `id` went off at `position`: receivers move their copy there and
+ * play the effect. A frag's damage to other players travels separately as damageEvent (weaponId
+ * 'frag'); a flash is judged by each client for its own player. */
+export interface GrenadeDetonatedMessage {
+  type: 'grenadeDetonated';
+  senderSlot: PlayerSlot;
+  id: string;
+  kind: GrenadeKind;
+  position: { x: number; y: number; z: number };
+}
+
+/** Longest grenade id accepted from the network. */
+export const GRENADE_ID_MAX_LENGTH = 48;
+/** Longest fuse a grenadeThrown may carry, in seconds. */
+export const GRENADE_MESSAGE_MAX_FUSE = 10;
 
 /** Sent by a client to everyone the moment its own player's health reaches 0 - `victimSlot` is
  * always the sender's own slot (kept explicit/named for readability at every call site that reads
@@ -700,6 +737,8 @@ export type NetworkMessage =
   | LampSyncMessage
   | WorldInteractMessage
   | WorldObjectStateMessage
+  | GrenadeThrownMessage
+  | GrenadeDetonatedMessage
   | DamageEventMessage
   | PlayerDiedMessage
   | RespawnEventMessage
@@ -757,6 +796,8 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'lampSync',
   'worldInteract',
   'worldObjectState',
+  'grenadeThrown',
+  'grenadeDetonated',
   'damageEvent',
   'playerDied',
   'respawnEvent',
@@ -818,6 +859,8 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
       (Array.isArray(valleyDoors) && valleyDoors.length <= 4096 && valleyDoors.every(id => Number.isSafeInteger(id) && (id as number) >= 0));
     return validDoors && [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
   }
+  if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
+  if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);
   return type.startsWith('pickup') ? hasValidPickupFields(value as Record<string, unknown>) : true;
 }
 
@@ -844,4 +887,26 @@ function hasValidPickupFields(message: Record<string, unknown>): boolean {
     default:
       return false;
   }
+}
+
+function isFiniteVec3(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+}
+
+function isValidGrenadeId(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0 && value.length <= GRENADE_ID_MAX_LENGTH;
+}
+
+/** Grenade messages drive physics and damage on every client, so their fields are checked here
+ * rather than trusted: a known kind, finite numbers, a short id and a fuse of 0 to 10 seconds. */
+function isValidGrenadeThrown(m: Record<string, unknown>): boolean {
+  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isFiniteVec3(m.origin) && isFiniteVec3(m.velocity)
+    && Number.isFinite(m.fuseLeft) && (m.fuseLeft as number) >= 0 && (m.fuseLeft as number) <= GRENADE_MESSAGE_MAX_FUSE
+    && Number.isFinite(m.t);
+}
+
+function isValidGrenadeDetonated(m: Record<string, unknown>): boolean {
+  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isFiniteVec3(m.position);
 }

@@ -100,6 +100,10 @@ interface ManagedEntity {
    * no AI to alert. */
   onHeardGunshot?(origin: THREE.Vector3, weaponId?: string): void;
   onNearbyDeath?(deathPosition: THREE.Vector3, killerPosition: THREE.Vector3): void;
+  /** Enemy-only, grenades: where its eyes are and which way it faces, and being blinded by a flash
+   * for `seconds`. */
+  flashView?(): { eye: THREE.Vector3; yaw: number };
+  onFlashed?(seconds: number): void;
   /** Enemy-only debug hooks (enemy AI v2 e2e checks). */
   debugRecord?(): EnemyDebugRecord;
   debugPlace?(x: number, z: number): void;
@@ -287,6 +291,37 @@ export class EntityManager {
       const amount = computeExplosionDamage(entity.mesh.position.distanceTo(position), radius, maxDamage);
       if (amount > 0) entity.takeDamage(amount, -1, position);
     }
+  }
+
+  /** A frag grenade (combat/grenades/GrenadeSystem.ts): `damageAt(distance)` to every live entity
+   * the blast `reaches` past the walls (the caller's chest and head rays; `entity` and `exclude`
+   * let those rays count the target's own colliders as reaching it). */
+  applyBlast(
+    position: THREE.Vector3,
+    damageAt: (distance: number) => number,
+    reaches: (center: THREE.Vector3, entity: object, exclude?: RAPIER.RigidBody) => boolean,
+  ): void {
+    for (const entity of this.entities) {
+      if (entity.isDead || !entity.takeDamage) continue;
+      const amount = damageAt(entity.mesh.position.distanceTo(position));
+      if (amount > 0 && reaches(entity.mesh.position, entity, entity.excludeRigidBody)) entity.takeDamage(amount, -1, position);
+    }
+  }
+
+  /** A flash grenade: `judge` gives each enemy's blind seconds from its eyes and facing (0 for none:
+   * out of range, no line of sight, too weak). Returns how many were blinded. */
+  applyFlash(judge: (eye: THREE.Vector3, yaw: number, entity: object, exclude?: RAPIER.RigidBody) => number): number {
+    let blinded = 0;
+    for (const entity of this.entities) {
+      if (entity.isDead || !entity.flashView || !entity.onFlashed) continue;
+      const view = entity.flashView();
+      const seconds = judge(view.eye, view.yaw, entity, entity.excludeRigidBody);
+      if (seconds > 0) {
+        entity.onFlashed(seconds);
+        blinded++;
+      }
+    }
+    return blinded;
   }
 
   update(dt: number, player: Player, visibility?: PlayerVisibility): void {

@@ -12,7 +12,7 @@ import { steerWithAvoidance } from './enemySteering.ts';
 import { enemyFloorAt, hasEnemyNavigator, heldAtDoor, resolveMoveTarget } from './enemyNavigator.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
-import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
+import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
 import { createHitColliders, ENEMY_HIT_SHAPE, yawRotation } from '../characterHitbox.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
@@ -43,6 +43,8 @@ export interface EnemyDebugRecord {
   readonly searchTarget: PlanarPoint | null;
   /** Knocked off balance by a heavy hit right now (step 5). */
   readonly staggered: boolean;
+  /** Seconds of flash-grenade blindness left. */
+  readonly blindSeconds: number;
 }
 
 /** How far an enemy must move horizontally before its ground height is resampled. sampleHeight is
@@ -184,6 +186,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
       pick: brain.pick,
       searchTarget: brain.searchTarget,
       staggered: brain.staggered,
+      blindSeconds: brain.blindSeconds,
     };
   }
 
@@ -258,6 +261,18 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   onHeardGunshot(origin: THREE.Vector3, weaponId?: string): void {
     if (this.dead) return;
     this.brain.onHeardGunshot(origin, weaponId);
+  }
+
+  /** Grenades: its eyes and facing, for judging a flash (EntityManager.applyFlash). */
+  flashView(): { eye: THREE.Vector3; yaw: number } {
+    const p = this.position;
+    return { eye: new THREE.Vector3(p.x, p.y + ENEMY_HEAD_OFFSET_Y, p.z), yaw: this.facingYaw };
+  }
+
+  /** Blinded by a flash grenade (see EnemyBrain.onFlashed). */
+  onFlashed(seconds: number): void {
+    if (this.dead) return;
+    this.brain.onFlashed(seconds);
   }
 
   /** A comrade died nearby (see EnemyBrain.onNearbyDeath). */

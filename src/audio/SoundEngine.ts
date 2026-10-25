@@ -1,5 +1,6 @@
 import { Settings } from '../settings/Settings.ts';
 import { WEAPON_SOUND_PATHS } from './weaponSounds.ts';
+import { DEAF_CUTOFF_OPEN, flashDeafness, RING_FREQUENCY } from './flashDeafness.ts';
 import { heartbeatFor, MUSIC_SILENT, musicMix, reverbSendFor, valleyImpulse, type MusicMix, type PacingPhase } from './ambience.ts';
 
 async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, AudioBuffer>> {
@@ -89,6 +90,12 @@ interface MusicNodes {
 export class SoundEngine {
   private readonly ctx: AudioContext;
   private readonly master: GainNode;
+  /** A flash grenade's muffle (flashDeafness.ts): a low-pass between the master bus and the output,
+   * wide open until a flash closes it. */
+  private readonly deafFilter: BiquadFilterNode;
+  /** The flash ring, made on the first flash and kept running at zero gain after. */
+  private ring: { oscillator: OscillatorNode; gain: GainNode } | null = null;
+  private deafLevel = 0;
   private readonly buffers: Map<string, AudioBuffer>;
   private keepAliveOscillator: OscillatorNode | null = null;
   /** The valley reverb (phase 6): sounds send into this, it returns into master. */
@@ -105,7 +112,10 @@ export class SoundEngine {
     this.buffers = buffers;
     this.master = ctx.createGain();
     this.master.gain.value = Settings.getMasterVolume();
-    this.master.connect(this.ctx.destination);
+    this.deafFilter = ctx.createBiquadFilter();
+    this.deafFilter.type = 'lowpass';
+    this.deafFilter.frequency.value = DEAF_CUTOFF_OPEN;
+    this.master.connect(this.deafFilter).connect(this.ctx.destination);
     this.startKeepAlive();
 
     this.reverbSend = ctx.createGain();
@@ -152,6 +162,8 @@ export class SoundEngine {
   dispose(): void {
     this.keepAliveOscillator?.stop();
     this.keepAliveOscillator = null;
+    this.ring?.oscillator.stop();
+    this.ring = null;
     for (const oscillator of this.music?.oscillators ?? []) oscillator.stop();
     this.music = null;
     void this.ctx.close();
@@ -159,6 +171,29 @@ export class SoundEngine {
 
   setMasterVolume(value: number): void {
     this.master.gain.value = Math.max(0, Math.min(1, value));
+  }
+
+  /** A flash grenade's white-out, 0 to 1 (GrenadeSystem.blindLevel), per frame: muffles everything
+   * through the master low-pass and rings over it, both following the level (flashDeafness.ts). */
+  setFlashDeafness(level: number): void {
+    const clamped = Math.max(0, Math.min(1, level));
+    if (clamped === this.deafLevel) return;
+    this.deafLevel = clamped;
+    const { cutoff, ringGain } = flashDeafness(clamped);
+    const now = this.ctx.currentTime;
+    this.deafFilter.frequency.setTargetAtTime(cutoff, now, 0.03);
+    if (!this.ring && ringGain > 0) {
+      const oscillator = this.ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = RING_FREQUENCY;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      // After the muffle, so the ring stays clear; scaled by the volume setting by hand instead.
+      oscillator.connect(gain).connect(this.ctx.destination);
+      oscillator.start();
+      this.ring = { oscillator, gain };
+    }
+    this.ring?.gain.gain.setTargetAtTime(ringGain * this.master.gain.value, now, 0.05);
   }
 
   /** AudioContext starts suspended until a user gesture - call from any click/keydown handler. */
@@ -293,6 +328,49 @@ export class SoundEngine {
     const wet = reverbSendFor(volumeScale, 0.45);
     this.noiseBurst(0.5, 350, 'lowpass', 0.9 * volumeScale, pan, wet);
     this.tone(70, 0.4, 0.6 * volumeScale, 'sawtooth', pan, 0, wet);
+  }
+
+  /** Grenades (docs/grenades.md), all synthesized; `volumeScale`/`pan` as playGunshot. The pin
+   * coming out as a cook starts: a sharp metallic tick and the ring's ping. */
+  playGrenadePin(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.02, 5200, 'highpass', 0.16 * volumeScale, pan);
+    this.tone(2350, 0.06, 0.05 * volumeScale, 'triangle', pan);
+    this.tone(3100, 0.05, 0.03 * volumeScale, 'sine', pan, 0.035);
+  }
+
+  /** A grenade leaving the hand: a short rising whoosh. */
+  playGrenadeThrow(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.24, 700, 'bandpass', 0.24 * volumeScale, pan, 0, 2400, 0.05);
+  }
+
+  /** A grenade hitting something; `volumeScale` already carries the impact's speed. Two bright,
+   * slightly random partials, so a run of bounces does not repeat one note. */
+  playGrenadeBounce(volumeScale = 1, pan = 0): void {
+    const pitch = 1 + (Math.random() - 0.5) * 0.25;
+    this.noiseBurst(0.025, 3600, 'highpass', 0.12 * volumeScale, pan);
+    this.tone(2700 * pitch, 0.07, 0.09 * volumeScale, 'triangle', pan);
+    this.tone(4150 * pitch, 0.05, 0.045 * volumeScale, 'sine', pan, 0.004);
+  }
+
+  /** A frag going off: heavier and longer than the launcher's explosion (playExplosion), a crack on
+   * top, a deep sub thump, a falling roar and a rattle of debris. */
+  playFragExplosion(volumeScale = 1, pan = 0): void {
+    const wet = reverbSendFor(volumeScale, 0.55);
+    this.noiseBurst(0.07, 2800, 'highpass', 0.55 * volumeScale, pan, wet);
+    this.noiseBurst(1.1, 520, 'lowpass', 0.95 * volumeScale, pan, wet, 110);
+    this.tone(48, 0.75, 0.75 * volumeScale, 'sine', pan, 0, wet);
+    this.tone(74, 0.45, 0.4 * volumeScale, 'sawtooth', pan, 0, wet);
+    this.noiseBurst(0.7, 2300, 'bandpass', 0.1 * volumeScale, pan, wet, 900, 0.12);
+  }
+
+  /** A flash going off: a sharp, bright crack with little body, and a high ring after it. */
+  playFlashBang(volumeScale = 1, pan = 0): void {
+    const wet = reverbSendFor(volumeScale, 0.5);
+    this.noiseBurst(0.05, 2400, 'highpass', 1.0 * volumeScale, pan, wet);
+    this.noiseBurst(0.3, 1500, 'lowpass', 0.45 * volumeScale, pan, wet, 300);
+    this.tone(150, 0.12, 0.35 * volumeScale, 'square', pan, 0, wet);
+    this.tone(4300, 1.1, 0.07 * volumeScale, 'sine', pan, 0.02, wet);
+    this.tone(3650, 0.8, 0.05 * volumeScale, 'sine', pan, 0.02, wet);
   }
 
   /**

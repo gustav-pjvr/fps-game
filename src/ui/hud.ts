@@ -19,6 +19,9 @@ export class Hud {
   private readonly magazine: HTMLSpanElement;
   private readonly capacity: HTMLSpanElement;
   private readonly reserve: HTMLSpanElement;
+  private readonly grenades: HTMLDivElement;
+  private readonly grenadeCounts: Record<'frag' | 'flash', HTMLSpanElement>;
+  private grenadesShown = '';
   private readonly prompt: HTMLDivElement;
   private readonly promptKey: HTMLElement;
   private readonly promptText: HTMLSpanElement;
@@ -102,7 +105,23 @@ export class Hud {
       element.style.cssText = `font-family:${MONO_FONT}; font-size:14px; color:${INK_DIM};`;
     }
     ammo.append(this.magazine, this.capacity, this.reserve);
-    weapon.append(this.weaponNameElement, ammo);
+    // Frag and flash counts under the ammo, hidden in modes without grenades.
+    this.grenades = document.createElement('div');
+    this.grenades.style.cssText = 'display:none; justify-content:flex-end; gap:16px; margin-top:10px;';
+    const grenadeCount = (label: string): HTMLSpanElement => {
+      const item = document.createElement('span');
+      item.style.cssText = 'display:inline-flex; align-items:baseline; gap:7px;';
+      const name = document.createElement('span');
+      name.style.cssText = `${LABEL_CSS} font-size:10px;`;
+      name.textContent = label;
+      const count = document.createElement('span');
+      count.style.cssText = `font-family:${MONO_FONT}; font-size:14px;`;
+      item.append(name, count);
+      this.grenades.appendChild(item);
+      return count;
+    };
+    this.grenadeCounts = { frag: grenadeCount('FRAG'), flash: grenadeCount('FLASH') };
+    weapon.append(this.weaponNameElement, ammo, this.grenades);
     this.container.appendChild(weapon);
 
     // An interaction prompt under the crosshair, e.g. the Uplink mission's `E  START UPLINK`.
@@ -148,6 +167,20 @@ export class Hud {
     this.magazine.textContent = reloading ? 'RELOADING' : numeric ? String(current) : 'MELEE';
     this.capacity.textContent = numeric ? ` / ${max}` : '';
     this.reserve.textContent = reserve != null && Number.isFinite(reserve) ? ` +${reserve}` : '';
+  }
+
+  /** The frag and flash counts beside the ammo, or null to hide them (grenades off in this mode). */
+  setGrenades(counts: { frag: number; flash: number } | null): void {
+    const shown = counts ? `${counts.frag}/${counts.flash}` : '';
+    if (shown === this.grenadesShown) return;
+    this.grenadesShown = shown;
+    this.grenades.style.display = counts ? 'flex' : 'none';
+    if (!counts) return;
+    for (const kind of ['frag', 'flash'] as const) {
+      const element = this.grenadeCounts[kind];
+      element.textContent = String(counts[kind]);
+      element.style.color = counts[kind] > 0 ? INK : INK_FAINT;
+    }
   }
 
   /** Shows `key` and `text` under the crosshair, or hides the prompt with null. */

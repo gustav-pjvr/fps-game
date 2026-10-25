@@ -404,6 +404,9 @@ export const ENEMY_WEAPON_LOUDNESS_RANGE: Readonly<Record<string, number>> = {
   gooseLauncher: 45,
   knife: 0,
   unarmed: 0,
+  // Grenades (combat/grenades/GrenadeSystem.ts) go through the same hearing path as a shot.
+  frag: 70,
+  flash: 55,
 };
 
 /**
@@ -575,6 +578,10 @@ export const ENEMY_STAGGER_DAMAGE_THRESHOLD = 25;
 export const ENEMY_STAGGER_DURATION = 0.5;
 /** How far a staggered enemy tips back, in radians, at the moment of the hit. */
 export const ENEMY_STAGGER_LURCH_RAD = 0.35;
+/** A flash-blinded enemy (grenades, entities/enemies/flashBlind.ts) that had a target fires one wide
+ * shot this often at where it last saw the player, through a cone this wide (half-angle, degrees). */
+export const ENEMY_FLASH_FIRE_INTERVAL = 0.7;
+export const ENEMY_FLASH_FIRE_SPREAD_DEG = 15;
 
 /**
  * Enemy AI v2, step 6 (docs/enemy-ai-v2.md): the pacing director behind the opt-in "Director" solo

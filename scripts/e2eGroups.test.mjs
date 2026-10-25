@@ -32,6 +32,12 @@ describe('e2e spec selection', () => {
     }
   });
 
+  it('grenade code runs the grenades spec, alongside the area it lives in', () => {
+    expect(groupsForFiles(['src/combat/grenades/GrenadeSystem.ts']).groups).toEqual(['core', 'grenades']);
+    expect(groupsForFiles(['src/ui/flashOverlay.ts']).groups).toEqual(['grenades', 'quick', 'ui']);
+    expect(playwrightRuns({ groups: ['grenades'], specs: [] })).toEqual([{ files: ['e2e/grenades.spec.ts'] }]);
+  });
+
   it('a changed spec runs itself, once', () => {
     expect(groupsForFiles(['e2e/mission.spec.ts'])).toEqual({ groups: [], specs: ['e2e/mission.spec.ts'] });
     // Already inside a chosen group: not listed twice.

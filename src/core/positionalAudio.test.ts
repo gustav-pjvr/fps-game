@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { facilityObjectVolume, knifeSwingVolume, lampBreakVolume, multiplayerGunshotVolume } from './positionalAudio.ts';
+import { facilityObjectVolume, GRENADE_BOUNCE_AUDIBLE_RANGE, GRENADE_BOUNCE_LOUD_SPEED, grenadeBounceVolume, knifeSwingVolume, lampBreakVolume, multiplayerGunshotVolume } from './positionalAudio.ts';
 
 describe('positional audio falloffs', () => {
   it('plays an opponent knife swing at full volume within 5 m and not at all beyond 15 m', () => {
@@ -27,5 +27,15 @@ describe('positional audio falloffs', () => {
 
   it('keeps the gunshot floor so a far shot is never silent', () => {
     expect(multiplayerGunshotVolume(500)).toBeCloseTo(0.15);
+  });
+});
+
+describe('grenade bounce volume', () => {
+  it('scales with the impact speed and fades out with distance', () => {
+    expect(grenadeBounceVolume(1, GRENADE_BOUNCE_LOUD_SPEED)).toBe(1);
+    expect(grenadeBounceVolume(1, GRENADE_BOUNCE_LOUD_SPEED * 2)).toBe(1);
+    expect(grenadeBounceVolume(1, GRENADE_BOUNCE_LOUD_SPEED / 2)).toBeCloseTo(0.5);
+    expect(grenadeBounceVolume(GRENADE_BOUNCE_AUDIBLE_RANGE + 1, GRENADE_BOUNCE_LOUD_SPEED)).toBe(0);
+    expect(grenadeBounceVolume(10, 5)).toBeLessThan(grenadeBounceVolume(2, 5));
   });
 });

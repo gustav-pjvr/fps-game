@@ -1,7 +1,7 @@
 import type * as THREE from 'three';
 import type { Player } from '../entities/Player.ts';
 import type { WeaponManager } from '../weapons/WeaponManager.ts';
-import { areGrenadesOnInMode, type GameMode } from '../core/gameModes.ts';
+import { grenadesEnabled, type GameMode } from '../core/gameModes.ts';
 import type { ActiveMultiplayer } from '../network/multiplayerMatchTypes.ts';
 import type { NetworkMessage, PlayerSlot } from '../network/protocol.ts';
 import type { BuildingManager } from '../world/BuildingManager.ts';
@@ -31,7 +31,7 @@ export interface MatchPickupsOptions {
 /** The pickup sites for a match: a pure function of the seed, the map and the mode, so every client
  * of a multiplayer match builds the same list and the wire only carries indices. */
 export function placeMatchPickups(options: Pick<MatchPickupsOptions, 'mode' | 'facility' | 'buildings' | 'multiplayer'>): PickupSite[] {
-  const kinds = pickupKindsForMode(options.mode, areGrenadesOnInMode(options.mode));
+  const kinds = pickupKindsForMode(options.mode, grenadesEnabled(options.mode));
   if (options.facility) {
     // Single-player knows its start room and keeps clear of it. A multiplayer match cannot: spawn
     // points are not part of the seed and a late joiner has different ones, so the list would differ.

@@ -162,7 +162,11 @@ import {
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
-import { DEFAULT_GAME_MODE, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
+import { DEFAULT_GAME_MODE, grenadesEnabled, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
+import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
+import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
+import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
+import { withBlastTargets } from '../combat/grenades/grenadeTargets.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
 import { loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
@@ -438,6 +442,10 @@ export class Game {
    * assigned once in create() right after construction, same forward-reference pattern as
    * modeExplanationScreen/loadoutScreen below. Null for every mode but Goose Toss. */
   private gooseTossController: GooseTossController | null = null;
+  /** Frag and flash grenades (combat/grenades/GrenadeSystem.ts); set in create(). */
+  grenades: GrenadeSystem | null = null;
+  /** The grenades' view-model arm, arc preview, HUD marks, white-out and deafness; set in create(). */
+  private grenadeEffects: GrenadeEffects | null = null;
   /** King of the Hill's own claim/drop/scoring controller (see
    * modeControllers/KingOfTheHillController.ts). Null for every mode but King of the Hill. */
   private kingOfTheHillController: KingOfTheHillController | null = null;
@@ -812,6 +820,8 @@ export class Game {
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
       getPickups: () => this.pickups?.views() ?? [],
       setPickupRespawnSeconds: (seconds) => this.pickups?.setRespawnSeconds(seconds),
+      getGrenadeDebug: () => this.grenades?.debugState() ?? null,
+      throwGrenade: (kind, direction) => this.grenades?.debugThrow(kind, direction) ?? null,
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -1604,6 +1614,30 @@ export class Game {
     if (multiplayer?.gameMode === 'gunGame') {
       game.gunGameController = new GunGameController(multiplayer, game.multiplayerMatchState, gooseAnnouncement);
     }
+    // Grenades: the system owns the carry, flight and blasts; these are its hooks into the match.
+    game.grenades = new GrenadeSystem({
+      scene: renderer.scene,
+      physics,
+      camera: renderer.camera,
+      player,
+      enabled: grenadesEnabled(currentGameMode),
+      sound,
+      targets: withBlastTargets(entityManager, hordeGooseManager),
+      network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
+      // Goose Horde is co-op: a frag never hurts or pushes a teammate.
+      friendlyFire: currentGameMode !== 'gooseHorde',
+      floor: facility ? undefined : sampleHeight,
+      canStartThrow: () => game.weaponManager.canStartThrow,
+      onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),
+      shootLampsNear: (position, radius) => {
+        if (!facility) return;
+        for (let i = 0; i < facility.world.lampCount; i++) {
+          const lamp = facility.world.lampPosition(i);
+          if (lamp && !facility.world.isLampDead(i) && position.distanceTo(new THREE.Vector3(lamp.x, lamp.y, lamp.z)) <= radius) game.destroyFacilityLamp(i, true);
+        }
+      },
+    });
+    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot, sound });
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
@@ -1669,6 +1703,9 @@ export class Game {
         },
         worldInteract: (slot, kind, id) => game.facilityInteraction?.receiveInteract(slot, kind, id),
         worldObjectState: (doors, breakers, valleyDoors) => game.facilityInteraction?.receiveState(doors, breakers, valleyDoors),
+        get grenades() {
+          return game.grenades;
+        },
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1875,6 +1912,8 @@ export class Game {
     this.modeExplanationScreen?.dispose();
     this.loadoutScreen?.dispose();
     this.explosionEffect.dispose();
+    this.grenadeEffects?.dispose();
+    this.grenades?.dispose();
     this.glintMarkers.dispose();
     this.gooseManager.dispose();
     this.goldenGooseManager?.dispose();
@@ -1944,6 +1983,8 @@ export class Game {
         : clearFixedSpawnPoint(this.isSpawnBlocked);
     const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
+    this.grenades?.resetMatch();
+    this.grenadeEffects?.resetMatch();
     // Re-arm death handling at the respawn itself, not on the next tick: this runs after an await,
     // so a goose explosion landing between here and that tick would otherwise kill the player with
     // deathHandled still true from the previous death, skipping the whole death sequence.
@@ -2543,6 +2584,7 @@ export class Game {
       this.perfLogger.endSection('ai', sectionStart);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
+      this.grenades?.update(dt, freezeLocalPlayer ? null : this.input);
 
       // Goose Horde: no-op for a follower (guest) manager - see HordeGooseManager's isAuthoritative
       // comment. Every living player (own + every opponent) is a valid target so co-op geese chase
@@ -2902,6 +2944,7 @@ export class Game {
     const { x, z } = pickRandomRespawnPoint(otherPositions, this.isSpawnBlocked);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
+    this.grenades?.resetForSpawn();
     this.deathHandled = false; // same reason as resetPlay: re-armed at the respawn, not a tick later
     // Per user request: a fresh life should mean a fresh loadout, not carrying over whatever ammo
     // was left in each weapon at the moment of death - single-player's own resetPlay() already
@@ -3285,6 +3328,7 @@ export class Game {
     // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
     this.lampSync.forget(slot);
     this.facilityInteraction?.forget(slot);
+    this.grenades?.forgetOpponent(slot);
     opponent.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);
@@ -3414,6 +3458,7 @@ export class Game {
     // through, and unlike interpolating every enemy/target mesh, it needs no new per-entity
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
+    this.grenades?.applyCameraShake(this.renderer.camera, now / 1000);
     this.renderer.camera.getWorldDirection(this.hudForward);
     const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
     const hudDt = Math.max(0, frameMs / 1000);
@@ -3421,6 +3466,7 @@ export class Game {
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);
     this.worldMarkers?.update(this.renderer.camera);
+    this.grenadeEffects?.update(hudDt, this.weaponManager);
     if (this.facility) {
       this.updateFacilityLight(hudDt);
     } else {
@@ -3429,6 +3475,7 @@ export class Game {
     this.updateTorches();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
+    this.grenadeEffects?.afterRender(this.renderer.webgl.domElement);
     this.perfLogger.endSection('render', renderStart);
     this.perfLogger.maybeEmit(this.perfContext);
   };

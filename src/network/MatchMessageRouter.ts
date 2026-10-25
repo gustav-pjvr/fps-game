@@ -20,7 +20,7 @@ import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGuns
 import { applyPlayerDied } from '../core/multiplayerScoring.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
 import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
-import { type NetworkMessage, type PlayerSlot } from './protocol.ts';
+import { type GrenadeDetonatedMessage, type GrenadeThrownMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import type { ActiveMultiplayer } from './multiplayerMatchTypes.ts';
 import { acceptsSnapshot, afterStateEvent } from './stateOrder.ts';
 import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
@@ -35,6 +35,8 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'fireEvent',
   'lampDestroyed',
   'lampSync',
+  'grenadeThrown',
+  'grenadeDetonated',
   'damageEvent',
   'playerDied',
   'respawnEvent',
@@ -49,6 +51,16 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'hordeAmmoDropPickedUp',
   'modeExplanationReady',
 ]);
+
+/** The grenade system's network side (combat/grenades/GrenadeSystem.ts implements it). */
+export interface GrenadeMessageReceiver {
+  /** Another player threw (or re-sent, for a late joiner) a grenade: fly a copy of it. */
+  receiveThrown(message: GrenadeThrownMessage): void;
+  /** Another player's grenade went off: move the copy there and play the effect. */
+  receiveDetonated(message: GrenadeDetonatedMessage): void;
+  /** A playerSnapshot from this slot arrived: the first time, re-send this client's live grenades. */
+  opponentInMatch(slot: PlayerSlot): void;
+}
 
 /** Everything routeMatchMessage needs from the owning Game instance, handed over as an explicit
  * context object so the ~270-line network switch no longer has to live inside Game.create()'s giant
@@ -108,6 +120,8 @@ export interface MatchMessageContext {
   worldInteract(slot: PlayerSlot, kind: 'door' | 'breaker', id: number): void;
   /** Guest only: the host's doors and breakers (on the Valley the open house doors), adopted whole. */
   worldObjectState(doors: string, breakers: string, valleyDoors?: number[]): void;
+  /** Null where grenades are off for the mode (gameModes.ts grenadesEnabled). */
+  readonly grenades: GrenadeMessageReceiver | null;
 }
 
 /** Routes one inbound network message to its local side effects. Takes over from the room screen's
@@ -178,6 +192,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
         opponent.remotePlayer.setTorch(message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather));
       }
       if (activeMultiplayer.map === 'facility') ctx.opponentInMatch(message.senderSlot);
+      ctx.grenades?.opponentInMatch(message.senderSlot);
       opponent.health = message.health;
       // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
       // they're alive again, even if their respawnEvent was somehow missed.
@@ -216,6 +231,13 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     case 'worldObjectState':
       // Host-authored and never relayed; the host applied it itself before sending.
       if (activeMultiplayer.session.role === 'guest') ctx.worldObjectState(message.doors, message.breakers, message.valleyDoors);
+      break;
+    case 'grenadeThrown':
+      // Validated in isNetworkMessage; the thrower's own client already flies its own grenade.
+      ctx.grenades?.receiveThrown(message);
+      break;
+    case 'grenadeDetonated':
+      ctx.grenades?.receiveDetonated(message);
       break;
     case 'damageEvent':
       // This client is authoritative over its own player's health - the attacker only ever

@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { areGrenadesOnInMode, resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
+import { resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, grenadesEnabled, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
 import type { PlayerLoadout } from './gameModes.ts';
-
-describe('areGrenadesOnInMode', () => {
-  it('is off in every mode until the grenades branch fills in its table (so no grenade crate is placed)', () => {
-    for (const mode of GAME_MODES) expect(areGrenadesOnInMode(mode)).toBe(false);
-  });
-});
 
 describe('modeUsesCustomLoadout', () => {
   it('is true only for the three unrestricted modes', () => {
@@ -82,5 +76,28 @@ describe('WEAPON_CATEGORIES', () => {
     expect(WEAPON_CATEGORIES.mp5).toBe('secondary');
     expect(WEAPON_CATEGORIES.knife).toBe('melee');
     expect(WEAPON_CATEGORIES.gooseLauncher).toBe('special');
+  });
+});
+
+describe('grenadesEnabled', () => {
+  it.each([
+    ['default', true],
+    ['elimination', true],
+    ['director', true],
+    ['horde', true],
+    ['gooseHorde', true],
+    ['mission', true],
+    ['kingOfTheHill', true],
+    ['knifeOnly', false],
+    ['gunGame', false],
+    ['sniperDuel', false],
+    ['oneShotOneKill', false],
+    ['gooseToss', false],
+  ] as const)('%s: %s', (mode, enabled) => {
+    expect(grenadesEnabled(mode)).toBe(enabled);
+  });
+
+  it('covers every multiplayer mode', () => {
+    for (const mode of GAME_MODES) expect(typeof grenadesEnabled(mode)).toBe('boolean');
   });
 });
