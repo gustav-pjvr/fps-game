@@ -12,6 +12,8 @@ export const GROUPS = {
   world: { files: ['e2e/world-bounds.spec.ts'] },
   // The indoor map (docs/facility-map.md), solo and two-player.
   facility: { files: ['e2e/facility.spec.ts', 'e2e/multiplayer-facility.spec.ts'] },
+  // Frag and flash grenades (docs/grenades.md), solo.
+  grenades: { files: ['e2e/grenades.spec.ts'] },
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
@@ -27,7 +29,7 @@ export const GROUPS = {
 };
 
 /** Every group a full run covers (everything but perf). */
-export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'mp'];
+export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'grenades', 'mp'];
 
 /**
  * Path rules, checked in order; every matching rule adds its groups, except that a `stop` rule
@@ -46,6 +48,7 @@ export const RULES = [
   { match: /^e2e\/.+\.spec\.ts$/, groups: [], stop: true },
 
   // Game areas.
+  { match: /^src\/combat\/grenades\/|^src\/weapons\/(GrenadeViewModel|grenadeThrowPose)\.ts$|^src\/ui\/(grenadeDangerMarkers|flashOverlay)\.ts$|^src\/audio\/flashDeafness\.ts$/, groups: ['grenades'] },
   { match: /^src\/world\/facility\/|^src\/render\/Flashlight\.ts$|^src\/ui\/(minimap|facilityMapLayer)\.ts$/, groups: ['facility'] },
   { match: /^src\/entities\/characterHitbox\.ts$|^public\/assets\/models\/characters\//, groups: ['quick', 'ai', 'mp'] },
   { match: /^src\/entities\/(enemies\/|EntityManager\.ts$|Target\.ts$)/, groups: ['quick', 'ai'] },
@@ -54,7 +57,7 @@ export const RULES = [
   { match: /^src\/ui\/|^index\.html$/, groups: ['quick', 'ui'] },
   { match: /^src\/world\//, groups: ['quick', 'world'] },
   { match: /^src\/(weapons|combat|input)\/|^src\/entities\/Player\.ts$/, groups: ['core'] },
-  { match: /^src\/core\/(Game|gameDebugApi)\.ts$/, groups: ['core', 'mission', 'facility'] },
+  { match: /^src\/core\/(Game|gameDebugApi)\.ts$/, groups: ['core', 'mission', 'facility', 'grenades'] },
   { match: /^src\/core\/App\.ts$/, groups: ['core', 'ui', 'mp'] },
   { match: /^src\/core\/config\.ts$/, groups: ['core', 'ai'] },
   { match: /^src\/(render|audio|settings)\/|^public\//, groups: ['quick'] },
