@@ -28,6 +28,13 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
   gooseHorde: 'Goose Horde (Co-op)',
 };
 
+/** Whether grenades are on in a mode (docs/squad-arsenal-night.md, section 3). Pickups use it to
+ * place grenade crates only where a player can carry grenades. The grenades branch fills this in
+ * with its mode table when it merges; until grenades exist no mode has them, so no crate is placed. */
+export function areGrenadesOnInMode(_mode: GameMode): boolean {
+  return false;
+}
+
 export function isModeAllowedOnMap(mode: GameMode, map: MatchMap): boolean {
   return map === 'valley' || (mode !== 'gooseToss' && mode !== 'kingOfTheHill' && mode !== 'gooseHorde');
 }

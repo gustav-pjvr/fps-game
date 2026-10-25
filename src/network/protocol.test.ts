@@ -86,3 +86,52 @@ describe('hello features', () => {
     expect(helloSupportsMap([...CLIENT_FEATURES], 'facility')).toBe(true);
   });
 });
+
+describe('pickup message validation', () => {
+  it('accepts well-formed pickup messages', () => {
+    for (const message of [
+      { type: 'pickupClaim', id: 0 },
+      { type: 'pickupClaim', id: 17 },
+      { type: 'pickupTaken', id: 3, slot: 2, respawnIn: 30 },
+      { type: 'pickupTaken', id: 3, slot: 0, respawnIn: 0 },
+      { type: 'pickupRespawned', id: 5 },
+      { type: 'pickupSyncRequest', senderSlot: 1 },
+      { type: 'pickupState', available: '' },
+      { type: 'pickupState', available: '1101001' },
+    ]) {
+      expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
+    }
+  });
+
+  it('rejects a bad id: negative, fractional, huge, missing or not a number', () => {
+    for (const id of [-1, 1.5, 256, 1e9, Number.NaN, '3', null, undefined]) {
+      expect(isNetworkMessage({ type: 'pickupClaim', id })).toBe(false);
+      expect(isNetworkMessage({ type: 'pickupRespawned', id })).toBe(false);
+      expect(isNetworkMessage({ type: 'pickupTaken', id, slot: 1, respawnIn: 30 })).toBe(false);
+    }
+  });
+
+  it('rejects a bad slot', () => {
+    for (const slot of [-1, 4, 0.5, '1', null, undefined]) {
+      expect(isNetworkMessage({ type: 'pickupTaken', id: 1, slot, respawnIn: 30 })).toBe(false);
+      expect(isNetworkMessage({ type: 'pickupSyncRequest', senderSlot: slot })).toBe(false);
+    }
+  });
+
+  it('rejects a bad respawn time', () => {
+    for (const respawnIn of [-1, 601, Number.POSITIVE_INFINITY, Number.NaN, '30', null, undefined]) {
+      expect(isNetworkMessage({ type: 'pickupTaken', id: 1, slot: 1, respawnIn })).toBe(false);
+    }
+  });
+
+  it('rejects a state string with anything but 0 and 1, or one that is too long', () => {
+    for (const available of ['102', 'abc', '1 0', 7, null, undefined, '1'.repeat(257)]) {
+      expect(isNetworkMessage({ type: 'pickupState', available })).toBe(false);
+    }
+    expect(isNetworkMessage({ type: 'pickupState', available: '1'.repeat(256) })).toBe(true);
+  });
+
+  it('rejects an unknown pickup type', () => {
+    expect(isNetworkMessage({ type: 'pickupGift', id: 1 })).toBe(false);
+  });
+});

@@ -246,6 +246,22 @@ export class SoundEngine {
     this.tone(1100, 0.06, 0.22, 'sine');
   }
 
+  /** A pickup taken (docs/pickups.md): a short two-note chime, rising for health, a metal clack for
+   * ammo and a heavier double clunk for a grenade crate. */
+  playPickup(kind: 'health' | 'ammo' | 'grenade'): void {
+    if (kind === 'health') {
+      this.tone(660, 0.09, 0.12, 'sine');
+      this.tone(990, 0.16, 0.12, 'sine', 0, 0.08);
+    } else if (kind === 'ammo') {
+      this.noiseBurst(0.03, 3000, 'highpass', 0.14);
+      this.tone(420, 0.06, 0.1, 'square', 0, 0.03);
+    } else {
+      this.noiseBurst(0.05, 1200, 'bandpass', 0.18);
+      this.tone(180, 0.1, 0.14, 'triangle');
+      this.tone(240, 0.1, 0.12, 'triangle', 0, 0.07);
+    }
+  }
+
   playPlayerHurt(): void {
     this.noiseBurst(0.15, 250, 'lowpass', 0.4);
     this.tone(140, 0.15, 0.3, 'sawtooth');

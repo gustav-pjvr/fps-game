@@ -126,6 +126,12 @@ export interface GameDebugApi {
   shootLamp(index: number): boolean;
   /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
   lampPosition(index: number): { x: number; y: number; z: number } | null;
+  /** Every pickup of the match (docs/pickups.md) with its kind, the ground position and whether it
+   * is on the map right now; empty when the match has none. */
+  getPickups(): { id: number; kind: 'health' | 'ammo' | 'grenade'; x: number; y: number; z: number; available: boolean }[];
+  /** Test-only: pickups taken from now on return after this many seconds (null restores the real
+   * times). Pickups already away keep their timers. */
+  setPickupRespawnSeconds(seconds: number | null): void;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
    * opponent's last-smoothed RemotePlayer position, for e2e verification that movement sync is
    * actually reaching the other client, not just that a connection exists. */

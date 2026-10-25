@@ -160,6 +160,15 @@ export class Player implements Entity {
     this.sounds.onDamaged(sourcePosition);
   }
 
+  /** Restores up to `amount` health (never past the maximum, and never for a dead player: a health
+   * pack does not revive). Returns how much was actually restored. */
+  heal(amount: number): number {
+    if (this.isDead || !(amount > 0)) return 0;
+    const before = this.health;
+    this.health = Math.min(PLAYER_HEALTH, this.health + amount);
+    return this.health - before;
+  }
+
   respawn(position: THREE.Vector3): void {
     this.health = PLAYER_HEALTH;
     this.verticalVelocity = 0;

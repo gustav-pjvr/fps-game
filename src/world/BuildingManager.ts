@@ -5,7 +5,7 @@ import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.ts';
 import { mulberry32 } from '../utils/rng.ts';
-import { isPointNearFootprint } from './houseFootprint.ts';
+import { isPointNearFootprint, type HouseFootprint } from './houseFootprint.ts';
 import { chunkKey, hashChunkSeed } from './chunkSeed.ts';
 import { HOUSE_DESIGNS, type HouseDesign } from './houseDesigns.ts';
 import { createBoxCollider, createHullCollider } from './structureKit.ts';
@@ -176,6 +176,33 @@ export class BuildingManager {
       x: site.siteX + building.localX,
       z: site.siteZ + building.localZ,
     }));
+  }
+
+  /** Every town in the world, streamed in or not, for pickup placement: each town's building centres
+   * (in the order getTownBuildingPositions gives them, which is what the road layout is built from)
+   * and every house's footprint as placed. Walks the same memoized layouts placement uses, so it
+   * agrees with what streams in. Only flat-zone cells within `worldRadius` of the world centre. */
+  getWorldTowns(worldRadius: number): { footprints: HouseFootprint[]; towns: { x: number; z: number }[][] } {
+    const reach = Math.ceil((worldRadius + FLAT_ZONE_RADIUS_MAX) / FLAT_ZONE_CELL_SIZE);
+    const footprints: HouseFootprint[] = [];
+    const towns: { x: number; z: number }[][] = [];
+    for (let gz = -reach; gz <= reach; gz++) {
+      for (let gx = -reach; gx <= reach; gx++) {
+        const site = getFlatZoneSite(gx, gz);
+        if (!site) continue;
+        const centres: { x: number; z: number }[] = [];
+        for (const placement of this.getTownLayout(gx, gz, site).buildings) {
+          const preset = this.presets[placement.presetIndex];
+          if (!preset) continue;
+          const originX = site.siteX + placement.localX;
+          const originZ = site.siteZ + placement.localZ;
+          centres.push({ x: originX, z: originZ });
+          footprints.push({ originX, originZ, offsetX: 0, offsetZ: 0, halfWidth: preset.footprintWidth / 2, halfDepth: preset.footprintDepth / 2, rotationY: placement.rotationY });
+        }
+        towns.push(centres);
+      }
+    }
+    return { footprints, towns };
   }
 
   /** Spawn-safety query (Game.ts rejects respawn points inside houses with it): true if world
