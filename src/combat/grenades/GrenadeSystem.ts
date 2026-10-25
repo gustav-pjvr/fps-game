@@ -15,6 +15,7 @@ import { FlashBlindness, flashSeconds, flashStrength } from './flashStrength.ts'
 import { predictArc, stepGrenade, type ArcPrediction, type FlightParams, type GrenadeBody, type Sweep, type Vec3 } from './grenadeFlight.ts';
 import { blastReaches, CameraShake, flashCosAngle, yawViewDirection } from './grenadeBlast.ts';
 import { GrenadeHand } from './grenadeHand.ts';
+import { buildGrenadeModel } from './grenadeModels.ts';
 import {
   computeFragDamage,
   FLASH_ENEMY_MAX_SECONDS,
@@ -141,7 +142,11 @@ interface LiveGrenade {
   fuseLeft: number;
   /** A copy's sender clock (grenadeThrown.t): a later resend replaces its state. */
   sentAt: number;
-  readonly mesh: THREE.Mesh;
+  /** Its model (grenadeModels.ts), from the per-kind pool. */
+  readonly mesh: THREE.Object3D;
+  /** The world axis it tumbles about in flight, and how fast (radians a second, halved per bounce). */
+  readonly spinAxis: THREE.Vector3;
+  spinRate: number;
 }
 
 /** The blast's rays and the flash's sight line start this far above the grenade, clear of the floor. */
@@ -158,8 +163,10 @@ const ARC_STEP = 1 / 20;
 const ARC_MAX_TIME = 3;
 /** A player moving faster than this between ticks teleported (a respawn): no throw momentum. */
 const MAX_THROWER_SPEED = 15;
-const PLACEHOLDER_COLOR = 0x23261f;
+/** A thrown grenade tumbles end over end this fast (radians a second); each bounce halves it. */
+const SPIN_RATE = 14;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class GrenadeSystem implements GrenadeMessageReceiver {
   private readonly hand: GrenadeHand;
@@ -171,8 +178,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private readonly detonations: GrenadeDetonation[] = [];
   private detonationCount = 0;
   private readonly detonationListeners: ((detonation: GrenadeDetonation) => void)[] = [];
-  private readonly geometry = new THREE.SphereGeometry(GRENADE_RADIUS * 1.3, 10, 8);
-  private readonly material = new THREE.MeshStandardMaterial({ color: PLACEHOLDER_COLOR, roughness: 0.6, metalness: 0.3 });
+  /** Models of grenades that went off, kept for the next throw of the same kind. */
+  private readonly modelPool: Record<GrenadeKind, THREE.Object3D[]> = { frag: [], flash: [] };
   /** Made once and only ever brightened: the Facility's lit materials compile for a fixed light
    * count, so a light added mid-match would recompile every one of them. */
   private readonly flashLight: THREE.PointLight | null;
@@ -216,8 +223,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     this.updateHand(dt, input);
 
     for (const grenade of Array.from(this.live.values())) {
-      stepGrenade(grenade.body, dt, this.sweep, this.params);
+      const step = stepGrenade(grenade.body, dt, this.sweep, this.params);
       grenade.mesh.position.set(grenade.body.position.x, grenade.body.position.y, grenade.body.position.z);
+      if (step.impactSpeed > 0) grenade.spinRate *= 0.5;
+      if (!grenade.body.resting) grenade.mesh.rotateOnWorldAxis(grenade.spinAxis, grenade.spinRate * dt);
       grenade.fuseLeft -= dt;
       if (grenade.own && grenade.fuseLeft <= 0) {
         this.detonateOwn(grenade.id, grenade.kind, grenade.mesh.position.clone());
@@ -272,8 +281,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     for (const grenade of this.live.values()) this.options.scene.remove(grenade.mesh);
     this.live.clear();
     if (this.flashLight) this.options.scene.remove(this.flashLight);
-    this.geometry.dispose();
-    this.material.dispose();
+    this.modelPool.frag.length = 0;
+    this.modelPool.flash.length = 0;
     this.detonationListeners.length = 0;
   }
 
@@ -502,9 +511,14 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   }
 
   private addLive(id: string, kind: GrenadeKind, own: boolean, origin: Vec3, velocity: Vec3, fuseLeft: number, sentAt: number): void {
-    const mesh = new THREE.Mesh(this.geometry, this.material);
+    const mesh = this.modelPool[kind].pop() ?? buildGrenadeModel(kind);
     mesh.position.set(origin.x, origin.y, origin.z);
-    mesh.castShadow = false;
+    // Pin end first along the throw, tumbling end over end about the horizontal axis across it.
+    const spinAxis = new THREE.Vector3(velocity.x, velocity.y, velocity.z).cross(UP);
+    if (spinAxis.lengthSq() < 1e-6) spinAxis.set(1, 0, 0);
+    spinAxis.normalize();
+    mesh.quaternion.setFromUnitVectors(UP, new THREE.Vector3(velocity.x, velocity.y, velocity.z).normalize());
+    if (!Number.isFinite(mesh.quaternion.x)) mesh.quaternion.identity();
     this.options.scene.add(mesh);
     this.live.set(id, {
       id,
@@ -514,6 +528,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       fuseLeft,
       sentAt,
       mesh,
+      spinAxis,
+      spinRate: SPIN_RATE,
     });
   }
 
@@ -521,6 +537,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const grenade = this.live.get(id);
     if (!grenade) return;
     this.options.scene.remove(grenade.mesh);
+    this.modelPool[grenade.kind].push(grenade.mesh);
     this.live.delete(id);
   }
 
