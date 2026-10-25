@@ -52,6 +52,17 @@ export function lampBreakVolume(distance: number): number {
  * from one straight ahead, not just louder/quieter with distance. Purely horizontal (XZ plane) -
  * this is a stereo pan, not full 3D audio, so vertical offset (a shot from a watch tower platform
  * above) doesn't factor in. */
+/** A grenade's bounce clink: full volume within GRENADE_BOUNCE_FULL_VOLUME_RANGE, gone past
+ * GRENADE_BOUNCE_AUDIBLE_RANGE, and as loud as the impact (full at GRENADE_BOUNCE_LOUD_SPEED m/s). */
+export const GRENADE_BOUNCE_FULL_VOLUME_RANGE = 3;
+export const GRENADE_BOUNCE_AUDIBLE_RANGE = 28;
+export const GRENADE_BOUNCE_LOUD_SPEED = 9;
+
+export function grenadeBounceVolume(distance: number, impactSpeed: number): number {
+  const speed = Math.max(0, Math.min(1, impactSpeed / GRENADE_BOUNCE_LOUD_SPEED));
+  return speed * distanceGainFalloff(distance, GRENADE_BOUNCE_FULL_VOLUME_RANGE, GRENADE_BOUNCE_AUDIBLE_RANGE, 0);
+}
+
 export function computeStereoPan(listenerPosition: THREE.Vector3, listenerYaw: number, sourcePosition: THREE.Vector3): number {
   const dx = sourcePosition.x - listenerPosition.x;
   const dz = sourcePosition.z - listenerPosition.z;

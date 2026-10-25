@@ -9,7 +9,7 @@ import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage,
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
 import { castHitscan } from '../hitscan.ts';
 import { computeKnockbackStrength } from '../explosion.ts';
-import { computeStereoPan, enemyGunshotVolume } from '../../core/positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, grenadeBounceVolume } from '../../core/positionalAudio.ts';
 import { GRAVITY } from '../../core/config.ts';
 import { FlashBlindness, flashSeconds, flashStrength } from './flashStrength.ts';
 import { predictArc, stepGrenade, type ArcPrediction, type FlightParams, type GrenadeBody, type Sweep, type Vec3 } from './grenadeFlight.ts';
@@ -147,6 +147,8 @@ interface LiveGrenade {
   /** The world axis it tumbles about in flight, and how fast (radians a second, halved per bounce). */
   readonly spinAxis: THREE.Vector3;
   spinRate: number;
+  /** This system's clock at its last bounce clink, so a rattle on the floor is not a buzz. */
+  lastClinkAt: number;
 }
 
 /** The blast's rays and the flash's sight line start this far above the grenade, clear of the floor. */
@@ -165,6 +167,10 @@ const ARC_MAX_TIME = 3;
 const MAX_THROWER_SPEED = 15;
 /** A thrown grenade tumbles end over end this fast (radians a second); each bounce halves it. */
 const SPIN_RATE = 14;
+/** Bounce clinks: none for a contact slower than this (m/s, a grenade rolling or settling), and at
+ * most one per grenade per CLINK_INTERVAL seconds. */
+const CLINK_MIN_SPEED = 1.2;
+const CLINK_INTERVAL = 0.09;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -226,6 +232,12 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       const step = stepGrenade(grenade.body, dt, this.sweep, this.params);
       grenade.mesh.position.set(grenade.body.position.x, grenade.body.position.y, grenade.body.position.z);
       if (step.impactSpeed > 0) grenade.spinRate *= 0.5;
+      if (step.impactSpeed >= CLINK_MIN_SPEED && this.clock - grenade.lastClinkAt >= CLINK_INTERVAL) {
+        grenade.lastClinkAt = this.clock;
+        const { distance, pan } = this.hearing(grenade.mesh.position);
+        const volume = grenadeBounceVolume(distance, step.impactSpeed);
+        if (volume > 0.01) this.options.sound.playGrenadeBounce(volume, pan);
+      }
       if (!grenade.body.resting) grenade.mesh.rotateOnWorldAxis(grenade.spinAxis, grenade.spinRate * dt);
       grenade.fuseLeft -= dt;
       if (grenade.own && grenade.fuseLeft <= 0) {
@@ -303,6 +315,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     for (const grenade of this.live.values()) if (!grenade.own) remote++;
     if (remote >= MAX_REMOTE_GRENADES) return;
     this.addLive(message.id, message.kind, false, message.origin, message.velocity, message.fuseLeft, message.t);
+    const { distance, pan } = this.hearing(message.origin);
+    this.options.sound.playGrenadeThrow(enemyGunshotVolume(distance), pan);
   }
 
   receiveDetonated(message: GrenadeDetonatedMessage): void {
@@ -432,6 +446,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     };
     for (const event of this.hand.update(dt, held, this.options.canStartThrow())) {
       if (event.type === 'cook') {
+        this.options.sound.playGrenadePin();
         this.options.onHandChange('cooking');
       } else if (event.type === 'throw') {
         this.spawnOwn(event.kind, event.fuseLeft);
@@ -492,6 +507,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const id = `${this.idPrefix}${this.nextId++}`;
     this.addLive(id, kind, true, origin, velocity, fuseLeft, 0);
     this.sendThrown(id, kind, origin, velocity, fuseLeft);
+    this.options.sound.playGrenadeThrow();
     return id;
   }
 
@@ -530,6 +546,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       mesh,
       spinAxis,
       spinRate: SPIN_RATE,
+      lastClinkAt: -Infinity,
     });
   }
 
@@ -575,7 +592,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const { player, sound, network, targets } = this.options;
     this.options.explosionEffect.spawn(position, FRAG_EFFECT_RADIUS);
     const eye = this.options.camera.getWorldPosition(new THREE.Vector3());
-    sound.playExplosion(enemyGunshotVolume(position.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, position));
+    const heard = this.hearing(position);
+    sound.playFragExplosion(enemyGunshotVolume(heard.distance), heard.pan);
     this.shake.add(fragShakeAmplitude(eye.distanceTo(blast)));
 
     // The local player: damage only from its own frag (others' arrives as damageEvent); knockback
@@ -616,8 +634,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       this.flashLight.intensity = FLASH_LIGHT_INTENSITY;
       this.flashLightTime = FLASH_LIGHT_SECONDS;
     }
-    // Placeholder bang until the flash has its own sound.
-    sound.playExplosion(0.6 * enemyGunshotVolume(blast.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, blast));
+    const heard = this.hearing(blast);
+    sound.playFlashBang(enemyGunshotVolume(heard.distance), heard.pan);
 
     if (!player.isDead) {
       const eye = camera.getWorldPosition(new THREE.Vector3());
@@ -633,6 +651,13 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       const strength = flashStrength(eye.distanceTo(blast), flashCosAngle(eye, yawViewDirection(yaw), blast), lineOfSight);
       return flashSeconds(strength, FLASH_ENEMY_MAX_SECONDS);
     });
+  }
+
+  /** How far `position` is from the local player and its stereo pan, for a positional sound. */
+  private hearing(position: Vec3): { distance: number; pan: number } {
+    const { player } = this.options;
+    const source = new THREE.Vector3(position.x, position.y, position.z);
+    return { distance: source.distanceTo(player.position), pan: computeStereoPan(player.position, player.facingYaw, source) };
   }
 
   /** Nothing solid between `from` and `to`, or the first thing hit is `target` itself (its own

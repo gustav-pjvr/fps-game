@@ -296,6 +296,49 @@ export class SoundEngine {
     this.tone(70, 0.4, 0.6 * volumeScale, 'sawtooth', pan, 0, wet);
   }
 
+  /** Grenades (docs/grenades.md), all synthesized; `volumeScale`/`pan` as playGunshot. The pin
+   * coming out as a cook starts: a sharp metallic tick and the ring's ping. */
+  playGrenadePin(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.02, 5200, 'highpass', 0.16 * volumeScale, pan);
+    this.tone(2350, 0.06, 0.05 * volumeScale, 'triangle', pan);
+    this.tone(3100, 0.05, 0.03 * volumeScale, 'sine', pan, 0.035);
+  }
+
+  /** A grenade leaving the hand: a short rising whoosh. */
+  playGrenadeThrow(volumeScale = 1, pan = 0): void {
+    this.noiseBurst(0.24, 700, 'bandpass', 0.24 * volumeScale, pan, 0, 2400, 0.05);
+  }
+
+  /** A grenade hitting something; `volumeScale` already carries the impact's speed. Two bright,
+   * slightly random partials, so a run of bounces does not repeat one note. */
+  playGrenadeBounce(volumeScale = 1, pan = 0): void {
+    const pitch = 1 + (Math.random() - 0.5) * 0.25;
+    this.noiseBurst(0.025, 3600, 'highpass', 0.12 * volumeScale, pan);
+    this.tone(2700 * pitch, 0.07, 0.09 * volumeScale, 'triangle', pan);
+    this.tone(4150 * pitch, 0.05, 0.045 * volumeScale, 'sine', pan, 0.004);
+  }
+
+  /** A frag going off: heavier and longer than the launcher's explosion (playExplosion), a crack on
+   * top, a deep sub thump, a falling roar and a rattle of debris. */
+  playFragExplosion(volumeScale = 1, pan = 0): void {
+    const wet = reverbSendFor(volumeScale, 0.55);
+    this.noiseBurst(0.07, 2800, 'highpass', 0.55 * volumeScale, pan, wet);
+    this.noiseBurst(1.1, 520, 'lowpass', 0.95 * volumeScale, pan, wet, 110);
+    this.tone(48, 0.75, 0.75 * volumeScale, 'sine', pan, 0, wet);
+    this.tone(74, 0.45, 0.4 * volumeScale, 'sawtooth', pan, 0, wet);
+    this.noiseBurst(0.7, 2300, 'bandpass', 0.1 * volumeScale, pan, wet, 900, 0.12);
+  }
+
+  /** A flash going off: a sharp, bright crack with little body, and a high ring after it. */
+  playFlashBang(volumeScale = 1, pan = 0): void {
+    const wet = reverbSendFor(volumeScale, 0.5);
+    this.noiseBurst(0.05, 2400, 'highpass', 1.0 * volumeScale, pan, wet);
+    this.noiseBurst(0.3, 1500, 'lowpass', 0.45 * volumeScale, pan, wet, 300);
+    this.tone(150, 0.12, 0.35 * volumeScale, 'square', pan, 0, wet);
+    this.tone(4300, 1.1, 0.07 * volumeScale, 'sine', pan, 0.02, wet);
+    this.tone(3650, 0.8, 0.05 * volumeScale, 'sine', pan, 0.02, wet);
+  }
+
   /**
    * The phase 6 layers, called every simulation tick: the combat music follows the pacing
    * director's phase and intensity (ambience.ts musicMix), and a heartbeat comes in at low health.

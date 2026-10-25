@@ -28,6 +28,7 @@ interface Rig {
   hand: GrenadeHandState[];
   opponents: GrenadeOpponent[];
   canStart: { value: boolean };
+  sound: Record<'playFragExplosion' | 'playFlashBang' | 'playGrenadePin' | 'playGrenadeThrow' | 'playGrenadeBounce', ReturnType<typeof vi.fn>>;
   step(seconds: number, input?: InputManager | null): void;
 }
 
@@ -72,6 +73,13 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
   const hand: GrenadeHandState[] = [];
   const opponents: GrenadeOpponent[] = [];
   const canStart = { value: true };
+  const sound = {
+    playFragExplosion: vi.fn(),
+    playFlashBang: vi.fn(),
+    playGrenadePin: vi.fn(),
+    playGrenadeThrow: vi.fn(),
+    playGrenadeBounce: vi.fn(),
+  };
   const system = new GrenadeSystem({
     scene,
     physics,
@@ -79,7 +87,7 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
     player: player as unknown as Player,
     enabled: options.enabled ?? true,
     explosionEffect: { spawn: explosions } as unknown as ExplosionEffect,
-    sound: { playExplosion: vi.fn() } as unknown as SoundEngine,
+    sound: sound as unknown as SoundEngine,
     targets: targets as unknown as GrenadeTargets,
     network: options.network
       ? { ownSlot: 0 as PlayerSlot, send: (message) => sent.push(message), opponents: () => opponents }
@@ -100,6 +108,7 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
     hand,
     opponents,
     canStart,
+    sound,
     step(seconds, input = null) {
       for (let t = 0; t < seconds - 1e-9; t += DT) {
         physics.world.step();
@@ -132,6 +141,21 @@ describe('GrenadeSystem flight', () => {
     expect(r.system.liveGrenades()).toHaveLength(0);
     expect(r.explosions).toHaveBeenCalledTimes(1);
     expect(r.system.debugState().lastDetonation?.kind).toBe('frag');
+  });
+
+  it('whooshes on the throw, clinks on the bounces (not while settling) and bangs at the fuse', async () => {
+    const r = await rig();
+    r.system.debugThrow('frag', { x: 0, y: 0.5, z: -1 });
+    expect(r.sound.playGrenadeThrow).toHaveBeenCalledTimes(1);
+    r.step(GRENADE_FUSE.frag + 0.1);
+    const clinks = r.sound.playGrenadeBounce.mock.calls;
+    expect(clinks.length).toBeGreaterThan(0);
+    expect(clinks.length).toBeLessThan(12);
+    for (const [volume] of clinks) expect(volume).toBeGreaterThan(0);
+    expect(r.sound.playFragExplosion).toHaveBeenCalledTimes(1);
+    r.system.debugThrow('flash');
+    r.step(GRENADE_FUSE.flash + 0.1);
+    expect(r.sound.playFlashBang).toHaveBeenCalledTimes(1);
   });
 
   it('bounces back off a wall instead of passing through it', async () => {
@@ -203,6 +227,7 @@ describe('GrenadeSystem input', () => {
     expect(r.system.cooking?.kind).toBe('frag');
     expect(r.system.arcPreview?.points.length).toBeGreaterThan(1);
     expect(r.hand).toEqual(['cooking']);
+    expect(r.sound.playGrenadePin).toHaveBeenCalledTimes(1);
     r.step(DT, fakeInput({}));
     expect(r.system.cooking).toBeNull();
     expect(r.hand).toEqual(['cooking', 'thrown']);
