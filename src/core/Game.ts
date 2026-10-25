@@ -177,6 +177,9 @@ import { KingOfTheHillController } from './modeControllers/KingOfTheHillControll
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
 import { Flashlight, RemoteTorches } from '../render/Flashlight.ts';
+import { createMatchPickups } from '../pickups/createMatchPickups.ts';
+import { NO_GRENADES } from '../pickups/pickupEffects.ts';
+import type { PickupSystem } from '../pickups/PickupSystem.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -394,6 +397,8 @@ export class Game {
   /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
    * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
   private soloMinimap: Minimap | null = null;
+  /** Health, ammo and grenade pickups (docs/pickups.md); assigned in create() once the Game exists. */
+  private pickups: PickupSystem | null = null;
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
   private connectionPollAccumulator = 0;
@@ -746,6 +751,8 @@ export class Game {
       },
       shootLamp: (index) => this.destroyFacilityLamp(index, true),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
+      getPickups: () => this.pickups?.views() ?? [],
+      setPickupRespawnSeconds: (seconds) => this.pickups?.setRespawnSeconds(seconds),
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -1463,6 +1470,21 @@ export class Game {
     // and each instance used to cost several WebGL contexts (thumbnails plus a live preview) on every
     // match start, restricted modes included.
     game.hudRoot = hudRoot;
+    game.pickups = createMatchPickups({
+      scene: renderer.scene,
+      mode: currentGameMode,
+      facility: facility ? { layout: facility.layout, start: facility.start } : null,
+      buildings,
+      multiplayer: activeMultiplayer,
+      player,
+      weaponManager: () => game.weaponManager,
+      // The grenades branch passes its supply here (docs/pickups.md); until grenades exist none is given.
+      grenades: NO_GRENADES,
+      onPickedUp: (kind, line) => {
+        gooseAnnouncement.show(line);
+        sound.playPickup(kind);
+      },
+    });
     if (facility && !activeMultiplayer) {
       game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
     }
@@ -1541,6 +1563,10 @@ export class Game {
         destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
+        // Getter: assigned right after construction, before any message can arrive.
+        get pickups() {
+          return game.pickups;
+        },
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1743,6 +1769,7 @@ export class Game {
     this.hordeGooseManager?.dispose();
     this.bonusGooseManager?.dispose();
     this.ammoDropManager?.dispose();
+    this.pickups?.dispose();
     for (const thrown of this.thrownGeese.values()) thrown.dispose(this.renderer.scene);
     this.thrownGeese.clear();
     this.gooseTossController?.dispose();
@@ -1837,6 +1864,7 @@ export class Game {
     // Every lamp shot out in the last run is lit again (section 11).
     this.facility?.world.relightAll();
     this.facility?.lampBreak.clear();
+    this.pickups?.resetAll();
     this.scoreState.value = 0;
     this.deathScreen.hide();
     this.deathScreenVisible = false;
@@ -2403,6 +2431,9 @@ export class Game {
       // Goose Horde multiplayer's ammo crates.
       if (this.ammoDropManager) this.updateHordeAmmoDrops(dt);
 
+      // Health, ammo and grenade pickups: timers, the walk-over check and the host's claims.
+      this.pickups?.update(dt, this.player.position, !freezeLocalPlayer);
+
       // Goose Toss's constant ambient supply (per user request - "many, many geese... spawned
       // across the map constantly"), independent of the normal spawn-on-death trigger above.
       // Host-only, same authority rule as every other goose spawn path.
@@ -2439,6 +2470,7 @@ export class Game {
     this.facility?.lampBreak.update(dt);
     this.updateMultiplayer(dt);
     this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
+    if (this.soloMinimap) this.updateMinimapPickups(this.soloMinimap);
 
     if (this.player.isDead && !this.deathHandled) {
       this.deathHandled = true;
@@ -2550,6 +2582,7 @@ export class Game {
     // positions for the minimap.
     const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions());
+    this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
     this.multiplayer.multiplayerHud.update(
       this.player.currentHealth,
@@ -2759,6 +2792,12 @@ export class Game {
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.debugTeleport(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z, t: this.sendClock() });
+  }
+
+  /** The pickups within reach of the minimap (docs/pickups.md) as small icons. */
+  private updateMinimapPickups(minimap: Minimap): void {
+    const position = this.player.position;
+    minimap.updatePickups(position, this.player.facingYaw, this.pickups?.minimapEntries(position.x, position.z) ?? []);
   }
 
   /** Goose Horde multiplayer's ammo crates: host-only spawn tick (see AmmoDropManager.update's own

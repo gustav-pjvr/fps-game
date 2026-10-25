@@ -7,6 +7,7 @@ import type { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
 import type { HordeGooseManager } from '../entities/HordeGooseManager.ts';
 import type { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import type { AmmoDropManager } from '../entities/AmmoDropManager.ts';
+import type { PickupSystem } from '../pickups/PickupSystem.ts';
 import type { WeaponManager } from '../weapons/WeaponManager.ts';
 import type { Tracers } from '../combat/Tracers.ts';
 import type { MuzzleFlash } from '../combat/MuzzleFlash.ts';
@@ -76,6 +77,9 @@ export interface MatchMessageContext {
   readonly hordeGooseManager: HordeGooseManager | null;
   readonly bonusGooseManager: BonusGooseManager | null;
   readonly ammoDropManager: AmmoDropManager | null;
+  /** Health, ammo and grenade pickups (docs/pickups.md). Read through a getter: it is assigned just
+   * after the Game is constructed. */
+  readonly pickups: PickupSystem | null;
   /** Queues incoming network damage (applied inside the next update tick, never here directly - see
    * Game.pendingNetworkDamage) and records the payload's own sender as the kill-credit source. */
   applyNetworkDamage(amount: number, sourceSlot: PlayerSlot): void;
@@ -454,6 +458,14 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     case 'hordeAmmoDropPickedUp':
       ctx.ammoDropManager?.removeById(message.id);
       activeMultiplayer.minimap.removeItemDot(message.id);
+      break;
+    case 'pickupClaim':
+    case 'pickupTaken':
+    case 'pickupRespawned':
+    case 'pickupSyncRequest':
+    case 'pickupState':
+      // Host-authoritative and never relayed: a guest talks to the host, the host answers (docs/pickups.md).
+      ctx.pickups?.handleMessage(message, senderSlot);
       break;
     case 'matchEnded':
       // Host-authored and never relayed; the host ends its own match directly when it sends this.

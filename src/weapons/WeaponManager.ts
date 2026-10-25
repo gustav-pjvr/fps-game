@@ -283,6 +283,18 @@ export class WeaponManager {
     this.active.weapon.addReserveAmmo(amount);
   }
 
+  /** Whether an ammo box (pickups) would give any carried weapon anything (see Weapon.ammoPickupWouldGive). */
+  ammoPickupWouldGive(maxReserveMagazines: number): boolean {
+    return this.slots.some((slot) => slot.weapon.ammoPickupWouldGive(maxReserveMagazines));
+  }
+
+  /** An ammo box: stocks every carried weapon, not just the held one. True when any got something. */
+  grantAmmoPickup(magazines: number, maxReserveMagazines: number): boolean {
+    let gave = false;
+    for (const slot of this.slots) gave = slot.weapon.grantAmmoPickup(magazines, maxReserveMagazines) || gave;
+    return gave;
+  }
+
   get isReloading(): boolean {
     return this.active.weapon.isReloading;
   }

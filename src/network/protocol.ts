@@ -613,6 +613,49 @@ export interface MatchEndedMessage {
   scoreboard: { slot: PlayerSlot; score: number }[];
 }
 
+// ---- Pickups (docs/pickups.md): host-authoritative health, ammo and grenade pickups -----------
+// Where each pickup stands is a pure function of the match seed, so every message names one by its
+// index in that list. Never relayed: a guest talks to the host, the host answers everyone.
+
+/** Guest -> host only: this player walked onto pickup `id` and would gain from it. The host
+ * grants the first claim for a pickup that is on the map and whose claimant it sees close by; the
+ * claimant is the transport sender, never a field of the payload. */
+export interface PickupClaimMessage {
+  type: 'pickupClaim';
+  id: number;
+}
+
+/** Host -> everyone: pickup `id` was taken by `slot` and returns in `respawnIn` seconds. Only
+ * `slot` applies the effect (when it receives this, its own grant); everyone else hides the pickup
+ * and shows its faint ring. `respawnIn` is relative because the clients' clocks differ. */
+export interface PickupTakenMessage {
+  type: 'pickupTaken';
+  id: number;
+  slot: PlayerSlot;
+  respawnIn: number;
+}
+
+/** Host -> everyone: pickup `id` is back on the map. */
+export interface PickupRespawnedMessage {
+  type: 'pickupRespawned';
+  id: number;
+}
+
+/** Guest -> host: asks for the whole pickup state. Sent when the guest's match starts (the first
+ * broadcasts may have been lost while it loaded, and a late joiner missed every one) and repeated
+ * until a pickupState answers. */
+export interface PickupSyncRequestMessage {
+  type: 'pickupSyncRequest';
+  senderSlot: PlayerSlot;
+}
+
+/** Host -> the one guest that asked: the whole pickup state, one character per pickup in site
+ * order, '1' on the map and '0' away. */
+export interface PickupStateMessage {
+  type: 'pickupState';
+  available: string;
+}
+
 export type NetworkMessage =
   | MatchEndedMessage
   | HelloMessage
@@ -661,7 +704,12 @@ export type NetworkMessage =
   | BonusGooseKilledMessage
   | ModeExplanationReadyMessage
   | HordeSyncRequestMessage
-  | HordeSyncStateMessage;
+  | HordeSyncStateMessage
+  | PickupClaimMessage
+  | PickupTakenMessage
+  | PickupRespawnedMessage
+  | PickupSyncRequestMessage
+  | PickupStateMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchEnded',
@@ -712,6 +760,11 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'modeExplanationReady',
   'hordeSyncRequest',
   'hordeSyncState',
+  'pickupClaim',
+  'pickupTaken',
+  'pickupRespawned',
+  'pickupSyncRequest',
+  'pickupState',
 ]);
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one
@@ -719,5 +772,31 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
 export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (typeof value !== 'object' || value === null) return false;
   const type = (value as { type?: unknown }).type;
-  return typeof type === 'string' && MESSAGE_TYPES.has(type as NetworkMessage['type']);
+  if (typeof type !== 'string' || !MESSAGE_TYPES.has(type as NetworkMessage['type'])) return false;
+  return type.startsWith('pickup') ? hasValidPickupFields(value as Record<string, unknown>) : true;
+}
+
+/** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */
+const PICKUP_STATE_MAX_LENGTH = 256;
+
+const isSlot = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 3;
+const isPickupId = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) < PICKUP_STATE_MAX_LENGTH;
+
+/** The pickup messages are the ones whose fields are checked here, at the boundary (the older types
+ * are read defensively where used): an id is a small non-negative integer, a slot is 0 to 3, the
+ * respawn time a finite number of seconds, the state string only '0' and '1'. */
+function hasValidPickupFields(message: Record<string, unknown>): boolean {
+  switch (message.type) {
+    case 'pickupClaim':
+    case 'pickupRespawned':
+      return isPickupId(message.id);
+    case 'pickupTaken':
+      return isPickupId(message.id) && isSlot(message.slot) && typeof message.respawnIn === 'number' && Number.isFinite(message.respawnIn) && message.respawnIn >= 0 && message.respawnIn <= 600;
+    case 'pickupSyncRequest':
+      return isSlot(message.senderSlot);
+    case 'pickupState':
+      return typeof message.available === 'string' && message.available.length <= PICKUP_STATE_MAX_LENGTH && /^[01]*$/.test(message.available);
+    default:
+      return false;
+  }
 }

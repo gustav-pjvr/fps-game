@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { MINIMAP_WORLD_RADIUS } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 import { ACCENT, AMBER, HAIRLINE, SURFACE, THREAT } from './theme.ts';
+import type { PickupKind } from '../pickups/pickupConfig.ts';
 
 const MAP_DIAMETER_PX = 140;
 const MAP_RADIUS_PX = MAP_DIAMETER_PX / 2;
@@ -24,6 +25,22 @@ export interface MinimapOptions {
   /** World metres from the centre to the rim; MINIMAP_WORLD_RADIUS by default. */
   readonly worldRadius?: number;
   readonly layer?: MinimapLayer;
+}
+
+/** A pickup icon's shape (a plus for health, a square for ammo, a diamond for a grenade crate) and
+ * colour (the HUD mint, amber and threat red, as the pickup's ring). */
+const PICKUP_ICON: Readonly<Record<PickupKind, { colour: string; clip: string; radius: string }>> = {
+  health: { colour: ACCENT, radius: '0', clip: 'polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%)' },
+  ammo: { colour: AMBER, radius: '2px', clip: 'none' },
+  grenade: { colour: THREAT, radius: '0', clip: 'polygon(50% 0, 100% 50%, 50% 100%, 0 50%)' },
+};
+
+/** A pickup the minimap draws (docs/pickups.md): the caller passes only those near enough to show. */
+export interface MinimapPickup {
+  readonly id: number;
+  readonly kind: PickupKind;
+  readonly x: number;
+  readonly z: number;
 }
 
 /** A live enemy as the minimap sees it (EntityManager.liveEnemyMotion). */
@@ -70,6 +87,8 @@ export class Minimap {
    * once added (crates don't move) but still needs the same per-frame rotate-with-player-facing
    * treatment as an opponent dot, so it lives in update() too, not a one-time placement. */
   private readonly itemDots = new Map<string, HTMLDivElement>();
+  /** Pickup icons (docs/pickups.md), keyed by pickup id; only the ones near the player exist. */
+  private readonly pickupIcons = new Map<number, HTMLDivElement>();
   /** Single-player Facility enemies (docs/facility-map.md, section 8), keyed by entity id. */
   private readonly enemyDots = new Map<number, { dot: HTMLDivElement; lastMovedAt: number }>();
   private readonly worldRadius: number;
@@ -189,6 +208,34 @@ export class Minimap {
       const itemPosition = items.get(id);
       if (!itemPosition) continue;
       placeDot(dot, localPosition, itemPosition, yawQuat, this.worldRadius);
+    }
+  }
+
+  /** Draws `pickups` (the ones within range) as small icons and removes the icons of any no longer
+   * listed (taken, or out of range). Call after update(), with the same position and yaw. */
+  updatePickups(localPosition: THREE.Vector3, localFacingYaw: number, pickups: readonly MinimapPickup[]): void {
+    const yawQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -localFacingYaw, 0, 'YXZ'));
+    const listed = new Set<number>();
+    for (const pickup of pickups) {
+      listed.add(pickup.id);
+      let icon = this.pickupIcons.get(pickup.id);
+      if (!icon) {
+        const style = PICKUP_ICON[pickup.kind];
+        icon = document.createElement('div');
+        icon.dataset.testid = 'minimap-pickup';
+        icon.dataset.kind = pickup.kind;
+        icon.style.cssText =
+          `position:absolute; width:${DOT_SIZE_PX - 1}px; height:${DOT_SIZE_PX - 1}px; background:${style.colour}; border-radius:${style.radius};` +
+          ` clip-path:${style.clip}; opacity:0.9; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
+        this.root.insertBefore(icon, this.forwardWedge);
+        this.pickupIcons.set(pickup.id, icon);
+      }
+      placeDot(icon, localPosition, pickup, yawQuat, this.worldRadius);
+    }
+    for (const [id, icon] of this.pickupIcons) {
+      if (listed.has(id)) continue;
+      icon.remove();
+      this.pickupIcons.delete(id);
     }
   }
 
