@@ -1513,7 +1513,7 @@ export class Game {
         }
       },
     });
-    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera });
+    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene });
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
