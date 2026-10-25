@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Player } from '../../entities/Player.ts';
 import type { InputManager } from '../../input/InputManager.ts';
-import type { ExplosionEffect } from '../ExplosionEffect.ts';
 import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage, PlayerSlot } from '../../network/protocol.ts';
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
@@ -25,6 +24,9 @@ import {
   FLASH_PLAYER_MAX_SECONDS,
   FRAG_KNOCKBACK_STRENGTH,
   FRAG_LAMP_RADIUS,
+  FRAG_LIGHT_INTENSITY,
+  FRAG_LIGHT_RANGE,
+  FRAG_LIGHT_SECONDS,
   FRAG_RADIUS,
   fragShakeAmplitude,
   GRENADE_FRICTION,
@@ -34,9 +36,11 @@ import {
   GRENADE_RADIUS,
   GRENADE_REST_SPEED,
   GRENADE_RESTITUTION,
+  GRENADE_THROW_ANIMATION_SECONDS,
   GRENADE_THROW_SPEED,
   type GrenadeKind,
 } from './grenadeTuning.ts';
+import { GRENADE_LEAVES_HAND_AT } from '../../weapons/grenadeThrowPose.ts';
 
 /**
  * Frag and flash grenades in play (docs/grenades.md, design: docs/squad-arsenal-night.md section 3):
@@ -47,7 +51,9 @@ import {
  * goes off, deals the frag's damage (its own player and enemies directly, opponents through
  * damageEvent with weaponId 'frag') and shoots out Facility lamps; every other client flies a copy
  * from grenadeThrown for the visuals and plays the effect on grenadeDetonated. A flash is judged by
- * each client for its own player. Knockback is applied by each client to its own player.
+ * each client for its own player. Knockback is applied by each client to its own player (in co-op
+ * only from its own frags). The frag's fireball, smoke and scorch are FragExplosion's, spawned by
+ * GrenadeEffects from the detonation listener; this system only lights it.
  *
  * The read-only getters at the bottom are the seams the HUD, view model and effects draw from.
  */
@@ -89,13 +95,12 @@ export interface GrenadeSystemOptions {
   readonly player: Player;
   /** gameModes.ts grenadesEnabled for this match: off, the player carries none. */
   readonly enabled: boolean;
-  readonly explosionEffect: ExplosionEffect;
   readonly sound: SoundEngine;
   readonly targets: GrenadeTargets;
   /** Null in single-player. */
   readonly network: GrenadeNetwork | null;
-  /** False in co-op (Goose Horde): a frag hurts no other player, only enemies, geese and the
-   * thrower. Default true. */
+  /** False in co-op (Goose Horde): a frag hurts and pushes no other player, only enemies, geese and
+   * the thrower. Default true. */
   readonly friendlyFire?: boolean;
   /** The terrain height, where a world has one (the Valley): a last floor under streamed-out ground. */
   readonly floor?: (x: number, z: number) => number;
@@ -124,6 +129,15 @@ export interface GrenadeDetonation {
   readonly own: boolean;
   /** GrenadeSystem's clock (seconds of play) when it went off. */
   readonly at: number;
+  /** A frag's: the surface it went off on or against (for the scorch and the dust ring), or null in
+   * the air. Always null for a flash. */
+  readonly surface: GrenadeSurface | null;
+}
+
+export interface GrenadeSurface {
+  readonly point: Readonly<Vec3>;
+  /** Unit normal, out of the surface. */
+  readonly normal: Readonly<Vec3>;
 }
 
 export interface GrenadeDebug {
@@ -152,12 +166,25 @@ interface LiveGrenade {
   spinRate: number;
   /** This system's clock at its last bounce clink, so a rattle on the floor is not a buzz. */
   lastClinkAt: number;
+  /** Seconds the model stays hidden: an own throw is still in the view-model hand until then. */
+  hiddenFor: number;
 }
 
 /** The blast's rays and the flash's sight line start this far above the grenade, clear of the floor. */
 const BLAST_LIFT = 0.1;
-/** How big the placeholder explosion reads (ExplosionEffect scales its burst by this). */
-const FRAG_EFFECT_RADIUS = 3.5;
+/** A frag's surface: looked for this far below it, and this far in the other five directions. */
+const SURFACE_PROBE_DOWN = 0.5;
+const SURFACE_PROBE_SIDE = 0.35;
+const SURFACE_PROBE_DIRECTIONS = [
+  { x: 0, y: -1, z: 0 }, { x: 1, y: 0, z: 0 }, { x: -1, y: 0, z: 0 },
+  { x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 1, z: 0 },
+] as const;
+/** The frag lights the scene from this far off its surface, so the ground round it catches it. */
+const FRAG_LIGHT_LIFT = 0.6;
+const FRAG_LIGHT_COLOR = 0xffa850;
+const FLASH_LIGHT_COLOR = 0xf4f6ff;
+/** An own throw's world copy shows once the view-model hand has let go of it (grenadeThrowPose). */
+const OWN_THROW_HIDDEN_SECONDS = GRENADE_LEAVES_HAND_AT * GRENADE_THROW_ANIMATION_SECONDS;
 /** Copies of other players' grenades at once; more grenadeThrown than this are ignored. */
 const MAX_REMOTE_GRENADES = 32;
 /** Grenade ids remembered after going off, so a late resend does not fly one again. */
@@ -192,10 +219,13 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private readonly detonationListeners: ((detonation: GrenadeDetonation) => void)[] = [];
   /** Models of grenades that went off, kept for the next throw of the same kind. */
   private readonly modelPool: Record<GrenadeKind, THREE.Object3D[]> = { frag: [], flash: [] };
-  /** Made once and only ever brightened: the Facility's lit materials compile for a fixed light
-   * count, so a light added mid-match would recompile every one of them. */
-  private readonly flashLight: THREE.PointLight | null;
-  private flashLightTime = 0;
+  /** The flash's and the frag's light. Made once and only ever brightened: the Facility's lit
+   * materials compile for a fixed light count, so a light added mid-match would recompile every
+   * one of them. */
+  private readonly blastLight: THREE.PointLight | null;
+  private blastLightTime = 0;
+  private blastLightSeconds = FLASH_LIGHT_SECONDS;
+  private blastLightPeak = FLASH_LIGHT_INTENSITY;
   private readonly ball = new RAPIER.Ball(GRENADE_RADIUS);
   private readonly params: FlightParams;
   private readonly sweep: Sweep;
@@ -220,10 +250,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     this.sweep = (from, displacement) => this.castSweep(from, displacement);
     this.idPrefix = `${options.network?.ownSlot ?? 0}${Math.floor(Math.random() * 36 ** 4).toString(36)}-`;
     if (options.enabled) {
-      this.flashLight = new THREE.PointLight(0xf4f6ff, 0, FLASH_LIGHT_RANGE, 2);
-      options.scene.add(this.flashLight);
+      this.blastLight = new THREE.PointLight(FLASH_LIGHT_COLOR, 0, FLASH_LIGHT_RANGE, 2);
+      options.scene.add(this.blastLight);
     } else {
-      this.flashLight = null;
+      this.blastLight = null;
     }
   }
 
@@ -237,6 +267,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     for (const grenade of Array.from(this.live.values())) {
       const step = stepGrenade(grenade.body, dt, this.sweep, this.params);
       grenade.mesh.position.set(grenade.body.position.x, grenade.body.position.y, grenade.body.position.z);
+      if (grenade.hiddenFor > 0) {
+        grenade.hiddenFor -= dt;
+        grenade.mesh.visible = grenade.hiddenFor <= 0;
+      }
       if (step.impactSpeed > 0) grenade.spinRate *= 0.5;
       if (step.impactSpeed >= CLINK_MIN_SPEED && this.clock - grenade.lastClinkAt >= CLINK_INTERVAL) {
         grenade.lastClinkAt = this.clock;
@@ -256,9 +290,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
 
     this.blindness.update(dt);
     this.shake.update(dt);
-    if (this.flashLight && this.flashLightTime > 0) {
-      this.flashLightTime = Math.max(0, this.flashLightTime - dt);
-      this.flashLight.intensity = FLASH_LIGHT_INTENSITY * (this.flashLightTime / FLASH_LIGHT_SECONDS);
+    if (this.blastLight && this.blastLightTime > 0) {
+      this.blastLightTime = Math.max(0, this.blastLightTime - dt);
+      const left = this.blastLightTime / this.blastLightSeconds;
+      this.blastLight.intensity = this.blastLightPeak * left * left;
     }
   }
 
@@ -298,7 +333,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   dispose(): void {
     for (const grenade of this.live.values()) this.options.scene.remove(grenade.mesh);
     this.live.clear();
-    if (this.flashLight) this.options.scene.remove(this.flashLight);
+    if (this.blastLight) this.options.scene.remove(this.blastLight);
     this.modelPool.frag.length = 0;
     this.modelPool.flash.length = 0;
     this.detonationListeners.length = 0;
@@ -320,7 +355,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     let remote = 0;
     for (const grenade of this.live.values()) if (!grenade.own) remote++;
     if (remote >= MAX_REMOTE_GRENADES) return;
-    this.addLive(message.id, message.kind, false, message.origin, message.velocity, message.fuseLeft, message.t);
+    this.addLive(message.id, message.kind, false, message.origin, message.velocity, message.fuseLeft, message.t, 0);
     const { distance, pan } = this.hearing(message.origin);
     this.options.sound.playGrenadeThrow(enemyGunshotVolume(distance), pan);
   }
@@ -455,7 +490,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
         this.options.sound.playGrenadePin();
         this.options.onHandChange('cooking');
       } else if (event.type === 'throw') {
-        this.spawnOwn(event.kind, event.fuseLeft);
+        this.spawnOwn(event.kind, event.fuseLeft, undefined, OWN_THROW_HIDDEN_SECONDS);
         this.options.onHandChange('thrown');
       } else {
         // Cooked too long: it goes off in the hand.
@@ -508,10 +543,11 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     return { origin: this.handPosition(), velocity };
   }
 
-  private spawnOwn(kind: GrenadeKind, fuseLeft: number, direction?: Vec3): string {
+  /** `hiddenFor`: seconds the world copy stays hidden while the view-model hand still holds it. */
+  private spawnOwn(kind: GrenadeKind, fuseLeft: number, direction?: Vec3, hiddenFor = 0): string {
     const { origin, velocity } = this.throwStart(direction);
     const id = `${this.idPrefix}${this.nextId++}`;
-    this.addLive(id, kind, true, origin, velocity, fuseLeft, 0);
+    this.addLive(id, kind, true, origin, velocity, fuseLeft, 0, hiddenFor);
     this.sendThrown(id, kind, origin, velocity, fuseLeft);
     this.options.sound.playGrenadeThrow();
     return id;
@@ -532,9 +568,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     });
   }
 
-  private addLive(id: string, kind: GrenadeKind, own: boolean, origin: Vec3, velocity: Vec3, fuseLeft: number, sentAt: number): void {
+  private addLive(id: string, kind: GrenadeKind, own: boolean, origin: Vec3, velocity: Vec3, fuseLeft: number, sentAt: number, hiddenFor: number): void {
     const mesh = this.modelPool[kind].pop() ?? buildGrenadeModel(kind);
     mesh.scale.setScalar(WORLD_MODEL_SCALE);
+    mesh.visible = hiddenFor <= 0;
     mesh.position.set(origin.x, origin.y, origin.z);
     // Pin end first along the throw, tumbling end over end about the horizontal axis across it.
     const spinAxis = new THREE.Vector3(velocity.x, velocity.y, velocity.z).cross(UP);
@@ -554,6 +591,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       spinAxis,
       spinRate: SPIN_RATE,
       lastClinkAt: -Infinity,
+      hiddenFor,
     });
   }
 
@@ -585,27 +623,31 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private goOff(id: string, kind: GrenadeKind, position: THREE.Vector3, own: boolean): void {
     const blast = position.clone();
     blast.y += BLAST_LIFT;
-    if (kind === 'frag') this.goOffFrag(blast, position, own);
+    const surface = kind === 'frag' ? this.findSurface(position) : null;
+    if (kind === 'frag') this.goOffFrag(blast, position, own, surface);
     else this.goOffFlash(blast, own);
 
-    const detonation: GrenadeDetonation = { id, kind, position: { x: position.x, y: position.y, z: position.z }, own, at: this.clock };
+    const detonation: GrenadeDetonation = { id, kind, position: { x: position.x, y: position.y, z: position.z }, own, at: this.clock, surface };
     this.detonations.push(detonation);
     if (this.detonations.length > RECENT_DETONATIONS) this.detonations.shift();
     this.detonationCount++;
     for (const listener of [...this.detonationListeners]) listener(detonation);
   }
 
-  private goOffFrag(blast: THREE.Vector3, position: THREE.Vector3, own: boolean): void {
+  private goOffFrag(blast: THREE.Vector3, position: THREE.Vector3, own: boolean, surface: GrenadeSurface | null): void {
     const { player, sound, network, targets } = this.options;
-    this.options.explosionEffect.spawn(position, FRAG_EFFECT_RADIUS);
+    const lightAt = surface
+      ? new THREE.Vector3(surface.point.x, surface.point.y, surface.point.z).addScaledVector(new THREE.Vector3(surface.normal.x, surface.normal.y, surface.normal.z), FRAG_LIGHT_LIFT)
+      : position;
+    this.lightBlast(lightAt, FRAG_LIGHT_COLOR, FRAG_LIGHT_INTENSITY, FRAG_LIGHT_RANGE, FRAG_LIGHT_SECONDS);
     const eye = this.options.camera.getWorldPosition(new THREE.Vector3());
     const heard = this.hearing(position);
     sound.playFragExplosion(enemyGunshotVolume(heard.distance), heard.pan);
     this.shake.add(fragShakeAmplitude(eye.distanceTo(blast)));
 
     // The local player: damage only from its own frag (others' arrives as damageEvent); knockback
-    // from any frag, since each client moves its own player.
-    if (!player.isDead) {
+    // from any frag, since each client moves its own player, except a teammate's in co-op.
+    if (!player.isDead && (own || this.options.friendlyFire !== false)) {
       const center = player.position;
       const distance = center.distanceTo(blast);
       if (distance < FRAG_RADIUS && blastReaches(blast, center, (from, to) => this.rayClear(from, to, player))) {
@@ -636,11 +678,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
 
   private goOffFlash(blast: THREE.Vector3, own: boolean): void {
     const { player, sound, camera, targets } = this.options;
-    if (this.flashLight) {
-      this.flashLight.position.copy(blast);
-      this.flashLight.intensity = FLASH_LIGHT_INTENSITY;
-      this.flashLightTime = FLASH_LIGHT_SECONDS;
-    }
+    this.lightBlast(blast, FLASH_LIGHT_COLOR, FLASH_LIGHT_INTENSITY, FLASH_LIGHT_RANGE, FLASH_LIGHT_SECONDS);
     const heard = this.hearing(blast);
     sound.playFlashBang(enemyGunshotVolume(heard.distance), heard.pan);
 
@@ -658,6 +696,58 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       const strength = flashStrength(eye.distanceTo(blast), flashCosAngle(eye, yawViewDirection(yaw), blast), lineOfSight);
       return flashSeconds(strength, FLASH_ENEMY_MAX_SECONDS);
     });
+  }
+
+  /** Turns the one blast light on at `position`; update() fades it out over `seconds`. */
+  private lightBlast(position: THREE.Vector3, color: number, intensity: number, range: number, seconds: number): void {
+    const light = this.blastLight;
+    if (!light) return;
+    light.position.copy(position);
+    light.color.setHex(color);
+    light.distance = range;
+    light.intensity = intensity;
+    this.blastLightPeak = intensity;
+    this.blastLightSeconds = seconds;
+    this.blastLightTime = seconds;
+  }
+
+  /** The world surface a frag at `position` lies on or against: the nearest fixed collider within
+   * a short reach (down first), else the terrain floor under it, else null (it went off in the air). */
+  private findSurface(position: THREE.Vector3): GrenadeSurface | null {
+    let best: GrenadeSurface | null = null;
+    let bestDistance = Infinity;
+    for (const direction of SURFACE_PROBE_DIRECTIONS) {
+      const reach = direction.y < 0 ? SURFACE_PROBE_DOWN : SURFACE_PROBE_SIDE;
+      const hit = this.options.physics.world.castRayAndGetNormal(
+        new RAPIER.Ray({ x: position.x, y: position.y, z: position.z }, direction),
+        reach,
+        false,
+        RAPIER.QueryFilterFlags.ONLY_FIXED | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      );
+      if (!hit || hit.timeOfImpact >= bestDistance) continue;
+      const n = hit.normal;
+      const length = Math.hypot(n.x, n.y, n.z);
+      // Started inside the collider: no usable normal.
+      if (length < 0.5) continue;
+      bestDistance = hit.timeOfImpact;
+      best = {
+        point: { x: position.x + direction.x * hit.timeOfImpact, y: position.y + direction.y * hit.timeOfImpact, z: position.z + direction.z * hit.timeOfImpact },
+        normal: { x: n.x / length, y: n.y / length, z: n.z / length },
+      };
+    }
+    const floor = this.options.floor;
+    if (!best && floor) {
+      const height = floor(position.x, position.z);
+      if (position.y - height <= SURFACE_PROBE_DOWN) {
+        // The terrain's normal from its slope either side.
+        const step = 0.5;
+        const dx = floor(position.x + step, position.z) - floor(position.x - step, position.z);
+        const dz = floor(position.x, position.z + step) - floor(position.x, position.z - step);
+        const normal = new THREE.Vector3(-dx, 2 * step, -dz).normalize();
+        best = { point: { x: position.x, y: height, z: position.z }, normal: { x: normal.x, y: normal.y, z: normal.z } };
+      }
+    }
+    return best;
   }
 
   /** How far `position` is from the local player and its stereo pan, for a positional sound. */

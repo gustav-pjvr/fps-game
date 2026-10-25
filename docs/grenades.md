@@ -26,6 +26,7 @@ Frag and flash grenades, carried beside the guns (not weapon slots). Design:
 | Flash strength and the player's blindness (hold then fade) | `src/combat/grenades/flashStrength.ts` |
 | Frag and flash models (shared geometry, pooled per kind) | `src/combat/grenades/grenadeModels.ts` |
 | Everything the player sees beyond the grenades (one object for Game) | `src/combat/grenades/GrenadeEffects.ts` |
+| Frag explosion (core, fireball and smoke, dust ring, sparks, debris, scorch) | `src/combat/grenades/FragExplosion.ts` |
 | Arc preview (accent dots and a landing ring, unlit, depth-tested) | `src/combat/grenades/GrenadeArcPreview.ts` |
 | Frag blast reaching the horde's geese too | `src/combat/grenades/grenadeTargets.ts` |
 | Throwing arm on the view model, and its keyframes | `src/weapons/GrenadeViewModel.ts`, `src/weapons/grenadeThrowPose.ts` |
@@ -62,6 +63,7 @@ after the camera is placed, and take the flash afterimage straight after the fra
 | `FLASH_PLAYER_MAX_SECONDS` / `FLASH_FADE_SECONDS` | 3.5 s / 1.2 s | white-out hold (scaled) then fade |
 | `FLASH_ENEMY_MAX_SECONDS` | 4 s | enemy blindness (scaled) |
 | `FLASH_LIGHT_SECONDS` / `FLASH_LIGHT_INTENSITY` / `FLASH_LIGHT_RANGE` | 0.15 s / 260 / 28 m | the flash's light |
+| `FRAG_LIGHT_SECONDS` / `FRAG_LIGHT_INTENSITY` / `FRAG_LIGHT_RANGE` | 0.22 s / 160 / 16 m | the frag's light (the same light, warm, 0.6 m off the surface) |
 | `GRENADE_DANGER_RANGE` | 8 m | danger marker range |
 
 Visual and audio constants, beside the code that uses them:
@@ -76,16 +78,27 @@ Visual and audio constants, beside the code that uses them:
 | `DEAF_CUTOFF_OPEN` / `DEAF_CUTOFF_CLOSED` | 20 kHz / 380 Hz | master low-pass at no flash / full blindness |
 | `RING_FREQUENCY` / `RING_PEAK_GAIN` | 3300 Hz / 0.07 | the ring, times the master volume |
 | `REDUCED_MOTION_WHITE_CAP` / `REDUCED_MOTION_RAMP_SECONDS` | 0.8 / 0.15 s | white-out under reduced motion |
+| `FRAG_MAX_PUFFS` / `_SPARKS` / `_DEBRIS` / `_SCORCHES` | 96 / 96 / 48 / 8 | frag effect pools, shared by every frag; the oldest is reused, `FragExplosion.ts` |
+| per frag | 1 core, 8 fire puffs, 12 dust puffs, 22 sparks, 10 debris, 1 scorch | `FragExplosion.ts` |
+| `CORE_SECONDS` / `FIRE_HOT_SECONDS` / `SCORCH_SECONDS` | 0.085 s / 0.3 s / 25 s (fades over the last 6) | `FragExplosion.ts` |
+| `GRENADE_LEAVES_HAND_AT` | 0.26 of the throw | the hand lets go; an own throw's world copy stays hidden until then, `grenadeThrowPose.ts` |
 
 ## What the player sees and hears
 
 - **Models:** the frag is an olive ovoid with two grooves, the flash a grey cylinder with an amber
   band; both have the guns' metal fuse, spoon and ring. One model per live grenade from a per-kind
   pool, sharing geometry and materials; it tumbles end over end in flight and stops at rest.
-- **Throw:** the arm (the arsenal's glove and sleeve) rises from below the frame into a cocked hold as
-  `weaponManager.throwPose` lowers the gun, holding the cooking grenade; on release it swings forward,
-  lets go a tenth of the way in, and drops out of view while the gun comes back up
-  (`weaponManager.throwProgress`). Keyframed and smoothstepped like the knife (`meleeSwing.ts`).
+- **Throw:** a gloved right hand built like the guns (palm, four fingers in three jointed segments
+  curled round the grenade, thumb, knuckle guards, padded tips), a wrist cuff with a strap and hazard
+  tab, and a sleeve that tapers off the bottom of the frame (the arsenal's glove and sleeve
+  materials, lit like the guns). It rises from below as `weaponManager.throwPose` lowers the gun and
+  holds the cooking grenade up at the right, the pulled pin hanging by its ring from the little
+  finger. On release it is a lob: a short wind back up and right, a swing forward over the shoulder
+  with the wrist flicking through, the hand letting go at 0.26 of the throw and the fingers opening,
+  then a follow-through down and out while the gun comes back up (`weaponManager.throwProgress`).
+  The forearm always hangs down from the hand (the wrist turns, the elbow never comes into view), so
+  the sleeve stays a narrow band: about 4 to 8 percent of the screen. Keyframed and smoothstepped
+  like the knife (`meleeSwing.ts`).
 - **Arc preview:** while cooking, accent-coloured dots every 0.32 m along `arcPreview.points` and a ring
   lying on the landing surface. Unlit, so it never changes the scene's light count; walls hide the part
   behind them.
@@ -95,6 +108,16 @@ Visual and audio constants, beside the code that uses them:
   flash, frozen, washed out and blurred) that outlasts the white. Game audio goes through a closing
   low-pass with a high ring over it, both following the blind level. Under `prefers-reduced-motion`
   the white ramps in over 0.15 s, never passes 0.8, and there is no afterimage.
+- **Frag explosion** (`FragExplosion.ts`, spawned by GrenadeEffects from the detonation listener): a
+  white-orange flash core under 0.1 s, a fireball of soft billboard puffs that cools from orange to
+  dark grey smoke and rises, a brown dust ring spreading along the surface, bright sparks and dark
+  debris flung out under gravity and bouncing on the surface, and a scorch decal that burns in and
+  fades after 25 s. GrenadeSystem finds the surface (the nearest fixed collider within 0.5 m below
+  or 0.35 m to the sides, else the terrain floor, else none in the air) and lights the blast with
+  the flash's light, made at match start, so no light is ever added mid-match. Everything is pooled
+  and in the scene from the first frame (empty draws), so a frag compiles nothing mid-match; the
+  puffs and scorch are unlit, so the Facility's light count is untouched. The Goose Launcher keeps
+  ExplosionEffect. A single-player Restart clears it all.
 - **Camera shake:** offsets the rendered camera position only, after the camera's interpolation has
   rewritten it each frame; the aim and every shot read the unshaken camera of the tick.
 - **Sounds,** all synthesized and positional (distance and stereo pan from the local player), remote
@@ -109,8 +132,8 @@ Visual and audio constants, beside the code that uses them:
 - **Knockback is applied by the receiver:** every client knocks back its own player from any frag;
   only the thrower's client deals damage.
 - **A cancelled cook returns the grenade** to the carry (death, pause, freeze), instead of dropping it.
-- **Goose Horde has no friendly fire:** a frag sends no damage to teammates; the thrower still takes
-  their own frag's damage, and teammates are still knocked back. A frag's blast now also kills the
+- **Goose Horde has no friendly fire:** a frag sends no damage to teammates and does not knock them
+  back; the thrower still takes their own frag's damage and knockback. A frag's blast now also kills the
   horde's geese, in Horde and Goose Horde, through the same hit path as a bullet (the host or
   single-player kills the goose, a guest reports the hit).
 - **Friction is read as a Coulomb coefficient:** the tangential speed lost at a contact is at most 0.6
@@ -118,12 +141,17 @@ Visual and audio constants, beside the code that uses them:
   a stop.
 - **Live grenades are drawn 1.35 times life size**, so they read beyond a few metres; the copy in the
   hand is true size.
-- **The frag's effect** is still the game's existing explosion (ExplosionEffect at radius 3.5); the
-  design's dust ring and sparks are not built yet.
+- **The frag's surface is found locally** by every client from the detonation point (the message
+  carries no normal), so the scorch and dust ring sit on whatever that client's world has there.
+- **In an unlit Facility room the arm reads as a silhouette:** the torch is world-only (it flared the
+  gun white), so the view model is lit only by the room's lamps.
 
 ## Tests
 
-- Unit: `src/combat/grenades/*.test.ts`, `src/weapons/grenadeThrowPose.test.ts`,
+- Unit: `src/combat/grenades/*.test.ts` (including `FragExplosion.test.ts`: pools and caps, no
+  light added, no scorch in the air, bits never pass through the surface; and in
+  `GrenadeSystem.test.ts` the surface probe, the reused light, the hidden own copy and no co-op
+  knockback), `src/weapons/grenadeThrowPose.test.ts`,
   `src/ui/grenadeDangerMarkers.test.ts`, `src/ui/flashOverlay.test.ts`, `src/audio/flashDeafness.test.ts`,
   `src/core/positionalAudio.test.ts`.
 - E2E: group `grenades` (`e2e/grenades.spec.ts`, solo): a frag kills the enemy beside it and spends

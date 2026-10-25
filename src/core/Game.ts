@@ -1499,11 +1499,10 @@ export class Game {
       camera: renderer.camera,
       player,
       enabled: grenadesEnabled(currentGameMode),
-      explosionEffect,
       sound,
       targets: withBlastTargets(entityManager, hordeGooseManager),
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
-      // Goose Horde is co-op: a frag never hurts a teammate.
+      // Goose Horde is co-op: a frag never hurts or pushes a teammate.
       friendlyFire: currentGameMode !== 'gooseHorde',
       floor: facility ? undefined : sampleHeight,
       canStartThrow: () => game.weaponManager.canStartThrow,
@@ -1846,6 +1845,7 @@ export class Game {
     const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
     this.grenades?.resetMatch();
+    this.grenadeEffects?.resetMatch();
     // Re-arm death handling at the respawn itself, not on the next tick: this runs after an await,
     // so a goose explosion landing between here and that tick would otherwise kill the player with
     // deathHandled still true from the previous death, skipping the whole death sequence.

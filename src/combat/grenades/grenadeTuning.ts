@@ -72,6 +72,11 @@ export const FLASH_ENEMY_MAX_SECONDS = 4;
 export const FLASH_LIGHT_SECONDS = 0.15;
 export const FLASH_LIGHT_INTENSITY = 260;
 export const FLASH_LIGHT_RANGE = 28;
+/** The frag's light: the same light as the flash's (made at match start, never added mid-match),
+ * warmer, shorter and smaller. */
+export const FRAG_LIGHT_SECONDS = 0.22;
+export const FRAG_LIGHT_INTENSITY = 160;
+export const FRAG_LIGHT_RANGE = 16;
 
 /** A live frag nearer than this to the player shows the on-screen danger marker. */
 export const GRENADE_DANGER_RANGE = 8;

@@ -5,7 +5,6 @@ import { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { EYE_OFFSET, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../core/config.ts';
 import type { Player } from '../../entities/Player.ts';
 import type { InputManager } from '../../input/InputManager.ts';
-import type { ExplosionEffect } from '../ExplosionEffect.ts';
 import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { Entity } from '../../entities/Entity.ts';
 import type { NetworkMessage, PlayerSlot } from '../../network/protocol.ts';
@@ -18,6 +17,7 @@ const DT = 1 / 60;
 
 interface Rig {
   physics: PhysicsWorld;
+  scene: THREE.Scene;
   system: GrenadeSystem;
   player: { takeDamage: ReturnType<typeof vi.fn>; applyKnockback: ReturnType<typeof vi.fn>; isDead: boolean };
   camera: THREE.PerspectiveCamera;
@@ -86,7 +86,6 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
     camera,
     player: player as unknown as Player,
     enabled: options.enabled ?? true,
-    explosionEffect: { spawn: explosions } as unknown as ExplosionEffect,
     sound: sound as unknown as SoundEngine,
     targets: targets as unknown as GrenadeTargets,
     network: options.network
@@ -97,8 +96,11 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
     onHandChange: (state) => hand.push(state),
     shootLampsNear: lamps,
   });
+  // What GrenadeEffects listens on to play the frag's explosion.
+  system.addDetonationListener(explosions);
   return {
     physics,
+    scene,
     system,
     player,
     camera,
@@ -141,7 +143,37 @@ describe('GrenadeSystem flight', () => {
     r.step(0.4);
     expect(r.system.liveGrenades()).toHaveLength(0);
     expect(r.explosions).toHaveBeenCalledTimes(1);
-    expect(r.system.debugState().lastDetonation?.kind).toBe('frag');
+    const detonation = r.system.debugState().lastDetonation;
+    expect(detonation?.kind).toBe('frag');
+    // The floor it rested on, for the scorch and the dust ring.
+    expect(detonation?.surface?.normal.y).toBeCloseTo(1, 3);
+    expect(detonation?.surface?.point.y).toBeCloseTo(0, 2);
+    expect(detonation?.surface?.point.z).toBeCloseTo(grenade!.position.z, 1);
+  });
+
+  it('finds the wall a frag went off against, and no surface in the air', async () => {
+    const r = await rig({ network: true, wallAt: -3 });
+    // Wall face at z = -2.9: a copy that goes off just in front of it, a metre up, and one in the air.
+    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'wall', kind: 'frag', position: { x: 0, y: 1, z: -2.75 } });
+    const wall = r.system.debugState().lastDetonation!.surface!;
+    expect(wall.normal.z).toBeCloseTo(1, 3);
+    expect(wall.point.z).toBeCloseTo(-2.9, 2);
+    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'air', kind: 'frag', position: { x: 0, y: 3, z: 6 } });
+    expect(r.system.debugState().lastDetonation!.surface).toBeNull();
+  });
+
+  it('keeps an own throw out of sight while the view-model hand still holds it', async () => {
+    const r = await rig();
+    r.step(DT * 3, fakeInput({ grenadeFrag: true }));
+    r.step(DT, fakeInput({}));
+    const model = r.scene.getObjectByName('grenade-frag')!;
+    expect(r.system.liveGrenades()).toHaveLength(1);
+    expect(model.visible).toBe(false);
+    r.step(0.15);
+    expect(model.visible).toBe(true);
+    // A scripted throw has no hand to leave.
+    r.system.debugThrow('flash');
+    expect(r.scene.getObjectByName('grenade-flash')!.visible).toBe(true);
   });
 
   it('whooshes on the throw, clinks on the bounces (not while settling) and bangs at the fuse', async () => {
@@ -208,6 +240,23 @@ describe('GrenadeSystem frag', () => {
     expect(r.targets.notifyGunshot).toHaveBeenCalledWith(expect.anything(), 'frag');
     expect(r.lamps).toHaveBeenCalledWith(expect.anything(), 4);
     expect(r.system.cameraShake).toBeGreaterThan(0);
+  });
+
+  it('lights the blast with the one light made at the start, never a new one', async () => {
+    const r = await rig();
+    const lights = (): THREE.PointLight[] => r.scene.children.filter((child): child is THREE.PointLight => child instanceof THREE.PointLight);
+    expect(lights()).toHaveLength(1);
+    const [light] = lights();
+    expect(light!.intensity).toBe(0);
+    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.frag + DT);
+    expect(lights()).toEqual([light]);
+    expect(light!.intensity).toBeGreaterThan(0);
+    // Warm, and lifted off the floor it went off on.
+    expect(light!.color.r).toBeGreaterThan(light!.color.b);
+    expect(light!.position.y).toBeGreaterThan(0.4);
+    r.step(0.3);
+    expect(light!.intensity).toBe(0);
   });
 
   it('never hurts a teammate in co-op (no friendly fire), still the thrower and the enemies', async () => {
@@ -322,6 +371,18 @@ describe('GrenadeSystem network copies', () => {
     r.step(GRENADE_ORPHAN_GRACE_SECONDS);
     expect(r.system.liveGrenades()).toHaveLength(0);
     expect(r.sent).toHaveLength(0);
+  });
+
+  it('in co-op a teammate\'s frag never knocks the player back; their own still does', async () => {
+    const r = await rig({ network: true, friendlyFire: false });
+    r.system.receiveThrown(thrown);
+    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: thrown.id, kind: 'frag', position: { x: 0, y: 0.1, z: -1 } });
+    expect(r.explosions).toHaveBeenCalledTimes(1);
+    expect(r.player.applyKnockback).not.toHaveBeenCalled();
+    expect(r.player.takeDamage).not.toHaveBeenCalled();
+    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.frag + DT);
+    expect(r.player.applyKnockback).toHaveBeenCalledTimes(1);
   });
 
   it('plays a detonation where the thrower says, knocks back but never self-damages', async () => {

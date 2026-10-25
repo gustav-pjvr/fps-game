@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import { FragExplosion } from './FragExplosion.ts';
 import { GrenadeArcPreview } from './GrenadeArcPreview.ts';
 import { GrenadeDangerMarkers } from '../../ui/grenadeDangerMarkers.ts';
 import type { Hud } from '../../ui/hud.ts';
@@ -25,14 +26,17 @@ export interface GrenadeEffectsOptions {
 /**
  * Everything the local player sees of the grenades beyond the grenades themselves (docs/grenades.md):
  * the throwing arm on the view model, the arc preview while cooking, the HUD counts, the danger
- * marker, and a flash's white-out with its afterimage, muffle and ring. One object so Game wires it with one line in create(), one
- * per render frame and one in dispose.
+ * marker, a frag's explosion (FragExplosion, from the system's detonation listener), and a flash's
+ * white-out with its afterimage, muffle and ring. One object so Game wires it with one line in
+ * create(), one per render frame and one in dispose.
  */
 export class GrenadeEffects {
   private readonly viewModel: GrenadeViewModel | null;
   private readonly arc: GrenadeArcPreview | null;
   private readonly danger: GrenadeDangerMarkers | null;
   private readonly flash: FlashOverlay | null;
+  private readonly fragExplosion: FragExplosion | null;
+  private readonly stopListening: () => void;
   private lastBlindLevel = 0;
   /** A flash just hit: freeze the next rendered frame as the afterimage. */
   private captureAfterimage = false;
@@ -43,6 +47,11 @@ export class GrenadeEffects {
     this.arc = enabled ? new GrenadeArcPreview(options.scene) : null;
     this.danger = enabled ? new GrenadeDangerMarkers(options.hudRoot) : null;
     this.flash = enabled ? new FlashOverlay(options.hudRoot) : null;
+    const fragExplosion = enabled ? new FragExplosion(options.scene) : null;
+    this.fragExplosion = fragExplosion;
+    this.stopListening = options.system.addDetonationListener((detonation) => {
+      if (detonation.kind === 'frag') fragExplosion?.spawn(detonation.position, detonation.surface);
+    });
   }
 
   /** Per render frame, after the camera is placed. */
@@ -52,7 +61,8 @@ export class GrenadeEffects {
       this.options.hud.setGrenades(null);
       return;
     }
-    this.viewModel?.update(weapon.throwPose, weapon.throwProgress, system.cooking?.kind ?? null);
+    this.viewModel?.update(weapon.throwPose, weapon.throwProgress, system.cooking?.kind ?? null, dt);
+    this.fragExplosion?.update(dt, this.options.camera);
     this.arc?.update(system.arcPreview);
     this.options.hud.setGrenades(system.enabled ? { frag: system.count('frag'), flash: system.count('flash') } : null);
     this.danger?.update(this.options.camera, system.liveGrenades());
@@ -63,6 +73,11 @@ export class GrenadeEffects {
     this.options.sound.setFlashDeafness(blind);
   }
 
+  /** A single-player Restart: every frag's smoke, debris and scorch gone at once. */
+  resetMatch(): void {
+    this.fragExplosion?.clear();
+  }
+
   /** Straight after the frame rendered (the canvas still holds it): takes the afterimage. */
   afterRender(canvas: HTMLCanvasElement): void {
     if (!this.captureAfterimage) return;
@@ -71,6 +86,8 @@ export class GrenadeEffects {
   }
 
   dispose(): void {
+    this.stopListening();
+    this.fragExplosion?.dispose();
     this.viewModel?.dispose();
     this.arc?.dispose();
     this.danger?.dispose();
