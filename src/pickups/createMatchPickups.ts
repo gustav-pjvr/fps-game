@@ -23,7 +23,7 @@ export interface MatchPickupsOptions {
   readonly player: Player;
   /** A getter: a mid-match Loadout change rebuilds the weapon manager. */
   readonly weaponManager: () => WeaponManager;
-  /** Where grenades come from. The grenades branch passes its supply here; until then NO_GRENADES. */
+  /** Where grenades come from. The match's grenade carry (grenadeSupplyFrom), or NO_GRENADES. */
   readonly grenades: GrenadeSupply;
   readonly onPickedUp: (kind: PickupKind, line: string) => void;
 }

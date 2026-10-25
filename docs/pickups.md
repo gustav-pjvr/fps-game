@@ -29,9 +29,9 @@ differs from that design, and the numbers to tune. Code is in `src/pickups/`.
   never past 6 magazines; for a gun with unlimited reloads (every other mode) it tops up the
   magazine instead, unless a reload is already doing that. The knife, empty hands and the Goose
   Launcher reward never take a box.
-- **Grenade crate:** +1 frag and +1 flash, up to the cap of 3 of each. The grenade system is on
-  another branch, so the Game passes `NO_GRENADES` and `areGrenadesOnInMode` returns false for every
-  mode: no crate is placed yet. The grenades branch fills in both when it merges.
+- **Grenade crate:** +1 frag and +1 flash, up to the cap of 3 of each (`GRENADE_MAX_COUNT`). The
+  Game passes `grenadeSupplyFrom(() => game.grenades)`, backed by the match's GrenadeSystem, and
+  crates are placed only in modes where `grenadesEnabled` is true (docs/grenades.md).
 - **Respawn:** health 30 s, ammo 25 s, grenades 45 s.
 - **Modes:** Knife Only and Goose Toss place health packs only. Goose Horde's own ammo drops are
   unchanged.

@@ -1,22 +1,48 @@
 import {
   PICKUP_AMMO_MAGAZINES,
   PICKUP_AMMO_RESERVE_CAP_MAGAZINES,
+  PICKUP_GRENADE_CAP,
   PICKUP_GRENADE_FLASH,
   PICKUP_GRENADE_FRAG,
   PICKUP_HEALTH_AMOUNT,
   type PickupKind,
 } from './pickupConfig.ts';
+import type { GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
-/** The grenade side of a pickup, handed in by the Game: the grenade system lives on another branch,
- * so pickups only see this small interface. `wouldGive` says whether a crate would add anything
- * (a grenade count below its cap); `grant` adds `frag` and `flash` grenades, clamped to the cap,
- * and returns false when nothing was given. NO_GRENADES is the supply while grenades do not exist. */
+/** The grenade side of a pickup, handed in by the Game, so pickups only see this small interface.
+ * `wouldGive` says whether a crate would add anything (a grenade count below its cap); `grant` adds
+ * `frag` and `flash` grenades, clamped to the cap, and returns false when nothing was given.
+ * NO_GRENADES is the supply where there is no grenade carry. */
 export interface GrenadeSupply {
   wouldGive(): boolean;
   grant(frag: number, flash: number): boolean;
 }
 
 export const NO_GRENADES: GrenadeSupply = { wouldGive: () => false, grant: () => false };
+
+/** The part of the grenade system (combat/grenades/GrenadeSystem.ts) a crate needs: whether the
+ * mode carries grenades, the counts, and the top-up that clamps to the cap. */
+export interface GrenadeCarry {
+  readonly enabled: boolean;
+  count(kind: GrenadeKind): number;
+  addGrenades(kind: GrenadeKind, amount: number): number;
+}
+
+/** A supply backed by the match's grenade carry. A getter, since the Game builds the pickups before
+ * the grenade system; while it returns null (or grenades are off) the crate gives nothing. */
+export function grenadeSupplyFrom(carry: () => GrenadeCarry | null): GrenadeSupply {
+  return {
+    wouldGive: () => {
+      const grenades = carry();
+      return !!grenades?.enabled && (grenades.count('frag') < PICKUP_GRENADE_CAP || grenades.count('flash') < PICKUP_GRENADE_CAP);
+    },
+    grant: (frag, flash) => {
+      const grenades = carry();
+      if (!grenades?.enabled) return false;
+      return grenades.addGrenades('frag', frag) + grenades.addGrenades('flash', flash) > 0;
+    },
+  };
+}
 
 /** What a pickup can do to the local player, assembled by the Game from the player, the weapon
  * manager and the grenade supply. */

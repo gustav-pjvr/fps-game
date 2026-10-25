@@ -1,3 +1,5 @@
+import { GRENADE_MAX_COUNT } from '../combat/grenades/grenadeTuning.ts';
+
 /** Pickup tuning (docs/squad-arsenal-night.md section 5, docs/pickups.md). Kept here, not in
  * core/config.ts, so the pickup branch stays out of that file's merge path. */
 
@@ -11,10 +13,11 @@ export const PICKUP_HEALTH_AMOUNT = 40;
  * whose reserve already holds this many magazines counts as full). */
 export const PICKUP_AMMO_MAGAZINES = 1;
 export const PICKUP_AMMO_RESERVE_CAP_MAGAZINES = 6;
-/** What a grenade crate adds, and the most of each kind a player carries (section 3). */
+/** What a grenade crate adds, and the most of each kind a player carries (section 3): the grenade
+ * system's own cap, so a crate and the carry agree. */
 export const PICKUP_GRENADE_FRAG = 1;
 export const PICKUP_GRENADE_FLASH = 1;
-export const PICKUP_GRENADE_CAP = 3;
+export const PICKUP_GRENADE_CAP = GRENADE_MAX_COUNT;
 
 /** Walk-over reach in metres (horizontal), and how far the player's centre may differ in height
  * from the pickup's centre so a pickup under a tower stair is not taken from the stair. */

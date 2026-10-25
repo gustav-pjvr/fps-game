@@ -187,7 +187,7 @@ import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
 import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
 import { visibility } from '../entities/enemies/playerVisibility.ts';
 import { createMatchPickups } from '../pickups/createMatchPickups.ts';
-import { NO_GRENADES } from '../pickups/pickupEffects.ts';
+import { grenadeSupplyFrom } from '../pickups/pickupEffects.ts';
 import type { PickupSystem } from '../pickups/PickupSystem.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
@@ -1574,8 +1574,8 @@ export class Game {
       multiplayer: activeMultiplayer,
       player,
       weaponManager: () => game.weaponManager,
-      // The grenades branch passes its supply here (docs/pickups.md); until grenades exist none is given.
-      grenades: NO_GRENADES,
+      // A grenade crate tops up the match's grenade carry (docs/pickups.md); built further down.
+      grenades: grenadeSupplyFrom(() => game.grenades),
       onPickedUp: (kind, line) => {
         gooseAnnouncement.show(line);
         sound.playPickup(kind);

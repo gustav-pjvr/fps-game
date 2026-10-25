@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { PICKUP_HEALTH_AMOUNT } from './pickupConfig.ts';
-import { applyPickup, healthGain, NO_GRENADES, pickupWouldGive, type GrenadeSupply, type PickupRecipient } from './pickupEffects.ts';
+import { applyPickup, grenadeSupplyFrom, healthGain, NO_GRENADES, pickupWouldGive, type GrenadeCarry, type GrenadeSupply, type PickupRecipient } from './pickupEffects.ts';
+import { GrenadeHand } from '../combat/grenades/grenadeHand.ts';
+import { GRENADE_MAX_COUNT, GRENADE_START_COUNT } from '../combat/grenades/grenadeTuning.ts';
 
 function recipient(overrides: Partial<PickupRecipient> & { state?: { current: number; max: number } } = {}): PickupRecipient & { healed: number[] } {
   const state = overrides.state ?? { current: 50, max: 100 };
@@ -77,5 +79,45 @@ describe('applyPickup', () => {
 
   it('reports nothing while grenades do not exist', () => {
     expect(applyPickup('grenade', recipient())).toBeNull();
+  });
+});
+
+describe('grenadeSupplyFrom', () => {
+  /** A carry over the grenade system's own hand, so the cap is the real one. */
+  const carryOf = (hand: GrenadeHand, enabled = true): GrenadeCarry => ({
+    enabled,
+    count: (kind) => hand.count(kind),
+    addGrenades: (kind, amount) => hand.add(kind, amount),
+  });
+
+  it('tops up one frag and one flash from the start count, then stops at the cap', () => {
+    const hand = new GrenadeHand(true);
+    const supply = grenadeSupplyFrom(() => carryOf(hand));
+    for (let n = GRENADE_START_COUNT; n < GRENADE_MAX_COUNT; n++) {
+      expect(supply.wouldGive()).toBe(true);
+      expect(supply.grant(1, 1)).toBe(true);
+    }
+    expect(hand.count('frag')).toBe(GRENADE_MAX_COUNT);
+    expect(hand.count('flash')).toBe(GRENADE_MAX_COUNT);
+    expect(supply.wouldGive()).toBe(false);
+    expect(supply.grant(1, 1)).toBe(false);
+  });
+
+  it('still gives when only one kind is below the cap', () => {
+    const hand = new GrenadeHand(true);
+    hand.add('frag', GRENADE_MAX_COUNT);
+    const supply = grenadeSupplyFrom(() => carryOf(hand));
+    expect(supply.wouldGive()).toBe(true);
+    expect(supply.grant(1, 1)).toBe(true);
+    expect(hand.count('flash')).toBe(GRENADE_START_COUNT + 1);
+  });
+
+  it('gives nothing before the grenade system exists or where grenades are off', () => {
+    expect(grenadeSupplyFrom(() => null).wouldGive()).toBe(false);
+    expect(grenadeSupplyFrom(() => null).grant(1, 1)).toBe(false);
+    const off = new GrenadeHand(false);
+    const supply = grenadeSupplyFrom(() => carryOf(off, false));
+    expect(supply.wouldGive()).toBe(false);
+    expect(supply.grant(1, 1)).toBe(false);
   });
 });
