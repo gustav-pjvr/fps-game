@@ -45,4 +45,15 @@ describe('mergeKeyBindings', () => {
     expect(mergeKeyBindings(stored).KeyG).toBe('flashlight');
     expect(mergeKeyBindings(stored).KeyF).toBeUndefined();
   });
+
+  it('binds the grenades to their default G and Q in a save from before them, unless taken', () => {
+    const stored = beforeTorch();
+    delete stored.KeyG; delete stored.KeyQ;
+    const merged = mergeKeyBindings(stored);
+    expect(merged.KeyG).toBe('grenadeFrag');
+    expect(merged.KeyQ).toBe('grenadeFlash');
+    stored.KeyQ = 'reload';
+    expect(mergeKeyBindings(stored).KeyQ).toBe('reload');
+    expect(Object.values(mergeKeyBindings(stored))).not.toContain('grenadeFlash');
+  });
 });

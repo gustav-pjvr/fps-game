@@ -17,7 +17,9 @@ export type Action =
   | 'weaponPrev'
   | 'resetPlay'
   | 'interact'
-  | 'flashlight';
+  | 'flashlight'
+  | 'grenadeFrag'
+  | 'grenadeFlash';
 
 export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   KeyW: 'moveForward',
@@ -35,6 +37,8 @@ export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   KeyT: 'resetPlay',
   KeyE: 'interact',
   KeyF: 'flashlight',
+  KeyG: 'grenadeFrag',
+  KeyQ: 'grenadeFlash',
 };
 
 /** Actions a player can rebind in the settings panel - excludes number keys/mouse, which stay fixed. */
@@ -48,6 +52,8 @@ export const REBINDABLE_ACTIONS: Action[] = [
   'reload',
   'resetPlay',
   'flashlight',
+  'grenadeFrag',
+  'grenadeFlash',
 ];
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -70,6 +76,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   resetPlay: 'Reset Match',
   interact: 'Interact',
   flashlight: 'Torch',
+  grenadeFrag: 'Frag Grenade',
+  grenadeFlash: 'Flash Grenade',
 };
 
 /** Human-readable key names for the few codes that don't read well as-is (KeyW -> W is fine; Space -> "Space" needed). */
