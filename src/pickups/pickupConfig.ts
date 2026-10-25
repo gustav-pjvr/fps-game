@@ -13,10 +13,9 @@ export const PICKUP_HEALTH_AMOUNT = 40;
  * whose reserve already holds this many magazines counts as full). */
 export const PICKUP_AMMO_MAGAZINES = 1;
 export const PICKUP_AMMO_RESERVE_CAP_MAGAZINES = 6;
-/** What a grenade crate adds, and the most of each kind a player carries (section 3): the grenade
- * system's own cap, so a crate and the carry agree. */
-export const PICKUP_GRENADE_FRAG = 1;
-export const PICKUP_GRENADE_FLASH = 1;
+/** What a grenade crate adds (one of the player's chosen kind), and the most a player carries: the
+ * grenade system's own cap, so a crate and the carry agree. */
+export const PICKUP_GRENADE_AMOUNT = 1;
 export const PICKUP_GRENADE_CAP = GRENADE_MAX_COUNT;
 
 /** Walk-over reach in metres (horizontal), and how far the player's centre may differ in height

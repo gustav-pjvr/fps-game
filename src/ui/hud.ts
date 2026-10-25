@@ -20,7 +20,8 @@ export class Hud {
   private readonly capacity: HTMLSpanElement;
   private readonly reserve: HTMLSpanElement;
   private readonly grenades: HTMLDivElement;
-  private readonly grenadeCounts: Record<'frag' | 'flash', HTMLSpanElement>;
+  private readonly grenadeName: HTMLSpanElement;
+  private readonly grenadeCount: HTMLSpanElement;
   private grenadesShown = '';
   private readonly prompt: HTMLDivElement;
   private readonly promptKey: HTMLElement;
@@ -105,22 +106,14 @@ export class Hud {
       element.style.cssText = `font-family:${MONO_FONT}; font-size:14px; color:${INK_DIM};`;
     }
     ammo.append(this.magazine, this.capacity, this.reserve);
-    // Frag and flash counts under the ammo, hidden in modes without grenades.
+    // The loadout grenade's name and count under the ammo, hidden in modes without grenades.
     this.grenades = document.createElement('div');
-    this.grenades.style.cssText = 'display:none; justify-content:flex-end; gap:16px; margin-top:10px;';
-    const grenadeCount = (label: string): HTMLSpanElement => {
-      const item = document.createElement('span');
-      item.style.cssText = 'display:inline-flex; align-items:baseline; gap:7px;';
-      const name = document.createElement('span');
-      name.style.cssText = `${LABEL_CSS} font-size:10px;`;
-      name.textContent = label;
-      const count = document.createElement('span');
-      count.style.cssText = `font-family:${MONO_FONT}; font-size:14px;`;
-      item.append(name, count);
-      this.grenades.appendChild(item);
-      return count;
-    };
-    this.grenadeCounts = { frag: grenadeCount('FRAG'), flash: grenadeCount('FLASH') };
+    this.grenades.style.cssText = 'display:none; justify-content:flex-end; align-items:baseline; gap:7px; margin-top:10px;';
+    this.grenadeName = document.createElement('span');
+    this.grenadeName.style.cssText = `${LABEL_CSS} font-size:10px;`;
+    this.grenadeCount = document.createElement('span');
+    this.grenadeCount.style.cssText = `font-family:${MONO_FONT}; font-size:14px;`;
+    this.grenades.append(this.grenadeName, this.grenadeCount);
     weapon.append(this.weaponNameElement, ammo, this.grenades);
     this.container.appendChild(weapon);
 
@@ -169,18 +162,17 @@ export class Hud {
     this.reserve.textContent = reserve != null && Number.isFinite(reserve) ? ` +${reserve}` : '';
   }
 
-  /** The frag and flash counts beside the ammo, or null to hide them (grenades off in this mode). */
-  setGrenades(counts: { frag: number; flash: number } | null): void {
-    const shown = counts ? `${counts.frag}/${counts.flash}` : '';
+  /** The carried grenade's name and count beside the ammo (FRAG 2, FLASH 2), or null to hide them
+   * (grenades off in this mode). */
+  setGrenades(grenade: { kind: 'frag' | 'flash'; count: number } | null): void {
+    const shown = grenade ? `${grenade.kind}/${grenade.count}` : '';
     if (shown === this.grenadesShown) return;
     this.grenadesShown = shown;
-    this.grenades.style.display = counts ? 'flex' : 'none';
-    if (!counts) return;
-    for (const kind of ['frag', 'flash'] as const) {
-      const element = this.grenadeCounts[kind];
-      element.textContent = String(counts[kind]);
-      element.style.color = counts[kind] > 0 ? INK : INK_FAINT;
-    }
+    this.grenades.style.display = grenade ? 'flex' : 'none';
+    if (!grenade) return;
+    this.grenadeName.textContent = grenade.kind === 'frag' ? 'FRAG' : 'FLASH';
+    this.grenadeCount.textContent = String(grenade.count);
+    this.grenadeCount.style.color = grenade.count > 0 ? INK : INK_FAINT;
   }
 
   /** Shows `key` and `text` under the crosshair, or hides the prompt with null. */

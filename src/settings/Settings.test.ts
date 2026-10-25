@@ -46,15 +46,37 @@ describe('mergeKeyBindings', () => {
     expect(mergeKeyBindings(stored).KeyF).toBeUndefined();
   });
 
-  it('binds the grenades to their default G and Q in a save from before them, unless taken', () => {
+  it('binds the one grenade to its default Q in a save from before it, unless Q is taken', () => {
     const stored = beforeTorch();
-    delete stored.KeyG; delete stored.KeyQ;
-    const merged = mergeKeyBindings(stored);
-    expect(merged.KeyG).toBe('grenadeFrag');
-    expect(merged.KeyQ).toBe('grenadeFlash');
+    delete stored.KeyQ;
+    expect(mergeKeyBindings(stored).KeyQ).toBe('grenade');
     stored.KeyQ = 'reload';
-    expect(mergeKeyBindings(stored).KeyQ).toBe('reload');
-    expect(Object.values(mergeKeyBindings(stored))).not.toContain('grenadeFlash');
+    delete stored.KeyR;
+    const merged = mergeKeyBindings(stored);
+    expect(merged.KeyQ).toBe('reload');
+    expect(Object.values(merged)).not.toContain('grenade');
+  });
+
+  it('drops the old frag and flash bindings and puts the grenade on Q', () => {
+    // An earlier build's save: G threw the frag, Q the flash.
+    const stored = { ...beforeTorch(), KeyG: 'grenadeFrag', KeyQ: 'grenadeFlash' } as unknown as Record<string, Action>;
+    const merged = mergeKeyBindings(stored);
+    expect(merged.KeyQ).toBe('grenade');
+    expect(merged.KeyG).toBeUndefined();
+    expect(Object.values(merged)).not.toContain('grenadeFrag');
+    expect(Object.values(merged)).not.toContain('grenadeFlash');
+    // Unknown actions are dropped wherever they sit.
+    const odd = { ...beforeTorch(), KeyZ: 'noSuchAction' } as unknown as Record<string, Action>;
+    expect(mergeKeyBindings(odd).KeyZ).toBeUndefined();
+  });
+
+  it('leaves Q alone when the player bound it to something else in an old save', () => {
+    const stored = { ...beforeTorch(), KeyQ: 'jump', KeyG: 'grenadeFrag' } as unknown as Record<string, Action>;
+    delete stored.Space;
+    const merged = mergeKeyBindings(stored);
+    expect(merged.KeyQ).toBe('jump');
+    expect(merged.KeyG).toBeUndefined();
+    expect(Object.values(merged)).not.toContain('grenade');
   });
 });
 

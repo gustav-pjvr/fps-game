@@ -168,7 +168,7 @@ import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
 import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
 import { withBlastTargets } from '../combat/grenades/grenadeTargets.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
-import { loadStoredLoadout } from './loadout.ts';
+import { equippedGrenade, loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
@@ -821,7 +821,7 @@ export class Game {
       getPickups: () => this.pickups?.views() ?? [],
       setPickupRespawnSeconds: (seconds) => this.pickups?.setRespawnSeconds(seconds),
       getGrenadeDebug: () => this.grenades?.debugState() ?? null,
-      throwGrenade: (kind, direction) => this.grenades?.debugThrow(kind, direction) ?? null,
+      throwGrenade: (direction) => this.grenades?.debugThrow(direction) ?? null,
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -1060,7 +1060,8 @@ export class Game {
     // The stored loadout is only ever consumed for the three unrestricted modes (see
     // modeUsesCustomLoadout) - harmless to always read/pass it in otherwise, every restricted
     // mode's own branch ignores the third parameter entirely.
-    const loadout = resolveWeaponLoadout(currentGameMode, Math.random, loadStoredLoadout());
+    const storedLoadout = loadStoredLoadout();
+    const loadout = resolveWeaponLoadout(currentGameMode, Math.random, storedLoadout);
     // Goose Horde multiplayer's limited ammo economy (per explicit user request) - every other
     // mode omits this entirely, keeping the existing unlimited-reload behavior unchanged.
     const isHordeMultiplayer = isHordeMode && !!multiplayer;
@@ -1621,6 +1622,8 @@ export class Game {
       camera: renderer.camera,
       player,
       enabled: grenadesEnabled(currentGameMode),
+      // The loadout's grenade at match start; a mid-match Loadout change does not touch it.
+      kind: equippedGrenade(storedLoadout),
       sound,
       targets: withBlastTargets(entityManager, hordeGooseManager),
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,

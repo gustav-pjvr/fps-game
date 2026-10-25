@@ -95,6 +95,9 @@ export interface GrenadeSystemOptions {
   readonly player: Player;
   /** gameModes.ts grenadesEnabled for this match: off, the player carries none. */
   readonly enabled: boolean;
+  /** The loadout's grenade, read once at match start: the only kind the player carries and throws
+   * this match. Other players' kinds arrive in grenadeThrown. */
+  readonly kind: GrenadeKind;
   readonly sound: SoundEngine;
   readonly targets: GrenadeTargets;
   /** Null in single-player. */
@@ -142,7 +145,9 @@ export interface GrenadeSurface {
 
 export interface GrenadeDebug {
   readonly enabled: boolean;
-  readonly counts: Record<GrenadeKind, number>;
+  /** The kind the player carries (the loadout's) and how many. */
+  readonly kind: GrenadeKind;
+  readonly count: number;
   readonly cooking: { kind: GrenadeKind; fuseLeft: number } | null;
   readonly live: LiveGrenadeView[];
   readonly blindLevel: number;
@@ -238,7 +243,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private readonly playerVelocity = new THREE.Vector3();
 
   constructor(private readonly options: GrenadeSystemOptions) {
-    this.hand = new GrenadeHand(options.enabled);
+    this.hand = new GrenadeHand(options.kind, options.enabled);
     this.params = {
       gravity: GRAVITY,
       restitution: GRENADE_RESTITUTION,
@@ -323,10 +328,12 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     camera.position.z += offset.z;
   }
 
-  /** Test hook (gameDebugApi.ts throwGrenade): throws one of `kind` at once with a full fuse, along
-   * `direction` (default: the aim). Spends it from the carry; the id, or null with none left. */
-  debugThrow(kind: GrenadeKind, direction?: Vec3): string | null {
-    if (!this.hand.take(kind)) return null;
+  /** Test hook (gameDebugApi.ts throwGrenade): throws one of the carried kind at once with a full
+   * fuse, along `direction` (default: the aim). Spends it from the carry; the id, or null with none
+   * left. */
+  debugThrow(direction?: Vec3): string | null {
+    if (!this.hand.take()) return null;
+    const kind = this.hand.kind;
     return this.spawnOwn(kind, GRENADE_FUSE[kind], direction);
   }
 
@@ -390,13 +397,19 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     return this.options.enabled;
   }
 
-  count(kind: GrenadeKind): number {
-    return this.hand.count(kind);
+  /** The one kind this player carries and throws, from the loadout. */
+  get kind(): GrenadeKind {
+    return this.hand.kind;
+  }
+
+  /** How many of that kind are carried. */
+  get count(): number {
+    return this.hand.count;
   }
 
   /** Tops up the carry (pickups). Returns how many were added. */
-  addGrenades(kind: GrenadeKind, amount: number): number {
-    return this.hand.add(kind, amount);
+  addGrenades(amount: number): number {
+    return this.hand.add(amount);
   }
 
   /** The grenade in hand, or null. `elapsed` counts from the pin. */
@@ -459,7 +472,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const cooking = this.cooking;
     return {
       enabled: this.options.enabled,
-      counts: { frag: this.hand.count('frag'), flash: this.hand.count('flash') },
+      kind: this.hand.kind,
+      count: this.hand.count,
       cooking: cooking ? { kind: cooking.kind, fuseLeft: cooking.fuseLeft } : null,
       live: this.liveGrenades(),
       blindLevel: this.blindness.level,
@@ -481,10 +495,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       this.arc = null;
       return;
     }
-    const held = {
-      frag: input.consumeJustPressed('grenadeFrag') || input.isActionActive('grenadeFrag'),
-      flash: input.consumeJustPressed('grenadeFlash') || input.isActionActive('grenadeFlash'),
-    };
+    const held = input.consumeJustPressed('grenade') || input.isActionActive('grenade');
     for (const event of this.hand.update(dt, held, this.options.canStartThrow())) {
       if (event.type === 'cook') {
         this.options.sound.playGrenadePin();

@@ -1,14 +1,23 @@
 # Grenades (v4.5.0, as built)
 
-Frag and flash grenades, carried beside the guns (not weapon slots). Design:
+Frag and flash grenades, carried beside the guns (not weapon slots). The player picks one kind in the
+Loadout screen and carries only that kind. Design:
 `docs/squad-arsenal-night.md` section 3. This page records what was built and where it differs.
 
 ## Playing them
 
-- **Carry:** 2 of each at spawn and on every respawn, at most 3 (`addGrenades` tops up, for pickups).
-  The counts show under the ammo readout (`FRAG 2  FLASH 2`), and are hidden in modes without grenades.
-- **Input:** G frag, Q flash (rebindable actions `grenadeFrag`, `grenadeFlash`). Hold to cook: the gun
-  drops, the throwing arm comes up holding the grenade, and the arc preview shows. Release to throw. A
+- **Which kind:** the loadout's `grenade` (`'frag'` or `'flash'`, default frag, saved under
+  `fps-game-loadout`). `Game.create` reads it once at match start and passes it to the system as
+  `kind`; a Loadout change mid-match does not touch it. It is the same in every mode, and a mode
+  without grenades carries none. Other players' grenades keep their own kind in `grenadeThrown`, so a
+  guest throwing flashes and a host throwing frags both work, whatever each side carries.
+- **Carry:** 2 of that kind at spawn and on every respawn, one count, at most 3 (`addGrenades` tops
+  up, for pickups). The count shows under the ammo readout with the kind's name (`FRAG 2` or
+  `FLASH 2`), and is hidden in modes without grenades.
+- **Input:** Q, or RB on a pad (one rebindable action `grenade`, "Throw Grenade"; E stays interact).
+  Key bindings saved by earlier builds (`grenadeFrag` on G, `grenadeFlash` on Q) are dropped on
+  load with any other unknown action (`mergeKeyBindings`), and Q goes to `grenade` unless the player
+  has put something else on Q. Hold to cook: the gun drops, the throwing arm comes up holding the grenade, and the arc preview shows. Release to throw. A
   tap throws at once. No throw while reloading or mid knife swing. Cooking past the fuse sets it off
   in the hand.
 - **Modes:** on in Default, Elimination, Director, Horde, Goose Horde, Mission and King of the Hill;
@@ -42,7 +51,7 @@ after the camera is placed, and take the flash afterimage straight after the fra
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `GRENADE_START_COUNT` / `GRENADE_MAX_COUNT` | 2 / 3 | carried per kind at spawn / at most |
+| `GRENADE_START_COUNT` / `GRENADE_MAX_COUNT` | 2 / 3 | carried (of the chosen kind) at spawn / at most |
 | `GRENADE_THROW_SPEED` | 17 m/s | along the aim, plus the thrower's velocity |
 | `GRENADE_RADIUS` | 0.07 m | the swept sphere |
 | `GRENADE_RESTITUTION` | 0.35 | share of the speed into a surface that comes back |
@@ -154,5 +163,8 @@ Visual and audio constants, beside the code that uses them:
   knockback), `src/weapons/grenadeThrowPose.test.ts`,
   `src/ui/grenadeDangerMarkers.test.ts`, `src/ui/flashOverlay.test.ts`, `src/audio/flashDeafness.test.ts`,
   `src/core/positionalAudio.test.ts`.
-- E2E: group `grenades` (`e2e/grenades.spec.ts`, solo): a frag kills the enemy beside it and spends
-  one; a flash blinds a player facing it and leaves one turned away from a far flash clear.
+- E2E: group `grenades` (`e2e/grenades.spec.ts`, solo): the loadout is seeded in localStorage
+  (`fps-game-loadout`) before the page loads. A frag carrier's frag kills the enemy beside it and
+  spends one; a flash carrier's flash blinds a player facing it and leaves one turned away from a far
+  flash clear. Unit tests for the one-kind carry are in `grenadeHand.test.ts` and
+  `GrenadeSystem.test.ts`, the binding migration in `src/settings/Settings.test.ts`.

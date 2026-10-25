@@ -4,9 +4,9 @@ import { Settings } from '../settings/Settings.ts';
 export type ActiveDevice = 'mouse' | 'gamepad';
 export interface StickVector { x: number; y: number }
 
-// Standard mapping. RB (5) throws a grenade (the frag for now); LB (4) stays unbound.
+// Standard mapping. RB (5) throws the loadout's grenade; LB (4) stays unbound.
 export const GAMEPAD_ACTIONS: Readonly<Partial<Record<number, Action>>> = {
-  0: 'jump', 1: 'interact', 2: 'reload', 3: 'weaponNext', 5: 'grenadeFrag',
+  0: 'jump', 1: 'interact', 2: 'reload', 3: 'weaponNext', 5: 'grenade',
   6: 'aim', 7: 'fire', 8: 'resetPlay', 9: 'pause',
   12: 'flashlight', 14: 'weaponPrev', 15: 'weaponNext',
 };

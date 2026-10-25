@@ -53,7 +53,7 @@ describe('standard mapping and lifecycle', () => {
     expect(input.poll([controller]).justPressed).toEqual(new Set(Object.values(GAMEPAD_ACTIONS)));
     expect(input.poll([controller]).justPressed.size).toBe(0);
     expect(input.poll([pad([], [4])]).actions.size).toBe(0);
-    expect(input.poll([pad([], [5])]).actions).toEqual(new Set(['grenadeFrag']));
+    expect(input.poll([pad([], [5])]).actions).toEqual(new Set(['grenade']));
     input.poll([pad()]);
     expect(input.poll([pad([], [7])]).justPressed.has('fire')).toBe(true);
   });

@@ -1,4 +1,4 @@
-import { DEFAULT_KEY_BINDINGS, REBINDABLE_ACTIONS, type Action } from '../input/actions.ts';
+import { ACTION_LABELS, DEFAULT_KEY_BINDINGS, REBINDABLE_ACTIONS, type Action } from '../input/actions.ts';
 import { isGraphicsQuality, type GraphicsQuality } from './graphicsQuality.ts';
 import { CAMERA_FOV, CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../core/config.ts';
 
@@ -38,9 +38,15 @@ function defaults(): StoredSettings {
  * binding added since they saved, such as KeyF for the torch) on its default key, but only while
  * that key is free: a player's own binding is never taken away, and an action they moved to another
  * key is not bound twice. Rebindable actions first, so they get their key ahead of fixed ones. A
- * player who had put another action on KeyF keeps it, and binds the torch in Settings. */
+ * player who had put another action on KeyF keeps it, and binds the torch in Settings. Bindings to
+ * actions that no longer exist (the separate 'grenadeFrag' on G and 'grenadeFlash' on Q of earlier
+ * builds) are dropped first, which frees G and Q: the one 'grenade' action then lands on Q unless
+ * the player has put something else there. */
 export function mergeKeyBindings(stored: Record<string, Action>): Record<string, Action> {
-  const merged: Record<string, Action> = { ...stored };
+  const merged: Record<string, Action> = {};
+  for (const [code, action] of Object.entries(stored)) {
+    if (Object.hasOwn(ACTION_LABELS, action)) merged[code] = action;
+  }
   const bound = new Set(Object.values(merged));
   const defaults = Object.entries(DEFAULT_KEY_BINDINGS);
   const order = [...REBINDABLE_ACTIONS, ...defaults.map(([, action]) => action)];

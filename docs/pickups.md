@@ -29,8 +29,9 @@ differs from that design, and the numbers to tune. Code is in `src/pickups/`.
   never past 6 magazines; for a gun with unlimited reloads (every other mode) it tops up the
   magazine instead, unless a reload is already doing that. The knife, empty hands and the Goose
   Launcher reward never take a box.
-- **Grenade crate:** +1 frag and +1 flash, up to the cap of 3 of each (`GRENADE_MAX_COUNT`). The
-  Game passes `grenadeSupplyFrom(() => game.grenades)`, backed by the match's GrenadeSystem, and
+- **Grenade crate:** +1 of the kind the player carries (the loadout's frag or flash, one count), up to
+  the cap of 3 (`GRENADE_MAX_COUNT`); the pickup line reads `+1 FRAG` or `+1 FLASH`. At the cap the
+  crate is left on the map (`wouldGive` says no). The Game passes `grenadeSupplyFrom(() => game.grenades)`, backed by the match's GrenadeSystem, and
   crates are placed only in modes where `grenadesEnabled` is true (docs/grenades.md).
 - **Respawn:** health 30 s, ammo 25 s, grenades 45 s.
 - **Modes:** Knife Only and Goose Toss place health packs only. Goose Horde's own ammo drops are
@@ -76,7 +77,7 @@ All in `src/pickups/pickupConfig.ts`:
 |---|---|
 | `PICKUP_HEALTH_AMOUNT` | 40 |
 | `PICKUP_AMMO_MAGAZINES`, `PICKUP_AMMO_RESERVE_CAP_MAGAZINES` | 1, 6 |
-| `PICKUP_GRENADE_FRAG`, `PICKUP_GRENADE_FLASH`, `PICKUP_GRENADE_CAP` | 1, 1, 3 |
+| `PICKUP_GRENADE_AMOUNT`, `PICKUP_GRENADE_CAP` | 1, 3 |
 | `PICKUP_RADIUS`, `PICKUP_VERTICAL_REACH` | 1.4 m, 1.6 m |
 | `PICKUP_CLAIM_TOLERANCE`, `PICKUP_CLAIM_RESEND_SECONDS` | 4 m, 0.6 s |
 | `PICKUP_RESPAWN_SECONDS` | health 30, ammo 25, grenade 45 |

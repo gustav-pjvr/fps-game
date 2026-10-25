@@ -103,15 +103,15 @@ describe('PickupSystem in single-player', () => {
 
   it('takes a grenade crate only when the supply says it would give something', () => {
     const { recipient } = makeRecipient();
-    const granted: [number, number][] = [];
+    const granted: number[] = [];
     let wants = false;
-    const withGrenades: PickupRecipient = { ...recipient, grenades: { wouldGive: () => wants, grant: (frag, flash) => (granted.push([frag, flash]), true) } };
+    const withGrenades: PickupRecipient = { ...recipient, grenades: { wouldGive: () => wants, grant: (amount) => (granted.push(amount), 'frag') } };
     const system = new PickupSystem(new THREE.Scene(), SITES, withGrenades, null);
     system.update(0.05, at(40), true);
     expect(granted).toEqual([]);
     wants = true;
     system.update(0.05, at(40), true);
-    expect(granted).toEqual([[1, 1]]);
+    expect(granted).toEqual([1]);
   });
 
   it('honours the respawn override hook and a practice reset', () => {

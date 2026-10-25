@@ -2,30 +2,31 @@ import {
   PICKUP_AMMO_MAGAZINES,
   PICKUP_AMMO_RESERVE_CAP_MAGAZINES,
   PICKUP_GRENADE_CAP,
-  PICKUP_GRENADE_FLASH,
-  PICKUP_GRENADE_FRAG,
+  PICKUP_GRENADE_AMOUNT,
   PICKUP_HEALTH_AMOUNT,
   type PickupKind,
 } from './pickupConfig.ts';
 import type { GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
 /** The grenade side of a pickup, handed in by the Game, so pickups only see this small interface.
- * `wouldGive` says whether a crate would add anything (a grenade count below its cap); `grant` adds
- * `frag` and `flash` grenades, clamped to the cap, and returns false when nothing was given.
- * NO_GRENADES is the supply where there is no grenade carry. */
+ * The player carries one kind (their loadout's). `wouldGive` says whether a crate would add
+ * anything (the count below its cap); `grant` adds `amount` of that kind, clamped to the cap, and
+ * returns the kind, or null when nothing was given. NO_GRENADES is the supply where there is no
+ * grenade carry. */
 export interface GrenadeSupply {
   wouldGive(): boolean;
-  grant(frag: number, flash: number): boolean;
+  grant(amount: number): GrenadeKind | null;
 }
 
-export const NO_GRENADES: GrenadeSupply = { wouldGive: () => false, grant: () => false };
+export const NO_GRENADES: GrenadeSupply = { wouldGive: () => false, grant: () => null };
 
 /** The part of the grenade system (combat/grenades/GrenadeSystem.ts) a crate needs: whether the
- * mode carries grenades, the counts, and the top-up that clamps to the cap. */
+ * mode carries grenades, the kind and count carried, and the top-up that clamps to the cap. */
 export interface GrenadeCarry {
   readonly enabled: boolean;
-  count(kind: GrenadeKind): number;
-  addGrenades(kind: GrenadeKind, amount: number): number;
+  readonly kind: GrenadeKind;
+  readonly count: number;
+  addGrenades(amount: number): number;
 }
 
 /** A supply backed by the match's grenade carry. A getter, since the Game builds the pickups before
@@ -34,12 +35,12 @@ export function grenadeSupplyFrom(carry: () => GrenadeCarry | null): GrenadeSupp
   return {
     wouldGive: () => {
       const grenades = carry();
-      return !!grenades?.enabled && (grenades.count('frag') < PICKUP_GRENADE_CAP || grenades.count('flash') < PICKUP_GRENADE_CAP);
+      return !!grenades?.enabled && grenades.count < PICKUP_GRENADE_CAP;
     },
-    grant: (frag, flash) => {
+    grant: (amount) => {
       const grenades = carry();
-      if (!grenades?.enabled) return false;
-      return grenades.addGrenades('frag', frag) + grenades.addGrenades('flash', flash) > 0;
+      if (!grenades?.enabled) return null;
+      return grenades.addGrenades(amount) > 0 ? grenades.kind : null;
     },
   };
 }
@@ -90,8 +91,10 @@ export function applyPickup(kind: PickupKind, recipient: PickupRecipient): strin
     }
     case 'ammo':
       return recipient.grantAmmo() ? 'AMMO RESTOCKED' : null;
-    case 'grenade':
-      return recipient.grenades.grant(PICKUP_GRENADE_FRAG, PICKUP_GRENADE_FLASH) ? `+${PICKUP_GRENADE_FRAG} FRAG  +${PICKUP_GRENADE_FLASH} FLASH` : null;
+    case 'grenade': {
+      const carried = recipient.grenades.grant(PICKUP_GRENADE_AMOUNT);
+      return carried ? `+${PICKUP_GRENADE_AMOUNT} ${carried.toUpperCase()}` : null;
+    }
   }
 }
 

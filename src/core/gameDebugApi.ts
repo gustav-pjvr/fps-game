@@ -1,7 +1,6 @@
 import type { MissionView } from './mission/missionState.ts';
 import type { PerfLogEntry } from './perfStats.ts';
 import type { GrenadeDebug } from '../combat/grenades/GrenadeSystem.ts';
-import type { GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
  * aiming, with one deliberate exception: damagePlayer, which exists so death-*UI-flow* tests don't
@@ -174,13 +173,13 @@ export interface GameDebugApi {
    * the lampDestroyed send); on the Valley `index` is a house lamp id (getValleyHouses' lamps).
    * False when there is no such live lamp. */
   shootLamp(index: number): boolean;
-  /** Grenades (combat/grenades/GrenadeSystem.ts): counts, the grenade in hand, every live grenade,
+  /** Grenades (combat/grenades/GrenadeSystem.ts): the kind and count, the grenade in hand, every live grenade,
    * the local white-out level, the camera shake and the last detonation. */
   getGrenadeDebug(): GrenadeDebug | null;
-  /** Test-only: throws one grenade of `kind` at once with a full fuse, along `direction` (default:
-   * the aim), spent from the carry like a real throw. The grenade's id, or null with none left or
-   * grenades off. */
-  throwGrenade(kind: GrenadeKind, direction?: { x: number; y: number; z: number }): string | null;
+  /** Test-only: throws one grenade (of the loadout's kind) at once with a full fuse, along
+   * `direction` (default: the aim), spent from the carry like a real throw. The grenade's id, or
+   * null with none left or grenades off. */
+  throwGrenade(direction?: { x: number; y: number; z: number }): string | null;
   /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
   lampPosition(index: number): { x: number; y: number; z: number } | null;
   /** Every pickup of the match (docs/pickups.md) with its kind, the ground position and whether it

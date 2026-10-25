@@ -9,7 +9,7 @@ import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { Entity } from '../../entities/Entity.ts';
 import type { NetworkMessage, PlayerSlot } from '../../network/protocol.ts';
 import { GrenadeSystem, type GrenadeHandState, type GrenadeOpponent, type GrenadeTargets } from './GrenadeSystem.ts';
-import { FRAG_MAX_DAMAGE, GRENADE_FUSE, GRENADE_ORPHAN_GRACE_SECONDS, GRENADE_START_COUNT } from './grenadeTuning.ts';
+import { FRAG_MAX_DAMAGE, GRENADE_FUSE, GRENADE_ORPHAN_GRACE_SECONDS, GRENADE_MAX_COUNT, GRENADE_START_COUNT, type GrenadeKind } from './grenadeTuning.ts';
 
 // GrenadeSystem against a real Rapier world: a floor slab, a player capsule, and optionally a wall.
 
@@ -36,7 +36,7 @@ function fixedCuboid(physics: PhysicsWorld, x: number, y: number, z: number, hx:
   return physics.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z));
 }
 
-async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: number; friendlyFire?: boolean } = {}): Promise<Rig> {
+async function rig(options: { enabled?: boolean; kind?: GrenadeKind; network?: boolean; wallAt?: number; friendlyFire?: boolean } = {}): Promise<Rig> {
   const physics = await PhysicsWorld.create();
   // Floor: top surface at y = 0.
   fixedCuboid(physics, 0, -0.5, 0, 60, 0.5, 60);
@@ -86,6 +86,7 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
     camera,
     player: player as unknown as Player,
     enabled: options.enabled ?? true,
+    kind: options.kind ?? 'frag',
     sound: sound as unknown as SoundEngine,
     targets: targets as unknown as GrenadeTargets,
     network: options.network
@@ -121,7 +122,7 @@ async function rig(options: { enabled?: boolean; network?: boolean; wallAt?: num
   };
 }
 
-function fakeInput(held: { grenadeFrag?: boolean; grenadeFlash?: boolean }): InputManager {
+function fakeInput(held: { grenade?: boolean }): InputManager {
   return {
     isActionActive: (action: string) => Boolean(held[action as keyof typeof held]),
     consumeJustPressed: () => false,
@@ -131,9 +132,9 @@ function fakeInput(held: { grenadeFrag?: boolean; grenadeFlash?: boolean }): Inp
 describe('GrenadeSystem flight', () => {
   it('flies, lands on the floor, comes to rest and goes off at its fuse', async () => {
     const r = await rig();
-    const id = r.system.debugThrow('frag', { x: 0, y: 0.5, z: -1 });
+    const id = r.system.debugThrow({ x: 0, y: 0.5, z: -1 });
     expect(id).not.toBeNull();
-    expect(r.system.count('frag')).toBe(GRENADE_START_COUNT - 1);
+    expect(r.system.count).toBe(GRENADE_START_COUNT - 1);
     r.step(GRENADE_FUSE.frag - 0.2);
     const [grenade] = r.system.liveGrenades();
     expect(grenade?.resting).toBe(true);
@@ -163,22 +164,26 @@ describe('GrenadeSystem flight', () => {
   });
 
   it('keeps an own throw out of sight while the view-model hand still holds it', async () => {
-    const r = await rig();
-    r.step(DT * 3, fakeInput({ grenadeFrag: true }));
-    r.step(DT, fakeInput({}));
-    const model = r.scene.getObjectByName('grenade-frag')!;
-    expect(r.system.liveGrenades()).toHaveLength(1);
-    expect(model.visible).toBe(false);
-    r.step(0.15);
-    expect(model.visible).toBe(true);
-    // A scripted throw has no hand to leave.
-    r.system.debugThrow('flash');
-    expect(r.scene.getObjectByName('grenade-flash')!.visible).toBe(true);
+    for (const kind of ['frag', 'flash'] as const) {
+      const r = await rig({ kind });
+      r.step(DT * 3, fakeInput({ grenade: true }));
+      r.step(DT, fakeInput({}));
+      const model = r.scene.getObjectByName(`grenade-${kind}`)!;
+      expect(r.system.liveGrenades()).toHaveLength(1);
+      expect(r.system.liveGrenades()[0]!.kind).toBe(kind);
+      expect(model.visible).toBe(false);
+      r.step(0.15);
+      expect(model.visible).toBe(true);
+      // A scripted throw has no hand to leave.
+      r.system.debugThrow();
+      expect(r.system.liveGrenades()).toHaveLength(2);
+      expect(r.system.liveGrenades().every((g) => g.kind === kind)).toBe(true);
+    }
   });
 
   it('whooshes on the throw, clinks on the bounces (not while settling) and bangs at the fuse', async () => {
     const r = await rig();
-    r.system.debugThrow('frag', { x: 0, y: 0.5, z: -1 });
+    r.system.debugThrow({ x: 0, y: 0.5, z: -1 });
     expect(r.sound.playGrenadeThrow).toHaveBeenCalledTimes(1);
     r.step(GRENADE_FUSE.frag + 0.1);
     const clinks = r.sound.playGrenadeBounce.mock.calls;
@@ -186,14 +191,15 @@ describe('GrenadeSystem flight', () => {
     expect(clinks.length).toBeLessThan(12);
     for (const [volume] of clinks) expect(volume).toBeGreaterThan(0);
     expect(r.sound.playFragExplosion).toHaveBeenCalledTimes(1);
-    r.system.debugThrow('flash');
-    r.step(GRENADE_FUSE.flash + 0.1);
-    expect(r.sound.playFlashBang).toHaveBeenCalledTimes(1);
+    const flash = await rig({ kind: 'flash' });
+    flash.system.debugThrow();
+    flash.step(GRENADE_FUSE.flash + 0.1);
+    expect(flash.sound.playFlashBang).toHaveBeenCalledTimes(1);
   });
 
   it('bounces back off a wall instead of passing through it', async () => {
-    const r = await rig({ wallAt: -4 });
-    r.system.debugThrow('flash', { x: 0, y: 0.1, z: -1 });
+    const r = await rig({ kind: 'flash', wallAt: -4 });
+    r.system.debugThrow({ x: 0, y: 0.1, z: -1 });
     r.step(1.2);
     const [grenade] = r.system.liveGrenades();
     expect(grenade!.position.z).toBeGreaterThan(-4);
@@ -203,7 +209,7 @@ describe('GrenadeSystem flight', () => {
 describe('GrenadeSystem frag', () => {
   it('shakes only the rendered camera position, never its aim, and never accumulates', async () => {
     const r = await rig();
-    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
     r.step(GRENADE_FUSE.frag + DT);
     expect(r.system.cameraShake).toBeGreaterThan(0);
     const base = r.camera.position.clone();
@@ -227,7 +233,7 @@ describe('GrenadeSystem frag', () => {
     r.opponents.push({ slot: 1, position: opponentCenter, entity: {}, isDead: false });
     r.opponents.push({ slot: 2, position: new THREE.Vector3(0, PLAYER_HEIGHT / 2, -40), entity: {}, isDead: false });
     // Dropped at the feet.
-    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
     r.step(GRENADE_FUSE.frag + DT);
     expect(r.player.takeDamage).toHaveBeenCalledTimes(1);
     expect(r.player.takeDamage.mock.calls[0]![0]).toBeGreaterThan(FRAG_MAX_DAMAGE * 0.5);
@@ -248,7 +254,7 @@ describe('GrenadeSystem frag', () => {
     expect(lights()).toHaveLength(1);
     const [light] = lights();
     expect(light!.intensity).toBe(0);
-    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
     r.step(GRENADE_FUSE.frag + DT);
     expect(lights()).toEqual([light]);
     expect(light!.intensity).toBeGreaterThan(0);
@@ -262,7 +268,7 @@ describe('GrenadeSystem frag', () => {
   it('never hurts a teammate in co-op (no friendly fire), still the thrower and the enemies', async () => {
     const r = await rig({ network: true, friendlyFire: false });
     r.opponents.push({ slot: 1, position: new THREE.Vector3(0, PLAYER_HEIGHT / 2, -2), entity: {}, isDead: false });
-    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
     r.step(GRENADE_FUSE.frag + DT);
     expect(r.sent.filter((m) => m.type === 'damageEvent')).toHaveLength(0);
     expect(r.player.takeDamage).toHaveBeenCalledTimes(1);
@@ -272,7 +278,7 @@ describe('GrenadeSystem frag', () => {
   it('is stopped by a wall between the blast and the target', async () => {
     const r = await rig({ network: true, wallAt: -2 });
     r.opponents.push({ slot: 1, position: new THREE.Vector3(0, PLAYER_HEIGHT / 2, -3.5), entity: {}, isDead: false });
-    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
     r.step(GRENADE_FUSE.frag + DT);
     expect(r.sent.filter((m) => m.type === 'damageEvent')).toHaveLength(0);
   });
@@ -280,8 +286,8 @@ describe('GrenadeSystem frag', () => {
 
 describe('GrenadeSystem flash', () => {
   it('whites out a player looking at it and asks the enemies to judge it', async () => {
-    const r = await rig();
-    r.system.debugThrow('flash', { x: 0, y: -0.5, z: -1 });
+    const r = await rig({ kind: 'flash' });
+    r.system.debugThrow({ x: 0, y: -0.5, z: -1 });
     r.step(GRENADE_FUSE.flash - 0.1);
     const [grenade] = r.system.liveGrenades();
     r.camera.lookAt(grenade!.position.x, grenade!.position.y, grenade!.position.z);
@@ -300,10 +306,40 @@ describe('GrenadeSystem flash', () => {
   });
 });
 
+describe('GrenadeSystem carry', () => {
+  it('carries only the loadout kind: 2 of it, one count, a cap of 3, back to 2 on a respawn', async () => {
+    for (const kind of ['frag', 'flash'] as const) {
+      const r = await rig({ kind });
+      expect(r.system.kind).toBe(kind);
+      expect(r.system.count).toBe(GRENADE_START_COUNT);
+      expect(r.system.debugState()).toMatchObject({ kind, count: GRENADE_START_COUNT });
+      expect(r.system.addGrenades(5)).toBe(GRENADE_MAX_COUNT - GRENADE_START_COUNT);
+      expect(r.system.count).toBe(GRENADE_MAX_COUNT);
+      expect(r.system.addGrenades(1)).toBe(0);
+      r.system.debugThrow();
+      expect(r.system.count).toBe(GRENADE_MAX_COUNT - 1);
+      r.system.resetForSpawn();
+      expect(r.system.count).toBe(GRENADE_START_COUNT);
+    }
+  });
+
+  it('throws the loadout kind with the key, and tells the others which kind it is', async () => {
+    for (const kind of ['frag', 'flash'] as const) {
+      const r = await rig({ kind, network: true });
+      r.step(DT * 3, fakeInput({ grenade: true }));
+      expect(r.system.cooking?.kind).toBe(kind);
+      r.step(DT, fakeInput({}));
+      expect(r.system.liveGrenades().map((g) => g.kind)).toEqual([kind]);
+      expect(r.sent.find((m) => m.type === 'grenadeThrown')).toMatchObject({ kind });
+      expect(r.system.count).toBe(GRENADE_START_COUNT - 1);
+    }
+  });
+});
+
 describe('GrenadeSystem input', () => {
   it('cooks while held and throws on release', async () => {
     const r = await rig();
-    r.step(DT * 3, fakeInput({ grenadeFrag: true }));
+    r.step(DT * 3, fakeInput({ grenade: true }));
     expect(r.system.cooking?.kind).toBe('frag');
     expect(r.system.arcPreview?.points.length).toBeGreaterThan(1);
     expect(r.hand).toEqual(['cooking']);
@@ -316,34 +352,34 @@ describe('GrenadeSystem input', () => {
   });
 
   it('goes off in the hand when cooked past the fuse', async () => {
-    const r = await rig();
-    r.step(GRENADE_FUSE.flash + 0.1, fakeInput({ grenadeFlash: true }));
+    const r = await rig({ kind: 'flash' });
+    r.step(GRENADE_FUSE.flash + 0.1, fakeInput({ grenade: true }));
     expect(r.system.liveGrenades()).toHaveLength(0);
     expect(r.system.debugState().detonations).toBe(1);
-    expect(r.system.count('flash')).toBe(GRENADE_START_COUNT - 1);
+    expect(r.system.count).toBe(GRENADE_START_COUNT - 1);
   });
 
   it('refuses to start while the weapon says no (reloading, knife swing)', async () => {
     const r = await rig();
     r.canStart.value = false;
-    r.step(DT * 5, fakeInput({ grenadeFrag: true }));
+    r.step(DT * 5, fakeInput({ grenade: true }));
     expect(r.system.cooking).toBeNull();
   });
 
   it('drops a cook when the player is frozen, without spending it', async () => {
     const r = await rig();
-    r.step(DT * 2, fakeInput({ grenadeFrag: true }));
+    r.step(DT * 2, fakeInput({ grenade: true }));
     r.step(DT, null);
     expect(r.system.cooking).toBeNull();
-    expect(r.system.count('frag')).toBe(GRENADE_START_COUNT);
+    expect(r.system.count).toBe(GRENADE_START_COUNT);
     expect(r.hand).toEqual(['cooking', 'empty']);
   });
 
   it('carries none and throws nothing where grenades are off', async () => {
     const r = await rig({ enabled: false });
-    expect(r.system.count('frag')).toBe(0);
-    expect(r.system.debugThrow('frag')).toBeNull();
-    r.step(DT * 3, fakeInput({ grenadeFrag: true }));
+    expect(r.system.count).toBe(0);
+    expect(r.system.debugThrow()).toBeNull();
+    r.step(DT * 3, fakeInput({ grenade: true }));
     expect(r.system.cooking).toBeNull();
   });
 });
@@ -373,6 +409,18 @@ describe('GrenadeSystem network copies', () => {
     expect(r.sent).toHaveLength(0);
   });
 
+  it('flies and plays either kind another player throws, whatever this player carries', async () => {
+    for (const carried of ['frag', 'flash'] as const) {
+      const r = await rig({ kind: carried, network: true });
+      const other = carried === 'frag' ? 'flash' : 'frag';
+      r.system.receiveThrown({ ...thrown, kind: other });
+      expect(r.system.liveGrenades().map((g) => g.kind)).toEqual([other]);
+      r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: thrown.id, kind: other, position: { x: 0, y: 0.1, z: -1 } });
+      expect(r.system.debugState().lastDetonation?.kind).toBe(other);
+      expect(r.system.count).toBe(GRENADE_START_COUNT);
+    }
+  });
+
   it('in co-op a teammate\'s frag never knocks the player back; their own still does', async () => {
     const r = await rig({ network: true, friendlyFire: false });
     r.system.receiveThrown(thrown);
@@ -380,7 +428,7 @@ describe('GrenadeSystem network copies', () => {
     expect(r.explosions).toHaveBeenCalledTimes(1);
     expect(r.player.applyKnockback).not.toHaveBeenCalled();
     expect(r.player.takeDamage).not.toHaveBeenCalled();
-    r.system.debugThrow('frag', { x: 0, y: -1, z: 0 });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
     r.step(GRENADE_FUSE.frag + DT);
     expect(r.player.applyKnockback).toHaveBeenCalledTimes(1);
   });
@@ -401,7 +449,7 @@ describe('GrenadeSystem network copies', () => {
 
   it('re-sends its own live grenades the first time an opponent is seen', async () => {
     const r = await rig({ network: true });
-    r.system.debugThrow('frag', { x: 0, y: 0, z: -1 });
+    r.system.debugThrow({ x: 0, y: 0, z: -1 });
     r.step(0.5);
     r.sent.length = 0;
     r.system.opponentInMatch(2);

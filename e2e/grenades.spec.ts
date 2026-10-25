@@ -2,17 +2,28 @@ import { test, expect, type Page } from '@playwright/test';
 import { findFirstEnemyIndex, lockPointer, waitForGameReady } from './helpers.ts';
 
 /**
- * Grenades (docs/grenades.md), solo on the default map, through the debug hooks: a frag kills an
- * enemy next to it and spends one from the carry; a flash whites out a player looking at it and
- * leaves one looking away from a far flash clear.
+ * Grenades (docs/grenades.md), solo on the default map, through the debug hooks. The player carries
+ * the one kind the stored loadout names: a frag kills an enemy next to it and spends one from the
+ * carry; a flash whites out a player looking at it and leaves one looking away from a far flash
+ * clear.
  */
 
-async function startSolo(page: Page): Promise<void> {
+const LOADOUT_STORAGE_KEY = 'fps-game-loadout';
+
+/** Starts a solo match whose stored loadout carries `grenade` (read once, at match start). */
+async function startSolo(page: Page, grenade: 'frag' | 'flash'): Promise<void> {
+  await page.addInitScript(
+    ({ key, value }) => window.localStorage.setItem(key, value),
+    { key: LOADOUT_STORAGE_KEY, value: JSON.stringify({ primary: 'rifle', secondary: 'pistol', melee: 'knife', grenade }) },
+  );
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
   await page.evaluate(() => window.__gameDebug!.setPlayerInvulnerable(true));
   await page.waitForFunction(() => window.__gameDebug!.getGrenadeDebug()?.enabled === true, undefined, { timeout: 10000 });
+  const carry = await page.evaluate(() => window.__gameDebug!.getGrenadeDebug()!);
+  expect(carry.kind).toBe(grenade);
+  expect(carry.count).toBe(2);
 }
 
 function liveEnemies(page: Page): Promise<number> {
@@ -26,18 +37,18 @@ async function forward(page: Page): Promise<{ x: number; z: number }> {
   return { x: 0, z: -1 };
 }
 
-test('a frag kills the enemy beside it and spends one frag', async ({ page }) => {
+test('a frag carrier throws a frag that kills the enemy beside it and spends one', async ({ page }) => {
   test.setTimeout(120000);
-  await startSolo(page);
+  await startSolo(page, 'frag');
   const before = await page.evaluate(() => window.__gameDebug!.getGrenadeDebug()!);
-  expect(before.counts.frag).toBeGreaterThan(0);
+  expect(before.count).toBeGreaterThan(0);
   const enemiesBefore = await liveEnemies(page);
   expect(enemiesBefore).toBeGreaterThan(0);
 
   const aim = await forward(page);
-  const id = await page.evaluate((direction) => window.__gameDebug!.throwGrenade('frag', direction), { x: aim.x, y: -0.35, z: aim.z });
+  const id = await page.evaluate((direction) => window.__gameDebug!.throwGrenade(direction), { x: aim.x, y: -0.35, z: aim.z });
   expect(id).not.toBeNull();
-  await expect.poll(() => page.evaluate(() => window.__gameDebug!.getGrenadeDebug()!.counts.frag)).toBe(before.counts.frag - 1);
+  await expect.poll(() => page.evaluate(() => window.__gameDebug!.getGrenadeDebug()!.count)).toBe(before.count - 1);
 
   // Keep an enemy pinned beside the grenade until it goes off (enemies walk; the frag rolls).
   const enemy = await findFirstEnemyIndex(page);
@@ -67,7 +78,7 @@ test('a frag kills the enemy beside it and spends one frag', async ({ page }) =>
  * turned away from it. Returns the highest blind level seen afterwards. */
 async function flashAndWatch(page: Page, direction: { x: number; y: number; z: number }, face: boolean): Promise<number> {
   const before = await page.evaluate(() => window.__gameDebug!.getGrenadeDebug()!);
-  const id = await page.evaluate((d) => window.__gameDebug!.throwGrenade('flash', d), direction);
+  const id = await page.evaluate((d) => window.__gameDebug!.throwGrenade(d), direction);
   expect(id).not.toBeNull();
   await expect
     .poll(
@@ -93,13 +104,13 @@ async function flashAndWatch(page: Page, direction: { x: number; y: number; z: n
     .toBe(true);
   const after = await page.evaluate(() => window.__gameDebug!.getGrenadeDebug()!);
   expect(after.lastDetonation?.kind).toBe('flash');
-  expect(after.counts.flash).toBe(before.counts.flash - 1);
+  expect(after.count).toBe(before.count - 1);
   return after.blindLevel;
 }
 
-test('a flash whites out a player facing it, and not one facing away from a far one', async ({ page }) => {
+test('a flash carrier throws a flash that whites out a player facing it, and not one facing away from a far one', async ({ page }) => {
   test.setTimeout(150000);
-  await startSolo(page);
+  await startSolo(page, 'flash');
   const aim = await forward(page);
 
   // Lobbed a few metres ahead and watched: strongly blinded.

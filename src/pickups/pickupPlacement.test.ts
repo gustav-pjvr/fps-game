@@ -1,6 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Scene } from 'three';
 import { setWorldSeedForTesting } from '../core/worldSeed.ts';
+import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { isPointNearFootprint } from '../world/houseFootprint.ts';
 import { cellOf, generateFacilityLayout, isWalkable, OPEN, SOLID } from '../world/facility/facilityLayout.ts';
@@ -140,9 +141,13 @@ describe('placeFacilityPickups', () => {
 
 describe('placeValleyPickups', () => {
   let buildings: BuildingManager;
+  let physics: PhysicsWorld;
   beforeAll(async () => {
-    buildings = await BuildingManager.create(new Scene(), null as never);
+    // The enterable houses build their colliders in a real physics world.
+    physics = await PhysicsWorld.create();
+    buildings = await BuildingManager.create(new Scene(), physics);
   });
+  afterAll(() => physics.dispose());
   const seeds = Array.from({ length: 25 }, (_, i) => i + 1);
 
   it('places about PICKUP_VALLEY_COUNT, clear of every house, road and tower, on the ground, inside the world', () => {

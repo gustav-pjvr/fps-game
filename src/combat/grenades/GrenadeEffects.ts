@@ -64,7 +64,7 @@ export class GrenadeEffects {
     this.viewModel?.update(weapon.throwPose, weapon.throwProgress, system.cooking?.kind ?? null, dt);
     this.fragExplosion?.update(dt, this.options.camera);
     this.arc?.update(system.arcPreview);
-    this.options.hud.setGrenades(system.enabled ? { frag: system.count('frag'), flash: system.count('flash') } : null);
+    this.options.hud.setGrenades({ kind: system.kind, count: system.count });
     this.danger?.update(this.options.camera, system.liveGrenades());
     const blind = system.blindLevel;
     if (blind > this.lastBlindLevel + 0.05) this.captureAfterimage = true;
