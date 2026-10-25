@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, isModeAllowedOnMap, isSinglePlayerModeAllowedOnMap, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
+import { resolveWeaponLoadout, pickGunGameUpgrade, modeUsesCustomLoadout, isModeAllowedOnMap, isSinglePlayerModeAllowedOnMap, grenadesEnabled, GAME_MODES, WEAPON_CATEGORIES } from './gameModes.ts';
 import type { PlayerLoadout } from './gameModes.ts';
 
 describe('isModeAllowedOnMap', () => {
@@ -97,5 +97,28 @@ describe('WEAPON_CATEGORIES', () => {
     expect(WEAPON_CATEGORIES.mp5).toBe('secondary');
     expect(WEAPON_CATEGORIES.knife).toBe('melee');
     expect(WEAPON_CATEGORIES.gooseLauncher).toBe('special');
+  });
+});
+
+describe('grenadesEnabled', () => {
+  it.each([
+    ['default', true],
+    ['elimination', true],
+    ['director', true],
+    ['horde', true],
+    ['gooseHorde', true],
+    ['mission', true],
+    ['kingOfTheHill', true],
+    ['knifeOnly', false],
+    ['gunGame', false],
+    ['sniperDuel', false],
+    ['oneShotOneKill', false],
+    ['gooseToss', false],
+  ] as const)('%s: %s', (mode, enabled) => {
+    expect(grenadesEnabled(mode)).toBe(enabled);
+  });
+
+  it('covers every multiplayer mode', () => {
+    for (const mode of GAME_MODES) expect(typeof grenadesEnabled(mode)).toBe('boolean');
   });
 });

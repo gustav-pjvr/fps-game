@@ -32,11 +32,35 @@ export function isModeAllowedOnMap(mode: GameMode, map: MatchMap): boolean {
   return map === 'valley' || (mode !== 'gooseToss' && mode !== 'kingOfTheHill' && mode !== 'gooseHorde');
 }
 
+/** Single-player's own modes (PlaySetupModal); single-player has no GameMode of its own. */
+export type SinglePlayerMode = 'elimination' | 'director' | 'horde' | 'mission';
+
 export function isSinglePlayerModeAllowedOnMap(
-  mode: 'elimination' | 'director' | 'horde' | 'mission',
+  mode: SinglePlayerMode,
   map: MatchMap,
 ): boolean {
   return map === 'valley' || mode === 'elimination' || mode === 'director';
+}
+
+/** Whether players carry frag and flash grenades (design: docs/squad-arsenal-night.md section 3):
+ * on wherever the loadout is open, off in the single-weapon and rotating-weapon modes. One table for
+ * multiplayer's GameMode and single-player's own modes alike. */
+const GRENADES_ENABLED: Readonly<Record<GameMode | SinglePlayerMode, boolean>> = {
+  default: true,
+  elimination: true,
+  director: true,
+  horde: true,
+  gooseHorde: true,
+  mission: true,
+  kingOfTheHill: true,
+  knifeOnly: false,
+  gunGame: false,
+  sniperDuel: false,
+  oneShotOneKill: false,
+  gooseToss: false,
+};
+export function grenadesEnabled(mode: GameMode | SinglePlayerMode): boolean {
+  return GRENADES_ENABLED[mode];
 }
 
 /** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user
