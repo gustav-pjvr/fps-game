@@ -10,6 +10,7 @@ import {
 import { buildWeaponViewModel } from './models/arsenal.ts';
 import { WEAPON_GLOW_INTENSITY } from './models/weaponMaterials.ts';
 import { castHitscan } from '../combat/hitscan.ts';
+import { GRENADE_THROW_ANIMATION_SECONDS } from '../combat/grenades/grenadeTuning.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { applySpreadCone } from '../combat/spread.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
@@ -53,6 +54,9 @@ interface WeaponSlot extends Omit<WeaponViewModel, 'group'> {
 const SPRINT_POSE_DAMP = 8;
 /** Peak roll (radians) at the middle of a reload, while the magazine is out. */
 const RELOAD_ROLL_ANGLE = 0.35;
+/** The gun drops for a grenade at this damp rate, and starts back up this long before the throw ends. */
+const THROW_POSE_DAMP = 18;
+const THROW_RAISE_SECONDS = 0.15;
 
 export class WeaponManager {
   private readonly slots: WeaponSlot[];
@@ -95,6 +99,12 @@ export class WeaponManager {
   private swayPitch = 0;
   /** 0 to 1 blend into the sprint tuck (see updateAim). */
   private sprintPose = 0;
+  /** Grenades (combat/grenades/GrenadeSystem.ts): a grenade cooking in the hand, then the throw's
+   * GRENADE_THROW_ANIMATION_SECONDS. Either lowers the gun and blocks fire, aim and reload. */
+  private grenadeInHand = false;
+  private throwLowerTime = 0;
+  /** 0 to 1 blend into the lowered pose (see updateAim). */
+  private throwPoseAmount = 0;
   private meleeVariant: MeleeVariant = 'draw';
   private meleeProgress = 1;
   private meleeDuration = MELEE_SWING_DURATION;
@@ -342,13 +352,50 @@ export class WeaponManager {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Whether a grenade throw may start: not while reloading, switching, mid knife swing or mid
+   * burst, and not while one is already in the hand. */
+  get canStartThrow(): boolean {
+    const meleeBusy = this.active.weapon.definition.kind === 'melee' && this.meleeProgress < 1;
+    return !this.active.weapon.isReloading && !this.switching && !meleeBusy && this.burstShotsRemaining === 0 && !this.handsBusy;
+  }
+
+  /** GrenadeSystem: a grenade is cooking in the hand (true), or a cook was dropped (false). */
+  setGrenadeInHand(inHand: boolean): void {
+    this.grenadeInHand = inHand;
+  }
+
+  /** GrenadeSystem: the grenade just left the hand; the gun stays down for the throw. */
+  beginThrowLower(): void {
+    this.grenadeInHand = false;
+    this.throwLowerTime = GRENADE_THROW_ANIMATION_SECONDS;
+  }
+
+  /** 0 to 1: how far the gun is lowered for a grenade, for the throw-arm view model. */
+  get throwPose(): number {
+    return this.throwPoseAmount;
+  }
+
+  private get handsBusy(): boolean {
+    return this.grenadeInHand || this.throwLowerTime > 0;
+  }
+
   update(dt: number, input: InputManager, player: Player): void {
     this.active.weapon.update(dt);
+    this.throwLowerTime = Math.max(0, this.throwLowerTime - dt);
     this.handleSwitchRequests(input);
     this.updateSwitching(dt);
     this.updateAim(dt, input, player);
 
     if (this.switching) return;
+
+    if (this.handsBusy) {
+      // A grenade in hand or just thrown: no fire, no reload. A trigger still held when the gun
+      // comes back up needs a fresh press, like after a switch.
+      input.consumeJustPressed('fire');
+      input.consumeJustPressed('reload');
+      if (input.isActionActive('fire')) this.fireLockedUntilRelease = true;
+      return;
+    }
 
     if (this.fireLockedUntilRelease) {
       // Drain any queued click so it doesn't fire the instant the lock lifts.
@@ -473,7 +520,7 @@ export class WeaponManager {
   private updateAim(dt: number, input: InputManager, player: Player): void {
     const { adsFov, hasScope } = this.active.weapon.definition;
     const isMelee = this.active.weapon.definition.kind === 'melee';
-    const targetAim = !isMelee && !this.switching && input.isActionActive('aim') ? 1 : 0;
+    const targetAim = !isMelee && !this.switching && !this.handsBusy && input.isActionActive('aim') ? 1 : 0;
     this.aimAmount = THREE.MathUtils.damp(this.aimAmount, targetAim, ADS_LERP_SPEED, dt);
     if (isMelee) this.aimAmount = 0;
 
@@ -568,6 +615,11 @@ export class WeaponManager {
       magazine.position.copy(magazineRestPosition);
       magazine.position.y -= 0.22 * drop;
     }
+
+    // Grenade: the gun drops out of the way while one is in hand, and comes back up at the end of
+    // the throw.
+    this.throwPoseAmount = THREE.MathUtils.damp(this.throwPoseAmount, this.grenadeInHand || this.throwLowerTime > THROW_RAISE_SECONDS ? 1 : 0, THROW_POSE_DAMP, dt);
+    this.active.viewModel.position.y -= WEAPON_HOLSTER_DROP * this.throwPoseAmount;
 
     const scopeShouldShow = hasScope && this.aimAmount >= SCOPE_REVEAL_THRESHOLD;
     this.scopeOverlay.setVisible(scopeShouldShow);
