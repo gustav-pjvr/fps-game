@@ -75,6 +75,10 @@ function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | nu
   const isSpecial = category === 'special';
   const card = document.createElement('div');
   card.dataset.weaponId = weapon.id;
+  if (!isSpecial) {
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+  }
   card.style.cssText =
     'display:flex; flex-direction:column; gap:10px; padding:14px 16px;' +
     ` background:${BG_RAISED}; border:1px solid ${isSpecial ? REWARD_GOLD : HAIRLINE};` +

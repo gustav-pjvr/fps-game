@@ -17,6 +17,7 @@ export type Action =
   | 'weaponPrev'
   | 'resetPlay'
   | 'interact'
+  | 'pause'
   | 'flashlight';
 
 export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
@@ -69,6 +70,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   weaponPrev: 'Previous Weapon',
   resetPlay: 'Reset Match',
   interact: 'Interact',
+  pause: 'Pause',
   flashlight: 'Torch',
 };
 

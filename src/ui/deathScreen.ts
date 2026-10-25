@@ -1,5 +1,6 @@
 import { MONO_FONT, INK_DIM, INK, LABEL_CSS, SURFACE, SANS_FONT } from './theme.ts';
 import { attachScanSweep, createButton } from './menu/menuStyles.ts';
+import { setDeviceHint } from '../input/GamepadInput.ts';
 
 /** Content sits near the top rather than screen-center (per user request) - clears both the
  * single-player Hud's top-left score text and, in multiplayer, MultiplayerHud's top-left health
@@ -64,6 +65,10 @@ export class DeathScreen {
 
     buttonRow.append(respawnButton, lobbyButton);
     this.element.append(title, this.scoreElement, this.statsElement, buttonRow);
+    const hint = document.createElement('div');
+    hint.style.cssText = `${LABEL_CSS} color:${INK_DIM};`;
+    setDeviceHint(hint, 'Click Respawn to play again', 'D-pad: select | A (Cross): activate | B (Circle): lobby');
+    this.element.appendChild(hint);
     root.appendChild(this.element);
   }
 
