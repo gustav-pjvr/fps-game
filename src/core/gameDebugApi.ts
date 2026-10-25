@@ -1,5 +1,7 @@
 import type { MissionView } from './mission/missionState.ts';
 import type { PerfLogEntry } from './perfStats.ts';
+import type { GrenadeDebug } from '../combat/grenades/GrenadeSystem.ts';
+import type { GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
 /** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
  * aiming, with one deliberate exception: damagePlayer, which exists so death-*UI-flow* tests don't
@@ -54,6 +56,8 @@ export interface GameDebugApi {
     searchTarget: { x: number; z: number } | null;
     /** Knocked off balance by a heavy hit right now (step 5). */
     staggered: boolean;
+    /** Seconds of flash-grenade blindness left. */
+    blindSeconds: number;
     x: number;
     y: number;
     z: number;
@@ -124,6 +128,13 @@ export interface GameDebugApi {
   /** Test-only, Facility only: shoots out lamp `index` exactly like a hit (light, effect, sound and,
    * in multiplayer, the lampDestroyed send). False when there is no such live lamp. */
   shootLamp(index: number): boolean;
+  /** Grenades (combat/grenades/GrenadeSystem.ts): counts, the grenade in hand, every live grenade,
+   * the local white-out level, the camera shake and the last detonation. */
+  getGrenadeDebug(): GrenadeDebug | null;
+  /** Test-only: throws one grenade of `kind` at once with a full fuse, along `direction` (default:
+   * the aim), spent from the carry like a real throw. The grenade's id, or null with none left or
+   * grenades off. */
+  throwGrenade(kind: GrenadeKind, direction?: { x: number; y: number; z: number }): string | null;
   /** Facility only: where lamp `index` hangs, so an e2e test can aim at it; null elsewhere. */
   lampPosition(index: number): { x: number; y: number; z: number } | null;
   /** Multiplayer only (MULTIPLAYER_PLAN.md §7 phase 2) - null outside a multiplayer match. The
