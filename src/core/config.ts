@@ -404,6 +404,9 @@ export const ENEMY_WEAPON_LOUDNESS_RANGE: Readonly<Record<string, number>> = {
   gooseLauncher: 45,
   knife: 0,
   unarmed: 0,
+  // Grenades (combat/grenades/GrenadeSystem.ts) go through the same hearing path as a shot.
+  frag: 70,
+  flash: 55,
 };
 
 /**
