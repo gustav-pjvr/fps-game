@@ -1541,6 +1541,7 @@ export class Game {
         destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
+        grenades: null,
       };
 
       activeMultiplayer.session.connection.setCallbacks({
