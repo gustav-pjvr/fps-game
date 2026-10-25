@@ -27,7 +27,7 @@ Add `--dry` to see the plan without running it, and `--base <ref>` to compare wi
 | mission | `mission.spec.ts` | `core/mission/`, uplink beacons, world markers, the death screen, `Game.ts` |
 | ui | `ui-qa.spec.ts` | `src/ui/`, `index.html`, `App.ts` |
 | world | `world-bounds.spec.ts` | `src/world/` |
-| facility | `facility.spec.ts`, `facility-doors.spec.ts`, `facility-modes.spec.ts`, `multiplayer-facility.spec.ts`, `pickups.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
+| facility | `facility.spec.ts`, `facility-doors.spec.ts`, `facility-modes.spec.ts`, `multiplayer-facility.spec.ts`, `pickups.spec.ts`, `solo-weather.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
 | pickups | `pickups.spec.ts` | `src/pickups/` |
 | mp | the six `multiplayer*.spec.ts` | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
 | perf | `perf-log.spec.ts`, `performance-check.spec.ts` | never by a change: measurements, run by name before a release or after render work |

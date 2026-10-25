@@ -1,12 +1,15 @@
 import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED } from '../theme.ts';
 import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
-import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, MATCH_MAPS, MATCH_MAP_LABELS, MATCH_MAP_DESCRIPTIONS, type GooseExplosionDifficulty, type MatchMap } from '../../core/config.ts';
+import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, MATCH_MAPS, MATCH_MAP_LABELS, MATCH_MAP_DESCRIPTIONS, MATCH_WEATHERS, MATCH_WEATHER_LABELS, type GooseExplosionDifficulty, type MatchMap, type MatchWeather } from '../../core/config.ts';
 
 export interface MatchSetupConfig {
   enemyCount: number;
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
   map: MatchMap;
+  /** The Valley's weather (Dusk, Night or Fog), the same choice a Create Room host has. Ignored on
+   * the Facility, which is indoors and has its own look. */
+  weather: MatchWeather;
   /** Goose Horde wave-survival mode (see core/config.ts's HORDE_WAVE_TABLE) - when true,
    * enemyCount/targetCount are ignored (no regular AI encounters spawn) and a HordeGooseManager
    * runs instead, see Game.ts's create(). */
@@ -30,6 +33,8 @@ export class PlaySetupModal {
   private readonly targetInput: HTMLInputElement;
   private readonly gooseDifficultySelect: HTMLSelectElement;
   private readonly mapSelect: HTMLSelectElement;
+  private readonly weatherSelect: HTMLSelectElement;
+  private readonly mapDescription = document.createElement('div');
   private readonly hordeModeCheckbox: HTMLInputElement;
   private readonly directorModeCheckbox: HTMLInputElement;
   private readonly missionModeCheckbox: HTMLInputElement;
@@ -52,7 +57,13 @@ export class PlaySetupModal {
     this.enemyInput = this.buildCountRow(panel, 'Enemies', defaults.enemyCount, maxCount);
     this.targetInput = this.buildCountRow(panel, 'Targets', defaults.targetCount, maxCount);
     this.gooseDifficultySelect = this.buildDifficultyRow(panel, defaults.gooseDifficulty);
-    this.mapSelect = this.buildMapRow(panel, defaults.map);
+    // Map and Weather share a line so the panel stays short enough to show its buttons.
+    const mapWeatherRow = document.createElement('div');
+    mapWeatherRow.style.cssText = 'display:flex; gap:12px; align-items:flex-start;';
+    this.mapSelect = this.buildMapRow(mapWeatherRow, defaults.map);
+    this.weatherSelect = this.buildWeatherRow(mapWeatherRow, defaults.weather, this.mapSelect);
+    panel.appendChild(mapWeatherRow);
+    panel.appendChild(this.mapDescription);
 
     this.hordeModeCheckbox = this.buildCheckboxRow(panel, 'Goose Horde: survive 10 waves', defaults.hordeMode);
     this.directorModeCheckbox = this.buildCheckboxRow(
@@ -99,6 +110,7 @@ export class PlaySetupModal {
         targetCount: this.clampInput(this.targetInput, maxCount),
         gooseDifficulty: this.gooseDifficultySelect.value as GooseExplosionDifficulty,
         map: this.mapSelect.value as MatchMap,
+        weather: this.weatherSelect.value as MatchWeather,
         hordeMode: this.hordeModeCheckbox.checked,
         directorMode: this.directorModeCheckbox.checked,
         missionMode: this.missionModeCheckbox.checked,
@@ -170,9 +182,9 @@ export class PlaySetupModal {
     return select;
   }
 
-  private buildMapRow(panel: HTMLDivElement, defaultValue: MatchMap): HTMLSelectElement {
+  private buildMapRow(panel: HTMLElement, defaultValue: MatchMap): HTMLSelectElement {
     const row = document.createElement('div');
-    row.style.cssText = 'margin-bottom:16px;';
+    row.style.cssText = 'flex:1; min-width:0;';
     const label = document.createElement('label');
     label.textContent = 'Map';
     label.htmlFor = 'match-setup-map';
@@ -188,14 +200,48 @@ export class PlaySetupModal {
       if (map === defaultValue) option.selected = true;
       select.appendChild(option);
     }
-    const description = document.createElement('div');
-    description.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px;';
+    const description = this.mapDescription;
+    description.style.cssText = 'font-size:0.8rem; opacity:0.7; margin:6px 0 16px;';
     const updateDescription = () => {
       description.textContent = MATCH_MAP_DESCRIPTIONS[select.value as MatchMap];
     };
     select.addEventListener('change', updateDescription);
     updateDescription();
-    row.append(label, select, description);
+    row.append(label, select);
+    panel.appendChild(row);
+    return select;
+  }
+
+  /** Same look as the Map select. Weather only applies to the Valley, so on the Facility the row
+   * greys out and reads "Indoor", as Create Room's does. */
+  private buildWeatherRow(panel: HTMLElement, defaultValue: MatchWeather, mapSelect: HTMLSelectElement): HTMLSelectElement {
+    const row = document.createElement('div');
+    row.style.cssText = 'flex:1; min-width:0;';
+    const label = document.createElement('label');
+    label.textContent = 'Weather';
+    label.htmlFor = 'match-setup-weather';
+    label.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
+    const select = document.createElement('select');
+    select.id = 'match-setup-weather';
+    select.name = 'weather';
+    select.style.cssText = this.gooseDifficultySelect.style.cssText;
+    for (const weather of MATCH_WEATHERS) {
+      const option = document.createElement('option');
+      option.value = weather;
+      option.textContent = MATCH_WEATHER_LABELS[weather];
+      if (weather === defaultValue) option.selected = true;
+      select.appendChild(option);
+    }
+    const updateForMap = () => {
+      const indoor = (mapSelect.value as MatchMap) === 'facility';
+      select.disabled = indoor;
+      label.textContent = indoor ? 'Indoor' : 'Weather';
+      row.style.opacity = indoor ? '0.4' : '1';
+      select.style.cursor = indoor ? 'not-allowed' : 'pointer';
+    };
+    mapSelect.addEventListener('change', updateForMap);
+    updateForMap();
+    row.append(label, select);
     panel.appendChild(row);
     return select;
   }

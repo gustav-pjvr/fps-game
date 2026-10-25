@@ -124,7 +124,6 @@ import {
   GOOSE_TOSS_EXPLOSION_RADIUS,
   GOOSE_TOSS_MAX_CONCURRENT,
   GOOSE_TOSS_SPAWN_INTERVAL_SECONDS,
-  DEFAULT_MATCH_WEATHER,
   GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH,
   GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE,
   GOOSE_LAUNCHER_EXPLOSION_RADIUS,
@@ -270,6 +269,8 @@ export interface MatchConfig {
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
   map: MatchMap;
+  /** Single-player's weather choice (PlaySetupModal); a multiplayer match reads it from its session. */
+  weather: MatchWeather;
   /** Single-player only (see PlaySetupModal) - multiplayer's equivalent is gameMode==='gooseHorde'
    * instead (unused/false here for a multiplayer match, same as enemyCount/targetCount's zeros). */
   hordeMode: boolean;
@@ -763,6 +764,7 @@ export class Game {
           ...this.facility.objects.counts(),
         };
       },
+      getTorchDebug: () => ({ available: this.torch !== null, on: this.torch?.isOn ?? false, weather: this.matchWeather, facility: this.facility !== null }),
       facilityDoor: (index) => this.facility?.objects.debugDoor(index) ?? null,
       setFacilityDoor: (index, open) => this.facilityInteraction?.requestState('door', index, open) ?? false,
       facilityBreaker: (index) => this.facility?.objects.debugBreaker(index) ?? null,
@@ -836,12 +838,12 @@ export class Game {
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
-    // Multiplayer-only, host-chosen (see CreateRoomScreen); single-player always 'day'. Applied
+    // Host-chosen in multiplayer (see CreateRoomScreen), picked in single-player's PlaySetupModal. Applied
     // once here, before anything compiles, not live-toggleable like graphics quality - see
     // Renderer.setMatchWeather. The lights then take the same look.
     // The Facility (docs/facility-map.md) is indoors: weather does not apply, it has its own look.
     const isFacility = (multiplayer?.map ?? matchConfig.map) === 'facility';
-    const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
+    const matchWeather: MatchWeather = multiplayer?.weather ?? matchConfig.weather;
     if (isFacility) renderer.setMatchLook(FACILITY_LOOK);
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);

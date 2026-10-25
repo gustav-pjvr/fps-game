@@ -108,6 +108,9 @@ export interface GameDebugApi {
   getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
   /** Goose Horde, null in every other mode: the current wave and every live horde goose. */
   getHordeDebug(): { wave: number; geese: { x: number; y: number; z: number; flavor: string }[] } | null;
+  /** The torch (render/Flashlight.ts): whether this match has one, whether it is on, the match's
+   * weather and whether it is on the Facility. */
+  getTorchDebug(): { available: boolean; on: boolean; weather: 'day' | 'night' | 'fog'; facility: boolean };
   /** The Facility (docs/facility-map.md) in a Facility match, null on the Valley: the map, the
    * layout's seed, its room, open cell and lamp counts, how long the light bake took and how many
    * vertices it lit, and whether the player's torch is on. */

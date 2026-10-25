@@ -215,8 +215,8 @@ export const MATCH_MAP_DESCRIPTIONS: Record<MatchMap, string> = {
   facility: 'Indoor complex, a new layout every match',
 };
 
-/** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'day' in single-player - purely
- * cosmetic/atmospheric, mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
+/** Host-chosen in multiplayer (see CreateRoomScreen), chosen in single-player's PlaySetupModal -
+ * purely cosmetic/atmospheric (plus the night torch, see render/Flashlight.ts), mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
  * sites: MatchStartMessage, WelcomeMessage.activeMatch, MultiplayerSession,
  * MultiplayerMatchStartParams). Each has a look in render/look.ts (sky, fog, lights, grade); 'day'
  * keeps its id for the network protocol but is the stylised dusk the art direction is built on. */
