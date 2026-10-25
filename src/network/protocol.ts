@@ -43,6 +43,10 @@ export function helloSupportsMap(features: unknown, map: MatchMap): boolean {
 export interface RosterEntry {
   slot: PlayerSlot;
   username: string;
+  /** A guest's PeerJS id, which other guests dial for a direct link (see network/GuestMesh.ts).
+   * Missing for the host's own entry and from older hosts; a guest with none is reached through the
+   * host only, as before. */
+  peerId?: string;
 }
 
 /** Host -> the one guest that just sent HelloMessage (targeted, not broadcast - see
@@ -186,6 +190,10 @@ export interface FireEventMessage {
   endY: number;
   endZ: number;
   weaponId: string;
+  /** Sender's clock, as on PlayerSnapshotMessage. A guest's shot can reach another guest twice for a
+   * moment (over their direct link and through the host, see network/directLinks.ts); this is what
+   * the second copy is recognised by. Stamped by PeerConnection; older builds send none. */
+  t?: number;
 }
 
 /** Self-reported, relayed (see MatchMessageRouter's RELAYABLE_MESSAGE_TYPES): `senderSlot` shot out
@@ -243,8 +251,9 @@ export interface DamageEventMessage {
   senderSlot: PlayerSlot;
   targetSlot: PlayerSlot;
   amount: number;
-  /** What did the damage, when it was not the attacker's held weapon: 'frag' for a frag grenade.
-   * Optional; older builds send none. */
+  /** The weapon that dealt it ('gooseLauncher' for a launcher blast, 'frag' for a frag grenade). The
+   * victim passes it on as PlayerDiedMessage.killerWeaponId, which Gun Game's finisher rule reads.
+   * Missing on older builds. */
   weaponId?: string;
 }
 
@@ -296,6 +305,10 @@ export interface PlayerDiedMessage {
   /** Sender's clock, as on PlayerSnapshotMessage: a snapshot sent before this death must not
    * bring the body back to life when it arrives after it. */
   t?: number;
+  /** The weapon of the damage that gave `killerSlot` the kill (DamageEventMessage.weaponId). Gun
+   * Game only credits the winning kill when it is the Goose Launcher (core/multiplayerScoring.ts).
+   * Missing on older builds, which are credited as before. */
+  killerWeaponId?: string;
 }
 
 /** Sent once a dying player actually respawns - lets every other client's RemotePlayer for that
@@ -323,6 +336,8 @@ export interface FootstepEventMessage {
   x: number;
   y: number;
   z: number;
+  /** Sender's clock, for the duplicate check FireEventMessage.t describes. */
+  t?: number;
 }
 
 /** Sent by the host when they click "Return to Lobby" from the podium/match-end screen - every
@@ -353,6 +368,8 @@ export interface PlayerJoinedMatchMessage {
   slot: PlayerSlot;
   username: string;
   isRejoin: boolean;
+  /** The player's PeerJS id (RosterEntry.peerId); a rejoin usually comes back with a new one. */
+  peerId?: string;
 }
 
 /** Host -> everyone (broadcast, never relayed - it's host-authored, not forwarded from a guest):
@@ -654,6 +671,11 @@ export interface HordeSyncRequestMessage {
 export interface HordeSyncStateMessage {
   type: 'hordeSyncState';
   wave: number;
+  /** Slots already out of the run (respawns used up), so a late joiner counts them when it checks
+   * whether everyone is eliminated. Missing on older hosts. */
+  eliminated?: PlayerSlot[];
+  /** Set when the run is already over on the host: a joiner adopts the same result. */
+  result?: 'cleared' | 'wiped';
 }
 
 /** Self-reported, relayed (see Game.ts's RELAYABLE_MESSAGE_TYPES) - `slot` has clicked Skip on the
@@ -722,6 +744,51 @@ export interface PickupStateMessage {
   available: string;
 }
 
+// ---- Squad (v4.4.0, docs/squad-arsenal-night.md section 1) --------------------------------------
+
+/** Guest <-> guest, on a direct link only (network/GuestMesh.ts): the dialer sends it when the link
+ * opens, the answerer replies once it accepts, and both repeat it as the link's heartbeat. A link
+ * whose hello names another room, or a slot the roster does not have on that peer, is closed. */
+export interface MeshHelloMessage {
+  type: 'meshHello';
+  slot: PlayerSlot;
+  roomCode: string;
+}
+
+/** Guest -> host, whenever the set of this guest's live direct links changes. The host stops
+ * relaying DIRECT_MESSAGE_TYPES (network/directLinks.ts) between two guests while each lists the
+ * other, and resumes the moment either drops it. Never relayed. */
+export interface MeshStatusMessage {
+  type: 'meshStatus';
+  senderSlot: PlayerSlot;
+  linked: PlayerSlot[];
+}
+
+/** Host -> the one guest that just asked for a sync (gooseSyncRequest or hordeSyncRequest): who is
+ * in the match right now. A guest that joined mid-match missed every playerJoinedMatch and
+ * playerLeft sent while it was still loading; this brings its opponents up to date. */
+export interface RosterSyncMessage {
+  type: 'rosterSync';
+  roster: RosterEntry[];
+}
+
+/** Host -> guests, after each connection poll: the host's measured round trip to each guest. A guest
+ * adds its own link to the host to get the round trip to another guest it has no direct link to. */
+export interface LinkQualityMessage {
+  type: 'linkQuality';
+  links: { slot: PlayerSlot; rttMs: number | null; relay: boolean }[];
+}
+
+/** Host -> a late joiner, King of the Hill only: who carries the golden goose, or where it lies.
+ * Applied as is (unlike goldenGooseDropped, which only counts from the carrier). */
+export interface GoldenGooseStateMessage {
+  type: 'goldenGooseState';
+  carrierSlot: PlayerSlot | null;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export type NetworkMessage =
   | MatchEndedMessage
   | HelloMessage
@@ -779,7 +846,12 @@ export type NetworkMessage =
   | PickupTakenMessage
   | PickupRespawnedMessage
   | PickupSyncRequestMessage
-  | PickupStateMessage;
+  | PickupStateMessage
+  | MeshHelloMessage
+  | MeshStatusMessage
+  | RosterSyncMessage
+  | LinkQualityMessage
+  | GoldenGooseStateMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchEnded',
@@ -839,7 +911,53 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'pickupRespawned',
   'pickupSyncRequest',
   'pickupState',
+  'meshHello',
+  'meshStatus',
+  'rosterSync',
+  'linkQuality',
+  'goldenGooseState',
 ]);
+
+function isPlayerSlot(value: unknown): value is PlayerSlot {
+  return value === 0 || value === 1 || value === 2 || value === 3;
+}
+
+function isRosterEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as { slot?: unknown; username?: unknown; peerId?: unknown };
+  return isPlayerSlot(entry.slot) && typeof entry.username === 'string' && (entry.peerId === undefined || typeof entry.peerId === 'string');
+}
+
+function isLinkEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as { slot?: unknown; rttMs?: unknown; relay?: unknown };
+  return isPlayerSlot(entry.slot) && (entry.rttMs === null || typeof entry.rttMs === 'number') && typeof entry.relay === 'boolean';
+}
+
+/** Shape checks for the v4.4.0 types: their fields steer connections and the roster, so a malformed
+ * one is dropped here rather than half applied. Every other type passes on its `type` alone. */
+function hasValidSquadShape(value: Record<string, unknown>): boolean {
+  switch (value.type) {
+    case 'meshHello':
+      return isPlayerSlot(value.slot) && typeof value.roomCode === 'string';
+    case 'meshStatus':
+      return isPlayerSlot(value.senderSlot) && Array.isArray(value.linked) && value.linked.every(isPlayerSlot);
+    case 'rosterSync':
+      return Array.isArray(value.roster) && value.roster.every(isRosterEntry);
+    case 'linkQuality':
+      return Array.isArray(value.links) && value.links.every(isLinkEntry);
+    case 'goldenGooseState':
+      return (value.carrierSlot === null || isPlayerSlot(value.carrierSlot)) && [value.x, value.y, value.z].every((n) => typeof n === 'number');
+    case 'hordeSyncState':
+      return (
+        typeof value.wave === 'number' &&
+        (value.eliminated === undefined || (Array.isArray(value.eliminated) && value.eliminated.every(isPlayerSlot))) &&
+        (value.result === undefined || value.result === 'cleared' || value.result === 'wiped')
+      );
+    default:
+      return true;
+  }
+}
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one
  * place that boundary gets narrowed, so nothing downstream has to re-check message shape. */
@@ -861,7 +979,8 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
   }
   if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
   if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);
-  return type.startsWith('pickup') ? hasValidPickupFields(value as Record<string, unknown>) : true;
+  if (type.startsWith('pickup')) return hasValidPickupFields(value as Record<string, unknown>);
+  return hasValidSquadShape(value as Record<string, unknown>);
 }
 
 /** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */

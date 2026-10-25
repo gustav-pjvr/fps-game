@@ -17,12 +17,14 @@ import type { KillFeed } from '../ui/killFeed.ts';
 import type { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import type { SoundEngine } from '../audio/SoundEngine.ts';
 import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume } from '../core/positionalAudio.ts';
-import { applyPlayerDied } from '../core/multiplayerScoring.ts';
+import { applyMatchDeath } from '../core/multiplayerScoring.ts';
+import { acceptsGoldenGooseClaim, acceptsGoldenGooseDrop } from '../core/modeControllers/KingOfTheHillController.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
 import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
-import { type GrenadeDetonatedMessage, type GrenadeThrownMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
+import { HOST_SLOT, type GrenadeDetonatedMessage, type GrenadeThrownMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import type { ActiveMultiplayer } from './multiplayerMatchTypes.ts';
 import { acceptsSnapshot, afterStateEvent } from './stateOrder.ts';
+import { buildMatchSync } from './matchSync.ts';
 import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
 
 /** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
@@ -94,14 +96,19 @@ export interface MatchMessageContext {
    * after the Game is constructed. */
   readonly pickups: PickupSystem | null;
   /** Queues incoming network damage (applied inside the next update tick, never here directly - see
-   * Game.pendingNetworkDamage) and records the payload's own sender as the kill-credit source. */
-  applyNetworkDamage(amount: number, sourceSlot: PlayerSlot): void;
+   * Game.pendingNetworkDamage) and records the payload's own sender, and the weapon it names, as
+   * the kill-credit source. */
+  applyNetworkDamage(amount: number, sourceSlot: PlayerSlot, weaponId: string | undefined): void;
   healLocalPlayerToFull(): void;
   /** Guest only: the host declared the scoreboard win condition met (see MatchEndedMessage). */
   applyHostMatchEnd(winnerSlot: PlayerSlot, scoreboard: readonly { slot: PlayerSlot; score: number }[]): void;
   /** Host only: the verdict it already announced, or null while the match is still running. */
   endedMatchVerdict(): { winnerSlot: PlayerSlot; scoreboard: { slot: PlayerSlot; score: number }[] } | null;
   checkHordeAllEliminated(): void;
+  /** Whether this client's match is already over (podium shown). */
+  matchHasEnded(): boolean;
+  /** Ends this client's Goose Horde run as lost (every player eliminated), as the host already did. */
+  endLostHordeRun(): void;
   receiveModeExplanationReady(slot: PlayerSlot): void;
   removeMultiplayerOpponent(slot: PlayerSlot): void;
   addMultiplayerOpponent(slot: PlayerSlot, username: string): Promise<void>;
@@ -141,14 +148,21 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
   const activeMultiplayer = ctx.multiplayer;
 
   if (activeMultiplayer.session.role === 'host' && RELAYABLE_MESSAGE_TYPES.has(message.type)) {
-    activeMultiplayer.session.connection.sendExcept(message, senderSlot);
+    // relay(), not sendExcept(): a guest pair with a live direct link already has its snapshots,
+    // shots and footsteps (network/directLinks.ts).
+    activeMultiplayer.session.connection.relay(message, senderSlot);
   }
 
   // Host-only liveness signal (see MULTIPLAYER_CONNECTION_TIMEOUT_MS's own comment) - any
   // message at all counts, not just playerSnapshot, so this stays fresh even during a brief
   // gap in position updates.
   const liveOpponent = activeMultiplayer.opponents.get(senderSlot);
-  if (liveOpponent) liveOpponent.lastMessageAt = performance.now();
+  if (liveOpponent) {
+    liveOpponent.lastMessageAt = performance.now();
+    // Only a snapshot starts the "playing" clock: the connection layer talks (mesh hellos, link
+    // reports) while the world is still being built, which says nothing about the main thread.
+    if (message.type === 'playerSnapshot') liveOpponent.firstSnapshotAt ??= performance.now();
+  }
 
   switch (message.type) {
     case 'matchStart':
@@ -248,15 +262,12 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (message.targetSlot !== activeMultiplayer.session.ownSlot) break;
       // message.senderSlot (payload origin), not the transport `senderSlot` param - see the
       // playerSnapshot comment; a relayed 3rd/4th-player hit must credit its real sender.
-      ctx.applyNetworkDamage(message.amount, message.senderSlot);
+      ctx.applyNetworkDamage(message.amount, message.senderSlot, message.weaponId);
       break;
     case 'playerDied': {
-      // Goose Horde is co-op - per explicit user request, nobody scores off a teammate's
-      // death (accidental friendly fire or otherwise); see the matching gate on the local-
-      // death broadcast side below for the full reasoning.
-      if (activeMultiplayer.gameMode !== 'gooseHorde') {
-        applyPlayerDied(ctx.scoreboard, ctx.deathCounts, message);
-      }
+      // The same rules the victim applied to its own death (MultiplayerMatchState.applyDeath): Goose
+      // Horde is co-op and scores nothing, and Gun Game's winning kill needs the launcher.
+      const credited = applyMatchDeath(ctx.scoreboard, ctx.deathCounts, activeMultiplayer.gameMode, activeMultiplayer.killLimit, message);
       const victim = activeMultiplayer.opponents.get(message.victimSlot);
       if (victim) {
         victim.isDead = true;
@@ -284,7 +295,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // per-client-authoritative pattern in this protocol) - dying does NOT reset the
       // weapon (per user request), which already falls out of the fact that respawn only
       // ever refills ammo, never touches weapon identity (see Weapon reset comments).
-      if (activeMultiplayer.gameMode === 'gunGame' && message.killerSlot === activeMultiplayer.session.ownSlot) {
+      // Only a credited kill upgrades: an uncredited one did not move the scoreboard either.
+      if (activeMultiplayer.gameMode === 'gunGame' && credited && message.killerSlot === activeMultiplayer.session.ownSlot) {
         void ctx.weaponManager.replaceActiveWeapon(pickGunGameUpgrade(ctx.weaponManager.activeWeaponId));
       }
       // "A goose spawns whenever a player dies" - a dying guest can't spawn its own
@@ -320,18 +332,12 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // Guest -> host only (see protocol.ts) - replies with every currently-live goose as
       // an individual gooseSpawned targeted only at the requester (sendTo, not a
       // broadcast), so the other already-synced guests don't get redundant spawns.
-      if (activeMultiplayer.session.role === 'host') {
-        for (const goose of ctx.gooseManager.listForSync()) {
-          activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'gooseSpawned', ...goose });
-        }
-        // Every non-Horde guest sends this the moment its match callbacks are attached, so it is the
-        // one reliable point to catch a guest that missed the host's one-off matchEnded: a player who
-        // joined or rejoined while the host sat on the podium (HostRoster keeps the match "in
-        // progress" there), or one still loading when the result went out. Guests never decide the
-        // winner themselves anymore, so without this replay that player's match would never end.
-        const verdict = ctx.endedMatchVerdict();
-        if (verdict) activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'matchEnded', ...verdict });
-      }
+      // Every non-Horde guest sends this the moment its match callbacks are attached, so it is the
+      // one reliable point to catch a guest that missed the host's one-off matchEnded: a player who
+      // joined or rejoined while the host sat on the podium (HostRoster keeps the match "in
+      // progress" there), or one still loading when the result went out. Guests never decide the
+      // winner themselves anymore, so without this replay that player's match would never end.
+      if (activeMultiplayer.session.role === 'host') sendFullSync(ctx, senderSlot);
       break;
     case 'respawnEvent': {
       // message.senderSlot - see playerSnapshot's own comment on why the transport slot is
@@ -369,6 +375,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const velocity = new THREE.Vector3(message.velX, message.velY, message.velZ);
       // message.senderSlot - see playerSnapshot's own comment; the transport slot would
       // misattribute the thrower for a guest receiving another guest's relayed throw.
+      // The same throw can arrive twice: once live, once in a late joiner's sync (matchSync.ts).
+      if (ctx.thrownGeese.has(message.id)) break;
       const thrown = new ThrownGoose(message.id, message.senderSlot, message.source, origin, velocity);
       ctx.scene.add(thrown.mesh);
       ctx.thrownGeese.set(message.id, thrown);
@@ -400,13 +408,22 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // Every client applies the same rule to the same pair of claims, so all converge on the
       // lowest-numbered claimant. A legitimate claim after a drop is unaffected (the ordered channel
       // delivers the drop first, leaving no carrier to compare against).
-      if (ctx.goldenGooseManager) {
-        const currentCarrier = ctx.goldenGooseManager.carrierSlot;
-        if (currentCarrier === null || message.senderSlot < currentCarrier) ctx.goldenGooseManager.claim(message.senderSlot);
+      if (ctx.goldenGooseManager && acceptsGoldenGooseClaim(ctx.goldenGooseManager.carrierSlot, message.senderSlot)) {
+        ctx.goldenGooseManager.claim(message.senderSlot);
       }
       break;
     case 'goldenGooseDropped':
-      ctx.goldenGooseManager?.drop(new THREE.Vector3(message.x, message.y, message.z));
+      // Only the carrier this client knows can drop it: a claimant that lost the tie-break may drop
+      // before it hears it lost (see acceptsGoldenGooseDrop).
+      if (ctx.goldenGooseManager && acceptsGoldenGooseDrop(ctx.goldenGooseManager.carrierSlot, message.senderSlot)) {
+        ctx.goldenGooseManager.drop(new THREE.Vector3(message.x, message.y, message.z));
+      }
+      break;
+    case 'goldenGooseState':
+      // A late joiner's sync from the host: taken as is, whoever carried it before.
+      if (activeMultiplayer.session.role !== 'guest' || senderSlot !== HOST_SLOT || !ctx.goldenGooseManager) break;
+      if (message.carrierSlot !== null) ctx.goldenGooseManager.claim(message.carrierSlot);
+      else ctx.goldenGooseManager.drop(new THREE.Vector3(message.x, message.y, message.z));
       break;
     case 'kothScoreTick':
       // message.senderSlot - see playerSnapshot's own comment; using the transport slot let
@@ -472,12 +489,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // currently-live horde goose, individually, targeted only at the requester (sendTo, not a
       // broadcast) so the other already-synced guests don't get redundant spawns. Mirrors
       // gooseSyncRequest's own handling exactly, just for the horde flock/wave.
-      if (activeMultiplayer.session.role === 'host' && ctx.hordeGooseManager) {
-        activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'hordeSyncState', wave: ctx.hordeGooseManager.currentWave });
-        for (const goose of ctx.hordeGooseManager.listForSync()) {
-          activeMultiplayer.session.connection.sendTo(senderSlot, { type: 'hordeGooseSpawned', ...goose });
-        }
-      }
+      if (activeMultiplayer.session.role === 'host') sendFullSync(ctx, senderSlot);
       break;
     case 'hordeSyncState':
       // Guest side only in practice (a host never receives its own targeted sendTo) - just brings
@@ -485,7 +497,26 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // toast the way applyWaveStarted's ordinary hordeWaveStarted caller does (see
       // HordeSyncStateMessage's own comment on why).
       ctx.hordeGooseManager?.applyWaveStarted(message.wave);
+      // The eliminated set lets this player's own all-eliminated check count teammates already
+      // out; a run that already finished on the host ends here the same way.
+      for (const slot of message.eliminated ?? []) activeMultiplayer.hordeEliminatedSlots.add(slot);
+      if (message.result === 'cleared') ctx.hordeGooseManager?.applyCleared();
+      else if (message.result === 'wiped') ctx.endLostHordeRun();
       break;
+    case 'rosterSync': {
+      // The host's answer to a late joiner's sync request: who is in the match now. Joins and
+      // leaves that went out while this player was still loading were missed; this catches up.
+      if (activeMultiplayer.session.role !== 'guest' || senderSlot !== HOST_SLOT) break;
+      const ownSlot = activeMultiplayer.session.ownSlot;
+      const listed = new Set(message.roster.map((entry) => entry.slot));
+      for (const slot of [...activeMultiplayer.opponents.keys()]) {
+        if (!listed.has(slot)) ctx.removeMultiplayerOpponent(slot);
+      }
+      for (const entry of message.roster) {
+        if (entry.slot !== ownSlot && !activeMultiplayer.opponents.has(entry.slot)) void ctx.addMultiplayerOpponent(entry.slot, entry.username);
+      }
+      break;
+    }
     case 'hordeAmmoDropSpawned':
       ctx.ammoDropManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z);
       activeMultiplayer.minimap.addItemDot(message.id);
@@ -524,4 +555,28 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       void ctx.addMultiplayerOpponent(message.slot, message.username);
       break;
   }
+}
+
+/** Host: the answer to either sync request (gooseSyncRequest, hordeSyncRequest), sent to that one
+ * guest only (see matchSync.ts for what it holds and in which order). */
+function sendFullSync(ctx: MatchMessageContext, slot: PlayerSlot): void {
+  const { multiplayer, hordeGooseManager, goldenGooseManager } = ctx;
+  const messages = buildMatchSync({
+    roster: multiplayer.hostRoster?.connectedRoster() ?? null,
+    goldenGoose: goldenGooseManager ? { carrierSlot: goldenGooseManager.carrierSlot, position: goldenGooseManager.position } : null,
+    geese: ctx.gooseManager.listForSync(),
+    horde: hordeGooseManager
+      ? {
+          wave: hordeGooseManager.currentWave,
+          eliminated: multiplayer.hordeEliminatedSlots,
+          result: ctx.matchHasEnded() ? (hordeGooseManager.isCleared ? 'cleared' : 'wiped') : undefined,
+          geese: hordeGooseManager.listForSync(),
+        }
+      : null,
+    ammoDrops: ctx.ammoDropManager?.listForSync() ?? [],
+    bonusGeese: ctx.bonusGooseManager?.listForSync() ?? [],
+    thrownGeese: ctx.thrownGeese.values(),
+    verdict: ctx.endedMatchVerdict(),
+  });
+  for (const message of messages) multiplayer.session.connection.sendTo(slot, message);
 }

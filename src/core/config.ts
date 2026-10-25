@@ -44,6 +44,19 @@ export const MULTIPLAYER_REJOIN_GRACE_PERIOD_MS = 90_000;
  * signal something is wrong, not a false positive from one dropped packet. */
 export const MULTIPLAYER_CONNECTION_TIMEOUT_MS = 8_000;
 
+/** How long the host waits on an opponent that is still LOADING before treating it as silent. A player
+ * sends no snapshots until its own world is built, and building it, plus the first frames after it
+ * (shader compiles), takes tens of seconds on a slow device or with several players loading at once,
+ * well past MULTIPLAYER_CONNECTION_TIMEOUT_MS: the host used to drop that player and end its match as
+ * "opponent disconnected" (found by the four-player browser test: a late joiner and a rejoiner were
+ * dropped right after their world appeared, one stalling about 10 s after its first snapshots). A
+ * player that really died while loading still ends through the connection's own close event; this is
+ * only the backstop. */
+export const MULTIPLAYER_LOADING_TIMEOUT_MS = 120_000;
+
+/** How long after its first playerSnapshot an opponent still counts as loading. */
+export const MULTIPLAYER_SETTLE_MS = 30_000;
+
 /** The radius every multiplayer spawn ring (initial match-start spawns, mid-match respawns) is
  * placed on - see multiplayerSpawn.ts's pickMultiplayerSpawnPoints/pickRandomRespawnPoint. */
 export const MULTIPLAYER_SPAWN_RADIUS = 35;

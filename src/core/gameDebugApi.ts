@@ -197,9 +197,16 @@ export interface GameDebugApi {
    * multiplayerDeathCount comment). 0 outside a multiplayer match. */
   getOpponentScore(): number;
   /** Multiplayer only - how many of this client's connections carry position snapshots on the
-   * confirmed fast channel (network/fastChannel.ts), and the HUD's ping line. 0 and '' outside a
-   * multiplayer match. */
-  getNetworkDebug(): { fastChannelsReady: number; pingLabel: string };
+   * confirmed fast channel (network/fastChannel.ts), the HUD's ping line, and the live direct guest
+   * links (PeerConnection.directLinksReady: a guest's own, the host's count of linked pairs). 0 and
+   * '' outside a multiplayer match. */
+  getNetworkDebug(): { fastChannelsReady: number; pingLabel: string; directLinksReady: number };
+  /** Multiplayer only: every opponent's smoothed position, by slot (ascending), for a 3 to 4
+   * player e2e test. Empty outside a multiplayer match. */
+  getOpponentPositions(): { slot: number; x: number; y: number; z: number }[];
+  /** Multiplayer only: the scoreboard's rows as the HUD shows them (multiplayerHud.ts's
+   * scoreboardRows), highest score first. Empty outside a multiplayer match. */
+  getScoreboardRows(): { slot: number; name: string; score: number; isYou: boolean }[];
   /** Multiplayer only - how many OTHER players are currently in this match (0-3), for verifying a
    * 3-4 player lobby actually has everyone present instead of just the single opponent the older
    * getOpponentPosition/getOpponentScore helpers above assume. 0 outside a multiplayer match. */

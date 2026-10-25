@@ -64,7 +64,7 @@ import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
 import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
 import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
-import { MultiplayerHud } from '../ui/multiplayerHud.ts';
+import { MultiplayerHud, scoreboardRows } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
@@ -144,7 +144,6 @@ import {
   type MatchWeather,
   type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
-  MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
@@ -162,6 +161,7 @@ import {
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
+import { isOpponentSilent } from './opponentLiveness.ts';
 import { DEFAULT_GAME_MODE, grenadesEnabled, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
 import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
 import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
@@ -416,6 +416,9 @@ export class Game {
   private connectionPollAccumulator = 0;
   /** When this client re-broadcasts its dead Facility lamps (see network/lampSync.ts). */
   private readonly lampSync = new LampSyncTracker();
+  /** Bumped by every add and remove of an opponent's slot: an add whose model load finishes after a
+   * newer add or a removal for that slot (a playerLeft during the load) is dropped, not shown. */
+  private readonly opponentGenerations = new Map<PlayerSlot, number>();
   /** Stamps `t` on this player's snapshots, deaths and respawns (see network/stateOrder.ts). */
   private readonly sendClock = createSendClock();
   private connectionPollInFlight = false;
@@ -836,7 +839,18 @@ export class Game {
       getNetworkDebug: () => ({
         fastChannelsReady: this.multiplayer?.session.connection.fastChannelReadyCount() ?? 0,
         pingLabel: this.multiplayer?.multiplayerHud.connectionText ?? '',
+        directLinksReady: this.multiplayer?.session.connection.directLinksReady() ?? 0,
       }),
+      getOpponentPositions: () =>
+        Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer: { position: p } }) => ({ slot, x: p.x, y: p.y, z: p.z })).sort(
+          (a, b) => a.slot - b.slot,
+        ),
+      getScoreboardRows: () => {
+        if (!this.multiplayer) return [];
+        const { ownSlot } = this.multiplayer.session;
+        const names = this.multiplayer.usernames;
+        return scoreboardRows(ownSlot, names.get(ownSlot) ?? 'You', this.multiplayer.opponents.keys(), names, this.multiplayerMatchState.scoreboard);
+      },
       getOpponentScore: () => {
         const opponent = this.multiplayer?.opponents.keys().next().value;
         return opponent !== undefined ? this.multiplayerMatchState.scoreboard.get(opponent) ?? 0 : 0;
@@ -1433,9 +1447,10 @@ export class Game {
           new THREE.Vector3(spawnPoint.x, sampleHeight(spawnPoint.x, spawnPoint.z) + SPAWN_HEIGHT_OFFSET, spawnPoint.z),
           // The target's own client is what actually applies this to its health - see the class
           // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
-          (amount) => multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount }),
+          (amount) =>
+            multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount, weaponId: game.weaponManager.activeWeaponId }),
         );
-        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), isDead: false });
+        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), firstSnapshotAt: null, isDead: false });
         usernames.set(entry.slot, entry.username);
         minimap.addDot(entry.slot);
         multiplayerHud.addOpponentRow(entry.slot, entry.username);
@@ -1683,15 +1698,18 @@ export class Game {
         hordeGooseManager,
         bonusGooseManager,
         ammoDropManager,
-        applyNetworkDamage: (amount, sourceSlot) => {
+        applyNetworkDamage: (amount, sourceSlot, weaponId) => {
           game.pendingNetworkDamage += amount;
           activeMultiplayer.lastDamageSourceSlot = sourceSlot;
           activeMultiplayer.lastDamageSourceAt = performance.now();
+          activeMultiplayer.lastDamageSourceWeaponId = weaponId;
         },
         healLocalPlayerToFull: () => game.healLocalPlayerToFull(),
         applyHostMatchEnd: (winnerSlot, scoreboard) => game.applyHostMatchEnd(winnerSlot, scoreboard),
         endedMatchVerdict: () => game.endedMatchVerdict(),
         checkHordeAllEliminated: () => game.checkHordeAllEliminated(),
+        matchHasEnded: () => game.multiplayerMatchState.hasEnded,
+        endLostHordeRun: () => game.endMultiplayerMatch(false, 'hordeWipe'),
         receiveModeExplanationReady: (slot) => game.receiveModeExplanationReady(slot),
         removeMultiplayerOpponent: (slot) => game.removeMultiplayerOpponent(slot),
         addMultiplayerOpponent: (slot, username) => game.addMultiplayerOpponent(slot, username),
@@ -1756,18 +1774,14 @@ export class Game {
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
         // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
         // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
-        onHostHello: async (username, rejoinToken, features) => {
+        onHostHello: async (username, rejoinToken, features, peerId) => {
           const hostRoster = activeMultiplayer.hostRoster;
           if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
           // An older build would load the Valley inside a Facility match: turned away before it takes a slot.
           if (!helloSupportsMap(features, activeMultiplayer.map)) return 'outdated';
-          const outcome = hostRoster.handleHello(username, rejoinToken, performance.now());
+          const outcome = hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
           if (outcome.outcome === 'full') return 'full';
 
-          // Connected slots only: the joiner builds a RemotePlayer for every roster entry, and a slot
-          // sitting in its rejoin grace period used to become a frozen ghost on their screen for up to
-          // 90s (guests never run the staleness sweep that would reap it).
-          const roster = hostRoster.connectedRoster();
           if (outcome.outcome === 'joined') {
             // A brand-new player may be handed a departed player's slot; don't let them inherit that
             // score (see the matching reset in MatchMessageRouter's playerJoinedMatch case).
@@ -1779,7 +1793,21 @@ export class Game {
             otherPositions.push({ x: player.position.x, z: player.position.z });
             const spawnPoint = pickRandomRespawnPoint(otherPositions, game.isSpawnBlocked);
             await game.addMultiplayerOpponent(outcome.slot, username);
-            activeMultiplayer.session.connection.send({ type: 'playerJoinedMatch', slot: outcome.slot, username, isRejoin: outcome.outcome === 'rejoined' });
+            // A joiner whose connection dropped while its model loaded: removeMultiplayerOpponent
+            // cancelled the add and already sent playerLeft, so announcing it now would give the
+            // other guests a ghost for a player who is gone.
+            if (!activeMultiplayer.opponents.has(outcome.slot)) return 'full';
+            // Read after the await: another player joining while this one's model loaded is in the
+            // roster now, though its playerJoinedMatch went out before this player was connected.
+            // Connected slots only: a slot in its rejoin grace period would be a frozen ghost here.
+            const roster = hostRoster.connectedRoster();
+            activeMultiplayer.session.connection.send({
+              type: 'playerJoinedMatch',
+              slot: outcome.slot,
+              username,
+              isRejoin: outcome.outcome === 'rejoined',
+              peerId: hostRoster.peerIdOf(outcome.slot),
+            });
             return {
               type: 'welcome',
               yourSlot: outcome.slot,
@@ -1811,7 +1839,7 @@ export class Game {
             yourSlot: outcome.slot,
             isRejoin: outcome.outcome === 'rejoined',
             hostUsername: activeMultiplayer.usernames.get(HOST_SLOT) ?? 'Host',
-            roster,
+            roster: hostRoster.connectedRoster(),
           };
         },
       });
@@ -2710,8 +2738,9 @@ export class Game {
         // adjudicated by anyone else, same trust model this protocol already uses for health.
         const recentlyDamaged = performance.now() - this.multiplayer.lastDamageSourceAt <= MULTIPLAYER_KILL_CREDIT_WINDOW_MS;
         const killerSlot = recentlyDamaged ? this.multiplayer.lastDamageSourceSlot : null;
+        const killerWeaponId = killerSlot === null ? undefined : this.multiplayer.lastDamageSourceWeaponId;
         const ownSlot = this.multiplayer.session.ownSlot;
-        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, t: this.sendClock() });
+        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, killerWeaponId, t: this.sendClock() });
         // Goose Horde is co-op - per explicit user request, nobody should score points off a
         // teammate's death (accidental friendly fire or otherwise), and there's no kill-limit win
         // condition for this mode anyway (see updateMultiplayer's own gooseHorde skip). Every other
@@ -2720,7 +2749,7 @@ export class Game {
         // and a guest's message never loops back to it either).
         // applyDeath itself already skips Goose Horde internally (see its own comment) - this mode
         // has no kill-limit win condition anyway (see updateMultiplayer's own gooseHorde skip).
-        this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, { victimSlot: ownSlot, killerSlot });
+        this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, this.multiplayer.killLimit, { victimSlot: ownSlot, killerSlot, killerWeaponId });
         // Goose Horde's limited-lives rule (per explicit user request): each player gets
         // HORDE_MAX_RESPAWNS respawns before this exact death permanently eliminates them instead
         // of auto-respawning (see updateMultiplayer's own gate on this). Self-authoritative and
@@ -2797,8 +2826,8 @@ export class Game {
         this.connectionPollInFlight = true;
         void this.multiplayer.session.connection.connectionQuality().then((measured) => {
           if (!this.multiplayer) return;
-          const summary = summarizeConnection(this.multiplayer.session.role, HOST_SLOT, measured, this.multiplayer.opponents.keys());
-          this.multiplayer.multiplayerHud.setConnection(summary.shown);
+          const summary = summarizeConnection(measured, this.multiplayer.opponents.keys());
+          this.multiplayer.multiplayerHud.setConnection(summary.perOpponent);
           for (const [slot, opponent] of this.multiplayer.opponents) {
             opponent.remotePlayer.setLeadSeconds(summary.leadSeconds.get(slot) ?? 0);
           }
@@ -2874,7 +2903,7 @@ export class Game {
           // while whichever client is still alive keeps waiting on a count that can now never be
           // satisfied, which is exactly what "waves never end" looks like from that client's side.
           if (this.multiplayer.gameMode === 'gooseHorde' && this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
-          if (now - opponent.lastMessageAt < MULTIPLAYER_CONNECTION_TIMEOUT_MS) continue;
+          if (!isOpponentSilent(now, opponent.lastMessageAt, opponent.firstSnapshotAt)) continue;
           this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
           // Actually close their connection too. A silent tab (typically backgrounded, which halts
           // its requestAnimationFrame loop) used to stay connected: removed from everyone's match,
@@ -3119,7 +3148,7 @@ export class Game {
     for (const opponent of this.multiplayer.opponents.values()) {
       const amount = computeExplosionDamage(position.distanceTo(opponent.remotePlayer.position), radius, maxDamage);
       if (amount > 0) {
-        this.multiplayer.session.connection.send({ type: 'damageEvent', senderSlot: throwerSlot, targetSlot: opponent.slot, amount });
+        this.multiplayer.session.connection.send({ type: 'damageEvent', senderSlot: throwerSlot, targetSlot: opponent.slot, amount, weaponId: source });
       }
     }
   }
@@ -3295,21 +3324,36 @@ export class Game {
       existing.lastStateSentAt = undefined;
       return;
     }
+    const generation = this.bumpOpponentGeneration(slot);
     const remotePlayer = await RemotePlayer.create(
       this.physics,
       this.renderer.scene,
       this.player.position,
-      (amount) => this.multiplayer!.session.connection.send({ type: 'damageEvent', senderSlot: this.multiplayer!.session.ownSlot, targetSlot: slot, amount }),
+      (amount) =>
+        this.multiplayer!.session.connection.send({
+          type: 'damageEvent',
+          senderSlot: this.multiplayer!.session.ownSlot,
+          targetSlot: slot,
+          amount,
+          weaponId: this.weaponManager.activeWeaponId,
+        }),
     );
-    if (!this.multiplayer || this.multiplayer.opponents.has(slot)) {
-      // Torn down or raced while the GLTF load above was in flight - don't leak the collider/mesh.
+    if (!this.multiplayer || this.multiplayer.opponents.has(slot) || this.opponentGenerations.get(slot) !== generation) {
+      // Torn down, raced, or the slot left (or was added again) while the GLTF load above was in
+      // flight - don't leak the collider/mesh, and never show a player who already left.
       remotePlayer.dispose(this.renderer.scene);
       return;
     }
-    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), isDead: false });
+    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), firstSnapshotAt: null, isDead: false });
     this.multiplayer.usernames.set(slot, username);
     this.multiplayer.minimap.addDot(slot);
     this.multiplayer.multiplayerHud.addOpponentRow(slot, username);
+  }
+
+  private bumpOpponentGeneration(slot: PlayerSlot): number {
+    const generation = (this.opponentGenerations.get(slot) ?? 0) + 1;
+    this.opponentGenerations.set(slot, generation);
+    return generation;
   }
 
   /** Removes a slot that disconnected mid-match (see protocol.ts's PlayerLeftMessage) - the match
@@ -3318,6 +3362,8 @@ export class Game {
    * player's final score still needs to show correctly on the podium. */
   private removeMultiplayerOpponent(slot: PlayerSlot): void {
     if (!this.multiplayer) return;
+    // Before the lookup: a removal while this slot's model is still loading must cancel that add.
+    this.bumpOpponentGeneration(slot);
     const opponent = this.multiplayer.opponents.get(slot);
     if (!opponent) return;
     // King of the Hill: if the departing player was carrying the golden goose, drop it at their

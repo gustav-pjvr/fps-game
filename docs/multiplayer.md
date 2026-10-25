@@ -617,3 +617,97 @@ picked them up. Live `/api/turn-credentials` now returns 5 entries, including
 relay candidates over UDP, TCP and TLS, and the simulated UDP-blocked guest that previously timed
 out joined a live production lobby in 4.6s. If joins regress, first check that endpoint still
 returns servers (an empty list means the env vars are missing or Metered's free quota ran out).
+
+## Three and four players (v4.4.0)
+
+The room always held four players (a host star, `MULTIPLAYER_MAX_PLAYERS = 4`), but several things
+only broke with three or more. The design is `docs/squad-arsenal-night.md` section 1; this is what
+was built and how it is checked.
+
+### The seven gaps and their fixes
+
+1. **Late joiner resync.** A third or fourth player joining mid-match used to miss shared state
+   that only live messages carry. `network/matchSync.ts` now builds one full answer from the host's
+   own managers (`MatchMessageRouter.sendFullSync`, one answer for both sync requests): the roster,
+   the King of the Hill carrier or the golden goose's resting place, the wandering geese, the Horde
+   wave with its eliminated slots, live flock and finished result, the ammo crates, the bonus goose,
+   geese in the air, and the host's verdict if the match is already decided.
+2. **Concurrent joins.** The roster used to be read before the join awaited player creation, so one
+   joiner could miss another's announcement. The roster is read after the await (`onHostHello`).
+   `rosterSync` lets a client that finds itself short of an opponent ask again.
+3. **Ghost player.** An opponent that finished loading after its `playerLeft` stayed forever. Every
+   add and remove of a slot bumps a generation (`opponentGenerations` in `Game.ts`); a load whose
+   generation is stale is dropped, and a joiner that left while its model loaded is never announced.
+4. **Scoreboard.** Rows come from `scoreboardRows` (`ui/multiplayerHud.ts`): the union of your own
+   slot, every opponent and every kept score, so a zero score has a row and a score kept after a
+   leave keeps its name.
+5. **King of the Hill drop race.** Claims are not arbitrated, so a claim only takes the goose from a
+   higher slot (`acceptsGoldenGooseClaim`), and a relayed drop only applies from the carrier the
+   client knows (`acceptsGoldenGooseDrop`). Every client applies the same rule and settles on the
+   same carrier.
+6. **Gun Game finisher bypass.** The kill that would reach the limit only counts when made with the
+   Goose Launcher (`creditsKill`, `applyMatchDeath`), so the rule is in the scoring and does not
+   depend on the weapon swap finishing in time. Every `damageEvent` carries the weapon id for it.
+7. **Ping to other guests.** No longer guessed as twice the host link: it is measured (see below).
+
+### Found by the browser test: a loading player was dropped
+
+The host drops an opponent that has been silent for `MULTIPLAYER_CONNECTION_TIMEOUT_MS` (8 s). A
+player sends no snapshots while its world is being built, and a late joiner or rejoiner (and, with
+four pages at once, a starting guest) can take far longer than that, plus a stall of about 10 s on its
+first frames: the host closed its connection and ended its match as "opponent disconnected" a few
+seconds after the world appeared. The sweep now goes by `isOpponentSilent` (`core/opponentLiveness.ts`):
+a player that has not sent a snapshot yet, or sent its first less than `MULTIPLAYER_SETTLE_MS` (30 s)
+ago, gets `MULTIPLAYER_LOADING_TIMEOUT_MS` (120 s) after its last message; only a settled player is held
+to the 8 s rule. Only a `playerSnapshot` starts the clock, because the connection layer sends messages
+(mesh hellos, link reports) while the world is still loading.
+
+### Direct guest-to-guest links
+
+Guest A's position used to reach guest B through the host: two hops and the host's upload.
+`network/GuestMesh.ts` opens a link between each pair of guests (the lower slot dials the higher
+one, using the PeerJS id every roster entry carries) and checks it with a `meshHello { slot,
+roomCode }`, so a stray connection is closed. The link opens the same fast channel as host links
+and is kept alive by hellos every second.
+
+- **What goes direct.** Only `playerSnapshot`, `fireEvent` and `footstepEvent`
+  (`DIRECT_MESSAGE_TYPES` in `network/directLinks.ts`). Damage, deaths, respawns, mode state and
+  world objects stay on the host path, so authority and ordering are unchanged.
+- **The host's relay rule.** Each guest reports its live links to the host (`meshStatus`). The host
+  stops relaying those three types between two guests only while both list each other
+  (`MeshRelayPolicy`), and resumes the moment either reports the link gone or leaves. A guest that
+  never reports is relayed to as before.
+- **The duplicate filter.** While the host has not yet seen both sides of a new link, a fireEvent or
+  footstepEvent arrives twice. Each copy carries the sender's never-repeating clock `t`, and the
+  receiver drops the second one. A snapshot needs no filter: receivers already drop any that is not
+  newer than the last applied.
+- **Fallback.** A link that never opens (strict NAT, no working TURN relay) is retried a few times
+  with a growing delay, then left alone until the roster changes (a rejoin brings a new PeerJS id).
+  Nothing depends on a link, so the match plays exactly as before.
+
+### Measured ping
+
+The HUD line shows one round trip per opponent (`formatOpponentPings`). Each side reads the
+browser's own connection statistics (`readConnectionQuality`): a guest measures the host and every
+guest it has a live direct link to. For a guest without a link it adds its own link to the host and
+the host's reported link to that guest (`linkQuality`, `combineRelayedQuality`), which is the path
+that guest's updates take. Each opponent is also predicted ahead by half its own round trip.
+
+### Browser test
+
+`e2e/multiplayer-four.spec.ts` (group `mp4`; see `docs/testing.md`) runs on the Valley with the
+default mode, one browser context per player, over real WebRTC:
+
+- **Four players:** every page sees three opponents in distinct slots; direct links are read
+  (`getNetworkDebug().directLinksReady`: a guest's own count, the host's count of linked pairs) and
+  logged, not asserted, because headless contexts may not open WebRTC links to each other; one
+  guest kills another with real pistol shots and every scoreboard shows the kill; the killer closes
+  its page, the others drop to two opponents, and it comes back in a new context with its old rejoin
+  token (`sessionStorage`, `core/multiplayerRejoin.ts`) into the same slot with its score.
+- **Mid-match join:** three players start, one kills another, and a fourth player joins fresh: it
+  sees three opponents, the full scoreboard with names and the kill, and the others see it.
+
+Four pages at about 2 FPS each make it the slowest spec (budgets of 15 and 12 minutes; just creating,
+joining and starting four players took 2.5 to 5 minutes here, depending on what else the laptop was
+running). It runs on its own: `E2E_PORT=5181 npx playwright test
+e2e/multiplayer-four.spec.ts`.

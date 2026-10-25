@@ -21,6 +21,11 @@ export interface RemoteOpponent {
    * every message received from this slot, not just playerSnapshot. Unused on a guest's own client
    * (guests never run the staleness sweep - see updateMultiplayer). */
   lastMessageAt: number;
+  /** When this slot's first playerSnapshot arrived, null until then. Before it and for
+   * MULTIPLAYER_SETTLE_MS after it the player may still be building its world or compiling its first
+   * frames, and the host's staleness sweep allows it MULTIPLAYER_LOADING_TIMEOUT_MS
+   * (core/opponentLiveness.ts). */
+  firstSnapshotAt: number | null;
   /** Set by their relayed playerDied, cleared by their respawnEvent or next playerSnapshot. A dead
    * player stops sending snapshots, so their avatar freezes where they fell; without this, horde
    * geese kept chasing and exploding on that corpse, and ammo crates anchored to (and were picked up
@@ -82,6 +87,10 @@ export interface ActiveMultiplayer {
    * goose explosion (or your own blast) long after someone last shot you no longer hands them a
    * free kill. */
   lastDamageSourceAt: number;
+  /** The weapon id that damageEvent carried (protocol.ts's DamageEventMessage.weaponId), sent on
+   * as playerDied.killerWeaponId so every client applies Gun Game's launcher-only winning kill the
+   * same way. Undefined when the sender did not say. */
+  lastDamageSourceWeaponId?: string;
   /** Goose Horde co-op only (per explicit user request): this client's own count of respawns
    * already used, out of HORDE_MAX_RESPAWNS - self-authoritative, same trust model as everything
    * else this client alone decides about itself. Once it reaches HORDE_MAX_RESPAWNS, the next
