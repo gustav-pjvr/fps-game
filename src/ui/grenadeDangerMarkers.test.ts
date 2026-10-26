@@ -15,6 +15,15 @@ describe('grenade danger markers', () => {
     expect(dangerousFrags(live, eye).map((g) => g.id)).toEqual([live[0]!.id]);
   });
 
+  it('collects into the array it is given, emptied first, so a per-frame caller allocates none', () => {
+    const eye = new THREE.Vector3();
+    const into = [grenade('frag', false, 9)];
+    const live = [grenade('frag', false, 3)];
+    const result = dangerousFrags(live, eye, into);
+    expect(result).toBe(into);
+    expect(into.map((g) => g.id)).toEqual([live[0]!.id]);
+  });
+
   it('sits on the frag when it is on screen', () => {
     const place = placeMarker(new THREE.Vector3(0.5, 0, -5), new THREE.Vector3(0.2, -0.1, 0.9), 1000, 800);
     expect(place.offscreen).toBe(false);

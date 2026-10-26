@@ -117,6 +117,7 @@ async function rig(options: { enabled?: boolean; kind?: GrenadeKind; network?: b
       for (let t = 0; t < seconds - 1e-9; t += DT) {
         physics.world.step();
         system.update(DT, input);
+        system.tickEffects(DT);
       }
     },
   };
@@ -303,6 +304,108 @@ describe('GrenadeSystem flash', () => {
     // Over the wall it cannot go: it bounces back, so judge a remote flash beyond the wall instead.
     r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-1', kind: 'flash', position: { x: 0, y: 0.5, z: -4 } });
     expect(r.system.blindLevel).toBe(0);
+  });
+});
+
+describe('GrenadeSystem effects while the simulation is frozen', () => {
+  it('the shake, blast light and white-out run out through tickEffects alone, and update() does not tick them', async () => {
+    const frag = await rig();
+    const light = frag.scene.children.find((child): child is THREE.PointLight => child instanceof THREE.PointLight)!;
+    frag.system.debugThrow({ x: 0, y: -1, z: 0 });
+    frag.step(GRENADE_FUSE.frag + DT);
+    expect(frag.system.cameraShake).toBeGreaterThan(0);
+    expect(light.intensity).toBeGreaterThan(0);
+    // Dead, or the match over: Game ticks only the effects.
+    for (let i = 0; i < 60 * 3; i++) frag.system.tickEffects(DT);
+    expect(frag.system.cameraShake).toBe(0);
+    expect(light.intensity).toBe(0);
+
+    const flash = await rig({ kind: 'flash' });
+    flash.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-2', kind: 'flash', position: { x: 0, y: 1.5, z: -1 } });
+    const blind = flash.system.blindLevel;
+    expect(blind).toBeGreaterThan(0.5);
+    // The simulation tick alone leaves the white-out where it is.
+    for (let i = 0; i < 60 * 10; i++) flash.system.update(DT, null);
+    expect(flash.system.blindLevel).toBe(blind);
+    for (let i = 0; i < 60 * 10; i++) flash.system.tickEffects(DT);
+    expect(flash.system.blindLevel).toBe(0);
+  });
+});
+
+describe('GrenadeSystem flash and enemies', () => {
+  it('blinds the enemies before the bang is heard, so an idle one is not already searching when it is judged', async () => {
+    const r = await rig({ kind: 'flash' });
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.flash + DT);
+    expect(r.targets.applyFlash).toHaveBeenCalledTimes(1);
+    expect(r.targets.notifyGunshot).toHaveBeenCalledWith(expect.anything(), 'flash');
+    expect(r.targets.applyFlash.mock.invocationCallOrder[0]!).toBeLessThan(r.targets.notifyGunshot.mock.invocationCallOrder[0]!);
+  });
+});
+
+describe('GrenadeSystem blast rays and sweeps', () => {
+  it('a frag inside a tree canopy sensor still hurts what is near it', async () => {
+    const r = await rig({ network: true });
+    // A canopy ball round the blast and the target, as VegetationManager makes them.
+    r.physics.world.createCollider(RAPIER.ColliderDesc.ball(4).setSensor(true).setTranslation(0, 1, -2));
+    r.opponents.push({ slot: 1, position: new THREE.Vector3(0, PLAYER_HEIGHT / 2, -3), entity: {}, isDead: false });
+    r.physics.world.step();
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.frag + DT);
+    expect(r.sent.filter((m) => m.type === 'damageEvent')).toHaveLength(1);
+    expect(r.player.takeDamage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a flash in a canopy still blinds a player looking at it', async () => {
+    const r = await rig();
+    r.physics.world.createCollider(RAPIER.ColliderDesc.ball(3).setSensor(true).setTranslation(0, 1.5, -2));
+    r.physics.world.step();
+    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-3', kind: 'flash', position: { x: 0, y: 1.5, z: -2 } });
+    expect(r.system.blindLevel).toBeGreaterThan(0.5);
+  });
+
+  it('a flash that went off inside a fixed collider (a door closed on it) still lights up what stands by its near face', async () => {
+    const r = await rig();
+    // The slab spans z -2.3 to -1.7: the blast sits 0.15 m inside its near face, the player looks at it.
+    fixedCuboid(r.physics, 0, 1.5, -2, 2, 1.5, 0.3);
+    r.physics.world.step();
+    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-6', kind: 'flash', position: { x: 0, y: 1.4, z: -1.85 } });
+    expect(r.system.blindLevel).toBeGreaterThan(0.5);
+  });
+
+  it('flies a copy of another player grenade into the local capsule instead of through it', async () => {
+    const r = await rig({ network: true });
+    r.system.receiveThrown({ type: 'grenadeThrown', senderSlot: 1, id: 'x-5', kind: 'frag', origin: { x: 0, y: 1, z: -3 }, velocity: { x: 0, y: 0, z: 12 }, fuseLeft: 9, t: 1 });
+    r.step(0.6);
+    const [grenade] = r.system.liveGrenades();
+    expect(grenade!.position.z).toBeLessThan(0);
+  });
+});
+
+describe('GrenadeSystem per-frame work', () => {
+  it('recomputes the cooking arc about 15 times a second, not every tick', async () => {
+    const r = await rig();
+    r.step(DT, fakeInput({ grenade: true }));
+    const first = r.system.arcPreview;
+    expect(first).not.toBeNull();
+    r.step(DT * 3, fakeInput({ grenade: true }));
+    expect(r.system.arcPreview).toBe(first);
+    r.step(DT * 3, fakeInput({ grenade: true }));
+    expect(r.system.arcPreview).not.toBe(first);
+  });
+
+  it('hands out the same live-view array and objects every call, refreshed in place', async () => {
+    const r = await rig();
+    r.system.debugThrow({ x: 0, y: 0.5, z: -1 });
+    const first = r.system.liveViews();
+    const view = first[0]!;
+    const x = view.position.z;
+    r.step(0.2);
+    const second = r.system.liveViews();
+    expect(second).toBe(first);
+    expect(second[0]).toBe(view);
+    expect(view.position.z).not.toBe(x);
+    expect(view.position.z).toBeCloseTo(r.system.liveGrenades()[0]!.position.z);
   });
 });
 

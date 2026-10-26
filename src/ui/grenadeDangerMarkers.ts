@@ -40,10 +40,17 @@ export function placeMarker(view: THREE.Vector3, ndc: THREE.Vector3, width: numb
   return { x, y, offscreen, angle: Math.atan2(dx * width, -dy * height) * 180 / Math.PI };
 }
 
-/** The live frags that warrant a marker: someone else's, within GRENADE_DANGER_RANGE of `eye`. */
-export function dangerousFrags(live: readonly LiveGrenadeView[], eye: THREE.Vector3): LiveGrenadeView[] {
-  return live.filter((g) => g.kind === 'frag' && !g.own
-    && Math.hypot(g.position.x - eye.x, g.position.y - eye.y, g.position.z - eye.z) <= GRENADE_DANGER_RANGE);
+/** The live frags that warrant a marker: someone else's, within GRENADE_DANGER_RANGE of `eye`.
+ * Collected into `into` (emptied first) when given, so a per-frame caller reuses one array. */
+export function dangerousFrags(live: readonly LiveGrenadeView[], eye: THREE.Vector3, into: LiveGrenadeView[] = []): LiveGrenadeView[] {
+  into.length = 0;
+  for (const g of live) {
+    if (g.kind === 'frag' && !g.own
+      && Math.hypot(g.position.x - eye.x, g.position.y - eye.y, g.position.z - eye.z) <= GRENADE_DANGER_RANGE) {
+      into.push(g);
+    }
+  }
+  return into;
 }
 
 const GLYPH = `<svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true">
@@ -64,6 +71,16 @@ export class GrenadeDangerMarkers {
   private readonly eye = new THREE.Vector3();
   private readonly view = new THREE.Vector3();
   private readonly ndc = new THREE.Vector3();
+  private readonly frags: LiveGrenadeView[] = [];
+  /** The marker layer's size, read only after it changes: reading it every frame, after the style
+   * writes of the frame before, forced a layout each time. */
+  private width = 0;
+  private height = 0;
+  private sizeStale = true;
+  private readonly resizeObserver: ResizeObserver | null;
+  private readonly onResize = (): void => {
+    this.sizeStale = true;
+  };
 
   constructor(root: HTMLElement) {
     this.element = document.createElement('div');
@@ -80,14 +97,26 @@ export class GrenadeDangerMarkers {
       this.markers.push({ element, arrow });
     }
     root.appendChild(this.element);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(this.onResize);
+      this.resizeObserver.observe(this.element);
+    } else {
+      this.resizeObserver = null;
+      window.addEventListener('resize', this.onResize);
+    }
   }
 
   update(camera: THREE.Camera, live: readonly LiveGrenadeView[]): void {
     camera.updateWorldMatrix(true, false);
     camera.getWorldPosition(this.eye);
-    const frags = dangerousFrags(live, this.eye);
-    const width = this.element.clientWidth;
-    const height = this.element.clientHeight;
+    const frags = dangerousFrags(live, this.eye, this.frags);
+    if (this.sizeStale && frags.length > 0) {
+      this.width = this.element.clientWidth;
+      this.height = this.element.clientHeight;
+      this.sizeStale = false;
+    }
+    const width = this.width;
+    const height = this.height;
     for (let i = 0; i < this.markers.length; i++) {
       const marker = this.markers[i]!;
       const frag = frags[i];
@@ -107,6 +136,8 @@ export class GrenadeDangerMarkers {
   }
 
   dispose(): void {
+    this.resizeObserver?.disconnect();
+    window.removeEventListener('resize', this.onResize);
     this.element.remove();
   }
 }

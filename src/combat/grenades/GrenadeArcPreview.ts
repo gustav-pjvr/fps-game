@@ -41,6 +41,7 @@ export class GrenadeArcPreview {
   private readonly ring: THREE.Mesh;
   private readonly matrix = new THREE.Matrix4();
   private readonly normal = new THREE.Vector3();
+  private drawn: ArcPrediction | null = null;
 
   constructor(private readonly scene: THREE.Scene) {
     const material = new THREE.MeshBasicMaterial({ color: ACCENT_CYAN, fog: false, toneMapped: false, transparent: true, opacity: 0.9 });
@@ -70,8 +71,11 @@ export class GrenadeArcPreview {
     scene.add(this.dots, this.ring);
   }
 
-  /** `arc`: GrenadeSystem.arcPreview (null when nothing is cooking, which hides the preview). */
+  /** `arc`: GrenadeSystem.arcPreview (null when nothing is cooking, which hides the preview). The
+   * system makes a new prediction object a few times a second, so the same one needs no redraw. */
   update(arc: ArcPrediction | null): void {
+    if (arc === this.drawn) return;
+    this.drawn = arc;
     if (!arc) {
       this.dots.visible = false;
       this.ring.visible = false;

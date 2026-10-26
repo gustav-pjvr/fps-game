@@ -50,6 +50,10 @@ const SKIN = 0.002;
 const MAX_BOUNCES_PER_STEP = 4;
 /** A contact normal at least this upright counts as a floor a grenade can rest on. */
 const FLOOR_NORMAL_Y = 0.7;
+/** A resting grenade looks this far below itself each step for what holds it up: nothing there (a
+ * capsule that walked off, a door that opened) and it wakes and falls. Past the contact skin, short
+ * of anything a grenade could visibly hang above. */
+const SUPPORT_PROBE = 0.04;
 
 function dot(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -77,9 +81,23 @@ export function bounceVelocity(velocity: Vec3, normal: Vec3, restitution: number
   };
 }
 
-/** Advances `body` by `dt` seconds in place. */
+/** Whether something still holds a resting grenade up: a floor-facing surface (or the terrain floor)
+ * within SUPPORT_PROBE below it. */
+function isSupported(body: GrenadeBody, sweep: Sweep, params: FlightParams): boolean {
+  const { position } = body;
+  if (params.floor && position.y <= params.floor(position.x, position.z) + params.radius + SUPPORT_PROBE) return true;
+  const hit = sweep(position, { x: 0, y: -SUPPORT_PROBE, z: 0 });
+  return hit !== null && hit.normal.y >= FLOOR_NORMAL_Y;
+}
+
+/** Advances `body` by `dt` seconds in place. A resting grenade stays put while something holds it up
+ * and wakes the step that nothing does. */
 export function stepGrenade(body: GrenadeBody, dt: number, sweep: Sweep, params: FlightParams): StepResult {
-  if (body.resting || !(dt > 0)) return { impactSpeed: 0 };
+  if (!(dt > 0)) return { impactSpeed: 0 };
+  if (body.resting) {
+    if (isSupported(body, sweep, params)) return { impactSpeed: 0 };
+    body.resting = false;
+  }
   const { position, velocity } = body;
   velocity.y += params.gravity * dt;
 

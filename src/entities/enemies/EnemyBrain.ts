@@ -231,8 +231,10 @@ export class EnemyBrain {
   /** A player gunshot. Heard only within that weapon's loudness range (perception.ts's
    * hearingRangeFor - a pistol carries less far than a sniper). An idle enemy searches toward
    * roughly where it came from; a searching one takes the fresh evidence too. Engaged enemies
-   * (alert/chase) learn nothing new from it. */
+   * (alert/chase) learn nothing new from it, and neither does a flash-blinded one (the blindness
+   * decides what it does next; a flash's own bang reaches it after onFlashed). */
   onHeardGunshot(origin: THREE.Vector3, weaponId?: string): void {
+    if (this.flashBlind.active) return;
     if (this.state !== 'idle' && this.state !== 'search') return;
     if (horizontalDistance(this.body.position, origin) > hearingRangeFor(weaponId)) return;
     this.enterSearchToward(origin, true);
@@ -241,7 +243,9 @@ export class EnemyBrain {
 
   /** Blinded by a flash grenade for `seconds` (grenades): it loses its target and its awareness
    * and staggers; then, if it had a target, it stands firing wide at where it last saw the player
-   * until it can see again (updateBlind), and searches there after. */
+   * until it can see again (updateBlind), and searches there after. One that never had a target
+   * (idle: nothing seen, nothing heard, last-seen is still its spawn point) only stands blind, then
+   * goes back to its patrol. */
   onFlashed(seconds: number): void {
     if (!(seconds > 0)) return;
     const hadTarget = this.state !== 'idle';
@@ -253,7 +257,7 @@ export class EnemyBrain {
     this.awareness = 0;
     this.hasLineOfSightToPlayer = false;
     this.flashBlind.blind(seconds, hadTarget);
-    this.enterSearchToward(this.lastSeenPosition, false);
+    if (hadTarget) this.enterSearchToward(this.lastSeenPosition, false);
   }
 
   /** Sent in by the pacing director (step 6): a reinforcement comes looking for the player, roughly
@@ -332,6 +336,7 @@ export class EnemyBrain {
     this.hasLineOfSightToPlayer = false;
     this.searchTimer = ENEMY_SEARCH_DURATION;
     if (this.combat.isStaggered) return;
+    if (!this.flashBlind.firingBack) return;
     this.body.faceToward(this.lastSeenPosition.x, this.lastSeenPosition.z);
     if (!fire) return;
     const target = this.lastSeenPosition.clone();
