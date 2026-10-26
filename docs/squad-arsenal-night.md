@@ -5,6 +5,8 @@ Gustav, 2026-10-25: "Go full out on 1; 2: grenades (flash and normal), doors, sw
 enemies, more modes on the Facility, the torch on the Valley at night, enterable buildings on the
 Valley.
 
+**Status (2026-10-26): all of it shipped together as v4.4.0** (see docs/CHANGELOG.md); the release split below was the plan.
+
 Three releases, each merged, reviewed (one independent Opus audit plus one re-check) and deployed
 before the next is called done. Work inside a release runs in parallel on separate branches.
 

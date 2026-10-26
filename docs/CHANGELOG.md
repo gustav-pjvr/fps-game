@@ -10,7 +10,53 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.3.1 (current)
+## v4.4.0 (current)
+
+Squad, arsenal and night, 2026-10-26. The design is in `docs/squad-arsenal-night.md`, with the
+as-built details in `docs/grenades.md`, `docs/pickups.md`, `docs/enterable-buildings.md`,
+`docs/facility-map.md` (sections 12 and 13) and `docs/multiplayer.md` (last section). Planned as
+three releases, shipped as one because every part was finished and tested together.
+
+- **3 and 4 players, properly.** Late joiners and rejoiners now get the whole match state (King of
+  the Hill carrier, Horde eliminations, live geese and grenades, doors, lamps, the scoreboard). Fixed:
+  players joining at the same time missing each other, a player who left during loading staying as
+  a ghost, zero-score players missing from the scoreboard, King of the Hill carriers disagreeing,
+  Gun Game skipping the launcher finisher, and the host dropping a player who was still loading,
+  dead, or stalled on their first frames. Guests now also link to each other directly for movement,
+  shots and footsteps (falling back to the host when a link cannot open), and the ping line shows a
+  measured ping per opponent. A four-player browser test covers it.
+- **Peers can no longer cheat or crash the room.** The host ignores host-only messages from guests,
+  every message about a player must come from that player, and numbers are bounded (damage, scores,
+  positions, grenade throws, house ids, hello fields).
+- **Controller support.** Analog move and look, the full mapping (RT fire, LT aim, A jump, B
+  interact, X reload, Y and the D-pad weapons, RB grenade, D-pad up torch, Start pause), play without
+  pointer lock, every menu navigable with the pad, pad button prompts, aim slowdown, vibration, and
+  settings for sensitivity, invert Y, aim assist and vibration.
+- **Grenades.** Pick a frag or a flash in the Loadout; Q (pad RB) throws it, hold to cook with an
+  arc preview. Frags bounce, explode with a fireball, smoke, sparks and a scorch, shoot out nearby
+  Facility lamps and are blocked by walls. Flashes white out and deafen whoever faces them and blind
+  enemies. A danger marker shows enemy frags near you. On in Default, Elimination, Director, Horde,
+  Goose Horde, Mission and King of the Hill.
+- **Facility doors and breakers.** Sliding doors you open and close with E (enemies and geese open
+  them too), and a breaker panel per power zone that kills or restores its lights (emergency lamps
+  stay on).
+- **Pickups.** Health packs, ammo boxes and grenade crates on both maps, respawning, synced by the
+  host.
+- **Night.** The torch works on the Valley at Night and in Fog, and solo players can pick the
+  weather. Enemies see less in the dark (a light meter by your health shows how visible you are);
+  firing, your torch beam or a flash reveal you.
+- **Every mode on the Facility.** Goose Toss, King of the Hill, Goose Horde, Horde and Mission.
+- **Enterable Valley buildings.** All three house designs have doors, rooms, furniture, real windows,
+  stairs in the two-storey block and lamps you can shoot out; enemies and geese come in through the
+  doors; the map shows a house's plan once you enter it.
+- **Loadout.** Weapons are square tiles showing just the weapon: hover for the name, click for the
+  stats; a smaller Grenade section below.
+
+Checks: every part had an independent review by area (networking, grenades, world and AI,
+controller and UI) and a re-check of its fixes; all 1237 unit tests pass; each feature's browser test
+passed on its branch; the merged build was released without a further browser run (Gustav's call).
+
+## v4.3.1
 
 Facility lamp fix, 2026-10-24.
 
