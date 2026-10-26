@@ -36,7 +36,7 @@ async function setup() {
   const physics = await PhysicsWorld.create();
   const brain = new EnemyBrain(
     new StillBody(physics), physics, new CombatCoordinator({ shooter: 2 }, mulberry32(1)), new SquadKnowledge(), { emit: () => {} },
-    {}, mulberry32(2), mulberry32(3), new THREE.Vector3(0, 0.85, 0),
+    { onRangedShotFired: () => {} }, mulberry32(2), mulberry32(3), new THREE.Vector3(0, 0.85, 0),
   );
   const player = {
     position: new THREE.Vector3(0, 0.85, 6),
