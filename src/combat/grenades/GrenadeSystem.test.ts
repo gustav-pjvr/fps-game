@@ -155,6 +155,10 @@ describe('GrenadeSystem flight', () => {
   it('finds the wall a frag went off against, and no surface in the air', async () => {
     const r = await rig({ network: true, wallAt: -3 });
     // Wall face at z = -2.9: a copy that goes off just in front of it, a metre up, and one in the air.
+    const copy = (id: string, z: number) =>
+      r.system.receiveThrown({ type: 'grenadeThrown', senderSlot: 1, id, kind: 'frag', origin: { x: 0, y: 1, z }, velocity: { x: 0, y: 0, z: 0 }, fuseLeft: 1, t: 1 });
+    copy('wall', -2.75);
+    copy('air', 6);
     r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'wall', kind: 'frag', position: { x: 0, y: 1, z: -2.75 } });
     const wall = r.system.debugState().lastDetonation!.surface!;
     expect(wall.normal.z).toBeCloseTo(1, 3);
@@ -301,6 +305,7 @@ describe('GrenadeSystem flash', () => {
   it('does nothing to a player behind a wall from it', async () => {
     const r = await rig({ wallAt: -1.5 });
     // Over the wall it cannot go: it bounces back, so judge a remote flash beyond the wall instead.
+    r.system.receiveThrown({ type: 'grenadeThrown', senderSlot: 1, id: 'x-1', kind: 'flash', origin: { x: 0, y: 0.5, z: -4 }, velocity: { x: 0, y: 0, z: 0 }, fuseLeft: 1, t: 1 });
     r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-1', kind: 'flash', position: { x: 0, y: 0.5, z: -4 } });
     expect(r.system.blindLevel).toBe(0);
   });
@@ -445,6 +450,25 @@ describe('GrenadeSystem network copies', () => {
     // A late resend of a grenade already gone off is ignored.
     r.system.receiveThrown({ ...thrown, t: 200 });
     expect(r.system.liveGrenades()).toHaveLength(0);
+  });
+
+  it("sets off only a copy it is flying, and only on its own thrower's word", async () => {
+    const r = await rig({ network: true });
+    const detonate = (senderSlot: PlayerSlot, id: string) =>
+      r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot, id, kind: 'frag', position: { x: 0, y: 0.1, z: -1 } });
+    // No throw first: a blast out of nowhere, beside the player.
+    detonate(1, 'never-thrown');
+    expect(r.explosions).not.toHaveBeenCalled();
+    expect(r.player.applyKnockback).not.toHaveBeenCalled();
+    r.system.receiveThrown(thrown);
+    // Another player naming slot 1's grenade can neither set it off nor move it.
+    detonate(2, thrown.id);
+    r.system.receiveThrown({ ...thrown, senderSlot: 2, origin: { x: 50, y: 1.5, z: 50 }, t: 500 });
+    expect(r.explosions).not.toHaveBeenCalled();
+    expect(r.system.liveGrenades()[0]!.position.x).toBeCloseTo(0, 3);
+    detonate(1, thrown.id);
+    expect(r.explosions).toHaveBeenCalledTimes(1);
+    expect(r.player.applyKnockback).toHaveBeenCalledTimes(1);
   });
 
   it('re-sends its own live grenades the first time an opponent is seen', async () => {

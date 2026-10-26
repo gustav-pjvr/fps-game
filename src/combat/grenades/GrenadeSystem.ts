@@ -160,6 +160,9 @@ interface LiveGrenade {
   readonly id: string;
   readonly kind: GrenadeKind;
   readonly own: boolean;
+  /** Who threw a copy (grenadeThrown.senderSlot); null for this client's own. Only they may resend
+   * or detonate it. */
+  readonly thrower: PlayerSlot | null;
   body: GrenadeBody;
   fuseLeft: number;
   /** A copy's sender clock (grenadeThrown.t): a later resend replaces its state. */
@@ -353,7 +356,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const existing = this.live.get(message.id);
     if (existing) {
       // A late joiner's resend also reaches everyone else: a newer one re-syncs the copy.
-      if (existing.own || !(message.t > existing.sentAt)) return;
+      if (existing.own || existing.thrower !== message.senderSlot || !(message.t > existing.sentAt)) return;
       existing.body = { position: { ...message.origin }, velocity: { ...message.velocity }, resting: false };
       existing.fuseLeft = message.fuseLeft;
       existing.sentAt = message.t;
@@ -362,17 +365,21 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     let remote = 0;
     for (const grenade of this.live.values()) if (!grenade.own) remote++;
     if (remote >= MAX_REMOTE_GRENADES) return;
-    this.addLive(message.id, message.kind, false, message.origin, message.velocity, message.fuseLeft, message.t, 0);
+    this.addLive(message.id, message.kind, message.senderSlot, message.origin, message.velocity, message.fuseLeft, message.t, 0);
     const { distance, pan } = this.hearing(message.origin);
     this.options.sound.playGrenadeThrow(enemyGunshotVolume(distance), pan);
   }
 
+  /** Only a copy this client is flying, thrown by the same sender, goes off: a detonation out of
+   * nowhere (no throw first, someone else's id) would be a free blast and knockback anywhere. One
+   * whose throw never arrived (a full copy limit, a join mid-flight before the resend) is missed. */
   receiveDetonated(message: GrenadeDetonatedMessage): void {
-    if (message.senderSlot === this.options.network?.ownSlot || this.finished.includes(message.id)) return;
+    const copy = this.live.get(message.id);
+    if (!copy || copy.own || copy.thrower !== message.senderSlot) return;
     this.removeLive(message.id);
     this.rememberFinished(message.id);
     const position = new THREE.Vector3(message.position.x, message.position.y, message.position.z);
-    this.goOff(message.id, message.kind, position, false);
+    this.goOff(message.id, copy.kind, position, false);
   }
 
   /** The first playerSnapshot from `slot` (they are in the match and listening now): re-send every
@@ -558,7 +565,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private spawnOwn(kind: GrenadeKind, fuseLeft: number, direction?: Vec3, hiddenFor = 0): string {
     const { origin, velocity } = this.throwStart(direction);
     const id = `${this.idPrefix}${this.nextId++}`;
-    this.addLive(id, kind, true, origin, velocity, fuseLeft, 0, hiddenFor);
+    this.addLive(id, kind, null, origin, velocity, fuseLeft, 0, hiddenFor);
     this.sendThrown(id, kind, origin, velocity, fuseLeft);
     this.options.sound.playGrenadeThrow();
     return id;
@@ -579,7 +586,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     });
   }
 
-  private addLive(id: string, kind: GrenadeKind, own: boolean, origin: Vec3, velocity: Vec3, fuseLeft: number, sentAt: number, hiddenFor: number): void {
+  /** `thrower`: null for this client's own grenade, else the copy's sender. */
+  private addLive(id: string, kind: GrenadeKind, thrower: PlayerSlot | null, origin: Vec3, velocity: Vec3, fuseLeft: number, sentAt: number, hiddenFor: number): void {
     const mesh = this.modelPool[kind].pop() ?? buildGrenadeModel(kind);
     mesh.scale.setScalar(WORLD_MODEL_SCALE);
     mesh.visible = hiddenFor <= 0;
@@ -594,7 +602,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     this.live.set(id, {
       id,
       kind,
-      own,
+      own: thrower === null,
+      thrower,
       body: { position: { x: origin.x, y: origin.y, z: origin.z }, velocity: { x: velocity.x, y: velocity.y, z: velocity.z }, resting: false },
       fuseLeft,
       sentAt,
