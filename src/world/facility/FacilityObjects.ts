@@ -51,6 +51,8 @@ export class FacilityObjects implements InteractiveWorldObjects {
   private body: RAPIER.RigidBody | null = null;
   private lampMaterials: { green: THREE.Material; red: THREE.Material } | null = null;
   private disposed = false;
+  /** closedDoors()'s list, rebuilt only after a door changes (wandering geese ask every step). */
+  private closedCache: readonly FacilityDoor[] | null = null;
 
   private constructor(
     private readonly layout: FacilityLayout,
@@ -182,6 +184,7 @@ export class FacilityObjects implements InteractiveWorldObjects {
       });
       return;
     }
+    this.closedCache = null;
     const closed = !this.state.isActive('door', id);
     this.doorViews[id]!.show(closed, instant);
     this.nav?.setDoorClosed(id, closed);
@@ -190,12 +193,14 @@ export class FacilityObjects implements InteractiveWorldObjects {
   /** Adopts a whole state (the host's worldObjectState, a welcome). Returns what changed. */
   applyWire(wire: WorldObjectWire, instant = false): WorldObjectChanges {
     if (this.disposed) return { doors: [], breakers: [] };
+    this.closedCache = null;
     return this.showChanges(this.state.apply(wire), instant);
   }
 
   /** Back to the match's start, at once (a single-player Restart). */
   reset(): WorldObjectChanges {
     if (this.disposed) return { doors: [], breakers: [] };
+    this.closedCache = null;
     return this.showChanges(this.state.reset(), true);
   }
 
@@ -260,8 +265,8 @@ export class FacilityObjects implements InteractiveWorldObjects {
   }
 
   /** The minimap's view (docs/facility-map.md, section 12): closed doors and every panel. */
-  closedDoors(): FacilityDoor[] {
-    return this.doors.filter(door => !this.state.isActive('door', door.id));
+  closedDoors(): readonly FacilityDoor[] {
+    return this.closedCache ??= this.doors.filter(door => !this.state.isActive('door', door.id));
   }
 
   /** Debug API: how many doors and breakers there are and how many are shut or off. */
