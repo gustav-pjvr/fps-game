@@ -92,6 +92,11 @@ export class EnemyBrain {
   private searchTarget: PlanarPoint | null = null;
   /** Where this enemy itself last had the player in sight - what an 'alert' enemy stares at. */
   private readonly lastSeenPosition: THREE.Vector3;
+  /** Whether this enemy itself has had the player in sight since it last went idle: lastSeenPosition
+   * only means something once it has (until then it is just the spawn point). */
+  private hasSeenPlayer = false;
+  /** The latest noise heard while flash-blinded, acted on when the blindness ends (null: none). */
+  private blindNoise: THREE.Vector3 | null = null;
   /** Throttled (ENEMY_LOS_CHECK_INTERVAL), not recomputed every frame - a raycast per enemy per
    * frame adds up once several are chasing at once. Randomized initial offset so many enemies'
    * checks don't all land on the same frame. */
@@ -232,9 +237,17 @@ export class EnemyBrain {
    * hearingRangeFor - a pistol carries less far than a sniper). An idle enemy searches toward
    * roughly where it came from; a searching one takes the fresh evidence too. Engaged enemies
    * (alert/chase) learn nothing new from it, and neither does a flash-blinded one (the blindness
-   * decides what it does next; a flash's own bang reaches it after onFlashed). */
+   * decides what it does next; a flash's own bang reaches it after onFlashed). It does remember the
+   * latest noise and searches there once the blindness ends. */
   onHeardGunshot(origin: THREE.Vector3, weaponId?: string): void {
-    if (this.flashBlind.active) return;
+    if (this.flashBlind.active) {
+      // Blind: it cannot react now, but it remembers the latest noise it heard and goes there when
+      // it can see again (updateBlind).
+      if (horizontalDistance(this.body.position, origin) <= hearingRangeFor(weaponId)) {
+        this.blindNoise = origin.clone();
+      }
+      return;
+    }
     if (this.state !== 'idle' && this.state !== 'search') return;
     if (horizontalDistance(this.body.position, origin) > hearingRangeFor(weaponId)) return;
     this.enterSearchToward(origin, true);
@@ -242,13 +255,13 @@ export class EnemyBrain {
   }
 
   /** Blinded by a flash grenade for `seconds` (grenades): it loses its target and its awareness
-   * and staggers; then, if it had a target, it stands firing wide at where it last saw the player
-   * until it can see again (updateBlind), and searches there after. One that never had a target
-   * (idle: nothing seen, nothing heard, last-seen is still its spawn point) only stands blind, then
-   * goes back to its patrol. */
+   * and staggers; then, if it had actually seen the player, it stands firing wide at where it last
+   * saw them until it can see again (updateBlind), and searches there after. One that never saw the
+   * player (idle, or searching toward a noise or a comrade's sighting: last-seen is still its spawn
+   * point) only stands blind and keeps its search destination, or goes back to its patrol. */
   onFlashed(seconds: number): void {
     if (!(seconds > 0)) return;
-    const hadTarget = this.state !== 'idle';
+    const hadTarget = this.state !== 'idle' && this.hasSeenPlayer;
     if (this.state === 'chase') {
       this.combat.standDown();
       this.knowledge.reportLost(this.body.id);
@@ -301,7 +314,10 @@ export class EnemyBrain {
         distanceToPlayer <= sightRayRange(engaged, archetype.detectionRange, archetype.leashRange, this.playerVisibility) &&
         this.isWorthLooking(current, player) &&
         this.computeLineOfSight(current, player);
-      if (this.hasLineOfSightToPlayer) this.lastSeenPosition.copy(player.position);
+      if (this.hasLineOfSightToPlayer) {
+        this.lastSeenPosition.copy(player.position);
+        this.hasSeenPlayer = true;
+      }
       if (this.state === 'chase') this.reportSighting(player);
     }
 
@@ -337,6 +353,7 @@ export class EnemyBrain {
     this.awareness = 0;
     this.hasLineOfSightToPlayer = false;
     this.searchTimer = ENEMY_SEARCH_DURATION;
+    if (!this.flashBlind.active) this.actOnBlindNoise();
     if (this.combat.isStaggered) return;
     if (!this.flashBlind.firingBack) return;
     this.body.faceToward(this.lastSeenPosition.x, this.lastSeenPosition.z);
@@ -345,6 +362,16 @@ export class EnemyBrain {
     target.y += EYE_OFFSET;
     fireWideShot(this.physics, headOf(this.body.position), target, ENEMY_FLASH_FIRE_SPREAD_DEG, player, archetype, this.body.excludeRigidBody, this.combatHooks);
     this.body.onFired?.();
+  }
+
+  /** The blindness just ended: search toward the latest noise heard while blind, if any. */
+  private actOnBlindNoise(): void {
+    const noise = this.blindNoise;
+    if (!noise) return;
+    this.blindNoise = null;
+    if (this.state !== 'idle' && this.state !== 'search') return;
+    this.enterSearchToward(noise, true);
+    this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
   }
 
   /** Gives up this enemy's role and its place among the squad's watchers - called from the shell's
@@ -432,6 +459,7 @@ export class EnemyBrain {
           this.announce('spotted');
         } else if (level === 'oblivious') {
           this.state = 'idle';
+          this.hasSeenPlayer = false;
         }
         break;
       }
@@ -456,7 +484,10 @@ export class EnemyBrain {
         this.awareness = stepAwareness(this.awareness, 0, dt);
         this.followFreshSighting(current);
         this.searchTimer -= dt;
-        if (this.searchTimer <= 0) this.state = 'idle';
+        if (this.searchTimer <= 0) {
+          this.state = 'idle';
+          this.hasSeenPlayer = false;
+        }
         break;
     }
   }
@@ -465,6 +496,7 @@ export class EnemyBrain {
    * too, so a still-full meter cannot bounce the enemy straight back into 'alert'. */
   private giveUp(): void {
     this.state = 'idle';
+    this.hasSeenPlayer = false;
     this.awareness = 0;
     this.combat.standDown();
     this.knowledge.reportLost(this.body.id);
