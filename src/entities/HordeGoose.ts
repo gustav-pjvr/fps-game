@@ -29,11 +29,20 @@ const INDOOR_DIVE_DISTANCE = 5;
 /** How fast an indoor flyer climbs or sinks toward the height it wants (m/s). */
 const INDOOR_CLIMB_SPEED = 3;
 
-/** Whether a horde goose centred at `goose` has reached a player whose body centre is `target`:
- * within HORDE_GOOSE_CONTACT_RADIUS of the player's body (its upright axis from feet to head), so a
- * goose on a house's ground floor never reaches a player upstairs or on a roof above it. */
+/** A player standing this far above the house floor under them (m) is on its roof, not in it. */
+const ROOF_CLEARANCE = 1.5;
+
+/** Whether a horde goose centred at `goose` has reached a player whose body centre is `target`.
+ * Contact is horizontal (within HORDE_GOOSE_CONTACT_RADIUS) outdoors, so a player on a watch tower or
+ * a house roof is still reached by the geese gathering below. For a player standing on a Valley
+ * house's floor it is also vertical (within that radius of the player's body, its upright axis from
+ * feet to head), so a goose on the ground floor never reaches a player upstairs above it. */
 export function hordeGooseReaches(goose: THREE.Vector3Like, target: THREE.Vector3Like): boolean {
   const across = Math.hypot(goose.x - target.x, goose.z - target.z);
+  if (across > HORDE_GOOSE_CONTACT_RADIUS) return false;
+  const feetY = target.y - PLAYER_HEIGHT / 2;
+  const floorY = enemyFloorAt(target.x, target.z, feetY);
+  if (floorY === null || feetY - floorY > ROOF_CLEARANCE) return true;
   const above = Math.max(0, Math.abs(goose.y - target.y) - PLAYER_HEIGHT / 2);
   return Math.hypot(across, above) <= HORDE_GOOSE_CONTACT_RADIUS;
 }

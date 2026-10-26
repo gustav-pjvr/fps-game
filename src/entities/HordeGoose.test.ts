@@ -74,12 +74,29 @@ function valleyHouse(design: number) {
 }
 
 describe('horde goose contact', () => {
-  it('reaches a player beside it on the same floor, not one on the floor above', () => {
+  it('reaches a player beside it outdoors, wherever the player stands high above the ground', () => {
     const goose = new THREE.Vector3(0, GROUND + GOOSE_HEIGHT / 2, 0);
     expect(hordeGooseReaches(goose, playerAt(1, GROUND, 0))).toBe(true);
     expect(hordeGooseReaches(goose, playerAt(1.5, GROUND, 0))).toBe(false);
-    // Upstairs (3.05 m up), straight overhead.
-    expect(hordeGooseReaches(goose, playerAt(0.3, GROUND + 3.05, 0))).toBe(false);
+    // On a watch tower 8 m up, geese gathered below still reach them (no house about).
+    expect(hordeGooseReaches(goose, playerAt(0.3, GROUND + 8, 0))).toBe(true);
+  });
+
+  it('in a Valley house it is vertical too: not a player upstairs, but one on the roof', () => {
+    const { houses, placement, room } = valleyHouse(1);
+    const upper = room(1);
+    const ground = room(0);
+    expect(upper.feet).toBeCloseTo(GROUND + 3.05, 6);
+    const below = new THREE.Vector3(upper.x, GROUND + GOOSE_HEIGHT / 2, upper.z);
+    // Upstairs, straight overhead of a goose on the ground floor.
+    expect(hordeGooseReaches(below, playerAt(upper.x, upper.feet, upper.z))).toBe(false);
+    expect(hordeGooseReaches(new THREE.Vector3(upper.x, upper.feet + GOOSE_HEIGHT / 2, upper.z), playerAt(upper.x, upper.feet, upper.z))).toBe(true);
+    // Beside a player on the ground floor.
+    expect(hordeGooseReaches(new THREE.Vector3(ground.x, GROUND + GOOSE_HEIGHT / 2, ground.z), playerAt(ground.x + 0.5, ground.feet, ground.z))).toBe(true);
+    // On the roof, high above the top floor: the geese below are the ones that reach them.
+    expect(placement.groundY).toBe(GROUND);
+    expect(hordeGooseReaches(below, playerAt(upper.x, upper.feet + 6, upper.z))).toBe(true);
+    houses.dispose();
   });
 });
 
