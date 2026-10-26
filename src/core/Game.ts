@@ -1603,15 +1603,20 @@ export class Game {
       game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
     }
     // Doors and breakers (docs/facility-map.md, section 12): a late joiner starts with the host's.
+    // A door never closes on a living enemy or goose either.
+    const others = () => ({
+      enemies: entityManager.liveEnemyMotion(),
+      geese: [...gooseManager.listForSync(), ...(hordeGooseManager?.listForSync() ?? [])],
+    });
     if (facility) {
-      const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
       interaction.applyInitial(multiplayer?.worldObjects);
       setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;
     } else if (buildings) {
       // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
       // messages; enemies open them through the same gate as the Facility's.
-      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
       interaction.applyInitial(multiplayer?.worldObjects);
       setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;

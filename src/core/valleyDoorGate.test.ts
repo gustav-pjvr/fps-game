@@ -13,7 +13,7 @@ const houseAt = (ref: HouseRef): HousePlacement | null =>
 
 /** The Valley branch of Game's wiring: the houses' doors behind a FacilityInteraction, its gate set
  * as the enemy door gate. Only the parts the gate touches are real. */
-function setup() {
+function setup(others?: { enemies: { x: number; z: number }[]; geese: { x: number; z: number }[] }) {
   const houses = new ValleyHouses(new THREE.Scene(), new RAPIER.World({ x: 0, y: -9.81, z: 0 }), houseAt, false);
   houses.housePlaced('house-0', PLACEMENT, new THREE.Group());
   const sound = { playDoorSlide: vi.fn() };
@@ -25,9 +25,10 @@ function setup() {
     hud: {} as never,
     sound: sound as never,
     multiplayer: null,
+    others: others ? () => others : undefined,
   });
   setEnemyDoorGate(interaction.enemyGate);
-  return { houses, sound, id: houseObjectId(houseKey(PLACEMENT.ref), FRONT_DOOR_SLOT) };
+  return { houses, sound, interaction, id: houseObjectId(houseKey(PLACEMENT.ref), FRONT_DOOR_SLOT) };
 }
 
 describe('enemies and Valley house doors', () => {
@@ -59,6 +60,25 @@ describe('enemies and Valley house doors', () => {
     const door = houses.doors.debugDoors()[0]!;
     expect(heldAtDoor(3, door.x, door.z - door.side * 1, 0, -door.side, 0.1)).toBe(false);
     expect(heldAtDoor(3, door.x + 6, door.z - door.side * 1, 0, door.side, 0.1)).toBe(false);
+    setEnemyDoorGate(null);
+  });
+
+  it('never close on an enemy or a goose standing in the doorway', () => {
+    const others = { enemies: [] as { x: number; z: number }[], geese: [] as { x: number; z: number }[] };
+    const { houses, interaction, id } = setup(others);
+    const door = houses.doors.debugDoors()[0]!;
+    houses.doors.set('door', id, true);
+    others.enemies.push({ x: door.x, z: door.z + 0.1 });
+    expect(interaction.requestState('door', id, false)).toBe(false);
+    expect(houses.doors.state.isActive('door', id)).toBe(true);
+    others.enemies.length = 0;
+    others.geese.push({ x: door.x + 0.3, z: door.z });
+    expect(interaction.requestState('door', id, false)).toBe(false);
+    expect(houses.doors.state.isActive('door', id)).toBe(true);
+    // Clear of the doorway: it closes.
+    others.geese[0] = { x: door.x, z: door.z - door.side * 2 };
+    expect(interaction.requestState('door', id, false)).toBe(true);
+    expect(houses.doors.state.isActive('door', id)).toBe(false);
     setEnemyDoorGate(null);
   });
 });
