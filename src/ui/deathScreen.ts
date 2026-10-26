@@ -67,7 +67,7 @@ export class DeathScreen {
     this.element.append(title, this.scoreElement, this.statsElement, buttonRow);
     const hint = document.createElement('div');
     hint.style.cssText = `${LABEL_CSS} color:${INK_DIM};`;
-    setDeviceHint(hint, 'Click Respawn to play again', 'D-pad: select | A (Cross): activate | B (Circle): lobby');
+    setDeviceHint(hint, 'Click Respawn to play again', 'D-pad: select | A (Cross): activate');
     this.element.appendChild(hint);
     root.appendChild(this.element);
   }
