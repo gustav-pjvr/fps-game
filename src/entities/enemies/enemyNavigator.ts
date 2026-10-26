@@ -58,3 +58,19 @@ export function setEnemyFloor(fn: EnemyFloor | null): void {
 export function enemyFloorAt(x: number, z: number, feetY: number): number | null {
   return floor ? floor(x, z, feetY) : null;
 }
+
+/** Where a walker going into the building that holds (x, z) starts from: the spot in front of its
+ * door outside (a Valley house's street node), or null where (x, z) is in no building. */
+export type EnemyEntrance = (x: number, z: number) => { x: number; z: number } | null;
+
+let entrance: EnemyEntrance | null = null;
+
+/** Module-level like the floor: set by a Valley match, cleared on its dispose. */
+export function setEnemyEntrance(fn: EnemyEntrance | null): void {
+  entrance = fn;
+}
+
+/** The outside spot in front of the door of the building at (x, z), or null (always null unset). */
+export function buildingEntranceAt(x: number, z: number): { x: number; z: number } | null {
+  return entrance ? entrance(x, z) : null;
+}

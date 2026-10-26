@@ -33,7 +33,7 @@ import {
 import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
-import { Enemy, setEnemyDoorGate, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
 import { facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
@@ -962,6 +962,7 @@ export class Game {
       setEnemyNavigator(null);
       setEnemyDoorGate(null);
       setEnemyFloor(null);
+      setEnemyEntrance(null);
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
@@ -990,6 +991,7 @@ export class Game {
       // Enemies walk into and out of the houses on their walk grids (docs/enterable-buildings.md).
       setEnemyNavigator(valleyBuildings.houses.nav.navigate);
       setEnemyFloor(valleyBuildings.houses.nav.floorAt);
+      setEnemyEntrance(valleyBuildings.houses.nav.entranceAt);
       watchTowers = valleyTowers;
       isSpawnBlocked = makeSpawnBlockedCheck(valleyBuildings);
     }
@@ -1923,6 +1925,7 @@ export class Game {
     setEnemyNavigator(null);
     setEnemyDoorGate(null);
     setEnemyFloor(null);
+    setEnemyEntrance(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();

@@ -24,7 +24,7 @@ import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHO
 import { ENEMY_HEIGHT, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
-export { setEnemyDoorGate, setEnemyFloor, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
+export { setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
 
 export const ENEMY_MODEL_PATH = ENEMY_CHARACTER.path;
 
