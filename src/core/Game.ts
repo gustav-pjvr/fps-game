@@ -7,7 +7,7 @@ import { Player } from '../entities/Player.ts';
 import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { GooseManager } from '../entities/GooseManager.ts';
-import { ThrownGoose } from '../entities/ThrownGoose.ts';
+import { ThrownGoose, throwSegmentBlocked } from '../entities/ThrownGoose.ts';
 import { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
 import { AmmoDropManager } from '../entities/AmmoDropManager.ts';
 import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
@@ -3080,7 +3080,7 @@ export class Game {
     const ownSlot = this.multiplayer?.session.ownSlot ?? null;
 
     for (const thrown of Array.from(this.thrownGeese.values())) {
-      const fromX = thrown.position.x, fromZ = thrown.position.z;
+      const fromX = thrown.position.x, fromY = thrown.position.y, fromZ = thrown.position.z;
       thrown.update(dt);
 
       if (thrown.throwerSlot !== ownSlot) {
@@ -3101,6 +3101,10 @@ export class Game {
       } else if (this.facility && crossesClosedDoor(this.facility.objects.closedDoors(), fromX, fromZ, thrown.position.x, thrown.position.z)) {
         // ...and on a closed door, on the side it came from.
         hitPosition = new THREE.Vector3(fromX, thrown.position.y, fromZ);
+      } else if (this.buildings && (this.buildings.houses.nav.isInside(fromX, fromZ) || this.buildings.houses.nav.isInside(thrown.position.x, thrown.position.z))
+        && throwSegmentBlocked(this.physics.world, { x: fromX, y: fromY, z: fromZ }, thrown.position)) {
+        // On the Valley it bursts on a house wall or closed door too, on the side it came from.
+        hitPosition = new THREE.Vector3(fromX, fromY, fromZ);
       } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
         hitPosition = thrown.position.clone();
       } else if (this.multiplayer) {
