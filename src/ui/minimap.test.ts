@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
-import { minimapTransform } from './minimap.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Minimap, minimapTransform } from './minimap.ts';
 
 const apply = (m: readonly number[], x: number, z: number): { sx: number; sy: number } => ({
   sx: m[0]! * x + m[2]! * z + m[4]!,
@@ -33,5 +33,37 @@ describe('minimapTransform', () => {
     const ahead = apply(m, 4 - Math.sin(yaw) * 10, -9 - Math.cos(yaw) * 10);
     expect(ahead.sx).toBeCloseTo(70);
     expect(ahead.sy).toBeCloseTo(50);
+  });
+});
+
+describe('Minimap zoom', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function fakeElement(): Record<string, unknown> {
+    const element: Record<string, unknown> = {
+      style: {}, dataset: {}, width: 0, height: 0,
+      appendChild: () => {}, insertBefore: () => {}, remove: () => {},
+      getContext: () => ({ setTransform: () => {}, clearRect: () => {} }),
+    };
+    return element;
+  }
+
+  it('places pickups and objective markers at the zoomed radius inside a house, like every other dot', () => {
+    vi.stubGlobal('document', { createElement: fakeElement });
+    vi.stubGlobal('window', { devicePixelRatio: 1 });
+    const layer = { testId: 'layer', update: () => {}, draw: () => {}, zoomRadius: () => 14 };
+    const map = new Minimap(fakeElement() as unknown as HTMLElement, { layer });
+    map.setMarkers([{ id: 'objective', x: 7, z: 0 }]);
+    const player = new THREE.Vector3(0, 0, 0);
+    map.update(player, new Map(), 0);
+    map.updatePickups(player, 0, [{ id: 1, kind: 'health', x: 7, z: 0 }]);
+    const left = (name: string): number => {
+      const element = (map as unknown as Record<string, Map<unknown, unknown>>)[name]!;
+      const entry = [...element.values()][0] as { dot?: { style: { left: string } }; style?: { left: string } };
+      return parseFloat((entry.dot ?? entry).style!.left);
+    };
+    // Half the zoomed radius away: halfway from the centre (70 px) to the rim (140 px).
+    expect(left('pickupIcons')).toBeCloseTo(105);
+    expect(left('markers')).toBeCloseTo(105);
   });
 });

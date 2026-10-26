@@ -247,7 +247,7 @@ export class Minimap {
       placeDot(dot, localPosition, opponentPosition, yawQuat, this.radius);
     }
 
-    for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.worldRadius);
+    for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.radius);
 
     if (!items) return;
     for (const [id, dot] of this.itemDots) {
@@ -276,7 +276,7 @@ export class Minimap {
         this.root.insertBefore(icon, this.forwardWedge);
         this.pickupIcons.set(pickup.id, icon);
       }
-      placeDot(icon, localPosition, pickup, yawQuat, this.worldRadius);
+      placeDot(icon, localPosition, pickup, yawQuat, this.radius);
     }
     for (const [id, icon] of this.pickupIcons) {
       if (listed.has(id)) continue;
