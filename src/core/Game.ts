@@ -2207,7 +2207,7 @@ export class Game {
     this.missionLastHealth = this.player.currentHealth;
     this.missionClock = 0;
     this.missionWon = false;
-    this.hud.setPrompt('E', null);
+    this.hud.setPrompt('interact', null);
   }
 
   /** Feeds the mission this tick's position and interact press, and acts on what it asks for: waves
@@ -2241,7 +2241,7 @@ export class Game {
         this.hud.compass.addMarker('extract', () => bearingDeg(x - this.player.position.x, z - this.player.position.z));
       } else if (event.kind === 'won') {
         this.missionWon = true;
-        this.hud.setPrompt('E', null);
+        this.hud.setPrompt('interact', null);
         this.deathScreen.showMission(this.missionResult(true));
         this.deathScreenVisible = true;
         this.input.releasePointerLock();
@@ -2289,7 +2289,7 @@ export class Game {
       hud.setObjective('UPLINK', 'Bring the uplinks online');
       hud.setObjectiveProgress(view.online, view.uplinks.length);
     }
-    hud.setPrompt('E', this.missionWon ? null : view.prompt);
+    hud.setPrompt('interact', this.missionWon ? null : view.prompt);
     this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
     // Only the Facility has a single-player map.
     this.soloMinimap?.setMarkers(missionMapMarkers(view));

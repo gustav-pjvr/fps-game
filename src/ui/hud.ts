@@ -1,5 +1,7 @@
 import { Compass, bearingDeg } from './compass.ts';
-import { setDeviceHint } from '../input/GamepadInput.ts';
+import { gamepadHint, setDeviceHint } from '../input/GamepadInput.ts';
+import { keyHint, type Action } from '../input/actions.ts';
+import { Settings } from '../settings/Settings.ts';
 import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, INK_FAINT, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_SHADOW, THREAT } from './theme.ts';
 
 export class Hud {
@@ -27,6 +29,10 @@ export class Hud {
   private readonly promptKey: HTMLElement;
   private readonly promptText: HTMLSpanElement;
   private progressShown = '';
+  // The last values written to the DOM: setPrompt and setVisibility run every fixed step, and a
+  // write that changes nothing still costs style and text invalidation.
+  private promptShown = '';
+  private visibilityShown: string | null = null;
 
   constructor(root: HTMLElement) {
     this.container = document.createElement('div');
@@ -175,15 +181,26 @@ export class Hud {
     this.grenadeCount.style.color = grenade.count > 0 ? INK : INK_FAINT;
   }
 
-  /** Shows `key` and `text` under the crosshair, or hides the prompt with null. */
-  setPrompt(key: string, text: string | null): void {
+  /** Shows the hint for `action` (the player's key, or the pad button) and `text` under the
+   * crosshair, or hides the prompt with null. Writes only when what is shown changes. */
+  setPrompt(action: Action, text: string | null): void {
     if (text === null) {
+      if (this.promptShown === '') return;
+      this.promptShown = '';
       this.prompt.style.display = 'none';
       return;
     }
-    setDeviceHint(this.promptKey, key, key === 'E' ? 'B (Circle)' : key === 'F' ? 'D-pad up' : key);
+    const key = keyHint(Settings.getKeyBindings(), action);
+    const pad = gamepadHint(action) ?? key;
+    const shown = `${key}
+${pad}
+${text}`;
+    if (shown === this.promptShown) return;
+    const first = this.promptShown === '';
+    this.promptShown = shown;
+    setDeviceHint(this.promptKey, key, pad);
     this.promptText.textContent = text;
-    this.prompt.style.display = 'flex';
+    if (first) this.prompt.style.display = 'flex';
   }
 
   setWeaponName(name: string): void {
@@ -203,10 +220,16 @@ export class Hud {
   }
 
   setVisibility(value: number | null): void {
-    this.lightMeter.style.display = value === null ? 'none' : 'inline-block';
-    if (value === null) return;
-    this.lightMeter.style.opacity = String(value);
-    this.lightMeter.setAttribute('aria-label', `Visibility to enemies: ${Math.round(value * 100)}%`);
+    // Called every fixed step with a continuously changing value: a whole percent is all the
+    // label says and all the eye tells apart, so only a change of a percent writes anything.
+    const percent = value === null ? null : Math.round(value * 100);
+    const shown = percent === null ? null : String(percent);
+    if (shown === this.visibilityShown) return;
+    this.visibilityShown = shown;
+    this.lightMeter.style.display = percent === null ? 'none' : 'inline-block';
+    if (percent === null) return;
+    this.lightMeter.style.opacity = String(percent / 100);
+    this.lightMeter.setAttribute('aria-label', `Visibility to enemies: ${percent}%`);
   }
 
   setScoreVisible(visible: boolean): void {

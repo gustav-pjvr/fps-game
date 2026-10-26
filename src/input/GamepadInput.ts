@@ -11,6 +11,18 @@ export const GAMEPAD_ACTIONS: Readonly<Partial<Record<number, Action>>> = {
   12: 'flashlight', 14: 'weaponPrev', 15: 'weaponNext',
 };
 
+const BUTTON_NAMES: Readonly<Record<number, string>> = {
+  0: 'A (Cross)', 1: 'B (Circle)', 2: 'X (Square)', 3: 'Y (Triangle)', 5: 'RB (R1)',
+  12: 'D-pad up', 14: 'D-pad left', 15: 'D-pad right',
+};
+
+/** The controller button hint for `action`, from GAMEPAD_ACTIONS (the first button that triggers it),
+ * or null when no standard button does. */
+export function gamepadHint(action: Action): string | null {
+  const button = Object.keys(GAMEPAD_ACTIONS).map(Number).find((index) => GAMEPAD_ACTIONS[index] === action);
+  return button === undefined ? null : BUTTON_NAMES[button] ?? `Button ${button}`;
+}
+
 export const GAMEPAD_MAPPING = [
   'Left stick: move; L3: sprint while moving forward',
   'Right stick: look; RT (R2): fire; LT (L2): aim',
