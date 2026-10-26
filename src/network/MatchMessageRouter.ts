@@ -30,8 +30,9 @@ import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
 /** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
  * tagged with the original sender's own slot - see the doc on routeMatchMessage below.
  * Lobby/roster messages (hello/welcome/rosterUpdate/roomFull) and host-authored broadcasts
- * (matchStart/hostLeftRoom/playerLeft/playerJoinedMatch) are deliberately excluded - the host
- * authors those itself, they never arrive from elsewhere to relay. */
+ * (matchStart/hostLeftRoom/playerLeft/playerJoinedMatch, the full list is senderAuthority.ts's
+ * HOST_AUTHORED_MESSAGE_TYPES) are deliberately excluded - the host authors those itself, and the
+ * connection drops any that arrive from a guest. */
 export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'playerSnapshot',
   'fireEvent',
@@ -56,6 +57,8 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
 
 /** The grenade system's network side (combat/grenades/GrenadeSystem.ts implements it). */
 export interface GrenadeMessageReceiver {
+  /** False where the mode has no grenades: their messages are then ignored, not flown. */
+  readonly enabled: boolean;
   /** Another player threw (or re-sent, for a late joiner) a grenade: fly a copy of it. */
   receiveThrown(message: GrenadeThrownMessage): void;
   /** Another player's grenade went off: move the copy there and play the effect. */
@@ -119,8 +122,9 @@ export interface MatchMessageContext {
   /** Facility only (a no-op elsewhere): another player's whole dead-lamp set (lampSync); kills any
    * listed lamp still lit, quietly. Validates the list itself. */
   syncLamps(lamps: unknown): void;
-  /** Facility only: a playerSnapshot from this slot arrived (they are in the match and listening),
-   * the cue to send them this client's dead-lamp set the first time (see network/lampSync.ts). */
+  /** A playerSnapshot from this slot arrived (they are in the match and listening), the cue to send
+   * them this client's dead lamps and (host) the doors the first time, on the Facility and on the
+   * Valley alike (see network/lampSync.ts). */
   opponentInMatch(slot: PlayerSlot): void;
   /** Host only (a no-op elsewhere): guest `slot` pressed interact on a door or breaker panel
    * (docs/facility-map.md, section 12), or on the Valley a house door. The host checks and applies it. */
@@ -146,6 +150,9 @@ export interface MatchMessageContext {
  * correctly use the transport `senderSlot`. Keep that distinction explicit. */
 export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMessage, senderSlot: PlayerSlot): void {
   const activeMultiplayer = ctx.multiplayer;
+  // Who may send what was checked at the connection (senderAuthority.ts); what needs this match's
+  // own state is checked here, before the host passes anything on.
+  if (!acceptsInMatch(ctx, message)) return;
 
   if (activeMultiplayer.session.role === 'host' && RELAYABLE_MESSAGE_TYPES.has(message.type)) {
     // relay(), not sendExcept(): a guest pair with a live direct link already has its snapshots,
@@ -205,7 +212,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (torchAvailable(activeMultiplayer.map, activeMultiplayer.weather)) {
         opponent.remotePlayer.setTorch(message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather));
       }
-      if (activeMultiplayer.map === 'facility') ctx.opponentInMatch(message.senderSlot);
+      // Every map: the Valley's house lamps and doors need the same catch-up as the Facility's.
+      ctx.opponentInMatch(message.senderSlot);
       ctx.grenades?.opponentInMatch(message.senderSlot);
       opponent.health = message.health;
       // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
@@ -426,6 +434,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       else ctx.goldenGooseManager.drop(new THREE.Vector3(message.x, message.y, message.z));
       break;
     case 'kothScoreTick':
+      // Never lower than the score already held (acceptsInMatch).
       // message.senderSlot - see playerSnapshot's own comment; using the transport slot let
       // one guest's points overwrite the host's own scoreboard row on every other guest's
       // client, which could crown the wrong King of the Hill winner in a 3+ player match.
@@ -503,6 +512,14 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (message.result === 'cleared') ctx.hordeGooseManager?.applyCleared();
       else if (message.result === 'wiped') ctx.endLostHordeRun();
       break;
+    case 'scoreboardSync':
+      // Host-authored (senderAuthority.ts): a joiner's catch-up on the kills made while it loaded.
+      if (activeMultiplayer.session.role !== 'guest' || senderSlot !== HOST_SLOT) break;
+      for (const entry of message.scores) {
+        ctx.scoreboard.set(entry.slot, entry.score);
+        ctx.deathCounts.set(entry.slot, entry.deaths);
+      }
+      break;
     case 'rosterSync': {
       // The host's answer to a late joiner's sync request: who is in the match now. Joins and
       // leaves that went out while this player was still loading were missed; this catches up.
@@ -557,6 +574,21 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
   }
 }
 
+/** Checks that need this client's match state, run before the host relays anything: a King of the
+ * Hill score only ever rises (a lower one would rewrite another client's view of the race), and
+ * grenade messages mean nothing where the mode has no grenades. */
+function acceptsInMatch(ctx: MatchMessageContext, message: NetworkMessage): boolean {
+  switch (message.type) {
+    case 'kothScoreTick':
+      return message.score >= (ctx.scoreboard.get(message.senderSlot) ?? 0);
+    case 'grenadeThrown':
+    case 'grenadeDetonated':
+      return ctx.grenades?.enabled === true;
+    default:
+      return true;
+  }
+}
+
 /** Host: the answer to either sync request (gooseSyncRequest, hordeSyncRequest), sent to that one
  * guest only (see matchSync.ts for what it holds and in which order). */
 function sendFullSync(ctx: MatchMessageContext, slot: PlayerSlot): void {
@@ -576,6 +608,8 @@ function sendFullSync(ctx: MatchMessageContext, slot: PlayerSlot): void {
     ammoDrops: ctx.ammoDropManager?.listForSync() ?? [],
     bonusGeese: ctx.bonusGooseManager?.listForSync() ?? [],
     thrownGeese: ctx.thrownGeese.values(),
+    scoreboard: ctx.scoreboard,
+    deathCounts: ctx.deathCounts,
     verdict: ctx.endedMatchVerdict(),
   });
   for (const message of messages) multiplayer.session.connection.sendTo(slot, message);

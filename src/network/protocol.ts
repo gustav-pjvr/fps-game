@@ -4,7 +4,7 @@
  * the host; the host relays gameplay messages between guests (see PeerConnection.ts/Game.ts's
  * relay logic) transparently, unchanged, tagged with the ORIGINAL sender's own slot. */
 
-import type { GooseExplosionDifficulty, MatchMap, MatchWeather } from '../core/config.ts';
+import { KOTH_POINTS_TO_WIN, type GooseExplosionDifficulty, type MatchMap, type MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 import { isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
@@ -789,8 +789,17 @@ export interface GoldenGooseStateMessage {
   z: number;
 }
 
+/** Host -> the one guest that just asked for a sync (see RosterSyncMessage): every connected slot's
+ * score and death count now. A late joiner's welcome carried the scoreboard from before it started
+ * loading; kills made while it loaded went past unheard. Applied as is: the host's count is the truth. */
+export interface ScoreboardSyncMessage {
+  type: 'scoreboardSync';
+  scores: { slot: PlayerSlot; score: number; deaths: number }[];
+}
+
 export type NetworkMessage =
   | MatchEndedMessage
+  | ScoreboardSyncMessage
   | HelloMessage
   | WelcomeMessage
   | RosterUpdateMessage
@@ -916,6 +925,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'rosterSync',
   'linkQuality',
   'goldenGooseState',
+  'scoreboardSync',
 ]);
 
 function isPlayerSlot(value: unknown): value is PlayerSlot {
@@ -954,6 +964,86 @@ function hasValidSquadShape(value: Record<string, unknown>): boolean {
         (value.eliminated === undefined || (Array.isArray(value.eliminated) && value.eliminated.every(isPlayerSlot))) &&
         (value.result === undefined || value.result === 'cleared' || value.result === 'wiped')
       );
+    case 'scoreboardSync':
+      return Array.isArray(value.scores) && value.scores.length <= 4 && value.scores.every(isScoreEntry);
+    default:
+      return true;
+  }
+}
+
+function isScoreEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as { slot?: unknown; score?: unknown; deaths?: unknown };
+  return isPlayerSlot(entry.slot) && isCount(entry.score) && isCount(entry.deaths);
+}
+
+const isCount = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+
+/** Largest coordinate a position may carry. The Valley's edge is a few hundred metres out, so this
+ * only turns away junk, and the Infinity or 1e300 that would poison every sum it enters. */
+export const NETWORK_MAX_COORD = 10_000;
+/** Largest velocity component a thrown goose or grenade may carry, in metres a second. A throw is
+ * about 17 and a long fall a few tens; 1e200 squared is Infinity, and the whole flight turns NaN. */
+export const NETWORK_MAX_SPEED = 200;
+/** Most damage one damageEvent may carry: a headshot with a one-shot mode's weapon is 300. */
+export const DAMAGE_EVENT_MAX_AMOUNT = 1000;
+/** Highest score a kothScoreTick may report: the win, plus the few ticks a carrier may send before
+ * the host's matchEnded reaches it. */
+export const KOTH_SCORE_TICK_MAX = KOTH_POINTS_TO_WIN + 10;
+/** hello's limits. The name field takes 16 characters and the rejoin token is a UUID (36). */
+export const HELLO_USERNAME_MAX_LENGTH = 32;
+export const HELLO_TOKEN_MAX_LENGTH = 64;
+export const HELLO_MAX_FEATURES = 16;
+export const HELLO_FEATURE_MAX_LENGTH = 32;
+
+const isCoord = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= NETWORK_MAX_COORD;
+const isFiniteNumber = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value);
+const isOptionalFinite = (value: unknown): boolean => value === undefined || isFiniteNumber(value);
+const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === 'string';
+const areCoords = (...values: unknown[]): boolean => values.every(isCoord);
+const isSpeed = (value: unknown): boolean => isFiniteNumber(value) && Math.abs(value as number) <= NETWORK_MAX_SPEED;
+
+function isShortString(value: unknown, maxLength: number): boolean {
+  return typeof value === 'string' && value.length <= maxLength;
+}
+
+/** Numbers a peer reports about itself that every receiver feeds into positions, health or the
+ * scoreboard: finite and in range, or the message is dropped whole. A NaN damage amount used to make
+ * the target immune to every later hit (it poisoned the pending damage sum), and a huge
+ * kothScoreTick won King of the Hill outright. */
+function hasValidGameplayFields(value: Record<string, unknown>): boolean {
+  switch (value.type) {
+    case 'hello':
+      return isShortString(value.username, HELLO_USERNAME_MAX_LENGTH)
+        && (value.rejoinToken === null || isShortString(value.rejoinToken, HELLO_TOKEN_MAX_LENGTH))
+        && (value.features === undefined || (Array.isArray(value.features) && value.features.length <= HELLO_MAX_FEATURES
+          && value.features.every((feature) => isShortString(feature, HELLO_FEATURE_MAX_LENGTH))));
+    case 'playerSnapshot':
+      return areCoords(value.x, value.y, value.z) && isFiniteNumber(value.yaw) && isFiniteNumber(value.pitch)
+        && isFiniteNumber(value.health) && (value.health as number) >= 0 && (value.health as number) <= DAMAGE_EVENT_MAX_AMOUNT
+        && isOptionalFinite(value.t);
+    case 'fireEvent':
+      return areCoords(value.originX, value.originY, value.originZ, value.endX, value.endY, value.endZ) && isOptionalFinite(value.t);
+    case 'footstepEvent':
+    case 'respawnEvent':
+      return areCoords(value.x, value.y, value.z) && isOptionalFinite(value.t);
+    case 'goldenGooseDropped':
+    case 'gooseThrowExploded':
+      return areCoords(value.x, value.y, value.z);
+    case 'gooseThrown':
+      return areCoords(value.originX, value.originY, value.originZ) && [value.velX, value.velY, value.velZ].every(isSpeed);
+    case 'damageEvent':
+      return isPlayerSlot(value.targetSlot) && isFiniteNumber(value.amount)
+        && (value.amount as number) >= 0 && (value.amount as number) <= DAMAGE_EVENT_MAX_AMOUNT && isOptionalString(value.weaponId);
+    case 'playerDied':
+      return isPlayerSlot(value.victimSlot) && (value.killerSlot === null || isPlayerSlot(value.killerSlot))
+        && isOptionalFinite(value.t) && isOptionalString(value.killerWeaponId);
+    case 'kothScoreTick':
+      return Number.isInteger(value.score) && (value.score as number) >= 0 && (value.score as number) <= KOTH_SCORE_TICK_MAX;
+    case 'playerReady':
+    case 'hordePlayerEliminated':
+    case 'modeExplanationReady':
+      return isPlayerSlot(value.slot);
     default:
       return true;
   }
@@ -965,6 +1055,8 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (typeof value !== 'object' || value === null) return false;
   const type = (value as { type?: unknown }).type;
   if (typeof type !== 'string' || !MESSAGE_TYPES.has(type as NetworkMessage['type'])) return false;
+  // A message that names its sender names a real slot (senderAuthority.ts compares it to the link).
+  if ('senderSlot' in value && !isPlayerSlot((value as { senderSlot?: unknown }).senderSlot)) return false;
   // The Facility's doors and breakers (section 12) are checked whole here, so a malformed one never
   // reaches the host's authority or a guest's world.
   if (type === 'worldInteract') {
@@ -980,7 +1072,7 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
   if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);
   if (type.startsWith('pickup')) return hasValidPickupFields(value as Record<string, unknown>);
-  return hasValidSquadShape(value as Record<string, unknown>);
+  return hasValidSquadShape(value as Record<string, unknown>) && hasValidGameplayFields(value as Record<string, unknown>);
 }
 
 /** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */
@@ -1008,10 +1100,18 @@ function hasValidPickupFields(message: Record<string, unknown>): boolean {
   }
 }
 
-function isFiniteVec3(value: unknown): boolean {
+/** A position: finite and within NETWORK_MAX_COORD on each axis. */
+function isPositionVec3(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  return Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+  return areCoords(v.x, v.y, v.z);
+}
+
+/** A velocity: finite and no faster than NETWORK_MAX_SPEED on each axis. */
+function isVelocityVec3(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return [v.x, v.y, v.z].every(isSpeed);
 }
 
 function isValidGrenadeId(value: unknown): boolean {
@@ -1019,13 +1119,14 @@ function isValidGrenadeId(value: unknown): boolean {
 }
 
 /** Grenade messages drive physics and damage on every client, so their fields are checked here
- * rather than trusted: a known kind, finite numbers, a short id and a fuse of 0 to 10 seconds. */
+ * rather than trusted: a known kind, a position in range and a sane speed, a short id and a fuse of
+ * 0 to 10 seconds. */
 function isValidGrenadeThrown(m: Record<string, unknown>): boolean {
-  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isFiniteVec3(m.origin) && isFiniteVec3(m.velocity)
+  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isPositionVec3(m.origin) && isVelocityVec3(m.velocity)
     && Number.isFinite(m.fuseLeft) && (m.fuseLeft as number) >= 0 && (m.fuseLeft as number) <= GRENADE_MESSAGE_MAX_FUSE
     && Number.isFinite(m.t);
 }
 
 function isValidGrenadeDetonated(m: Record<string, unknown>): boolean {
-  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isFiniteVec3(m.position);
+  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isPositionVec3(m.position);
 }

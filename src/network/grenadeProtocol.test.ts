@@ -44,6 +44,9 @@ describe('grenade message validation', () => {
     ['a missing velocity', { velocity: undefined }],
     ['a non-numeric velocity', { velocity: { x: '1', y: 0, z: 0 } }],
     ['a missing clock', { t: undefined }],
+    ['a velocity near 1e200 (its flight would turn NaN)', { velocity: { x: 1e200, y: 0, z: 0 } }],
+    ['a speed past the cap', { velocity: { x: 0, y: 0, z: 201 } }],
+    ['an origin far outside any map', { origin: { x: 1e7, y: 0, z: 0 } }],
   ])('rejects a grenadeThrown with %s', (_label, patch) => {
     expect(isNetworkMessage(decode({ ...thrown, ...patch }))).toBe(false);
   });
@@ -57,6 +60,7 @@ describe('grenade message validation', () => {
     ['a missing position', { position: undefined }],
     ['a NaN position', { position: { x: NaN, y: 0, z: 0 } }],
     ['a long id', { id: 'y'.repeat(100) }],
+    ['a position far outside any map', { position: { x: 0, y: -1e9, z: 0 } }],
   ])('rejects a grenadeDetonated with %s', (_label, patch) => {
     expect(isNetworkMessage({ ...detonated, ...patch })).toBe(false);
   });
@@ -64,25 +68,25 @@ describe('grenade message validation', () => {
 
 describe('grenade message routing', () => {
   function context(role: 'host' | 'guest') {
-    const grenades = { receiveThrown: vi.fn(), receiveDetonated: vi.fn(), opponentInMatch: vi.fn() };
-    const sendExcept = vi.fn();
+    const grenades = { enabled: true, receiveThrown: vi.fn(), receiveDetonated: vi.fn(), opponentInMatch: vi.fn() };
+    const relay = vi.fn();
     const ctx = {
       multiplayer: {
-        session: { role, ownSlot: role === 'host' ? 0 : 2, connection: { sendExcept } },
+        session: { role, ownSlot: role === 'host' ? 0 : 2, connection: { relay } },
         opponents: new Map(),
         map: 'valley',
       },
       grenades,
     } as unknown as MatchMessageContext;
-    return { ctx, grenades, sendExcept };
+    return { ctx, grenades, relay };
   }
 
   it('is relayed by the host', () => {
     expect(RELAYABLE_MESSAGE_TYPES.has('grenadeThrown')).toBe(true);
     expect(RELAYABLE_MESSAGE_TYPES.has('grenadeDetonated')).toBe(true);
-    const { ctx, sendExcept } = context('host');
+    const { ctx, relay } = context('host');
     routeMatchMessage(ctx, thrown, 1);
-    expect(sendExcept).toHaveBeenCalledWith(thrown, 1);
+    expect(relay).toHaveBeenCalledWith(thrown, 1);
   });
 
   it('hands thrown and detonated grenades to the grenade system', () => {
@@ -97,5 +101,15 @@ describe('grenade message routing', () => {
     const { ctx } = context('guest');
     const off = { ...ctx, grenades: null } as MatchMessageContext;
     expect(() => routeMatchMessage(off, thrown, 0)).not.toThrow();
+  });
+
+  it('neither flies nor relays grenades in a mode whose grenade system is disabled', () => {
+    const { ctx, grenades, relay } = context('host');
+    grenades.enabled = false;
+    routeMatchMessage(ctx, thrown, 1);
+    routeMatchMessage(ctx, detonated, 1);
+    expect(grenades.receiveThrown).not.toHaveBeenCalled();
+    expect(grenades.receiveDetonated).not.toHaveBeenCalled();
+    expect(relay).not.toHaveBeenCalled();
   });
 });

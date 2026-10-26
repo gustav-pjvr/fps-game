@@ -10,6 +10,8 @@ const empty: MatchSyncSource = {
   ammoDrops: [],
   bonusGeese: [],
   thrownGeese: [],
+  scoreboard: new Map(),
+  deathCounts: new Map(),
   verdict: null,
 };
 
@@ -31,11 +33,11 @@ describe('buildMatchSync', () => {
       ],
       verdict: { winnerSlot: 1, scoreboard: [{ slot: 1, score: 10 }] },
     });
-    expect(messages.map((m) => m.type)).toEqual(['rosterSync', 'goldenGooseState', 'gooseSpawned', 'bonusGooseSpawned', 'gooseThrown', 'matchEnded']);
+    expect(messages.map((m) => m.type)).toEqual(['rosterSync', 'scoreboardSync', 'goldenGooseState', 'gooseSpawned', 'bonusGooseSpawned', 'gooseThrown', 'matchEnded']);
     for (const message of messages) expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
-    expect(messages[1]).toEqual({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 });
-    expect(messages[2]).toEqual({ type: 'gooseSpawned', id: 'g1', x: 1, y: 0, z: 2, killerSlot: null });
-    expect(messages[4]).toEqual({
+    expect(messages[2]).toEqual({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 });
+    expect(messages[3]).toEqual({ type: 'gooseSpawned', id: 'g1', x: 1, y: 0, z: 2, killerSlot: null });
+    expect(messages[5]).toEqual({
       type: 'gooseThrown',
       senderSlot: 1,
       id: 't1',
@@ -47,6 +49,33 @@ describe('buildMatchSync', () => {
       velZ: 9,
       source: 'gooseLauncher',
     });
+  });
+
+  it("carries every connected slot's score and deaths, 0 for a slot with none, and no one else's", () => {
+    const messages = buildMatchSync({
+      ...empty,
+      roster: [{ slot: 0, username: 'Host' }, { slot: 1, username: 'Bo' }, { slot: 3, username: 'Dee' }],
+      // Slot 2 left (its score stays for the podium); slot 3 is a newcomer with nothing yet.
+      scoreboard: new Map([[0, 2], [1, 5], [2, 7]]),
+      deathCounts: new Map([[0, 4], [2, 1]]),
+    });
+    expect(messages[1]).toEqual({
+      type: 'scoreboardSync',
+      scores: [
+        { slot: 0, score: 2, deaths: 4 },
+        { slot: 1, score: 5, deaths: 0 },
+        { slot: 3, score: 0, deaths: 0 },
+      ],
+    });
+  });
+
+  it('drops a scoreboardSync with a malformed entry', () => {
+    const entry = { slot: 1, score: 2, deaths: 0 };
+    expect(isNetworkMessage({ type: 'scoreboardSync', scores: [entry] })).toBe(true);
+    for (const bad of [{ ...entry, slot: 7 }, { ...entry, score: -1 }, { ...entry, score: Number.NaN }, { ...entry, deaths: 1.5 }]) {
+      expect(isNetworkMessage({ type: 'scoreboardSync', scores: [bad] })).toBe(false);
+    }
+    expect(isNetworkMessage({ type: 'scoreboardSync', scores: [entry, entry, entry, entry, entry] })).toBe(false);
   });
 
   it('carries the Horde wave, eliminated set, result, flock and ammo crates', () => {
