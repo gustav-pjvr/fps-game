@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../utils/rng.ts';
 import { OPEN, cellCentre, cellOf, generateFacilityLayout, isSpawnBlocked, isWalkable, playerStart, type FacilityLayout } from './facilityLayout.ts';
+import { facilityDoors } from './facilityDoors.ts';
 import {
   FACILITY_FLIGHT_CEILING_GAP, FACILITY_FLIGHT_CRUISE, FACILITY_HORDE_MIN_SPAWN_DISTANCE, FACILITY_OBJECTIVE_MIN_DISTANCE,
-  FACILITY_PICKUP_CLEARANCE, facilityBlocksThrow, facilityFloorPoints, facilityFlightHeight, facilityGoosePlacement, facilityHordeSpawnPoint,
+  FACILITY_PICKUP_CLEARANCE, crossesClosedDoor, facilityBlocksThrow, facilityFloorPoints, facilityFlightHeight, facilityGoosePlacement, facilityHordeSpawnPoint,
   facilityMissionObjectives, pickPointNear,
 } from './facilityModes.ts';
 
@@ -92,6 +93,28 @@ describe('facilityGoosePlacement', () => {
     // from the atrium centre to well outside the grid is never clear.
     expect(placement.canWander(0, 0, -60, 0)).toBe(false);
     expect(placement.canWander(0, 0, 1, 1)).toBe(true);
+  });
+});
+
+describe('closed doors and the goose modes', () => {
+  const layout = layouts[0]!;
+  const door = facilityDoors(layout)[0]!;
+  // From its first corridor-side cell's centre to the room cell across the plane.
+  const centreOf = (id: number) => cellCentre(id % layout.size, Math.floor(id / layout.size));
+  const a = centreOf(door.cells[0]!), b = centreOf(door.roomCells[0]!);
+
+  it('a wandering goose never picks a line through a closed door, and does through an open one', () => {
+    let closed = [door];
+    const placement = facilityGoosePlacement(layout, mulberry32(4), { closedDoors: () => closed });
+    expect(placement.canWander(a.x, a.z, b.x, b.z)).toBe(false);
+    closed = [];
+    expect(placement.canWander(a.x, a.z, b.x, b.z)).toBe(true);
+  });
+
+  it('the step of a thrown goose through a closed door plane is stopped, one beside it or short of it is not', () => {
+    expect(crossesClosedDoor([door], a.x, a.z, b.x, b.z)).toBe(true);
+    expect(crossesClosedDoor([door], a.x, a.z, (a.x * 3 + b.x) / 4, (a.z * 3 + b.z) / 4)).toBe(false);
+    expect(crossesClosedDoor([], a.x, a.z, b.x, b.z)).toBe(false);
   });
 });
 

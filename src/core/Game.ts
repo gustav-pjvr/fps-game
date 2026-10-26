@@ -34,7 +34,7 @@ import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
 import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
-import { facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
+import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -1287,7 +1287,7 @@ export class Game {
         multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
     }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT,
     // Indoors every goose lands on clear floor (docs/facility-map.md, "Modes on the Facility").
-    facility ? facilityGoosePlacement(facility.layout) : null);
+    facility ? facilityGoosePlacement(facility.layout, Math.random, facility.objects) : null);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
@@ -3068,6 +3068,7 @@ export class Game {
     const ownSlot = this.multiplayer?.session.ownSlot ?? null;
 
     for (const thrown of Array.from(this.thrownGeese.values())) {
+      const fromX = thrown.position.x, fromZ = thrown.position.z;
       thrown.update(dt);
 
       if (thrown.throwerSlot !== ownSlot) {
@@ -3085,6 +3086,9 @@ export class Game {
       } else if (this.facility && facilityBlocksThrow(this.facility.layout, thrown.position.x, thrown.position.y, thrown.position.z, GOOSE_RADIUS)) {
         // Indoors a throw bursts on the first wall, crate or ceiling it meets.
         hitPosition = thrown.position.clone();
+      } else if (this.facility && crossesClosedDoor(this.facility.objects.closedDoors(), fromX, fromZ, thrown.position.x, thrown.position.z)) {
+        // ...and on a closed door, on the side it came from.
+        hitPosition = new THREE.Vector3(fromX, thrown.position.y, fromZ);
       } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
         hitPosition = thrown.position.clone();
       } else if (this.multiplayer) {

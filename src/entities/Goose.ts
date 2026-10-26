@@ -171,7 +171,14 @@ export class Goose implements Entity, Damageable {
     const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
 
     const step = Math.min(distance, GOOSE_WANDER_SPEED * dt);
-    this.applyPosition(current.x + steeredDir.x * step, current.z + steeredDir.z * step);
+    const nextX = current.x + steeredDir.x * step, nextZ = current.z + steeredDir.z * step;
+    // Indoors a door that closed across its line since it chose it stops it; it picks a new line.
+    if (this.canWander && !this.canWander(current.x, current.z, nextX, nextZ)) {
+      this.applyPosition(current.x, current.z);
+      this.repathTimer = 0;
+      return;
+    }
+    this.applyPosition(nextX, nextZ);
     this.mesh.rotation.y = Math.atan2(steeredDir.x, steeredDir.z);
   }
 
