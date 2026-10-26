@@ -108,6 +108,10 @@ describe('Valley house doors', () => {
     expect(houses.doors.doorwayOccupied(id, [{ x: door.x, z: door.z + 0.2 }], 0.4)).toBe(true);
     expect(houses.doors.doorwayOccupied(id, [{ x: door.x - door.side * 1.2, z: door.z }], 0.4)).toBe(false);
     expect(houses.doors.closedDoorAhead(door.x - door.side * 1, door.z, door.side, 0)).toBe(id);
+    // Not for a walk whose waypoint is short of the door, nor for feet on the upper floor over it.
+    expect(houses.doors.closedDoorAhead(door.x - door.side * 1, door.z, door.side, 0, 0.5, door.y)).toBe(-1);
+    expect(houses.doors.closedDoorAhead(door.x - door.side * 1, door.z, door.side, 0, 3, door.y)).toBe(id);
+    expect(houses.doors.closedDoorAhead(door.x - door.side * 1, door.z, door.side, 0, 3, door.y + 3.05)).toBe(-1);
     houses.doors.set('door', id, true);
     expect(houses.doors.closedDoorAhead(door.x - door.side * 1, door.z, door.side, 0)).toBe(-1);
   });

@@ -181,9 +181,9 @@ export class FacilityInteraction {
 
   /** The enemy door gate (entities/enemies/enemyNavigator.ts): holds an enemy at a closed door and,
    * after its wait, opens the door the way a player would. Enemies never close doors. */
-  readonly enemyGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number): boolean => {
+  readonly enemyGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number, reach?: number, feetY?: number): boolean => {
     if (!this.authority) return false;
-    const door = this.deps.objects.closedDoorAhead(x, z, dirX, dirZ);
+    const door = this.deps.objects.closedDoorAhead(x, z, dirX, dirZ, reach, feetY);
     const step = this.waits.step(enemyId, door, dt);
     if (step === 'open') this.apply('door', door, true);
     return step !== 'walk';

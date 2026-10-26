@@ -4,15 +4,13 @@ import { FACILITY_DOOR_SLIDE_SECONDS } from '../../core/config.ts';
 import { worldBox } from '../structureGeometry.ts';
 import { getStructureMaterials, STRUCTURE_TILE_METRES } from '../structureMaterials.ts';
 import {
-  bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, segmentCrossesDoor, type DoorPlane,
+  bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, walkMeetsDoor, type DoorPlane,
 } from '../doors/doorGeometry.ts';
 import type { InteractiveWorldObjects } from '../doors/interactiveObjects.ts';
 import { SlidingDoorView, type SlidingDoorLook } from '../doors/SlidingDoorView.ts';
 import type { WorldObjectChanges, WorldObjectKind, WorldObjectWire } from '../facility/facilityObjectState.ts';
 import { parseHouseObjectId } from './valleyHouseIds.ts';
 
-/** How far ahead (m) along its walk an enemy notices a closed door (as on the Facility). */
-const ENEMY_DOOR_LOOKAHEAD = 1.6;
 /** A received list longer than this is not a real match's (it is ignored whole). */
 const MAX_OPEN_DOORS = 4096;
 const LAMP_GREEN = 0x3dff6a;
@@ -134,10 +132,9 @@ export class ValleyDoors implements InteractiveWorldObjects {
     return plane ? new THREE.Vector3(plane.x, (plane.y ?? 0) + plane.height / 2, plane.z) : null;
   }
 
-  closedDoorAhead(x: number, z: number, dirX: number, dirZ: number): number {
-    const toX = x + dirX * ENEMY_DOOR_LOOKAHEAD, toZ = z + dirZ * ENEMY_DOOR_LOOKAHEAD;
+  closedDoorAhead(x: number, z: number, dirX: number, dirZ: number, reach?: number, feetY?: number): number {
     for (const [id, { plane }] of this.views) {
-      if (!this.open.has(id) && segmentCrossesDoor(plane, x, z, toX, toZ)) return id;
+      if (!this.open.has(id) && walkMeetsDoor(plane, x, z, dirX, dirZ, reach, feetY)) return id;
     }
     return -1;
   }

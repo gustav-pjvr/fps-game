@@ -7,7 +7,7 @@ import type { FacilityWorld } from './FacilityBuilder.ts';
 import { cellCentre, isWalkable, type FacilityLayout } from './facilityLayout.ts';
 import type { FacilityNav } from './facilityNav.ts';
 import { doorCrossings, facilityDoors, type FacilityDoor } from './facilityDoors.ts';
-import { bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, segmentCrossesDoor, type Box3 } from '../doors/doorGeometry.ts';
+import { bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, walkMeetsDoor, type Box3 } from '../doors/doorGeometry.ts';
 import type { InteractiveWorldObjects } from '../doors/interactiveObjects.ts';
 import { SlidingDoorView, type SlidingDoorLook } from '../doors/SlidingDoorView.ts';
 import { facilityPower, type FacilityBreaker, type FacilityPower } from './facilityPower.ts';
@@ -18,8 +18,6 @@ import {
 /** Breaker panel size (m) and its pick box, a little larger so it is easy to aim at. */
 const PANEL = { width: 0.5, height: 0.7, depth: 0.12 } as const;
 const PANEL_PICK_HALF = { along: 0.3, up: 0.4, out: 0.12 } as const;
-/** How far ahead (m) along its walk an enemy notices a closed door and stops for it. */
-const ENEMY_DOOR_LOOKAHEAD = 1.6;
 const LAMP_GREEN = 0x3dff6a;
 const LAMP_RED = 0xff3326;
 
@@ -243,12 +241,12 @@ export class FacilityObjects implements InteractiveWorldObjects {
     return best;
   }
 
-  /** The closed door an enemy at (x, z) walking along (dirX, dirZ) is about to reach, or -1. */
-  closedDoorAhead(x: number, z: number, dirX: number, dirZ: number): number {
-    const toX = x + dirX * ENEMY_DOOR_LOOKAHEAD, toZ = z + dirZ * ENEMY_DOOR_LOOKAHEAD;
+  /** The closed door an enemy at (x, z) walking along (dirX, dirZ), its waypoint `reach` m on and
+   * its feet at feetY, is about to reach, or -1 (doorGeometry.ts's walkMeetsDoor). */
+  closedDoorAhead(x: number, z: number, dirX: number, dirZ: number, reach?: number, feetY?: number): number {
     for (const door of this.doors) {
       if (this.state.isActive('door', door.id)) continue;
-      if (segmentCrossesDoor(door, x, z, toX, toZ)) return door.id;
+      if (walkMeetsDoor(door, x, z, dirX, dirZ, reach, feetY)) return door.id;
     }
     return -1;
   }

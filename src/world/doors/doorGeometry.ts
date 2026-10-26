@@ -62,6 +62,24 @@ export function segmentCrossesDoor(door: DoorPlane, ax: number, az: number, bx: 
   return Math.abs(va + (vb - va) * t) <= door.width / 2;
 }
 
+/** How far ahead (m) along its walk an enemy (or a horde goose) notices a closed door and stops. */
+export const ENEMY_DOOR_LOOKAHEAD = 1.6;
+/** Feet this far (m) below a door's floor still count as at it: the ground in front of a house. */
+const DOOR_FEET_BELOW = 1;
+
+/** Whether a walker at (x, z) heading along the unit direction (dirX, dirZ) is about to go through
+ * the door's opening. The lookahead stops at its waypoint, `reach` metres on (a walk that ends short
+ * of the door never needs it), and feet at `feetY`, when given, must be at the opening's height: a
+ * body on an upper floor or above the header (a window over the front door) is not at the door. */
+export function walkMeetsDoor(door: DoorPlane, x: number, z: number, dirX: number, dirZ: number, reach = Infinity, feetY?: number): boolean {
+  if (feetY !== undefined) {
+    const floor = door.y ?? 0;
+    if (feetY < floor - DOOR_FEET_BELOW || feetY >= floor + door.height) return false;
+  }
+  const ahead = Math.min(ENEMY_DOOR_LOOKAHEAD, Math.max(0, reach));
+  return ahead > 0 && segmentCrossesDoor(door, x, z, x + dirX * ahead, z + dirZ * ahead);
+}
+
 /** Whether a body of `radius` at (x, z) overlaps the closed door's leaves. */
 export function bodyInDoorway(door: DoorPlane, x: number, z: number, radius: number): boolean {
   const across = door.axis === 'x';

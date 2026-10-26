@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, segmentCrossesDoor, type DoorPlane } from './doorGeometry.ts';
+import { bodyInDoorway, distanceToDoor, doorPickBox, rayBoxDistance, segmentCrossesDoor, walkMeetsDoor, type DoorPlane } from './doorGeometry.ts';
 import { SlidingDoorView, type SlidingDoorLook } from './SlidingDoorView.ts';
 
 const FACILITY_DOOR: DoorPlane = { axis: 'x', side: 1, x: 2, z: -1, width: 2, height: 2.4 };
@@ -22,6 +22,21 @@ describe('shared door geometry', () => {
     expect(segmentCrossesDoor(RAISED_DOOR, 5, 2, 5.2, 4)).toBe(true);
     expect(segmentCrossesDoor(RAISED_DOOR, 6, 2, 6, 4)).toBe(false);
     expect(segmentCrossesDoor(RAISED_DOOR, 4, 2, 6, 2.5)).toBe(false);
+  });
+
+  it('meets a door only before the waypoint and at the height of its opening', () => {
+    // 1 m in front of the raised door (plane z = 3), walking at it.
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1)).toBe(true);
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1, 3, 10.5)).toBe(true);
+    // A waypoint 0.6 m on (a player standing with their back to the door) never needs it.
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1, 0.6, 10.5)).toBe(false);
+    // Feet on the ground just below the floor still count; an upper floor over the door does not.
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1, 3, 9.8)).toBe(true);
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1, 3, 10.5 + 3.05)).toBe(false);
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1, 3, 10.5 + 2.1)).toBe(false);
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 2, 0, 1, 3, 8)).toBe(false);
+    // Past the lookahead: not yet.
+    expect(walkMeetsDoor(RAISED_DOOR, 5, 0, 0, 1, 10, 10.5)).toBe(false);
   });
 
   it('measures bodies in the doorway and the distance to it', () => {
