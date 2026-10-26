@@ -63,6 +63,22 @@ describe('Hud per-tick writes', () => {
     expect(dom.writes()).toBe(0);
   });
 
+  it('a shown prompt does not rebuild its hint every tick, only when the action, text or bindings change', () => {
+    const { hud } = makeHud();
+    const spy = vi.spyOn(Settings, 'getKeyBindings');
+    const bindings = { KeyG: 'interact' } as const;
+    spy.mockReturnValue(bindings);
+    hud.setPrompt('interact', 'OPEN DOOR');
+    const key = (hud as unknown as { promptKey: { dataset: Record<string, string> } }).promptKey;
+    key.dataset.mouseHint = 'stale';
+    for (let i = 0; i < 20; i++) hud.setPrompt('interact', 'OPEN DOOR');
+    expect(key.dataset.mouseHint).toBe('stale');
+    spy.mockReturnValue({ KeyH: 'interact' });
+    hud.setPrompt('interact', 'OPEN DOOR');
+    expect(key.dataset.mouseHint).toBe('H');
+    spy.mockRestore();
+  });
+
   it('takes the prompt key from the action, so a rebound or unbound key shows truthfully', () => {
     const { hud } = makeHud();
     const spy = vi.spyOn(Settings, 'getKeyBindings');

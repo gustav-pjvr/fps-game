@@ -100,6 +100,22 @@ describe('stored controller settings', () => {
     expect(settings.getKeyBindings()).toEqual(DEFAULT_KEY_BINDINGS);
   });
 
+  it('hands out the same frozen bindings snapshot until a binding changes', async () => {
+    const { settings } = await load({});
+    const first = settings.getKeyBindings();
+    expect(settings.getKeyBindings()).toBe(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    settings.rebindKey('grenade', 'KeyZ');
+    const second = settings.getKeyBindings();
+    expect(second).not.toBe(first);
+    expect(second.KeyZ).toBe('grenade');
+    expect(first.KeyZ).toBeUndefined();
+    expect(settings.getKeyBindings()).toBe(second);
+    settings.resetKeyBindings();
+    expect(settings.getKeyBindings()).not.toBe(second);
+    expect(settings.getKeyBindings()).toEqual(DEFAULT_KEY_BINDINGS);
+  });
+
   it('persists all controller settings under the existing key and reloads them', async () => {
     const { settings, storage } = await load({});
     settings.setControllerSensitivity(2);

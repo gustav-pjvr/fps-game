@@ -92,6 +92,8 @@ function loadFromStorage(): StoredSettings {
 }
 
 let state = loadFromStorage();
+/** getKeyBindings()'s snapshot of state.keyBindings, rebuilt after they change. */
+let bindingsSnapshot: Readonly<Record<string, Action>> | null = null;
 
 function persist(): void {
   try {
@@ -141,10 +143,12 @@ export const Settings = {
     persist();
   },
 
-  /** Returns a copy - handing out the internal object would let a caller's mutation silently
-   * persist wrong bindings on the next persist(). All rebinding goes through rebindKey. */
-  getKeyBindings(): Record<string, Action> {
-    return { ...state.keyBindings };
+  /** A frozen snapshot, the same object until the bindings change (the HUD and the input manager
+   * read it every tick or key event, so it must not copy each time) - handing out the internal
+   * object would let a caller's mutation silently persist wrong bindings on the next persist(). All
+   * rebinding goes through rebindKey. */
+  getKeyBindings(): Readonly<Record<string, Action>> {
+    return bindingsSnapshot ??= Object.freeze({ ...state.keyBindings });
   },
   /** Clears any existing binding for this action and any existing binding on the new key, then binds them. */
   rebindKey(action: Action, newCode: string): void {
@@ -154,10 +158,12 @@ export const Settings = {
     }
     next[newCode] = action;
     state.keyBindings = next;
+    bindingsSnapshot = null;
     persist();
   },
   resetKeyBindings(): void {
     state.keyBindings = { ...DEFAULT_KEY_BINDINGS };
+    bindingsSnapshot = null;
     persist();
   },
 

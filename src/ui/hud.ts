@@ -32,6 +32,10 @@ export class Hud {
   // The last values written to the DOM: setPrompt and setVisibility run every fixed step, and a
   // write that changes nothing still costs style and text invalidation.
   private promptShown = '';
+  /** What the shown prompt was built from, so an unchanged prompt costs no allocation per tick. */
+  private promptAction: Action | null = null;
+  private promptLabel = '';
+  private promptBindings: Readonly<Record<string, Action>> | null = null;
   private visibilityShown: string | null = null;
 
   constructor(root: HTMLElement) {
@@ -187,10 +191,16 @@ export class Hud {
     if (text === null) {
       if (this.promptShown === '') return;
       this.promptShown = '';
+      this.promptBindings = null;
       this.prompt.style.display = 'none';
       return;
     }
-    const key = keyHint(Settings.getKeyBindings(), action);
+    const bindings = Settings.getKeyBindings();
+    if (this.promptShown !== '' && action === this.promptAction && text === this.promptLabel && bindings === this.promptBindings) return;
+    this.promptAction = action;
+    this.promptLabel = text;
+    this.promptBindings = bindings;
+    const key = keyHint(bindings, action);
     const pad = gamepadHint(action) ?? key;
     const shown = `${key}
 ${pad}
