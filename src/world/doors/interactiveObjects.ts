@@ -25,8 +25,9 @@ export interface InteractiveWorldObjects {
   distanceTo(kind: WorldObjectKind, id: number, x: number, z: number): number;
   /** Where the object sits (its sounds play there), or null. */
   position(kind: WorldObjectKind, id: number): THREE.Vector3 | null;
-  /** The closed door an enemy at (x, z) walking along (dirX, dirZ) is about to reach, or -1. */
-  closedDoorAhead(x: number, z: number, dirX: number, dirZ: number): number;
+  /** The closed door an enemy at (x, z) walking along (dirX, dirZ) is about to reach, or -1. The
+   * lookahead stops `reach` m on (its waypoint), and feet at feetY must be at the door's height. */
+  closedDoorAhead(x: number, z: number, dirX: number, dirZ: number, reach?: number, feetY?: number): number;
   /** The whole state as worldObjectState and the welcome carry it. */
   wire(): WorldObjectWire;
   /** A received state checked against this world, or null when it does not fit (another build, a

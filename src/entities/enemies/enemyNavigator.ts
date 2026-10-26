@@ -25,10 +25,11 @@ export function hasEnemyNavigator(): boolean {
   return navigator !== null;
 }
 
-/** Whether an enemy at (x, z) about to walk along the unit direction (dirX, dirZ) must stand still
- * this tick: a Facility match's closed door in the way (docs/facility-map.md, section 12). The gate
- * itself counts the wait and opens the door. */
-export type EnemyDoorGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number) => boolean;
+/** Whether an enemy (or a horde goose) at (x, z) about to walk along the unit direction (dirX, dirZ)
+ * must stand still this tick: a closed Facility or Valley house door in the way (docs/facility-map.md,
+ * section 12). `reach` is how far on its waypoint is (the door must lie before it) and feetY its feet
+ * height (the door must be at that height). The gate itself counts the wait and opens the door. */
+export type EnemyDoorGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number, reach?: number, feetY?: number) => boolean;
 
 let doorGate: EnemyDoorGate | null = null;
 
@@ -38,8 +39,8 @@ export function setEnemyDoorGate(fn: EnemyDoorGate | null): void {
 }
 
 /** True when a door gate holds this enemy where it stands this tick; always false without one. */
-export function heldAtDoor(enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number): boolean {
-  return doorGate ? doorGate(enemyId, x, z, dirX, dirZ, dt) : false;
+export function heldAtDoor(enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number, reach?: number, feetY?: number): boolean {
+  return doorGate ? doorGate(enemyId, x, z, dirX, dirZ, dt, reach, feetY) : false;
 }
 
 /** The floor under an enemy whose feet are at feetY: a Valley house's floor, stair or upper floor
@@ -56,4 +57,20 @@ export function setEnemyFloor(fn: EnemyFloor | null): void {
 /** The floor height at (x, z) for feet at feetY, or null for the terrain (always null unset). */
 export function enemyFloorAt(x: number, z: number, feetY: number): number | null {
   return floor ? floor(x, z, feetY) : null;
+}
+
+/** Where a walker going into the building that holds (x, z) starts from: the spot in front of its
+ * door outside (a Valley house's street node), or null where (x, z) is in no building. */
+export type EnemyEntrance = (x: number, z: number) => { x: number; z: number } | null;
+
+let entrance: EnemyEntrance | null = null;
+
+/** Module-level like the floor: set by a Valley match, cleared on its dispose. */
+export function setEnemyEntrance(fn: EnemyEntrance | null): void {
+  entrance = fn;
+}
+
+/** The outside spot in front of the door of the building at (x, z), or null (always null unset). */
+export function buildingEntranceAt(x: number, z: number): { x: number; z: number } | null {
+  return entrance ? entrance(x, z) : null;
 }

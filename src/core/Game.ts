@@ -33,8 +33,8 @@ import {
 import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
-import { Enemy, setEnemyDoorGate, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
-import { facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
+import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -147,6 +147,7 @@ import {
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
+  PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_STRUCTURE_CLEARANCE,
@@ -185,7 +186,7 @@ import { KingOfTheHillController } from './modeControllers/KingOfTheHillControll
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
 import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
-import { visibility } from '../entities/enemies/playerVisibility.ts';
+import { flashLightsPlayer, visibility } from '../entities/enemies/playerVisibility.ts';
 import { createMatchPickups } from '../pickups/createMatchPickups.ts';
 import { grenadeSupplyFrom } from '../pickups/pickupEffects.ts';
 import type { PickupSystem } from '../pickups/PickupSystem.ts';
@@ -962,6 +963,7 @@ export class Game {
       setEnemyNavigator(null);
       setEnemyDoorGate(null);
       setEnemyFloor(null);
+      setEnemyEntrance(null);
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
@@ -990,6 +992,7 @@ export class Game {
       // Enemies walk into and out of the houses on their walk grids (docs/enterable-buildings.md).
       setEnemyNavigator(valleyBuildings.houses.nav.navigate);
       setEnemyFloor(valleyBuildings.houses.nav.floorAt);
+      setEnemyEntrance(valleyBuildings.houses.nav.entranceAt);
       watchTowers = valleyTowers;
       isSpawnBlocked = makeSpawnBlockedCheck(valleyBuildings);
     }
@@ -1285,7 +1288,7 @@ export class Game {
         multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
     }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT,
     // Indoors every goose lands on clear floor (docs/facility-map.md, "Modes on the Facility").
-    facility ? facilityGoosePlacement(facility.layout) : null);
+    facility ? facilityGoosePlacement(facility.layout, Math.random, facility.objects) : null);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
@@ -1601,15 +1604,20 @@ export class Game {
       game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
     }
     // Doors and breakers (docs/facility-map.md, section 12): a late joiner starts with the host's.
+    // A door never closes on a living enemy or goose either.
+    const others = () => ({
+      enemies: entityManager.liveEnemyMotion(),
+      geese: [...gooseManager.listForSync(), ...(hordeGooseManager?.listForSync() ?? [])],
+    });
     if (facility) {
-      const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
       interaction.applyInitial(multiplayer?.worldObjects);
       setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;
     } else if (buildings) {
       // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
       // messages; enemies open them through the same gate as the Facility's.
-      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer });
+      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
       interaction.applyInitial(multiplayer?.worldObjects);
       setEnemyDoorGate(interaction.enemyGate);
       game.facilityInteraction = interaction;
@@ -1923,6 +1931,7 @@ export class Game {
     setEnemyNavigator(null);
     setEnemyDoorGate(null);
     setEnemyFloor(null);
+    setEnemyEntrance(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();
@@ -2584,6 +2593,7 @@ export class Game {
     }
 
     const probe = this.facility?.world.probeAt(this.player.position.x, this.player.position.z);
+    const at = this.player.position;
     this.playerVisibility.value = visibility({
       map: this.facility ? 'facility' : 'valley',
       weather: this.matchWeather,
@@ -2591,6 +2601,8 @@ export class Game {
       secondsSinceShot: this.secondsSinceShot,
       torchOn: this.torch?.isOn ?? false,
       enemyInTorchBeam: false,
+      houseRoomLit: this.buildings?.houses.roomLampLitAt(at.x, at.y - PLAYER_HEIGHT / 2, at.z) ?? null,
+      flashLit: this.grenades ? flashLightsPlayer(this.grenades.recentDetonations, this.grenades.now, at) : false,
     });
     this.playerVisibility.torchOn = this.torch?.isOn ?? false;
     this.playerVisibility.eye.copy(this.renderer.camera.position);
@@ -3068,6 +3080,7 @@ export class Game {
     const ownSlot = this.multiplayer?.session.ownSlot ?? null;
 
     for (const thrown of Array.from(this.thrownGeese.values())) {
+      const fromX = thrown.position.x, fromZ = thrown.position.z;
       thrown.update(dt);
 
       if (thrown.throwerSlot !== ownSlot) {
@@ -3085,6 +3098,9 @@ export class Game {
       } else if (this.facility && facilityBlocksThrow(this.facility.layout, thrown.position.x, thrown.position.y, thrown.position.z, GOOSE_RADIUS)) {
         // Indoors a throw bursts on the first wall, crate or ceiling it meets.
         hitPosition = thrown.position.clone();
+      } else if (this.facility && crossesClosedDoor(this.facility.objects.closedDoors(), fromX, fromZ, thrown.position.x, thrown.position.z)) {
+        // ...and on a closed door, on the side it came from.
+        hitPosition = new THREE.Vector3(fromX, thrown.position.y, fromZ);
       } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
         hitPosition = thrown.position.clone();
       } else if (this.multiplayer) {

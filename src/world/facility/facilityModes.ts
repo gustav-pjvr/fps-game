@@ -1,6 +1,7 @@
 import type { RNG } from '../../utils/rng.ts';
 import { PROP, SOLID, cellCentre, cellOf, isSpawnBlocked, isWalkable, type FacilityLayout, type FacilityRoom } from './facilityLayout.ts';
 import { segmentClear } from './facilityNav.ts';
+import { segmentCrossesDoor, type DoorPlane } from '../doors/doorGeometry.ts';
 
 // Where the goose modes and the Uplink mission put things on the Facility (docs/facility-map.md,
 // "Modes on the Facility"). Pure, unit-tested; the entity managers call it through the small
@@ -149,6 +150,12 @@ export function facilityMissionObjectives(layout: FacilityLayout, start: Point):
   return [...chosen].map(c => c.site);
 }
 
+/** Whether the move from (ax, az) to (bx, bz) goes through one of these closed doors' openings: a
+ * wandering goose's line, or a thrown goose's step this tick. */
+export function crossesClosedDoor(doors: readonly DoorPlane[], ax: number, az: number, bx: number, bz: number): boolean {
+  return doors.some(door => segmentCrossesDoor(door, ax, az, bx, bz));
+}
+
 const crateHeights = new WeakMap<FacilityLayout, Map<number, number>>();
 
 /** Whether a thrown goose of `radius` at (x, y, z) has hit the facility: wall mass, a crate's top or
@@ -170,13 +177,15 @@ export function facilityBlocksThrow(layout: FacilityLayout, x: number, y: number
 
 // ---- Adapters for the entity managers ----------------------------------------------------------
 
-/** GooseManager's placement on the Facility (Goose Toss pickups, the goose a death spawns). */
-export function facilityGoosePlacement(layout: FacilityLayout, rng: RNG = Math.random) {
+/** GooseManager's placement on the Facility (Goose Toss pickups, the goose a death spawns). A goose
+ * wanders only in a clear straight line that no closed door (from `doors`, FacilityObjects) crosses. */
+export function facilityGoosePlacement(layout: FacilityLayout, rng: RNG = Math.random, doors: { closedDoors(): readonly DoorPlane[] } | null = null) {
   const points = facilityFloorPoints(layout, FACILITY_PICKUP_CLEARANCE);
   return {
     randomPoint: (): Point | null => pickPoint(points, rng),
     near: (x: number, z: number, min: number, max: number): Point | null => pickPointNear(points, x, z, min, max, rng),
-    canWander: (ax: number, az: number, bx: number, bz: number): boolean => segmentClear(layout, ax, az, bx, bz, WANDER_CLEARANCE),
+    canWander: (ax: number, az: number, bx: number, bz: number): boolean =>
+      segmentClear(layout, ax, az, bx, bz, WANDER_CLEARANCE) && !(doors && crossesClosedDoor(doors.closedDoors(), ax, az, bx, bz)),
   };
 }
 

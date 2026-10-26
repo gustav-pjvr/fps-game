@@ -12,7 +12,7 @@ import { EnemyDoorWaits } from '../world/facility/facilityDoors.ts';
 import {
   interactPrompt, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
 } from '../world/facility/facilityObjectState.ts';
-import { FACILITY_INTERACT_REACH, PLAYER_RADIUS } from './config.ts';
+import { ENEMY_RADIUS, FACILITY_INTERACT_REACH, GOOSE_RADIUS, PLAYER_RADIUS } from './config.ts';
 import { computeStereoPan, facilityObjectVolume } from './positionalAudio.ts';
 
 /** The host checks a guest's reach against where it sees that guest, which trails the guest's own
@@ -31,6 +31,9 @@ interface InteractionDeps {
   readonly sound: SoundEngine;
   /** Null in single-player. */
   readonly multiplayer: ActiveMultiplayer | null;
+  /** Where the living enemies and geese stand (this client's, the deciding one's): a door does not
+   * close on them either. */
+  readonly others?: () => { enemies: Iterable<{ x: number; z: number }>; geese: Iterable<{ x: number; z: number }> };
 }
 
 /**
@@ -104,10 +107,10 @@ export class FacilityInteraction {
   }
 
   /** Sets one object if this client decides, with its sound, and tells the guests. A door does not
-   * close on a player standing in it. True when it changed. */
+   * close on a player, an enemy or a goose standing in it. True when it changed. */
   private apply(kind: WorldObjectKind, id: number, active: boolean): boolean {
     const { objects } = this.deps;
-    if (kind === 'door' && !active && objects.doorwayOccupied(id, this.playerBodies(), PLAYER_RADIUS)) return false;
+    if (kind === 'door' && !active && this.doorwayOccupied(id)) return false;
     if (!objects.set(kind, id, active)) return false;
     this.playSounds(kind === 'door' ? { doors: [id], breakers: [] } : { doors: [], breakers: [id] });
     this.broadcast();
@@ -117,6 +120,13 @@ export class FacilityInteraction {
   private broadcast(): void {
     const multiplayer = this.deps.multiplayer;
     if (multiplayer?.session.role === 'host') multiplayer.session.connection.send({ type: 'worldObjectState', ...this.deps.objects.wire() });
+  }
+
+  private doorwayOccupied(id: number): boolean {
+    const { objects, others } = this.deps;
+    if (objects.doorwayOccupied(id, this.playerBodies(), PLAYER_RADIUS)) return true;
+    const rest = others?.();
+    return !!rest && (objects.doorwayOccupied(id, rest.enemies, ENEMY_RADIUS) || objects.doorwayOccupied(id, rest.geese, GOOSE_RADIUS));
   }
 
   /** Where every living player stands, as this client sees them. */
@@ -181,9 +191,9 @@ export class FacilityInteraction {
 
   /** The enemy door gate (entities/enemies/enemyNavigator.ts): holds an enemy at a closed door and,
    * after its wait, opens the door the way a player would. Enemies never close doors. */
-  readonly enemyGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number): boolean => {
+  readonly enemyGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number, reach?: number, feetY?: number): boolean => {
     if (!this.authority) return false;
-    const door = this.deps.objects.closedDoorAhead(x, z, dirX, dirZ);
+    const door = this.deps.objects.closedDoorAhead(x, z, dirX, dirZ, reach, feetY);
     const step = this.waits.step(enemyId, door, dt);
     if (step === 'open') this.apply('door', door, true);
     return step !== 'walk';

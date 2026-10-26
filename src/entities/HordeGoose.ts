@@ -5,9 +5,10 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Damageable } from '../combat/damage.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { steerWithAvoidance } from './enemies/enemySteering.ts';
-import { resolveMoveTarget } from './enemies/enemyNavigator.ts';
+import { buildingEntranceAt, enemyFloorAt, heldAtDoor, resolveMoveTarget } from './enemies/enemyNavigator.ts';
 import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import {
+  ENEMY_HEIGHT,
   GOOSE_HEIGHT,
   GOOSE_RADIUS,
   HORDE_FLYER_DESCENT_SECONDS,
@@ -16,6 +17,7 @@ import {
   HORDE_JUMPER_BURST_MULTIPLIER,
   HORDE_JUMPER_BURST_SECONDS,
   HORDE_JUMPER_TRIGGER_RADIUS,
+  PLAYER_HEIGHT,
 } from '../core/config.ts';
 
 export type HordeGooseFlavor = 'walker' | 'jumper' | 'flyer';
@@ -26,6 +28,15 @@ const WADDLE_ROCK_ANGLE = 0.22;
 const INDOOR_DIVE_DISTANCE = 5;
 /** How fast an indoor flyer climbs or sinks toward the height it wants (m/s). */
 const INDOOR_CLIMB_SPEED = 3;
+
+/** Whether a horde goose centred at `goose` has reached a player whose body centre is `target`:
+ * within HORDE_GOOSE_CONTACT_RADIUS of the player's body (its upright axis from feet to head), so a
+ * goose on a house's ground floor never reaches a player upstairs or on a roof above it. */
+export function hordeGooseReaches(goose: THREE.Vector3Like, target: THREE.Vector3Like): boolean {
+  const across = Math.hypot(goose.x - target.x, goose.z - target.z);
+  const above = Math.max(0, Math.abs(goose.y - target.y) - PLAYER_HEIGHT / 2);
+  return Math.hypot(across, above) <= HORDE_GOOSE_CONTACT_RADIUS;
+}
 
 /** How far a horde goose must move horizontally before its ground height is resampled - same
  * value and reasoning as Goose.ts/Enemy.ts's identical constant (`sampleHeight` is a 4-octave fBm
@@ -180,8 +191,11 @@ export class HordeGoose implements Entity, Damageable {
   private updateFlyerDescent(dt: number, targetPosition: THREE.Vector3): void {
     if (!this.flyerTargetCaptured) {
       this.flyerTargetCaptured = true;
-      this.flyerTargetX = targetPosition.x;
-      this.flyerTargetZ = targetPosition.z;
+      // A target inside a Valley house: land on the street in front of its door and walk in from
+      // there (through the door gate), never down through the roof.
+      const entrance = buildingEntranceAt(targetPosition.x, targetPosition.z);
+      this.flyerTargetX = entrance ? entrance.x : targetPosition.x;
+      this.flyerTargetZ = entrance ? entrance.z : targetPosition.z;
       // The descent never leaves this x/z, so its ground height is sampled exactly once here rather
       // than re-running the same expensive sampleHeight call at the same point every tick.
       this.flyerGroundY = sampleHeight(this.flyerTargetX, this.flyerTargetZ) + GOOSE_HEIGHT / 2;
@@ -195,7 +209,7 @@ export class HordeGoose implements Entity, Damageable {
     this.mesh.position.set(this.flyerTargetX, y, this.flyerTargetZ);
     this.mesh.rotation.x = -Math.PI / 2.4;
 
-    if (this.position.distanceTo(targetPosition) <= HORDE_GOOSE_CONTACT_RADIUS) {
+    if (hordeGooseReaches(this.position, targetPosition)) {
       this.reachedTarget = true;
       this.dead = true;
       return;
@@ -213,7 +227,7 @@ export class HordeGoose implements Entity, Damageable {
   private updateIndoorFlight(dt: number, targetPosition: THREE.Vector3, flightHeight: (x: number, z: number) => number): void {
     const current = this.rigidBody.translation();
     const distance = Math.hypot(targetPosition.x - current.x, targetPosition.z - current.z);
-    if (distance <= HORDE_GOOSE_CONTACT_RADIUS) {
+    if (hordeGooseReaches(current, targetPosition)) {
       this.reachedTarget = true;
       this.dead = true;
       return;
@@ -222,6 +236,8 @@ export class HordeGoose implements Entity, Damageable {
     const wx = waypoint.x - current.x;
     const wz = waypoint.z - current.z;
     const waypointDistance = Math.hypot(wx, wz);
+    // A closed door ahead (it flies under the header): it waits there and opens it, as enemies do.
+    if (waypointDistance > 1e-4 && this.heldAtDoor(current, wx / waypointDistance, wz / waypointDistance, waypointDistance, dt)) return;
     const step = Math.min(waypointDistance, this.chaseSpeed * dt);
     const nextX = waypointDistance > 1e-4 ? current.x + (wx / waypointDistance) * step : current.x;
     const nextZ = waypointDistance > 1e-4 ? current.z + (wz / waypointDistance) * step : current.z;
@@ -242,7 +258,7 @@ export class HordeGoose implements Entity, Damageable {
     const dz = targetPosition.z - current.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
 
-    if (distance <= HORDE_GOOSE_CONTACT_RADIUS) {
+    if (hordeGooseReaches(current, targetPosition)) {
       this.reachedTarget = true;
       this.dead = true;
       return;
@@ -257,21 +273,29 @@ export class HordeGoose implements Entity, Damageable {
       speed *= HORDE_JUMPER_BURST_MULTIPLIER;
     }
 
-    // Through the doors on the Facility (the enemies' navigator); straight at the target outdoors.
-    const waypoint = resolveMoveTarget(current.x, current.z, targetPosition.x, targetPosition.z);
+    // Through the doors on the Facility and into the Valley houses (the enemies' navigator, told both
+    // heights so a house's floors are told apart); straight at the target outdoors. The navigator
+    // reads heights as an enemy's body centre, so the goose passes its feet plus that.
+    const feetY = current.y - GOOSE_HEIGHT / 2;
+    const waypoint = resolveMoveTarget(current.x, current.z, targetPosition.x, targetPosition.z, feetY + ENEMY_HEIGHT / 2, targetPosition.y);
     const wx = waypoint.x - current.x;
     const wz = waypoint.z - current.z;
     const waypointDistance = Math.hypot(wx, wz);
+    const reach = waypointDistance > 1e-4 ? waypointDistance : distance;
+    if (reach < 1e-4) return;
     const desiredDir = waypointDistance > 1e-4
       ? new THREE.Vector3(wx / waypointDistance, 0, wz / waypointDistance)
       : new THREE.Vector3(dx / distance, 0, dz / distance);
+    // A closed door ahead: it waits there and opens it, as enemies do.
+    if (this.heldAtDoor(current, desiredDir.x, desiredDir.z, reach, dt)) return;
     const chestPos = new THREE.Vector3(current.x, current.y, current.z);
-    const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
+    // A waypoint the navigator knows is clear (a house's walk grid) is walked straight, like an enemy.
+    const steeredDir = waypoint.direct ? desiredDir : steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
 
-    const step = Math.min(distance, speed * dt);
+    const step = Math.min(reach, speed * dt);
     const nextX = current.x + steeredDir.x * step;
     const nextZ = current.z + steeredDir.z * step;
-    const groundY = this.groundHeightAt(nextX, nextZ) + GOOSE_HEIGHT / 2;
+    const groundY = this.groundHeightAt(nextX, nextZ, feetY) + GOOSE_HEIGHT / 2;
 
     this.rigidBody.setNextKinematicTranslation({ x: nextX, y: groundY, z: nextZ });
     this.waddlePhase += dt * WADDLE_BOB_SPEED;
@@ -280,11 +304,27 @@ export class HordeGoose implements Entity, Damageable {
     this.mesh.rotation.z = Math.sin(this.waddlePhase) * WADDLE_ROCK_ANGLE;
   }
 
+  /** The door gate (enemyNavigator.ts) for a goose about to move along (dirX, dirZ) with its waypoint
+   * `reach` m on: true while a closed door holds it, facing the door (the gate opens it after the
+   * wait, synced like an enemy's opening). */
+  private heldAtDoor(current: THREE.Vector3Like, dirX: number, dirZ: number, reach: number, dt: number): boolean {
+    if (!heldAtDoor(this.id, current.x, current.z, dirX, dirZ, dt, reach, current.y - GOOSE_HEIGHT / 2)) return false;
+    this.mesh.rotation.y = Math.atan2(dirX, dirZ);
+    this.mesh.rotation.z = 0;
+    return true;
+  }
+
   /** Cached terrain height, resampled only after HEIGHT_RESAMPLE_DISTANCE_SQ of horizontal movement
    * - a straight port of Goose.ts's groundHeightAt (same perf bug, fixed there first: this used to
    * call sampleHeight uncached every tick for every chasing goose). NaN-initialized sample point
-   * means the first call always resamples, including right after a flyer lands. */
-  private groundHeightAt(x: number, z: number): number {
+   * means the first call always resamples, including right after a flyer lands. In a Valley house it
+   * is the floor under the feet (ground floor, stair or upper floor), as for enemies. */
+  private groundHeightAt(x: number, z: number, feetY: number): number {
+    const floor = enemyFloorAt(x, z, feetY);
+    if (floor !== null) {
+      this.heightSampleX = Number.NaN;
+      return floor;
+    }
     const dx = x - this.heightSampleX;
     const dz = z - this.heightSampleZ;
     if (!(dx * dx + dz * dz < HEIGHT_RESAMPLE_DISTANCE_SQ)) {

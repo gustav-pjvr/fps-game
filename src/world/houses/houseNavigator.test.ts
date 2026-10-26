@@ -94,6 +94,21 @@ describe('house navigator', () => {
     }
   });
 
+  it('gives the street in front of the door as a house\'s entrance, and none outside every house', () => {
+    for (const rotationY of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      for (const design of [0, 1, 2]) {
+        const p = placement(design, rotationY), nav = new HouseNavigator();
+        nav.add('h', p);
+        const inside = roomCentre(p, 0), entrance = nav.entranceAt(inside.x, inside.z)!;
+        const door = HOUSE_LAYOUTS[design]!.door, doorAt = houseToWorld(door.x, 0, door.z, p.x, p.groundY, p.z, rotationY);
+        expect(nav.isInside(entrance.x, entrance.z)).toBe(false);
+        expect(Math.hypot(entrance.x - doorAt.x, entrance.z - doorAt.z)).toBeLessThan(2);
+        expect(walk(nav, p, entrance, inside)).toBeGreaterThan(0);
+        expect(nav.entranceAt(p.x + 30, p.z)).toBeNull();
+      }
+    }
+  });
+
   it('walks straight, without the whiskers, inside a house and onto its door', () => {
     const p = placement(0, 0), nav = new HouseNavigator();
     nav.add('h', p);

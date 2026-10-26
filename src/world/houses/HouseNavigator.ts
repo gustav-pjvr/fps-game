@@ -218,6 +218,16 @@ export class HouseNavigator {
     return ground + floorAt(house.design.grid, at.x, at.z, feetY - ground);
   };
 
+  /** The enemies' building entrance (setEnemyEntrance): for a point in a streamed-in house's
+   * footprint, the street node in front of its door; null elsewhere. */
+  readonly entranceAt = (x: number, z: number): { x: number; z: number } | null => {
+    const house = this.houseAt(x, z);
+    if (!house) return null;
+    const street = house.design.grid.nodes[house.design.grid.outside]!;
+    const at = this.world(house, street.x, street.z, false);
+    return { x: at.x, z: at.z };
+  };
+
   /** Whether (x, z) is inside a streamed-in house's footprint. */
   isInside(x: number, z: number): boolean {
     return this.houseAt(x, z) !== null;

@@ -24,7 +24,7 @@ import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHO
 import { ENEMY_HEIGHT, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
-export { setEnemyDoorGate, setEnemyFloor, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
+export { setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
 
 export const ENEMY_MODEL_PATH = ENEMY_CHARACTER.path;
 
@@ -318,8 +318,9 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     const dz = waypoint.z - current.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
     if (distance < 1e-4) return;
-    // A closed Facility door ahead: stand facing it while the gate counts down and opens it.
-    if (heldAtDoor(this.id, current.x, current.z, dx / distance, dz / distance, dt)) {
+    // A closed door ahead before the waypoint, at the feet's height: stand facing it while the gate
+    // counts down and opens it.
+    if (heldAtDoor(this.id, current.x, current.z, dx / distance, dz / distance, dt, distance, current.y - ENEMY_HEIGHT / 2)) {
       this.mesh.rotation.y = Math.atan2(dx, dz);
       return;
     }
@@ -352,6 +353,8 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     let dx = awayX;
     let dz = awayZ;
     let distance = awayDistance;
+    // How far on the point it backs toward is, for the door gate (unbounded when it backs straight away).
+    let reach = Number.POSITIVE_INFINITY;
     if (hasEnemyNavigator()) {
       const waypoint = resolveMoveTarget(
         current.x,
@@ -367,7 +370,15 @@ export class Enemy implements Entity, Damageable, EnemyBody {
         dx = wx;
         dz = wz;
         distance = waypointDistance;
+        reach = waypointDistance;
       }
+    }
+
+    // Backing into a closed door: it stands its ground facing the threat while the gate counts down
+    // and opens the door, the same as walking into one.
+    if (heldAtDoor(this.id, current.x, current.z, dx / distance, dz / distance, dt, reach, current.y - ENEMY_HEIGHT / 2)) {
+      if (awayDistance > 1e-2) this.mesh.rotation.y = Math.atan2(-awayX, -awayZ);
+      return { x: current.x, y: current.y, z: current.z };
     }
 
     const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
