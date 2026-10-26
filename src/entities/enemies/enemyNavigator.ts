@@ -32,10 +32,18 @@ export function hasEnemyNavigator(): boolean {
 export type EnemyDoorGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number, reach?: number, feetY?: number) => boolean;
 
 let doorGate: EnemyDoorGate | null = null;
+let doorForget: ((enemyId: number) => void) | null = null;
 
-/** Module-level like the navigator: set by a Facility match, cleared on its dispose. */
-export function setEnemyDoorGate(fn: EnemyDoorGate | null): void {
+/** Module-level like the navigator: set by a Facility match, cleared on its dispose. `forget` drops
+ * the gate's wait for an enemy that is gone (see forgetDoorWait). */
+export function setEnemyDoorGate(fn: EnemyDoorGate | null, forget?: (enemyId: number) => void): void {
   doorGate = fn;
+  doorForget = fn ? forget ?? null : null;
+}
+
+/** An enemy or horde goose is gone (killed, removed): the gate drops any wait it left at a door. */
+export function forgetDoorWait(enemyId: number): void {
+  doorForget?.(enemyId);
 }
 
 /** True when a door gate holds this enemy where it stands this tick; always false without one. */

@@ -5,7 +5,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Damageable } from '../combat/damage.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { steerWithAvoidance } from './enemies/enemySteering.ts';
-import { buildingEntranceAt, enemyFloorAt, heldAtDoor, resolveMoveTarget } from './enemies/enemyNavigator.ts';
+import { buildingEntranceAt, enemyFloorAt, forgetDoorWait, heldAtDoor, resolveMoveTarget } from './enemies/enemyNavigator.ts';
 import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import {
   ENEMY_HEIGHT,
@@ -352,6 +352,7 @@ export class HordeGoose implements Entity, Damageable {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    forgetDoorWait(this.id);
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.world.removeCollider(this.bodyCollider, true);
     this.physics.world.removeRigidBody(this.rigidBody);

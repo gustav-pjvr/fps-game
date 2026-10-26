@@ -8,6 +8,7 @@ import { walkMeetsDoor, type DoorPlane } from '../world/doors/doorGeometry.ts';
 import { HOUSE_LAYOUTS, houseToWorld } from '../world/houses/houseLayout.ts';
 import { houseKey, houseObjectId } from '../world/houses/valleyHouseIds.ts';
 import { FRONT_DOOR_SLOT, ValleyHouses, type HousePlacement } from '../world/houses/ValleyHouses.ts';
+import { EnemyDoorWaits } from '../world/facility/facilityDoors.ts';
 import { FacilityInteraction } from '../core/facilityInteraction.ts';
 import { GOOSE_HEIGHT, PLAYER_HEIGHT } from '../core/config.ts';
 
@@ -108,6 +109,19 @@ describe('horde geese and closed doors', () => {
     expect(goose.isDead).toBe(false);
     expect(goose.position.z).toBeGreaterThan(DOOR.z);
     goose.dispose();
+  });
+
+  it('a walker that dies waiting at a closed door leaves no wait behind', () => {
+    const waits = new EnemyDoorWaits();
+    setEnemyDoorGate(
+      (id, x, z, dirX, dirZ, dt, reach, feetY) => waits.step(id, walkMeetsDoor({ ...DOOR, y: GROUND }, x, z, dirX, dirZ, reach, feetY) ? 0 : -1, dt) !== 'walk',
+      (id) => waits.forget(id),
+    );
+    const goose = new HordeGoose(physics, new THREE.Vector3(0, GROUND + GOOSE_HEIGHT / 2, 0), 'walker', 3);
+    run(goose, playerAt(0, GROUND, -6), 1);
+    expect(waits.size).toBe(1);
+    goose.dispose();
+    expect(waits.size).toBe(0);
   });
 
   it('an indoor flyer stops at a closed door under its header', () => {

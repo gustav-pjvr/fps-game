@@ -1612,14 +1612,14 @@ export class Game {
     if (facility) {
       const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
       interaction.applyInitial(multiplayer?.worldObjects);
-      setEnemyDoorGate(interaction.enemyGate);
+      setEnemyDoorGate(interaction.enemyGate, interaction.forgetEnemy);
       game.facilityInteraction = interaction;
     } else if (buildings) {
       // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
       // messages; enemies open them through the same gate as the Facility's.
       const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
       interaction.applyInitial(multiplayer?.worldObjects);
-      setEnemyDoorGate(interaction.enemyGate);
+      setEnemyDoorGate(interaction.enemyGate, interaction.forgetEnemy);
       game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);

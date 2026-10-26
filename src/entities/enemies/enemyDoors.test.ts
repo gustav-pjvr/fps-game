@@ -10,6 +10,7 @@ import { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { setHeightOverride } from '../../world/TerrainGenerator.ts';
 import { walkMeetsDoor, type DoorPlane } from '../../world/doors/doorGeometry.ts';
 import { ENEMY_HEIGHT } from '../../core/config.ts';
+import { EnemyDoorWaits } from '../../world/facility/facilityDoors.ts';
 import { mulberry32 } from '../../utils/rng.ts';
 
 /** A closed door across z at z = -1, 2 m wide, on flat ground. */
@@ -81,5 +82,22 @@ describe('Enemy and closed doors', () => {
     enemy.moveToward(0, -4, 2, 1 / 30);
     expect(enemy.mesh.position.z).toBe(before);
     enemy.dispose();
+  });
+
+  it('an enemy that dies (is removed) while waiting at a door leaves no wait behind', () => {
+    const waits = new EnemyDoorWaits();
+    setEnemyDoorGate(
+      (id, x, z, dirX, dirZ, dt, reach, feetY) => {
+        const door = walkMeetsDoor(DOOR, x, z, dirX, dirZ, reach, feetY) ? 0 : -1;
+        return waits.step(id, door, dt) !== 'walk';
+      },
+      (id) => waits.forget(id),
+    );
+    const enemy = makeEnemy();
+    physics.step(1 / 60);
+    enemy.moveToward(0, -4, 2, 1 / 30);
+    expect(waits.size).toBe(1);
+    enemy.dispose();
+    expect(waits.size).toBe(0);
   });
 });

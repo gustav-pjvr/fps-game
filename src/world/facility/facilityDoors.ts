@@ -148,6 +148,16 @@ export class EnemyDoorWaits {
     return 'wait';
   }
 
+  /** Drops enemy `id`'s wait: it died or was removed while standing at a door. */
+  forget(id: number): void {
+    this.waits.delete(id);
+  }
+
+  /** How many enemies have a wait running (tests). */
+  get size(): number {
+    return this.waits.size;
+  }
+
   clear(): void {
     this.waits.clear();
   }

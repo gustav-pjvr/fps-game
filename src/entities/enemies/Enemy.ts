@@ -9,7 +9,7 @@ import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import type { EnemyArchetype } from './archetypes.ts';
 import { steerWithAvoidance } from './enemySteering.ts';
-import { enemyFloorAt, hasEnemyNavigator, heldAtDoor, resolveMoveTarget } from './enemyNavigator.ts';
+import { enemyFloorAt, forgetDoorWait, hasEnemyNavigator, heldAtDoor, resolveMoveTarget } from './enemyNavigator.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
@@ -468,6 +468,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    forgetDoorWait(this.id);
     this.brain.dispose();
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.unregisterCollider(this.headCollider);

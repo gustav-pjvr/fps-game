@@ -199,6 +199,9 @@ export class FacilityInteraction {
     return step !== 'walk';
   };
 
+  /** An enemy or horde goose is gone: drops its door wait. */
+  readonly forgetEnemy = (enemyId: number): void => this.waits.forget(enemyId);
+
   private playSounds(changes: WorldObjectChanges): void {
     const { objects, player, sound } = this.deps;
     const play = (kind: WorldObjectKind, id: number): void => {
