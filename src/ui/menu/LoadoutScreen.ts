@@ -29,7 +29,10 @@ import {
   equippedGrenade,
   type LoadoutWeaponSlot,
 } from '../../core/loadout.ts';
-import { setDeviceHint } from '../../input/GamepadInput.ts';
+import { gamepadHint, setDeviceHint } from '../../input/GamepadInput.ts';
+import { keyHint } from '../../input/actions.ts';
+import { Settings } from '../../settings/Settings.ts';
+import { ModalScope } from './modalScope.ts';
 import { LoadoutCharacterPreview } from './loadoutCharacterPreview.ts';
 import type { Object3D } from 'three';
 
@@ -207,6 +210,10 @@ export class LoadoutScreen {
     readonly stats: HTMLDivElement;
   };
   private readonly updateScrollHint: () => void;
+  private readonly closeButton: HTMLButtonElement;
+  private readonly grenadeKeyCap: HTMLSpanElement;
+  private readonly scope = new ModalScope();
+  private readonly onKeyDown: (event: KeyboardEvent) => void;
   private loadout: PlayerLoadout;
   private detailsTarget: DetailsTarget;
 
@@ -239,6 +246,7 @@ export class LoadoutScreen {
     titleWrap.appendChild(title);
     const closeButton = createButton('Close', 'primary');
     closeButton.addEventListener('click', onClose);
+    this.closeButton = closeButton;
     header.append(titleWrap, closeButton);
 
     const body = document.createElement('div');
@@ -292,7 +300,8 @@ export class LoadoutScreen {
     keyCap.style.cssText =
       `font-family:${MONO_FONT}; font-size:10.5px; font-weight:400; letter-spacing:0; text-transform:none; color:${TEXT};` +
       ` border:1px solid ${HAIRLINE}; border-radius:2px; padding:2px 6px; background:${BG_RAISED};`;
-    setDeviceHint(keyCap, 'Q', 'RB');
+    this.grenadeKeyCap = keyCap;
+    this.refreshGrenadeHint();
     const throwLabel = document.createElement('span');
     throwLabel.textContent = 'to throw';
     throwHint.append(keyCap, throwLabel);
@@ -399,9 +408,21 @@ export class LoadoutScreen {
     }
 
     this.refresh();
+    // Escape closes the page, same as Close. Document-level, so it must stay quiet while hidden.
+    this.onKeyDown = (event) => {
+      if (this.overlay.style.display === 'none' || event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', this.onKeyDown);
     // Run once after layout settles, so the hint's initial visibility matches whether the list
     // actually overflows (a short catalog never shows it at all).
     requestAnimationFrame(this.updateScrollHint);
+  }
+
+  /** The throw key as bound now (the player can rebind it in Settings), or "Unbound". */
+  private refreshGrenadeHint(): void {
+    setDeviceHint(this.grenadeKeyCap, keyHint(Settings.getKeyBindings(), 'grenade'), gamepadHint('grenade') ?? 'RB');
   }
 
   private buildSlotSocket(slot: LoadoutWeaponSlot | 'grenade'): { socket: HTMLDivElement; value: HTMLDivElement } {
@@ -534,17 +555,26 @@ export class LoadoutScreen {
     this.overlay.style.display = 'flex';
     this.loadout = loadStoredLoadout();
     this.refresh();
+    this.refreshGrenadeHint();
     this.characterPreview.start();
     attachScanSweep(this.overlay);
     requestAnimationFrame(this.updateScrollHint);
+    // Keyboard focus belongs in the page: on the equipped primary, else Close. Whatever is behind
+    // (the pause menu) goes inert so Tab cannot reach it.
+    const equipped = equippedWeaponId(this.loadout, 'primary');
+    const tile = this.weaponTiles.find((candidate) => candidate.weapon.id === equipped)?.element;
+    this.scope.enter(this.overlay, tile ?? this.closeButton);
   }
 
   hide(): void {
     this.overlay.style.display = 'none';
     this.characterPreview.stop();
+    this.scope.leave();
   }
 
   dispose(): void {
+    document.removeEventListener('keydown', this.onKeyDown);
+    this.scope.leave();
     this.characterPreview.dispose();
     this.overlay.remove();
   }
