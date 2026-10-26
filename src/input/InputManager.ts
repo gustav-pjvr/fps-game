@@ -35,6 +35,7 @@ export class InputManager {
     document.addEventListener('wheel', this.onWheel, { passive: true });
     document.addEventListener('contextmenu', this.onContextMenu);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
+    if (typeof window !== 'undefined') window.addEventListener('blur', this.onWindowBlur);
   }
 
   get isLocked(): boolean {
@@ -173,6 +174,12 @@ export class InputManager {
     if (document.hidden) this.pause();
   };
 
+  /** A pad keeps playing without pointer lock, so the lock loss that pauses the mouse never comes
+   * when the window loses focus (alt-tab, a notification): pause here. */
+  private readonly onWindowBlur = (): void => {
+    if (this.activeDevice === 'gamepad' && !this.paused) this.pause();
+  };
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     this.useMouse();
     if (!this.locked) return;
@@ -232,6 +239,7 @@ export class InputManager {
     document.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('contextmenu', this.onContextMenu);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    if (typeof window !== 'undefined') window.removeEventListener('blur', this.onWindowBlur);
   }
 
   private useMouse(): void {

@@ -12,6 +12,7 @@ vi.mock('../ui/gamepadFocus.ts', () => ({
 
 let input: InputManager;
 let doc: EventTarget & { pointerLockElement: unknown; hidden: boolean };
+let win: EventTarget;
 let controller: Gamepad;
 let canvas: HTMLCanvasElement;
 
@@ -31,6 +32,8 @@ beforeEach(() => {
     documentElement: { dataset: {} }, querySelectorAll: () => [], exitPointerLock: vi.fn(),
   });
   vi.stubGlobal('document', doc);
+  win = new EventTarget();
+  vi.stubGlobal('window', win);
   setPad();
   vi.stubGlobal('navigator', { getGamepads: () => [controller] });
   gamepadInput.poll([]);
@@ -64,6 +67,19 @@ describe('InputManager controller integration', () => {
     expect(input.isEngaged).toBe(false);
     setPad(); input.update();
     setPad([], [9]); input.update();
+    expect(input.isEngaged).toBe(true);
+  });
+
+  it('pauses when the window loses focus during pad play, and only then', () => {
+    gamepadInput.setActiveDevice('gamepad'); input.resume();
+    expect(input.isEngaged).toBe(true);
+    win.dispatchEvent(new Event('blur'));
+    expect(input.isEngaged).toBe(false);
+    // Mouse play already pauses through the pointer lock loss; blur alone changes nothing there.
+    gamepadInput.setActiveDevice('mouse'); input.resume();
+    doc.pointerLockElement = canvas; event('pointerlockchange');
+    expect(input.isEngaged).toBe(true);
+    win.dispatchEvent(new Event('blur'));
     expect(input.isEngaged).toBe(true);
   });
 
