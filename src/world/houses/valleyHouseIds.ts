@@ -5,6 +5,8 @@
  * ids are plain non-negative integers so they ride the existing worldInteract message unchanged.
  */
 
+import { FLAT_ZONE_CELL_SIZE, FLAT_ZONE_RADIUS_MAX, WORLD_BOUNDARY_RADIUS } from '../../core/config.ts';
+
 /** Cells are offset by this so they pack as non-negative numbers (50 m cells: +-100 km). */
 const CELL_OFFSET = 2048;
 const CELL_SPAN = CELL_OFFSET * 2;
@@ -44,6 +46,18 @@ export function parseHouseObjectId(id: number): { house: HouseRef; key: number; 
   if (!Number.isSafeInteger(id) || id < 0) return null;
   const key = Math.floor(id / SLOT_SPAN), house = houseFromKey(key);
   return house ? { house, key, slot: id % SLOT_SPAN } : null;
+}
+
+/** The farthest flat-zone cell from the centre on either axis that can hold a town inside the world
+ * (the same reach as BuildingManager.getWorldTowns over WORLD_BOUNDARY_RADIUS). */
+export const HOUSE_CELL_REACH = Math.ceil((WORLD_BOUNDARY_RADIUS + FLAT_ZONE_RADIUS_MAX) / FLAT_ZONE_CELL_SIZE);
+
+/** Whether `ref`'s town can lie inside the world. The id format reaches 2048 cells each way, and
+ * looking a house up builds and caches its town's whole layout, so an id from a peer is checked with
+ * this first: a stream of far ids would otherwise cost every receiver thousands of layout builds and
+ * grow those caches without bound. */
+export function isHouseInWorld(ref: HouseRef): boolean {
+  return Math.abs(ref.gx) <= HOUSE_CELL_REACH && Math.abs(ref.gz) <= HOUSE_CELL_REACH;
 }
 
 /** The same house's string id BuildingManager keys its placed houses by. */

@@ -6,7 +6,7 @@ import { doorToWorld, houseToWorld } from './houseLayout.ts';
 import { HouseLights } from './HouseLights.ts';
 import { HouseNavigator } from './HouseNavigator.ts';
 import { parseHouseLampList } from '../../network/lampSync.ts';
-import { houseKey, houseObjectId, parseHouseObjectId, type HouseRef } from './valleyHouseIds.ts';
+import { houseKey, houseObjectId, isHouseInWorld, parseHouseObjectId, type HouseRef } from './valleyHouseIds.ts';
 import { ValleyDoors } from './ValleyDoors.ts';
 
 /** Interiors (furniture, partitions, the stair) are hidden past this distance from the camera. */
@@ -48,8 +48,13 @@ export class ValleyHouses {
   private readonly loaded = new Map<string, LoadedHouse>();
   private readonly cameraPosition = new THREE.Vector3();
 
-  /** `houseAt` answers for any house in the world, streamed in or not. */
-  constructor(scene: THREE.Scene, world: RAPIER.World, private readonly houseAt: (ref: HouseRef) => HousePlacement | null, lampsOn: boolean) {
+  /** Every house lookup by id (doors, lamps; ids may come from the network) goes through this. */
+  private readonly houseAt: (ref: HouseRef) => HousePlacement | null;
+
+  /** `houseAt` answers for any house in the world, streamed in or not. It is only ever asked about
+   * a house whose town can lie inside the world (isHouseInWorld). */
+  constructor(scene: THREE.Scene, world: RAPIER.World, houseAt: (ref: HouseRef) => HousePlacement | null, lampsOn: boolean) {
+    this.houseAt = (ref) => (isHouseInWorld(ref) ? houseAt(ref) : null);
     this.doors = new ValleyDoors(scene, world, (id) => this.doorPlane(id));
     this.lights = new HouseLights(scene, lampsOn);
   }
