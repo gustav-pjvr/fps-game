@@ -161,7 +161,7 @@ import {
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
-import { isOpponentSilent } from './opponentLiveness.ts';
+import { isOpponentSilent, restartOpponentForRejoin } from './opponentLiveness.ts';
 import { DEFAULT_GAME_MODE, grenadesEnabled, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
 import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
 import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
@@ -1793,9 +1793,11 @@ export class Game {
             otherPositions.push({ x: player.position.x, z: player.position.z });
             const spawnPoint = pickRandomRespawnPoint(otherPositions, game.isSpawnBlocked);
             await game.addMultiplayerOpponent(outcome.slot, username);
-            // A joiner whose connection dropped while its model loaded: removeMultiplayerOpponent
-            // cancelled the add and already sent playerLeft, so announcing it now would give the
-            // other guests a ghost for a player who is gone.
+            // The add was cancelled while the model loaded (removeMultiplayerOpponent ran for this slot,
+            // e.g. another hello took it over): announcing it now would give the other guests a ghost.
+            // A joiner whose own connection dropped meanwhile is not caught here: PeerConnection sees
+            // that close and, once this returns, reports the slot through onPeerDisconnected instead
+            // of sending the welcome, which takes the player out again and sends playerLeft.
             if (!activeMultiplayer.opponents.has(outcome.slot)) return 'full';
             // Read after the await: another player joining while this one's model loaded is in the
             // roster now, though its playerJoinedMatch went out before this player was connected.
@@ -3319,9 +3321,12 @@ export class Game {
     if (!this.multiplayer) return;
     const existing = this.multiplayer.opponents.get(slot);
     if (existing) {
-      // A rejoin that took over this slot before the old connection closed: the new page's clock
-      // starts again near zero, so the old floor would drop its snapshots (see stateOrder.ts).
-      existing.lastStateSentAt = undefined;
+      // A rejoin that took over this slot before the old connection closed: a fresh page, so fresh
+      // liveness and clock (restartOpponentForRejoin), and its catch-ups (lamps, doors, grenades) again.
+      restartOpponentForRejoin(existing, performance.now());
+      this.lampSync.forget(slot);
+      this.facilityInteraction?.forget(slot);
+      this.grenades?.forgetOpponent(slot);
       return;
     }
     const generation = this.bumpOpponentGeneration(slot);

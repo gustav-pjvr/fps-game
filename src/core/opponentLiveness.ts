@@ -15,3 +15,23 @@ export function isOpponentSilent(now: number, lastMessageAt: number, firstSnapsh
   const settled = !isDead && firstSnapshotAt !== null && lastMessageAt - firstSnapshotAt >= MULTIPLAYER_SETTLE_MS;
   return now - lastMessageAt >= (settled ? MULTIPLAYER_CONNECTION_TIMEOUT_MS : MULTIPLAYER_LOADING_TIMEOUT_MS);
 }
+
+/** The liveness and state-order fields of an opponent (network/multiplayerMatchTypes.ts RemoteOpponent). */
+export interface OpponentLivenessState {
+  lastMessageAt: number;
+  firstSnapshotAt: number | null;
+  isDead: boolean;
+  lastStateSentAt?: number;
+}
+
+/** A rejoin took over `opponent`'s slot before its old connection closed, so the same entry now
+ * stands for a fresh page: just heard from, still loading (no snapshot yet), alive, and with a new
+ * sender clock that starts near zero (the old floor would drop its snapshots, see stateOrder.ts).
+ * Without this a takeover inherited a dead player's freeze and a long-settled clock, so the host's
+ * sweep dropped the rejoiner the moment its first frames stalled. */
+export function restartOpponentForRejoin(opponent: OpponentLivenessState, now: number): void {
+  opponent.lastMessageAt = now;
+  opponent.firstSnapshotAt = null;
+  opponent.isDead = false;
+  opponent.lastStateSentAt = undefined;
+}
