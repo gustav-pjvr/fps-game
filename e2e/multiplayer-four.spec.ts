@@ -76,7 +76,7 @@ async function joinLobby(guest: Page, code: string): Promise<void> {
   await ready.click();
 }
 
-const inGame = (guest: Page) => () => guest.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 90000 });
+const inGame = (guest: Page, timeout = 90000) => () => guest.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout });
 
 /** A guest into a running match (a late join or a rejoin): in once the game's debug hooks exist. */
 async function joinMatch(guest: Page, code: string): Promise<void> {
@@ -204,8 +204,9 @@ async function expectOpponentCount(players: Player[], count: number, timeout: nu
 
 test.describe('three and four players', () => {
   test('four players: opponents, a guest to guest kill, direct links, leave and rejoin with the score', async ({ browser }) => {
-    // Four pages at about 2 FPS each: creating, joining and starting alone takes several minutes.
-    test.setTimeout(900000);
+    // Four pages at about 2 FPS each: creating, joining and starting alone takes several minutes, and
+    // under load the whole test measured over 15 (the rejoin alone about 4).
+    test.setTimeout(1200000);
     const { host, guests, code } = await startMatch(browser, 3);
     const [shooter, victim, bystander] = guests;
     const everyone = [host, ...guests];
@@ -262,7 +263,9 @@ test.describe('three and four players', () => {
     step('d: the others dropped to two opponents');
 
     // ... and it rejoins in a new context with its old token, back in its slot with its score.
-    await submitJoin(comeback.page, inGame(comeback.page));
+    // A rejoin loads the running world (minutes under load): a 90 s wait gave up and clicked Join
+    // again on a page already loading the match.
+    await submitJoin(comeback.page, inGame(comeback.page, 240000));
     step('rejoined');
     await expectOpponentCount([comeback, ...stayers], 3, 90000);
     expect(await ownSlot(comeback.page)).toBe(shooterSlot);
