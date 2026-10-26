@@ -2467,6 +2467,9 @@ export class Game {
 
   private readonly update = (dt: number): void => {
     this.tickCount++;
+    // The grenades' shake, white-out and blast light run out on every tick, also while the
+    // simulation below is frozen (dead, paused, mission won, match ended): render keeps drawing them.
+    this.grenades?.tickEffects(dt);
     this.input.update(dt, this.worldBriefingActive || this.deathScreenVisible || this.multiplayerMatchState.hasEnded, this.crosshairOverEnemy);
     if (this.deathScreenVisible && !this.multiplayerMatchState.hasEnded && this.input.consumeJustPressed('resetPlay')) void this.resetPlay();
     // Match end (MULTIPLAYER_PLAN.md §7 phase 4) freezes simulation permanently for the rest of

@@ -14,6 +14,11 @@ export class FlashBlindState {
     return this.remaining > 0;
   }
 
+  /** It had a target before the flash and will shoot blind at the last-seen spot. */
+  get firingBack(): boolean {
+    return this.firesBack;
+  }
+
   get secondsLeft(): number {
     return this.remaining;
   }

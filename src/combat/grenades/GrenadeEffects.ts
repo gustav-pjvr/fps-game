@@ -65,7 +65,7 @@ export class GrenadeEffects {
     this.fragExplosion?.update(dt, this.options.camera);
     this.arc?.update(system.arcPreview);
     this.options.hud.setGrenades({ kind: system.kind, count: system.count });
-    this.danger?.update(this.options.camera, system.liveGrenades());
+    this.danger?.update(this.options.camera, system.liveViews());
     const blind = system.blindLevel;
     if (blind > this.lastBlindLevel + 0.05) this.captureAfterimage = true;
     this.lastBlindLevel = blind;

@@ -6,7 +6,6 @@ import type { InputManager } from '../../input/InputManager.ts';
 import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage, PlayerSlot } from '../../network/protocol.ts';
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
-import { castHitscan } from '../hitscan.ts';
 import { computeKnockbackStrength } from '../explosion.ts';
 import { computeStereoPan, enemyGunshotVolume, grenadeBounceVolume } from '../../core/positionalAudio.ts';
 import { GRAVITY } from '../../core/config.ts';
@@ -169,6 +168,8 @@ interface LiveGrenade {
   /** The world axis it tumbles about in flight, and how fast (radians a second, halved per bounce). */
   readonly spinAxis: THREE.Vector3;
   spinRate: number;
+  /** What liveViews() hands out for it: one object for its whole life, refreshed on each call. */
+  readonly view: { id: string; kind: GrenadeKind; own: boolean; position: Vec3; fuseLeft: number; resting: boolean };
   /** This system's clock at its last bounce clink, so a rattle on the floor is not a buzz. */
   lastClinkAt: number;
   /** Seconds the model stays hidden: an own throw is still in the view-model hand until then. */
@@ -177,6 +178,8 @@ interface LiveGrenade {
 
 /** The blast's rays and the flash's sight line start this far above the grenade, clear of the floor. */
 const BLAST_LIFT = 0.1;
+/** A blast point found inside a fixed collider has its rays start this far outside its nearest face. */
+const OUTSIDE_SOLID_MARGIN = 0.03;
 /** A frag's surface: looked for this far below it, and this far in the other five directions. */
 const SURFACE_PROBE_DOWN = 0.5;
 const SURFACE_PROBE_SIDE = 0.35;
@@ -198,6 +201,8 @@ const RECENT_DETONATIONS = 8;
 /** The arc preview: sampled every ARC_STEP seconds for at most ARC_MAX_TIME. */
 const ARC_STEP = 1 / 20;
 const ARC_MAX_TIME = 3;
+/** The preview's arc is recomputed this often while cooking (a 60-cast prediction per tick is too much). */
+const ARC_REFRESH_SECONDS = 1 / 15;
 /** A player moving faster than this between ticks teleported (a respawn): no throw momentum. */
 const MAX_THROWER_SPEED = 15;
 /** A thrown grenade tumbles end over end this fast (radians a second); each bounce halves it. */
@@ -233,11 +238,15 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private blastLightPeak = FLASH_LIGHT_INTENSITY;
   private readonly ball = new RAPIER.Ball(GRENADE_RADIUS);
   private readonly params: FlightParams;
+  /** The own grenades' sweep and the copies' (which also meet the local player's capsule). */
   private readonly sweep: Sweep;
+  private readonly remoteSweep: Sweep;
   private readonly idPrefix: string;
   private nextId = 0;
   private clock = 0;
   private arc: ArcPrediction | null = null;
+  private arcAge = 0;
+  private readonly viewList: LiveGrenadeView[] = [];
   private readonly lastPlayerPosition = new THREE.Vector3();
   private hasLastPlayerPosition = false;
   private readonly playerVelocity = new THREE.Vector3();
@@ -252,7 +261,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       radius: GRENADE_RADIUS,
       floor: options.floor,
     };
-    this.sweep = (from, displacement) => this.castSweep(from, displacement);
+    this.sweep = (from, displacement) => this.castSweep(from, displacement, true);
+    this.remoteSweep = (from, displacement) => this.castSweep(from, displacement, false);
     this.idPrefix = `${options.network?.ownSlot ?? 0}${Math.floor(Math.random() * 36 ** 4).toString(36)}-`;
     if (options.enabled) {
       this.blastLight = new THREE.PointLight(FLASH_LIGHT_COLOR, 0, FLASH_LIGHT_RANGE, 2);
@@ -262,15 +272,16 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     }
   }
 
-  /** One tick. `input` is null while the local player is frozen (dead, paused, mission won): a
-   * cook in progress is dropped. Live grenades, the blindness and the shake carry on regardless. */
+  /** One simulation tick. `input` is null while the local player is frozen (dead, paused, mission
+   * won): a cook in progress is dropped. Live grenades carry on regardless. The screen effects
+   * (shake, white-out, blast light) are tickEffects', which Game calls on every tick, simulating or not. */
   update(dt: number, input: InputManager | null): void {
     this.clock += dt;
     this.trackPlayerVelocity(dt);
     this.updateHand(dt, input);
 
     for (const grenade of Array.from(this.live.values())) {
-      const step = stepGrenade(grenade.body, dt, this.sweep, this.params);
+      const step = stepGrenade(grenade.body, dt, grenade.own ? this.sweep : this.remoteSweep, this.params);
       grenade.mesh.position.set(grenade.body.position.x, grenade.body.position.y, grenade.body.position.z);
       if (grenade.hiddenFor > 0) {
         grenade.hiddenFor -= dt;
@@ -293,6 +304,12 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       }
     }
 
+  }
+
+  /** Decays the camera shake, the white-out (and so the muffle and ring) and the blast light. Game
+   * calls it on every tick, also while the simulation is frozen (dead, paused, mission won, match
+   * ended): the render frame keeps drawing these, and they must run out rather than hang on. */
+  tickEffects(dt: number): void {
     this.blindness.update(dt);
     this.shake.update(dt);
     if (this.blastLight && this.blastLightTime > 0) {
@@ -434,6 +451,23 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     }));
   }
 
+  /** The live grenades for per-frame readers (the danger markers): the same array and the same view
+   * objects every call, refreshed in place. Read them at once; never keep them. */
+  liveViews(): readonly LiveGrenadeView[] {
+    const list = this.viewList;
+    list.length = 0;
+    for (const g of this.live.values()) {
+      const view = g.view;
+      view.position.x = g.body.position.x;
+      view.position.y = g.body.position.y;
+      view.position.z = g.body.position.z;
+      view.fuseLeft = g.fuseLeft;
+      view.resting = g.body.resting;
+      list.push(view);
+    }
+    return list;
+  }
+
   /** 0 to 1: the local player's white-out (and muffled hearing) right now. */
   get blindLevel(): number {
     return this.blindness.level;
@@ -510,8 +544,12 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       }
     }
     if (this.hand.cookingKind) {
-      const { origin, velocity } = this.throwStart();
-      this.arc = predictArc(origin, velocity, this.sweep, this.params, ARC_MAX_TIME, ARC_STEP);
+      this.arcAge += dt;
+      if (!this.arc || this.arcAge >= ARC_REFRESH_SECONDS) {
+        this.arcAge = 0;
+        const { origin, velocity } = this.throwStart();
+        this.arc = predictArc(origin, velocity, this.sweep, this.params, ARC_MAX_TIME, ARC_STEP);
+      }
     } else {
       this.arc = null;
     }
@@ -539,7 +577,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       .applyQuaternion(quaternion)
       .add(eye);
     const reach = hand.clone().sub(eye);
-    const hit = this.castSweep(eye, reach);
+    const hit = this.castSweep(eye, reach, true);
     if (hit) hand.copy(eye).addScaledVector(reach, Math.max(0, hit.fraction - 0.05));
     return hand;
   }
@@ -603,6 +641,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       spinRate: SPIN_RATE,
       lastClinkAt: -Infinity,
       hiddenFor,
+      view: { id, kind, own, position: { x: origin.x, y: origin.y, z: origin.z }, fuseLeft, resting: false },
     });
   }
 
@@ -700,13 +739,15 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       this.blindness.apply(flashStrength(eye.distanceTo(blast), flashCosAngle(eye, view, blast), lineOfSight), FLASH_PLAYER_MAX_SECONDS);
     }
     if (!own) return;
-    // Heard first, then blinded: the blindness decides what a blinded enemy does next.
-    targets.notifyGunshot(blast, 'flash');
+    // Blinded first, then heard: an enemy judges whether it "had a target" from its state before
+    // the bang, and the bang would put every idle one into a search. A blinded enemy ignores the
+    // bang itself (EnemyBrain.onHeardGunshot), so the blindness still decides what it does next.
     targets.applyFlash((eye, yaw, entity, exclude) => {
       const lineOfSight = this.rayClear(blast, eye, entity, exclude);
       const strength = flashStrength(eye.distanceTo(blast), flashCosAngle(eye, yawViewDirection(yaw), blast), lineOfSight);
       return flashSeconds(strength, FLASH_ENEMY_MAX_SECONDS);
     });
+    targets.notifyGunshot(blast, 'flash');
   }
 
   /** Turns the one blast light on at `position`; update() fades it out over `seconds`. */
@@ -769,20 +810,55 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   }
 
   /** Nothing solid between `from` and `to`, or the first thing hit is `target` itself (its own
-   * colliders count as reaching it). `exclude` skips a body altogether. */
+   * colliders count as reaching it). `exclude` skips a body altogether. Sensors (a tree's canopy
+   * ball) are not solid, and a `from` inside a fixed collider (a door that shut on the grenade)
+   * starts just outside it, so a blast is not shut in by the shape it lies in. */
   private rayClear(from: Vec3, to: Vec3, target: object | null, exclude?: RAPIER.RigidBody): boolean {
-    const direction = new THREE.Vector3(to.x - from.x, to.y - from.y, to.z - from.z);
+    const start = this.outsideFixedSolid(from);
+    const direction = new THREE.Vector3(to.x - start.x, to.y - start.y, to.z - start.z);
     const length = direction.length();
     if (length < 1e-4) return true;
     direction.divideScalar(length);
-    const hit = castHitscan(this.options.physics, new THREE.Vector3(from.x, from.y, from.z), direction, length, undefined, exclude);
+    const hit = this.options.physics.world.castRayAndGetNormal(
+      new RAPIER.Ray(start, direction),
+      length,
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      undefined,
+      exclude,
+    );
     if (!hit) return true;
-    return target !== null && this.options.physics.getEntity(hit.colliderHandle) === target;
+    return target !== null && this.options.physics.getEntity(hit.collider.handle) === target;
   }
 
-  /** The world sweep for grenadeFlight: a GRENADE_RADIUS ball cast along `displacement`, past the
-   * local player's own capsule and every sensor. */
-  private castSweep(from: Vec3, displacement: Vec3): { fraction: number; normal: Vec3 } | null {
+  /** `point`, or where it leaves the fixed solid collider it lies inside: the nearest surface point
+   * pushed OUTSIDE_SOLID_MARGIN further out. */
+  private outsideFixedSolid(point: Vec3): Vec3 {
+    let inside: RAPIER.Collider | null = null;
+    this.options.physics.world.intersectionsWithPoint(
+      point,
+      (collider) => {
+        inside = collider;
+        return false;
+      },
+      RAPIER.QueryFilterFlags.ONLY_FIXED | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+    );
+    if (!inside) return point;
+    const projection = (inside as RAPIER.Collider).projectPoint(point, false);
+    if (!projection) return point;
+    const surface = projection.point;
+    const out = new THREE.Vector3(surface.x - point.x, surface.y - point.y, surface.z - point.z);
+    const distance = out.length();
+    if (distance < 1e-6) out.set(0, 1, 0);
+    else out.divideScalar(distance);
+    return { x: surface.x + out.x * OUTSIDE_SOLID_MARGIN, y: surface.y + out.y * OUTSIDE_SOLID_MARGIN, z: surface.z + out.z * OUTSIDE_SOLID_MARGIN };
+  }
+
+  /** The world sweep for grenadeFlight: a GRENADE_RADIUS ball cast along `displacement`, past every
+   * sensor. `ownGrenade`: also past the local player's own capsule (its own throw starts at its
+   * hand); another player's grenade meets that capsule like any other body. */
+  private castSweep(from: Vec3, displacement: Vec3, ownGrenade: boolean): { fraction: number; normal: Vec3 } | null {
     const hit = this.options.physics.world.castShape(
       from,
       IDENTITY_ROTATION,
@@ -793,7 +869,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       false,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
       undefined,
-      this.options.player.ownCollider,
+      ownGrenade ? this.options.player.ownCollider : undefined,
     );
     if (!hit) return null;
     // normal1 is the ball's own outward normal at the contact (the ball is never rotated, so local

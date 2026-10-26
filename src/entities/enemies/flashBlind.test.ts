@@ -114,4 +114,40 @@ describe('EnemyBrain flash blindness', () => {
     for (let t = 0; t < 0.3; t += 0.05) brain.update(0.05, player);
     expect(brain.debug.blindSeconds).toBe(0);
   });
+
+  it('one that never had a target only stands blind: no shots, no search toward its spawn point, and the bang does not wake it', async () => {
+    const physics = await PhysicsWorld.create();
+    const body = new FakeBody(physics);
+    const shots: THREE.Vector3[] = [];
+    const brain = new EnemyBrain(
+      body,
+      physics,
+      new CombatCoordinator({ shooter: 2 }, mulberry32(1)),
+      new SquadKnowledge(),
+      { emit: () => {} },
+      { onRangedShotFired: (_origin, end) => shots.push(end.clone()) },
+      mulberry32(2),
+      mulberry32(3),
+      new THREE.Vector3(0, 0.85, 10),
+    );
+    const player = {
+      position: new THREE.Vector3(0, 0.85, 0),
+      movementBobStrength: 0,
+      isDead: false,
+      ownCollider: { handle: -5 },
+      takeDamage: () => {},
+    } as unknown as Player;
+    expect(brain.debug.state).toBe('idle');
+
+    // The flash's own bang comes after the blinding (GrenadeSystem) and must not undo it.
+    brain.onFlashed(2);
+    brain.onHeardGunshot(new THREE.Vector3(0, 0.85, 0), 'flash');
+    expect(brain.debug.state).toBe('idle');
+    expect(brain.debug.awareness).toBe(0);
+    for (let t = 0; t < 1.9; t += 0.05) brain.update(0.05, player);
+    expect(shots).toHaveLength(0);
+    expect(body.faced).toBeNull();
+    expect(body.moves).toBe(0);
+    expect(brain.debug.state).toBe('idle');
+  });
 });

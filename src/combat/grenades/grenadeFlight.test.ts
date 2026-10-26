@@ -100,6 +100,32 @@ describe('stepGrenade', () => {
     expect(grenade.position).toEqual(restingAt);
   });
 
+  it('a resting grenade wakes and falls once what held it up is gone, and stays while it is there', () => {
+    // A shelf with its top at y = 1 (a capsule's top, say) that later moves away.
+    let shelf = true;
+    const shelfSweep: Sweep = (from, displacement) => (shelf ? planes({ point: { x: 0, y: 1, z: 0 }, normal: { x: 0, y: 1, z: 0 } })(from, displacement) : FLOOR(from, displacement));
+    const grenade = body({ x: 0, y: 1 + RADIUS + 0.002, z: 0 }, { x: 0, y: 0, z: 0 });
+    grenade.resting = true;
+    stepGrenade(grenade, 1 / 60, shelfSweep, PARAMS);
+    expect(grenade.resting).toBe(true);
+    expect(grenade.position.y).toBeCloseTo(1 + RADIUS + 0.002);
+    shelf = false;
+    for (let i = 0; i < 30 && grenade.position.y > 1; i++) stepGrenade(grenade, 1 / 60, shelfSweep, PARAMS);
+    expect(grenade.resting).toBe(false);
+    expect(grenade.position.y).toBeLessThan(1);
+    for (let i = 0; i < 60 * 4 && !grenade.resting; i++) stepGrenade(grenade, 1 / 60, shelfSweep, PARAMS);
+    expect(grenade.resting).toBe(true);
+    expect(grenade.position.y).toBeLessThan(RADIUS + 0.01);
+  });
+
+  it('a resting grenade on the terrain floor fallback stays resting', () => {
+    const nothing: Sweep = () => null;
+    const grenade = body({ x: 0, y: 2 + RADIUS + 0.002, z: 0 }, { x: 0, y: 0, z: 0 });
+    grenade.resting = true;
+    stepGrenade(grenade, 1 / 60, nothing, { ...PARAMS, floor: () => 2 });
+    expect(grenade.resting).toBe(true);
+  });
+
   it('does not come to rest against a wall in mid-air', () => {
     const wall = planes({ point: { x: 1, y: 0, z: 0 }, normal: { x: -1, y: 0, z: 0 } });
     const grenade = body({ x: 0.929, y: 5, z: 0 }, { x: 0.2, y: 0, z: 0 });
