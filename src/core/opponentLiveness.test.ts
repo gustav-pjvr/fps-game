@@ -18,6 +18,15 @@ describe('isOpponentSilent', () => {
     expect(isOpponentSilent(1000 + MULTIPLAYER_LOADING_TIMEOUT_MS - 1, 1000, null)).toBe(false);
   });
 
+  it('keeps a player that stalls right after its first snapshot past the settle window', () => {
+    // The four-player browser test: a late joiner sent one snapshot, then its page froze for about a
+    // minute; the host dropped it 30 s after that snapshot, so nobody else ever added it.
+    const first = 1000;
+    expect(isOpponentSilent(first + MULTIPLAYER_SETTLE_MS + 1, first, first)).toBe(false);
+    expect(isOpponentSilent(first + MULTIPLAYER_LOADING_TIMEOUT_MS - 1, first, first)).toBe(false);
+    expect(isOpponentSilent(first + MULTIPLAYER_LOADING_TIMEOUT_MS, first, first)).toBe(true);
+  });
+
   it('waits out a dead player that sends nothing until its respawn, but not forever', () => {
     // Settled, then killed: silent past the connection timeout while its respawn timer runs.
     const now = MULTIPLAYER_SETTLE_MS + 100_000;
