@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GamepadInput, GAMEPAD_ACTIONS, lookResponse, mergeMoveVectors, radialDeadZone } from './GamepadInput.ts';
+import { GamepadInput, PAD_SWITCH_IDLE_SAMPLES, GAMEPAD_ACTIONS, lookResponse, mergeMoveVectors, radialDeadZone } from './GamepadInput.ts';
 import { Settings } from '../settings/Settings.ts';
 
 function pad(axes = [0, 0, 0, 0], down: number[] = [], index = 0): Gamepad {
@@ -88,10 +88,24 @@ describe('standard mapping and lifecycle', () => {
     expect(input.poll([pad(), pad([], [], 1)]).actions.size).toBe(0);
     expect(input.poll([pad(), pad([], [7], 1)]).justPressed.has('fire')).toBe(true);
     expect(input.poll([pad(), pad([], [7], 1)]).actions.has('fire')).toBe(true);
+    // The pad in use keeps the seat while it is in use; once idle long enough, the other may take it.
+    for (let i = 0; i < PAD_SWITCH_IDLE_SAMPLES; i++) input.poll([pad(), pad([], [7], 1)]);
     expect(input.poll([pad([0, -1], []), pad([], [7], 1)]).actions.has('moveForward')).toBe(true);
     // Nothing new on either pad: the pad in use keeps the seat.
     expect(input.poll([pad([0, -1], []), pad([], [7], 1)]).actions.has('moveForward')).toBe(true);
-    expect(input.poll([pad([0, -1], []), pad([], [7, 2], 1)]).justPressed.has('reload')).toBe(true);
+    // Pad 0 is now in use, so a press on pad 1 straight away is ignored rather than stealing the seat.
+    expect(input.poll([pad([0, -1], []), pad([], [7, 2], 1)]).justPressed.has('reload')).toBe(false);
+  });
+
+  it('delivers a press once when a virtual mirror of the pad reports it a sample later', () => {
+    const input = new GamepadInput();
+    let jumps = 0;
+    const count = (pads: Gamepad[]): void => { if (input.poll(pads).justPressed.has('jump')) jumps++; };
+    count([pad(), pad([], [], 1)]);
+    count([pad(), pad([], [0], 1)]);       // the real pad (index 1) presses A
+    count([pad([], [0]), pad([], [0], 1)]); // its mirror (index 0) reports it a sample later
+    count([pad([], [0]), pad([], [0], 1)]);
+    expect(jumps).toBe(1);
   });
 
   it('keeps the current pad when two pads are touched in the same sample, and drops one that disconnects', () => {

@@ -66,6 +66,9 @@ function connectedGamepads(): readonly (Gamepad | null)[] {
   catch { return []; }
 }
 
+/** Samples the pad in use must be idle before another pad can take over (see choosePad). */
+export const PAD_SWITCH_IDLE_SAMPLES = 30;
+
 export class GamepadInput {
   activeDevice: ActiveDevice = 'mouse';
   managed = false;
@@ -163,8 +166,15 @@ export class GamepadInput {
       if (touched) this.lastActivity.set(candidate.index, this.sampleNumber);
       this.snapshots.set(candidate.index, { buttons, axes });
     }
-    // The pad in use keeps the seat on a tie; only a strictly newer touch moves it.
-    let best = available.find((candidate) => candidate.index === this.pad?.index) ?? available[0] ?? null;
+    // The pad in use keeps the seat while it is being used: another pad takes over only once the
+    // current one has been idle for PAD_SWITCH_IDLE_SAMPLES. A virtual mirror of the same pad
+    // (Steam Input, DS4Windows) reports each press a sample later, and switching on that would
+    // deliver the press twice.
+    const current = available.find((candidate) => candidate.index === this.pad?.index) ?? null;
+    const lastUse = this.lastActivity.get(current?.index ?? -1);
+    const currentIdle = lastUse === undefined ? Number.POSITIVE_INFINITY : this.sampleNumber - lastUse;
+    if (current && currentIdle < PAD_SWITCH_IDLE_SAMPLES) return current;
+    let best = current ?? available[0] ?? null;
     for (const candidate of available) {
       if ((this.lastActivity.get(candidate.index) ?? -1) > (this.lastActivity.get(best?.index ?? -1) ?? -1)) best = candidate;
     }

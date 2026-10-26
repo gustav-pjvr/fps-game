@@ -110,12 +110,19 @@ function activate(element: HTMLElement): void {
   queueMicrotask(() => { if (element.isConnected) element.click(); });
 }
 
+/** How long a newly shown menu ignores A and B (see GamepadFocus.sinceFocus). */
+export const MENU_PRESS_GRACE = 0.3;
+
 export class GamepadFocus {
   private direction: FocusDirection | null = null;
   private repeatIn = 0;
   // Buttons held when a menu took focus. A (jump) or B (interact) still down from play must be
   // released before it can press anything, or it would fire the screen's first button.
   private readonly heldAtFocus = new Set<number>();
+  // Seconds since a menu took focus. A and B do nothing for MENU_PRESS_GRACE after it appears: a
+  // reflexive jump or interact a frame later would otherwise press its first button (Respawn on the
+  // Uplink results, Return to Lobby at a guest's match end).
+  private sinceFocus = Number.POSITIVE_INFINITY;
 
   constructor(private readonly findControls: () => HTMLElement[] = menuControls) {}
 
@@ -127,6 +134,7 @@ export class GamepadFocus {
     if (focused < 0) {
       focused = 0;
       controls[0]!.focus();
+      this.sinceFocus = 0;
       this.heldAtFocus.clear();
       for (const button of frame.buttons) this.heldAtFocus.add(button);
     }
@@ -147,6 +155,8 @@ export class GamepadFocus {
       this.repeatIn = direction !== this.direction ? 0.35 : 0.12;
     }
     this.direction = direction;
+    this.sinceFocus += dt;
+    if (this.sinceFocus < MENU_PRESS_GRACE) return;
     if (frame.pressed.has(1) && !this.heldAtFocus.has(1)) { gamepadBack(); return; }
     if (frame.pressed.has(0) && !this.heldAtFocus.has(0)) {
       const element = document.activeElement as HTMLElement;

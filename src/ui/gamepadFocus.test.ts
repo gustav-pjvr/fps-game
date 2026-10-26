@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { backControl, GamepadFocus, nearestFocus, type FocusRect } from './gamepadFocus.ts';
+import { backControl, GamepadFocus, MENU_PRESS_GRACE, nearestFocus, type FocusRect } from './gamepadFocus.ts';
 import { gamepadInput, type GamepadFrame } from '../input/GamepadInput.ts';
 
 const rect = (x: number, y: number, width = 20, height = 20): FocusRect => ({ x, y, width, height });
@@ -61,7 +61,7 @@ describe('controller menu button gate', () => {
     menu.update(frame([0], []), 0.016);    // still held
     await flush();
     expect(respawn.clicks).toBe(0);
-    menu.update(frame([], []), 0.016);     // released
+    menu.update(frame([], []), MENU_PRESS_GRACE); // released, after the grace
     menu.update(frame([0], [0]), 0.016);   // a new press
     await flush();
     expect(respawn.clicks).toBe(1);
@@ -74,9 +74,13 @@ describe('controller menu button gate', () => {
     expect(respawn.clicks).toBe(0);
   });
 
-  it('accepts a press that begins after the menu has focus', async () => {
+  it('ignores a fresh A a few frames after the menu appears (a reflexive jump), then accepts one', async () => {
     const { menu, respawn } = setup();
     menu.update(frame([], []), 0.016);
+    menu.update(frame([0], [0]), 0.05);
+    await flush();
+    expect(respawn.clicks).toBe(0);
+    menu.update(frame([], []), MENU_PRESS_GRACE);
     menu.update(frame([0], [0]), 0.016);
     await flush();
     expect(respawn.clicks).toBe(1);
