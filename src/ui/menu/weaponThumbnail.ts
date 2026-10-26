@@ -1,8 +1,8 @@
 import { INK } from '../theme.ts';
 import * as THREE from 'three';
 
-// Rendered larger than the 72px slot the old inventory card used, since the card was enlarged to
-// 112px so players can actually make out each weapon's shape/details, not just its silhouette.
+// CSS pixels (the renderer multiplies by the device pixel ratio, up to 2): at least as large as the
+// biggest Loadout tile, so a tile never upscales its thumbnail.
 const THUMBNAIL_SIZE = 192;
 
 /** Every thumbnail rendered so far this session, keyed by weapon id. A weapon's model never
@@ -62,6 +62,7 @@ export function renderWeaponThumbnail(weaponId: string, source: THREE.Object3D):
   const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
   camera.position.set(1.4, 0.9, 1.6);
   camera.lookAt(0, 0, 0);
+  fitCameraToModel(camera, model);
 
   const renderer = getSharedRenderer();
   renderer.render(scene, camera);
@@ -70,6 +71,42 @@ export function renderWeaponThumbnail(weaponId: string, source: THREE.Object3D):
   const dataUrl = renderer.domElement.toDataURL('image/png');
   thumbnailCache.set(weaponId, dataUrl);
   return dataUrl;
+}
+
+/** How much of the frame the model's longer projected side fills; the rest is breathing room. */
+const FRAME_FILL = 0.86;
+
+/** Zooms and recentres the camera's projection so the model's on-screen silhouette (every vertex,
+ * projected) is centred and fills FRAME_FILL of the square frame. A bounding box alone leaves a
+ * long gun seen at 3/4 small and off centre, and the Loadout tiles show nothing but the design.
+ * Exact for a perspective camera: the scale and shift are applied in clip space (x' = s * (x - c * w)). */
+function fitCameraToModel(camera: THREE.PerspectiveCamera, model: THREE.Object3D): void {
+  camera.updateMatrixWorld();
+  model.updateMatrixWorld(true);
+  const point = new THREE.Vector3();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  model.traverse((object) => {
+    if (!(object instanceof THREE.Mesh) || !object.visible) return;
+    const position = (object.geometry as THREE.BufferGeometry).getAttribute('position');
+    if (!position) return;
+    for (let i = 0; i < position.count; i++) {
+      point.fromBufferAttribute(position, i).applyMatrix4(object.matrixWorld).project(camera);
+      minX = Math.min(minX, point.x); maxX = Math.max(maxX, point.x);
+      minY = Math.min(minY, point.y); maxY = Math.max(maxY, point.y);
+    }
+  });
+  const half = Math.max(maxX - minX, maxY - minY) / 2;
+  if (!Number.isFinite(half) || half <= 0) return;
+  const scale = FRAME_FILL / half;
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  camera.projectionMatrix.premultiply(new THREE.Matrix4().set(
+    scale, 0, 0, -scale * centerX,
+    0, scale, 0, -scale * centerY,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ));
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
 }
 
 function getSharedRenderer(): THREE.WebGLRenderer {

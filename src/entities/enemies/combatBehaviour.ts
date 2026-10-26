@@ -333,7 +333,8 @@ export class CombatBehaviour {
       // Whisker avoidance during chase too: a head-height LOS ray can clear past a tree trunk or
       // boulder whose collider still blocks the ground path, so a beelining chaser used to clip
       // through trunks.
-      this.body.moveToward(player.position.x, player.position.z, archetype.moveSpeed, dt);
+      const target = player.position;
+      this.body.moveToward(target.x, target.z, archetype.moveSpeed, dt, target.y);
     }
   }
 

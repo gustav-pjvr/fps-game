@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Player } from './Player.ts';
+import type { PlayerVisibility } from './enemies/playerVisibility.ts';
 import { Target, TARGET_MODEL_PATH } from './enemies/Target.ts';
 import { Enemy, ENEMY_MODEL_PATH, type EnemyCombatHooks, type EnemyDebugRecord } from './enemies/Enemy.ts';
 import { createArchetypePicker } from './enemies/archetypes.ts';
@@ -91,7 +92,7 @@ interface ManagedEntity {
   readonly debugState?: string;
   readonly debugArchetype?: string;
   dispose(): void;
-  update?(dt: number, player: Player): void;
+  update?(dt: number, player: Player, visibility?: PlayerVisibility): void;
   /** Both Target and Enemy implement Damageable; optional here only so the interface stays honest
    * about what EntityManager actually relies on. */
   takeDamage?(amount: number, hitColliderHandle: number, sourcePosition?: THREE.Vector3): void;
@@ -99,9 +100,14 @@ interface ManagedEntity {
    * no AI to alert. */
   onHeardGunshot?(origin: THREE.Vector3, weaponId?: string): void;
   onNearbyDeath?(deathPosition: THREE.Vector3, killerPosition: THREE.Vector3): void;
+  /** Enemy-only, grenades: where its eyes are and which way it faces, and being blinded by a flash
+   * for `seconds`. */
+  flashView?(): { eye: THREE.Vector3; yaw: number };
+  onFlashed?(seconds: number): void;
   /** Enemy-only debug hooks (enemy AI v2 e2e checks). */
   debugRecord?(): EnemyDebugRecord;
   debugPlace?(x: number, z: number): void;
+  debugCommand?(target: { x: number; y: number; z: number } | null): void;
   /** Enemy-only: its entry on the combat coordinator's roster, or null when not fighting. */
   combatCandidate?(): RoleCandidate | null;
   /** Enemy-only: position picking (step 3). */
@@ -287,7 +293,38 @@ export class EntityManager {
     }
   }
 
-  update(dt: number, player: Player): void {
+  /** A frag grenade (combat/grenades/GrenadeSystem.ts): `damageAt(distance)` to every live entity
+   * the blast `reaches` past the walls (the caller's chest and head rays; `entity` and `exclude`
+   * let those rays count the target's own colliders as reaching it). */
+  applyBlast(
+    position: THREE.Vector3,
+    damageAt: (distance: number) => number,
+    reaches: (center: THREE.Vector3, entity: object, exclude?: RAPIER.RigidBody) => boolean,
+  ): void {
+    for (const entity of this.entities) {
+      if (entity.isDead || !entity.takeDamage) continue;
+      const amount = damageAt(entity.mesh.position.distanceTo(position));
+      if (amount > 0 && reaches(entity.mesh.position, entity, entity.excludeRigidBody)) entity.takeDamage(amount, -1, position);
+    }
+  }
+
+  /** A flash grenade: `judge` gives each enemy's blind seconds from its eyes and facing (0 for none:
+   * out of range, no line of sight, too weak). Returns how many were blinded. */
+  applyFlash(judge: (eye: THREE.Vector3, yaw: number, entity: object, exclude?: RAPIER.RigidBody) => number): number {
+    let blinded = 0;
+    for (const entity of this.entities) {
+      if (entity.isDead || !entity.flashView || !entity.onFlashed) continue;
+      const view = entity.flashView();
+      const seconds = judge(view.eye, view.yaw, entity, entity.excludeRigidBody);
+      if (seconds > 0) {
+        entity.onFlashed(seconds);
+        blinded++;
+      }
+    }
+    return blinded;
+  }
+
+  update(dt: number, player: Player, visibility?: PlayerVisibility): void {
     this.killedThisTick.length = 0;
     this.knowledge.advance(dt);
     this.updateCoordinator();
@@ -298,7 +335,7 @@ export class EntityManager {
       const entity = this.entities[i];
       if (!entity) continue;
 
-      entity.update?.(dt, player);
+      entity.update?.(dt, player, visibility);
 
       if (entity.isDead) {
         const deathPosition = entity.mesh.position.clone();
@@ -674,6 +711,12 @@ export class EntityManager {
    * through its normal takeDamage path (no attacker position, so it only flinches or staggers). */
   damageEnemy(index: number, amount: number): void {
     this.entities[index]?.takeDamage?.(amount, -1);
+  }
+
+  /** Test-only - the live entity at `index` (an enemy) stops thinking and walks to (x, y, z), a body
+   * centre point, through the houses' navigator and doors (the houses e2e); null lets it think again. */
+  commandEnemy(index: number, target: { x: number; y: number; z: number } | null): void {
+    this.entities[index]?.debugCommand?.(target);
   }
 
   /** Test-only - instantly moves the live entity at `index` (an enemy) to (x, z) on the ground. */

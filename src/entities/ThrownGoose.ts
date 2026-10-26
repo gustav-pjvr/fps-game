@@ -1,3 +1,4 @@
+import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import { GRAVITY } from '../core/config.ts';
@@ -56,4 +57,14 @@ export class ThrownGoose {
     scene.remove(this.mesh);
     disposeProceduralMesh(this.mesh);
   }
+}
+
+/** Whether a thrown goose's step from `from` to `to` crosses a solid fixed collider (a house wall, a
+ * closed door, furniture). Sensors (a tree's canopy ball) are not solid. */
+export function throwSegmentBlocked(world: RAPIER.World, from: THREE.Vector3Like, to: THREE.Vector3Like): boolean {
+  const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+  const length = Math.hypot(dx, dy, dz);
+  if (length < 1e-6) return false;
+  const ray = new RAPIER.Ray({ x: from.x, y: from.y, z: from.z }, { x: dx / length, y: dy / length, z: dz / length });
+  return world.castRay(ray, length, true, RAPIER.QueryFilterFlags.ONLY_FIXED | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS) !== null;
 }

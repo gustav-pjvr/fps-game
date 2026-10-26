@@ -1,4 +1,5 @@
-import { PLAYER_HEALTH, type MatchMap } from './config.ts';
+import { PLAYER_HEALTH } from './config.ts';
+import { GRENADE_KINDS, isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
 /** Multiplayer-only, host-picked pre-match (per explicit user request - single-player never has a
  * mode, always the unrestricted default loadout). Threaded alongside `gooseDifficulty`/`killLimit`
@@ -28,15 +29,28 @@ export const GAME_MODE_LABELS: Record<GameMode, string> = {
   gooseHorde: 'Goose Horde (Co-op)',
 };
 
-export function isModeAllowedOnMap(mode: GameMode, map: MatchMap): boolean {
-  return map === 'valley' || (mode !== 'gooseToss' && mode !== 'kingOfTheHill' && mode !== 'gooseHorde');
-}
+/** Single-player's own modes (PlaySetupModal); single-player has no GameMode of its own. */
+export type SinglePlayerMode = 'elimination' | 'director' | 'horde' | 'mission';
 
-export function isSinglePlayerModeAllowedOnMap(
-  mode: 'elimination' | 'director' | 'horde' | 'mission',
-  map: MatchMap,
-): boolean {
-  return map === 'valley' || mode === 'elimination' || mode === 'director';
+/** Whether players carry frag and flash grenades (design: docs/squad-arsenal-night.md section 3):
+ * on wherever the loadout is open, off in the single-weapon and rotating-weapon modes. One table for
+ * multiplayer's GameMode and single-player's own modes alike. */
+const GRENADES_ENABLED: Readonly<Record<GameMode | SinglePlayerMode, boolean>> = {
+  default: true,
+  elimination: true,
+  director: true,
+  horde: true,
+  gooseHorde: true,
+  mission: true,
+  kingOfTheHill: true,
+  knifeOnly: false,
+  gunGame: false,
+  sniperDuel: false,
+  oneShotOneKill: false,
+  gooseToss: false,
+};
+export function grenadesEnabled(mode: GameMode | SinglePlayerMode): boolean {
+  return GRENADES_ENABLED[mode];
 }
 
 /** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user
@@ -66,7 +80,15 @@ export interface PlayerLoadout {
   primary: string | null;
   secondary: string | null;
   melee: string | null;
+  /** The grenade thrown with Q (pad RB). Absent in loadouts saved before the Loadout page offered
+   * one; loadStoredLoadout (core/loadout.ts) fills it with LOADOUT_GRENADE_DEFAULT. */
+  grenade?: GrenadeKind;
 }
+
+/** The grenade kinds live with the rest of the grenade tuning (combat/grenades/grenadeTuning.ts);
+ * re-exported here for the loadout code that reads them alongside the weapon slots. */
+export { GRENADE_KINDS, isGrenadeKind, type GrenadeKind };
+export const LOADOUT_GRENADE_DEFAULT: GrenadeKind = 'frag';
 
 export const LOADOUT_SLOT_DEFAULTS: Readonly<Record<'primary' | 'secondary' | 'melee', string>> = {
   primary: 'rifle',

@@ -13,10 +13,10 @@ This file is the design. Sections are referenced by the build jobs.
 - A second map, **Facility**, picked before a match: in the single-player setup and in Create Room.
   The Valley (today's outdoor world) stays the default.
 - Modes on the Facility. Single-player: Elimination and Director. Multiplayer: Default, 1 Shot 1
-  Kill, Sniper Duel, Gun Game, Knife Only. Not in this release (the options are disabled with a
-  reason when Facility is picked): single-player Horde and Mission, multiplayer Goose Toss, King of
-  the Hill and Goose Horde. They depend on open terrain, flying geese or watch towers.
-- No ambient goose flock and no bonus golden goose on the Facility.
+  Kill, Sniper Duel, Gun Game, Knife Only. Since v4.6.0 every other mode too (section 12):
+  single-player Horde and Mission, multiplayer Goose Toss, King of the Hill and Goose Horde.
+- No ambient goose flock and no bonus golden goose on the Facility (Goose Toss's pickups are the
+  one exception, section 12).
 - Weather does not apply indoors: the weather select is disabled while Facility is picked.
 - The layout comes from the match seed (`core/worldSeed.ts`), so every client in a multiplayer
   match builds the identical facility, and single-player gets a new one each match.
@@ -227,3 +227,101 @@ dark and players then rely on their torches.
 - **Resets:** a single-player Restart relights every lamp. A rematch builds a new facility anyway.
 - **Debug API:** `getFacilityDebug()` gains `deadLamps: number` and a test-only
   `shootLamp(index)`; plus `lampPosition(index)` so an e2e test can aim at one.
+
+## 12. Doors and breaker switches
+
+`facilityDoors.ts` merges adjacent doorway cells with the same axis, room and side into one
+opening. A seeded draw (`FACILITY_DOOR_SEED_OFFSET = 613`) gives each eligible opening a door
+with `FACILITY_DOOR_CHANCE = 0.6`; eligible openings into dark rooms always get doors and start
+closed. Other doors start open. `FACILITY_DOOR_MAX_CELLS = 3`: openings wider than 3 cells
+(4.5 m) get no door, so a dark room with one is not sealed.
+
+`FacilityObjects.ts` builds two painted steel sliding leaves, a hazard stripe and red closed or
+green open status lamps. Leaves are 6 cm thick and sit 4 cm toward the corridor so they slide
+inside the wall mass. `FACILITY_DOOR_SLIDE_SECONDS = 0.6`; colliders change immediately with
+state, independently of the visual slide. Closed doors block players, bullets, grenades and
+enemy sight. Doors refuse to close on a player. Door changes do not recompute the light bake.
+
+Look at a door or breaker within `FACILITY_INTERACT_REACH = 2.2` m and press interact (E or pad B)
+to toggle it. A nearer physics hit blocks the prompt, with 0.2 m tolerance for a door's own
+collider. `facilityInteraction.ts` owns prompts, authority, positional slide and breaker sounds,
+and the enemy gate. The cost-ordered flow field treats closed door crossings as passable with
+`FACILITY_DOOR_NAV_COST = 4` extra steps: short detours win, long ones lead through the door.
+Enemies stop within a 1.6 m lookahead, wait `FACILITY_ENEMY_DOOR_WAIT = 0.8` seconds at the same
+door, then open it. They never close doors.
+
+`facilityPower.ts` groups rooms by position into 4 to 6 seeded zones, using farthest-point room
+seeds and nearest-seed membership. Corridor lamps join the nearest room's zone. Each zone has
+one panel on a perimeter wall beside walkable floor inside a room, never in the atrium (room 0).
+Its floor cell stays at least 3 cells (Chebyshev distance) from every doorway. The panel centre
+is 1.45 m high, stands 0.06 m off the wall and has a lever and red or green status lamp. A zone
+without panel space joins its nearest neighbour. All breakers start on.
+
+Switching off darkens that zone's panel lamps; emergency lamps stay lit on battery. Switching on
+relights every lamp that was not shot out. `FacilityWorld` tracks shot-out and unpowered lamps
+separately. Visuals change immediately; the rebake queue recomputes light from the current union
+of dark lamps, one queued lamp per update, for both cuts and relights. `flushLampRebakes()` drains
+the queue for tests. The final vertex light, direct light, fill and probe arrays are independent
+of the order of power changes and lamp shots. Restart restores lamps, initial doors and breakers.
+
+The minimap draws closed doors as short bars. A panel shows on the minimap once its room is
+entered. Multiplayer is host-authoritative: guests send `worldInteract { kind, id }`, where kind
+is `door` or `breaker` and id is a non-negative integer. The host validates the object and guest
+reach (2.2 m plus 1.5 m latency slack), applies the change and broadcasts `worldObjectState`.
+`facilityObjectState.ts` encodes `doors` and `breakers` as bit strings in id order: 1 means open
+or on. Network validation limits each string to 4096 binary characters; layout parsing requires
+the exact expected counts. Welcome and first-snapshot resync carry the full state for late joiners.
+
+Debug hooks: `facilityDoor`, `setFacilityDoor`, `facilityBreaker`, `setFacilityBreaker`,
+`facilityLookTarget` and the door and breaker counts in `getFacilityDebug()`. Debug setters use
+the interaction rules, including refusing to close on players.
+
+## 13. Modes on the Facility (v4.6.0, docs/squad-arsenal-night.md section 7)
+
+Every mode now runs on the Facility; the map gates in `core/gameModes.ts` and the "Valley only"
+notes in Create Room, the match end screen's Rematch picker and the single-player setup are gone.
+Where things go is decided in `src/world/facility/facilityModes.ts` (pure, unit-tested), which the
+entity managers reach through two small adapters, so the Valley code paths are unchanged.
+
+- **Goose Toss.** `GooseManager` takes an optional `GoosePlacement` (`facilityGoosePlacement`):
+  the opening batch, the constant supply and the goose a death spawns all land on cell centres
+  walkable with 0.6 m clearance (clear of walls, pillars and crates), the supply anywhere in the
+  facility, a death's goose 10 to 20 m from the victim. A wandering goose only takes a destination
+  in clear straight line (`segmentClear`, 0.45 m), so it never presses into a wall. The opening
+  batch runs on the Facility for Goose Toss only; the bonus golden goose stays off. A thrown goose
+  bursts on the first wall cell, crate or ceiling it meets (`facilityBlocksThrow`), not only on the
+  floor.
+- **King of the Hill.** The golden goose starts at the atrium centre (0, 0), on the floor (the
+  height override already makes `sampleHeight` 0), so nothing changed there. While it lies free it
+  is a cyan diamond on the Facility map (`KingOfTheHillController.minimapMarkers`).
+- **Goose Horde and Horde.** `HordeGooseManager` takes an optional `HordeIndoorSite`
+  (`facilityHordeSite`). Each goose comes in at a room floor cell (corridors left out) outside every
+  live player's room and at least 18 m from each player, preferably within 40 m of the nearest so a
+  wave arrives in seconds; with no such cell, the one farthest from its nearest player. Walkers and
+  jumpers chase through the doors with the enemies' navigator (`resolveMoveTarget`, section 3; a
+  no-op on the Valley). Flyers never drop from the sky indoors: they spawn at their flight height
+  and fly the same waypoints at 2.6 m, clamped to the local ceiling minus 0.6 m (a corridor's 3.2 m
+  allows exactly 2.6), diving onto the target over the last 5 m. A guest's mirror flyers start at
+  the same height. Single-player Horde starts at the layout's start like Elimination.
+- **Mission.** `facilityMissionObjectives(layout, start)` picks four rooms, one per quadrant around
+  the atrium where it can, never the atrium or the start's room, each at least 16 m from the
+  start; the largest room wins in a quadrant (room for the console and the extraction ring), a
+  short quadrant is filled from the others, farthest first. Each point is the clear floor nearest
+  its room's centre. `MissionState` is unchanged: the three nearest the start are the uplinks, the
+  farthest the extraction. Each point gets a console (`facility/facilityConsoles.ts`: a steel
+  cabinet with a lit screen and a beacon cap, solid to walk into) and its beam is a slim shaft from
+  the cap to the ceiling (`UplinkBeacons`' indoor site). All of it is emissive or unlit: no light is
+  added, because the Facility's materials compile for a fixed number of lights. World markers sit
+  1 m over the cap; the uplinks not yet online and the open extraction are diamonds on the map
+  (`missionMapMarkers`).
+- **Minimap.** `Minimap.setMarkers` draws a mode's objectives as cyan diamonds, held at the rim
+  when out of range like the other dots.
+- **Debug API:** `getHordeDebug()` returns the current wave and every live horde goose.
+- **Tests:** `facilityModes.test.ts`, `missionState.test.ts` (markers); e2e
+  `e2e/facility-modes.spec.ts` (group `facility`): solo Horde starts wave 1 with geese inside the
+  bounds and under the ceiling, solo Mission shows four objectives inside the bounds and marks the
+  uplinks on the map.
+- **Known limits:** the mission's radii are the Valley's (start 9 m, hold 14 m, extraction 6 m), so
+  an upload can be started or held from just behind a room's wall, and the extraction ring can
+  cross a small room's walls. Multiplayer Goose Toss, King of the Hill and Goose Horde on the
+  Facility have no e2e test of their own.

@@ -10,8 +10,14 @@ export const GROUPS = {
   mission: { files: ['e2e/mission.spec.ts'] },
   ui: { files: ['e2e/ui-qa.spec.ts'] },
   world: { files: ['e2e/world-bounds.spec.ts'] },
-  // The indoor map (docs/facility-map.md), solo and two-player.
-  facility: { files: ['e2e/facility.spec.ts', 'e2e/multiplayer-facility.spec.ts'] },
+  // The indoor map (docs/facility-map.md), solo and two-player, and the modes on it; the torch and solo weather.
+  facility: { files: ['e2e/facility.spec.ts', 'e2e/facility-doors.spec.ts', 'e2e/facility-modes.spec.ts', 'e2e/multiplayer-facility.spec.ts', 'e2e/pickups.spec.ts', 'e2e/solo-weather.spec.ts'] },
+  // Health, ammo and grenade pickups (docs/pickups.md).
+  pickups: { files: ['e2e/pickups.spec.ts'] },
+  // The enterable Valley houses (docs/enterable-buildings.md): doors, interiors, enemies inside.
+  houses: { files: ['e2e/houses.spec.ts'] },
+  // Frag and flash grenades (docs/grenades.md), solo.
+  grenades: { files: ['e2e/grenades.spec.ts'] },
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
@@ -22,12 +28,17 @@ export const GROUPS = {
       'e2e/multiplayer-pause-damage.spec.ts',
     ],
   },
+  // Host plus three guests in four contexts (docs/multiplayer.md, "Three and four players"). About ten
+  // minutes on SwiftShader, so a change picks it only through the squad rules below, never as part of mp.
+  mp4: { files: ['e2e/multiplayer-four.spec.ts'] },
   // Measurements, not pass or fail on behaviour: never picked by a change, only asked for by name.
   perf: { files: ['e2e/perf-log.spec.ts', 'e2e/performance-check.spec.ts'] },
 };
 
-/** Every group a full run covers (everything but perf). */
-export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'mp'];
+/** Every group a full run covers (everything but perf). mp4 is in it because the full suite means
+ * every behaviour spec, and the shared helpers a full run follows (lockPointer, equipPistol) are what
+ * it drives. It is the slowest group, which is one more reason the full suite stays a last resort. */
+export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'houses', 'grenades', 'mp', 'mp4'];
 
 /**
  * Path rules, checked in order; every matching rule adds its groups, except that a `stop` rule
@@ -46,15 +57,20 @@ export const RULES = [
   { match: /^e2e\/.+\.spec\.ts$/, groups: [], stop: true },
 
   // Game areas.
+  { match: /^src\/pickups\//, groups: ['pickups'] },
+  { match: /^src\/world\/(houses|doors)\/|^src\/ui\/valleyHouseMapLayer\.ts$/, groups: ['houses'] },
+  { match: /^src\/combat\/grenades\/|^src\/weapons\/(GrenadeViewModel|grenadeThrowPose)\.ts$|^src\/ui\/(grenadeDangerMarkers|flashOverlay)\.ts$|^src\/audio\/flashDeafness\.ts$/, groups: ['grenades'] },
   { match: /^src\/world\/facility\/|^src\/render\/Flashlight\.ts$|^src\/ui\/(minimap|facilityMapLayer)\.ts$/, groups: ['facility'] },
   { match: /^src\/entities\/characterHitbox\.ts$|^public\/assets\/models\/characters\//, groups: ['quick', 'ai', 'mp'] },
   { match: /^src\/entities\/(enemies\/|EntityManager\.ts$|Target\.ts$)/, groups: ['quick', 'ai'] },
+  // The 3 to 4 player machinery (direct guest links, late-joiner sync, the roster): its own browser test too.
+  { match: /^src\/network\/(GuestMesh|directLinks|matchSync|HostRoster|PeerConnection|MatchMessageRouter)\w*\.ts$/, groups: ['mp4'] },
   { match: /^src\/(network|lobby)\/|^src\/entities\/RemotePlayer\.ts$|^src\/core\/(multiplayer\w*|modeControllers\/.*|gameModes)\.ts$|^src\/ui\/menu\/(CreateRoomScreen|JoinRoomScreen|MultiplayerMenu)\.ts$|^src\/ui\/matchEndScreen\.ts$/, groups: ['mp'] },
   { match: /^src\/core\/mission\/|^src\/world\/UplinkBeacons\.ts$|^src\/ui\/(worldMarkers|deathScreen)\.ts$/, groups: ['mission'] },
   { match: /^src\/ui\/|^index\.html$/, groups: ['quick', 'ui'] },
   { match: /^src\/world\//, groups: ['quick', 'world'] },
   { match: /^src\/(weapons|combat|input)\/|^src\/entities\/Player\.ts$/, groups: ['core'] },
-  { match: /^src\/core\/(Game|gameDebugApi)\.ts$/, groups: ['core', 'mission', 'facility'] },
+  { match: /^src\/core\/(Game|gameDebugApi)\.ts$/, groups: ['core', 'mission', 'facility', 'grenades'] },
   { match: /^src\/core\/App\.ts$/, groups: ['core', 'ui', 'mp'] },
   { match: /^src\/core\/config\.ts$/, groups: ['core', 'ai'] },
   { match: /^src\/(render|audio|settings)\/|^public\//, groups: ['quick'] },

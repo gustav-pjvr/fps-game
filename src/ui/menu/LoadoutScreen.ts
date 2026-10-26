@@ -1,4 +1,4 @@
-import { AMBER, SURFACE, LABEL_CSS } from '../theme.ts';
+import { AMBER, SURFACE, SURFACE_RAISED, INK_FAINT, LABEL_CSS, MONO_FONT } from '../theme.ts';
 import { WEAPON_DEFINITIONS, type WeaponDefinition } from '../../weapons/definitions.ts';
 import { buildWeaponViewModel } from '../../weapons/models/arsenal.ts';
 import {
@@ -15,16 +15,30 @@ import {
   DISPLAY_FONT,
   BODY_FONT,
 } from './menuStyles.ts';
-import { createStatBadge } from './statIcons.ts';
+import { createStatBadge, type StatIconKind } from './statIcons.ts';
 import { getCachedWeaponThumbnail, releaseThumbnailRenderer, renderWeaponThumbnail } from './weaponThumbnail.ts';
-import { WEAPON_CATEGORIES, LOADOUT_SLOT_DEFAULTS, type WeaponCategory, type PlayerLoadout } from '../../core/gameModes.ts';
-import { loadStoredLoadout, saveLoadout } from '../../core/loadout.ts';
+import { buildGrenadeThumbnailModel } from './grenadeThumbnailModel.ts';
+import { FLASH_MAX_RANGE, FLASH_PLAYER_MAX_SECONDS, FRAG_MAX_DAMAGE, FRAG_RADIUS, GRENADE_FUSE } from '../../combat/grenades/grenadeTuning.ts';
+import { WEAPON_CATEGORIES, GRENADE_KINDS, type WeaponCategory, type PlayerLoadout, type GrenadeKind } from '../../core/gameModes.ts';
+import {
+  loadStoredLoadout,
+  saveLoadout,
+  equipWeapon,
+  equipGrenade,
+  equippedWeaponId,
+  equippedGrenade,
+  type LoadoutWeaponSlot,
+} from '../../core/loadout.ts';
+import { gamepadHint, setDeviceHint } from '../../input/GamepadInput.ts';
+import { keyHint } from '../../input/actions.ts';
+import { Settings } from '../../settings/Settings.ts';
+import { ModalScope } from './modalScope.ts';
 import { LoadoutCharacterPreview } from './loadoutCharacterPreview.ts';
+import type { Object3D } from 'three';
 
 const REWARD_GOLD = AMBER;
 
-type EquippableCategory = 'primary' | 'secondary' | 'melee';
-const EQUIPPABLE_CATEGORIES: readonly EquippableCategory[] = ['primary', 'secondary', 'melee'];
+const EQUIPPABLE_CATEGORIES: readonly LoadoutWeaponSlot[] = ['primary', 'secondary', 'melee'];
 const CATEGORY_LABELS: Record<WeaponCategory, string> = {
   primary: 'Primary',
   secondary: 'Secondary',
@@ -41,122 +55,185 @@ const CATEGORY_DISPLAY_ORDER: Record<WeaponCategory, readonly string[]> = {
   special: ['gooseLauncher'],
 };
 
-/** One-time injected rule so the weapon list can hide its scrollbar in WebKit/Blink browsers (no
- * inline-style equivalent exists for the `::-webkit-scrollbar` pseudo-element) - paired with the
- * `scrollbar-width`/`-ms-overflow-style` inline properties below, which cover Firefox/legacy Edge.
- * Mirrors menuStyles.ts's own ensureMotionKeyframesInjected pattern for the same reason (inline
- * `style.cssText` can't declare this either). */
-let scrollbarHideStyleInjected = false;
-function ensureScrollbarHideStyleInjected(): void {
-  if (scrollbarHideStyleInjected) return;
-  scrollbarHideStyleInjected = true;
+/** What the Loadout page says about each grenade. The numbers come from the grenades' own tuning
+ * table (combat/grenades/grenadeTuning.ts), so the page and the game never disagree. */
+interface GrenadeChoice {
+  readonly name: string;
+  readonly description: string;
+  readonly stats: readonly (readonly [StatIconKind, string])[];
+}
+const GRENADE_CHOICES: Readonly<Record<GrenadeKind, GrenadeChoice>> = {
+  frag: {
+    name: 'Frag Grenade',
+    description: 'A shrapnel burst, deadliest close to the blast.',
+    stats: [['damage', `${FRAG_MAX_DAMAGE} near`], ['radius', `${FRAG_RADIUS} m radius`], ['fuse', `${GRENADE_FUSE.frag.toFixed(1)} s fuse`]],
+  },
+  flash: {
+    name: 'Flash Grenade',
+    description: 'A blinding burst that whites out anyone facing it.',
+    stats: [['blind', `Blinds up to ${FLASH_PLAYER_MAX_SECONDS} s`], ['reach', `${FLASH_MAX_RANGE} m reach`], ['fuse', `${GRENADE_FUSE.flash.toFixed(1)} s fuse`]],
+  },
+};
+
+/** View-model arm parts (arsenal.ts's hands()): the tiles show the weapon's design alone. */
+const ARM_PART_NAMES: ReadonlySet<string> = new Set(['trigger-hand', 'trigger-sleeve', 'support-hand', 'support-sleeve']);
+
+/** One-time injected rules: the tile states (hover, focus, equipped) need pseudo-classes and
+ * pseudo-elements that inline `style.cssText` can't declare, and the weapon list hides its
+ * scrollbar in WebKit/Blink (paired with the inline `scrollbar-width`/`-ms-overflow-style` below
+ * for Firefox/legacy Edge). Mirrors menuStyles.ts's own ensureMotionKeyframesInjected pattern. */
+let loadoutStyleInjected = false;
+function ensureLoadoutStyleInjected(): void {
+  if (loadoutStyleInjected) return;
+  loadoutStyleInjected = true;
   const style = document.createElement('style');
   style.textContent =
     '.loadout-scroll-hide::-webkit-scrollbar { display: none; }' +
-    // Small-viewport clamp: below 980px the fixed 3-column layout (catalog / equipped-slot readout
-    // / character rim) has no room left for any of the three to breathe, so it collapses to a
-    // single scrollable column instead - the overlay itself (normally unscrolled, each column
+    // Tiles: equal squares that show only the rendered design. The name is a caption laid over the
+    // tile's foot (absolutely placed, so showing it never moves anything) on hover or focus.
+    '.loadout-tile {' +
+    '  position: relative; flex: 0 0 auto; box-sizing: border-box; margin: 0; padding: 0; overflow: hidden;' +
+    '  width: var(--loadout-tile); height: var(--loadout-tile); display: flex; align-items: center; justify-content: center;' +
+    // A faint pool of light behind the design lifts the dark gunmetal renders off the tile.
+    `  background: radial-gradient(circle at 50% 50%, rgba(111, 240, 220, 0.07), transparent 70%), ${SURFACE};` +
+    `  border: 1px solid ${HAIRLINE}; border-radius: 2px; color: ${TEXT}; cursor: pointer;` +
+    '  transition: border-color 150ms ease-out, background-color 150ms ease-out;' +
+    '}' +
+    '.loadout-tile-small { width: var(--loadout-grenade-tile); height: var(--loadout-grenade-tile); }' +
+    '.loadout-tile img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }' +
+    `.loadout-tile:hover { border-color: ${INK_FAINT}; }` +
+    `.loadout-tile[aria-pressed="true"] { border-color: ${ACCENT}; box-shadow: inset 0 0 0 1px ${ACCENT}; background-color: ${SURFACE_RAISED}; }` +
+    // The equipped corner: a solid accent triangle, so equipped reads even while another tile has focus.
+    '.loadout-tile[aria-pressed="true"]::after {' +
+    "  content: ''; position: absolute; top: 0; right: 0; width: 0; height: 0;" +
+    `  border-style: solid; border-width: 0 16px 16px 0; border-color: transparent ${ACCENT} transparent transparent;` +
+    '}' +
+    `.loadout-tile-reward, .loadout-tile-reward:hover { border-color: ${REWARD_GOLD}; }` +
+    '.loadout-tile-caption {' +
+    '  position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 6px 6px; pointer-events: none;' +
+    `  font-family: ${BODY_FONT}; font-size: 11.5px; font-weight: 600; line-height: 1.2; text-align: center; color: ${TEXT};` +
+    `  background: linear-gradient(to bottom, transparent, ${BG_VOID} 55%); opacity: 0; transition: opacity 150ms ease-out;` +
+    '}' +
+    '.loadout-tile:hover .loadout-tile-caption, .loadout-tile:focus-visible .loadout-tile-caption,' +
+    ' [data-input-device="gamepad"] .loadout-tile:focus .loadout-tile-caption { opacity: 1; }' +
+    '@media (prefers-reduced-motion: reduce) { .loadout-tile, .loadout-tile-caption { transition: none; } }' +
+    // Small-viewport clamp: below 980px the fixed 3-column layout (catalog / details and equipped
+    // slots / character rim) has no room left for any of the three to breathe, so it collapses to a
+    // single scrollable column instead - the body itself (normally unscrolled, each column
     // scrolls independently) becomes the scroll container, and the character rim shrinks to a
     // fixed height rather than the vh-based sizing that assumes a tall desktop viewport.
     '@media (max-width: 980px) {' +
     '  .loadout-body { flex-direction: column; overflow-y: auto; }' +
-    '  .loadout-middle { width: 100% !important; flex-direction: row; flex-wrap: wrap; justify-content: center; }' +
+    // Each column takes its content's height (the body scrolls, not the catalog).
+    '  .loadout-body > * { flex: none !important; }' +
+    '  .loadout-middle { width: 100% !important; }' +
     '  .loadout-rim { width: 100% !important; height: 340px !important; }' +
     '}';
   document.head.appendChild(style);
 }
 
-interface WeaponCard {
-  readonly element: HTMLDivElement;
+interface WeaponTile {
+  readonly element: HTMLButtonElement;
   readonly weapon: WeaponDefinition;
+  readonly category: WeaponCategory;
 }
 
-function buildWeaponCard(weapon: WeaponDefinition, thumbnailDataUrl: string | null, category: WeaponCategory): HTMLDivElement {
-  const isSpecial = category === 'special';
-  const card = document.createElement('div');
-  card.dataset.weaponId = weapon.id;
-  card.style.cssText =
-    'display:flex; flex-direction:column; gap:10px; padding:14px 16px;' +
-    ` background:${BG_RAISED}; border:1px solid ${isSpecial ? REWARD_GOLD : HAIRLINE};` +
-    ` border-radius:2px; transition:border-color 0.15s ease-out, transform 0.12s ease-out;` +
-    (isSpecial ? ' opacity:0.75;' : ' cursor:pointer;');
+interface GrenadeTile {
+  readonly element: HTMLButtonElement;
+  readonly kind: GrenadeKind;
+}
 
-  if (isSpecial) {
-    const badge = document.createElement('div');
-    badge.textContent = 'REWARD ONLY';
-    badge.style.cssText = `${LABEL_CSS} color:${REWARD_GOLD};`;
-    card.appendChild(badge);
-  }
+type DetailsTarget = { readonly kind: 'weapon'; readonly id: string } | { readonly kind: 'grenade'; readonly id: GrenadeKind };
 
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex; gap:14px;';
-
-  const thumbnail = document.createElement('div');
-  thumbnail.style.cssText =
-    `flex-shrink:0; width:92px; height:92px; background:${SURFACE};` +
-    ' display:flex; align-items:center; justify-content:center; overflow:hidden;';
+/** A square tile showing only the rendered design. `name` is its accessible name and its hover or
+ * focus caption; the details panel carries everything else. */
+function buildTile(name: string, thumbnailDataUrl: string | null, options: { small?: boolean; reward?: boolean } = {}): HTMLButtonElement {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'loadout-tile' + (options.small ? ' loadout-tile-small' : '') + (options.reward ? ' loadout-tile-reward' : '');
+  tile.setAttribute('aria-label', options.reward ? `${name}, reward only` : name);
   if (thumbnailDataUrl) {
     const img = document.createElement('img');
     img.src = thumbnailDataUrl;
-    img.alt = `${weapon.name} preview`;
-    img.style.cssText = 'width:100%; height:100%; object-fit:contain; pointer-events:none;';
-    thumbnail.appendChild(img);
+    img.alt = '';
+    tile.appendChild(img);
   }
+  const caption = document.createElement('span');
+  caption.className = 'loadout-tile-caption';
+  caption.setAttribute('aria-hidden', 'true');
+  caption.textContent = name;
+  tile.appendChild(caption);
+  return tile;
+}
 
-  const info = document.createElement('div');
-  info.style.cssText = 'flex:1; min-width:0;';
-
-  const name = document.createElement('div');
-  name.textContent = weapon.name;
-  name.style.cssText = `font-family:${DISPLAY_FONT}; font-size:0.95rem; font-weight:300; margin-bottom:4px; color:${isSpecial ? REWARD_GOLD : TEXT};`;
-
-  const desc = document.createElement('div');
-  desc.textContent = weapon.description;
-  desc.style.cssText = `font-family:${BODY_FONT}; font-size:0.8rem; color:${STEEL}; margin-bottom:6px;`;
-
-  const stats = document.createElement('div');
-  stats.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px 12px; font-size:0.72rem; opacity:0.75; font-variant-numeric:tabular-nums;';
-  stats.append(
+function weaponStats(weapon: WeaponDefinition): HTMLSpanElement[] {
+  const stats = [
     createStatBadge('damage', `${weapon.damage}`),
     createStatBadge('fireRate', `${weapon.fireRate}/s`),
     createStatBadge('magazine', `${weapon.magazineSize}`),
     createStatBadge('reload', `${weapon.reloadTime}s`),
-  );
-  if (weapon.hasScope) stats.appendChild(createStatBadge('scope', 'Scope'));
-  if (weapon.burstCount && weapon.burstCount > 1) stats.appendChild(createStatBadge('fireRate', `${weapon.burstCount}-round burst`));
+  ];
+  if (weapon.hasScope) stats.push(createStatBadge('scope', 'Scope'));
+  if (weapon.burstCount && weapon.burstCount > 1) stats.push(createStatBadge('fireRate', `${weapon.burstCount}-round burst`));
+  return stats;
+}
 
-  info.append(name, desc, stats);
-  row.append(thumbnail, info);
-  card.appendChild(row);
-  return card;
+/** A tile row: equal squares side by side, wrapping when the column is narrow. */
+function buildTileRow(label: string, tiles: readonly HTMLButtonElement[]): HTMLDivElement {
+  const row = document.createElement('div');
+  row.setAttribute('role', 'group');
+  row.setAttribute('aria-label', label);
+  row.style.cssText = 'display:flex; flex-wrap:wrap; gap:10px;';
+  row.append(...tiles);
+  return row;
 }
 
 /** Full-page loadout management (per explicit user request - replaces the old read-only
- * "Inventory" showcase): guns grouped by category on the left (clicked to equip), the currently
- * equipped Primary/Secondary/Melee readout in the middle, and the player's character spinning
- * inside a tall rim on the right. The category label is the whole point - it's what stops a player
- * stacking multiple primaries, since clicking a weapon only ever fills *its own* category's slot.
- * Persists immediately on every click (see core/loadout.ts), same "survives a reload" mechanism
- * the saved username already uses. */
+ * "Inventory" showcase): weapons as square tiles grouped by category on the left (clicked to
+ * equip), with a smaller Grenade section below them; the clicked item's details and the equipped
+ * Primary/Secondary/Melee/Grenade readout in the middle; and the player's character spinning inside
+ * a tall rim on the right. The category is the whole point - it's what stops a player stacking
+ * multiple primaries, since clicking a weapon only ever fills *its own* category's slot. Persists
+ * immediately on every click (see core/loadout.ts), same "survives a reload" mechanism the saved
+ * username already uses. */
 export class LoadoutScreen {
   private readonly overlay: HTMLDivElement;
   private readonly characterPreview: LoadoutCharacterPreview;
-  private readonly slotValueElements: Record<EquippableCategory, HTMLDivElement>;
-  private readonly cards: WeaponCard[];
+  private readonly slotValueElements: Record<LoadoutWeaponSlot | 'grenade', HTMLDivElement>;
+  private readonly weaponTiles: WeaponTile[];
+  private readonly grenadeTiles: GrenadeTile[];
+  private readonly details: {
+    readonly category: HTMLDivElement;
+    readonly status: HTMLDivElement;
+    readonly name: HTMLDivElement;
+    readonly description: HTMLDivElement;
+    readonly stats: HTMLDivElement;
+  };
+  private readonly updateScrollHint: () => void;
+  private readonly closeButton: HTMLButtonElement;
+  private readonly grenadeKeyCap: HTMLSpanElement;
+  private readonly scope = new ModalScope();
+  private readonly onKeyDown: (event: KeyboardEvent) => void;
   private loadout: PlayerLoadout;
+  private detailsTarget: DetailsTarget;
 
-  private constructor(root: HTMLElement, cards: WeaponCard[], onClose: () => void) {
-    ensureScrollbarHideStyleInjected();
+  private constructor(root: HTMLElement, weaponTiles: WeaponTile[], grenadeTiles: GrenadeTile[], onClose: () => void) {
+    ensureLoadoutStyleInjected();
     ensureMotionKeyframesInjected();
-    this.cards = cards;
+    this.weaponTiles = weaponTiles;
+    this.grenadeTiles = grenadeTiles;
     this.loadout = loadStoredLoadout();
+    this.detailsTarget = { kind: 'weapon', id: equippedWeaponId(this.loadout, 'primary') };
 
     this.overlay = document.createElement('div');
     this.overlay.dataset.testid = 'loadout-screen';
     this.overlay.className = 'menu-surface';
+    // Tile sizes follow the viewport (the height for the rows, the width so Secondary, Melee and
+    // Special still share a row), so the whole catalog fits unscrolled from 1280x720 up.
     this.overlay.style.cssText =
       `position:absolute; inset:0; display:none; flex-direction:column; background:${BG_VOID};` +
-      ` color:${TEXT}; font-family:${BODY_FONT}; z-index:30; pointer-events:auto; padding:36px 48px; box-sizing:border-box;`;
+      ` color:${TEXT}; font-family:${BODY_FONT}; z-index:30; pointer-events:auto; padding:36px 48px; box-sizing:border-box;` +
+      ' --loadout-tile:clamp(84px, min(14vh, 8vw), 132px); --loadout-grenade-tile:calc(var(--loadout-tile) * 0.66);';
 
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; flex-shrink:0;';
@@ -169,6 +246,7 @@ export class LoadoutScreen {
     titleWrap.appendChild(title);
     const closeButton = createButton('Close', 'primary');
     closeButton.addEventListener('click', onClose);
+    this.closeButton = closeButton;
     header.append(titleWrap, closeButton);
 
     const body = document.createElement('div');
@@ -185,17 +263,52 @@ export class LoadoutScreen {
     leftColumn.tabIndex = 0;
     leftColumn.setAttribute('role', 'region');
     leftColumn.setAttribute('aria-label', 'Weapon catalog');
+    // The 5px padding (cancelled by the margin) keeps a focused tile's outline inside the scroll box.
     leftColumn.style.cssText =
-      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:22px;' +
+      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:26px; padding:5px; margin:-5px;' +
       ' scrollbar-width:none; -ms-overflow-style:none;';
+
+    // Category sections sit side by side and wrap, so the short ones (Secondary, Melee, Special)
+    // share a row instead of each taking a full-width band.
+    const weaponSections = document.createElement('div');
+    weaponSections.style.cssText = 'display:flex; flex-wrap:wrap; align-items:flex-start; gap:22px 32px;';
     for (const category of ['primary', 'secondary', 'melee', 'special'] as const) {
       const section = document.createElement('div');
       section.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
-      section.appendChild(createEyebrow(CATEGORY_LABELS[category]));
-      const categoryCards = cards.filter((c) => WEAPON_CATEGORIES[c.weapon.id] === category);
-      for (const c of categoryCards) section.appendChild(c.element);
-      leftColumn.appendChild(section);
+      const heading = document.createElement('div');
+      heading.style.cssText = 'display:flex; align-items:baseline; gap:12px;';
+      // The Goose Launcher's section says what it is in gold instead of "Special": a heading no
+      // wider than its one tile, so the section still fits beside Secondary and Melee.
+      const eyebrow = createEyebrow(category === 'special' ? 'Reward only' : CATEGORY_LABELS[category]);
+      if (category === 'special') eyebrow.style.color = REWARD_GOLD;
+      heading.appendChild(eyebrow);
+      const tiles = weaponTiles.filter((t) => t.category === category).map((t) => t.element);
+      section.append(heading, buildTileRow(CATEGORY_LABELS[category], tiles));
+      weaponSections.appendChild(section);
     }
+
+    // The grenade: a smaller section below the weapons, with its throw key.
+    const grenadeSection = document.createElement('div');
+    grenadeSection.dataset.testid = 'loadout-grenades';
+    grenadeSection.style.cssText = `display:flex; flex-direction:column; gap:10px; padding-top:18px; border-top:1px solid ${HAIRLINE};`;
+    const grenadeHeading = document.createElement('div');
+    grenadeHeading.style.cssText = 'display:flex; align-items:center; gap:12px;';
+    const throwHint = document.createElement('div');
+    throwHint.style.cssText = `display:flex; align-items:center; gap:6px; ${LABEL_CSS}`;
+    const keyCap = document.createElement('span');
+    keyCap.dataset.testid = 'loadout-grenade-key';
+    keyCap.style.cssText =
+      `font-family:${MONO_FONT}; font-size:10.5px; font-weight:400; letter-spacing:0; text-transform:none; color:${TEXT};` +
+      ` border:1px solid ${HAIRLINE}; border-radius:2px; padding:2px 6px; background:${BG_RAISED};`;
+    this.grenadeKeyCap = keyCap;
+    this.refreshGrenadeHint();
+    const throwLabel = document.createElement('span');
+    throwLabel.textContent = 'to throw';
+    throwHint.append(keyCap, throwLabel);
+    grenadeHeading.append(createEyebrow('Grenade'), throwHint);
+    grenadeSection.append(grenadeHeading, buildTileRow('Grenade', grenadeTiles.map((t) => t.element)));
+
+    leftColumn.append(weaponSections, grenadeSection);
 
     // A soft fade + chevron standing in for a scrollbar - present only while there's more to see
     // below the fold (see updateScrollHint), so it reads as "more below" rather than a permanent
@@ -210,22 +323,47 @@ export class LoadoutScreen {
     chevron.style.cssText = `color:${STEEL}; font-size:1.1rem; animation:pulseGlow 1.6s ease-in-out infinite;`;
     scrollHint.appendChild(chevron);
 
-    const updateScrollHint = (): void => {
+    this.updateScrollHint = (): void => {
       const hasMoreBelow = leftColumn.scrollTop + leftColumn.clientHeight < leftColumn.scrollHeight - 2;
       scrollHint.style.opacity = hasMoreBelow ? '1' : '0';
     };
-    leftColumn.addEventListener('scroll', updateScrollHint);
+    leftColumn.addEventListener('scroll', this.updateScrollHint);
 
     leftColumnWrap.append(leftColumn, scrollHint);
 
-    // --- Middle: the currently-equipped readout for each slot ---
+    // --- Middle: the clicked item's details, then the currently-equipped readout per slot ---
     const middleColumn = document.createElement('div');
     middleColumn.className = 'loadout-middle';
-    middleColumn.style.cssText = 'flex:0 0 auto; width:190px; display:flex; flex-direction:column; justify-content:center; gap:14px;';
-    this.slotValueElements = {} as Record<EquippableCategory, HTMLDivElement>;
-    for (const category of EQUIPPABLE_CATEGORIES) {
-      const { socket, value } = this.buildSlotSocket(category);
-      this.slotValueElements[category] = value;
+    middleColumn.style.cssText = 'flex:0 0 auto; width:clamp(230px, 19vw, 290px); display:flex; flex-direction:column; justify-content:center; gap:12px;';
+
+    const detailsPanel = document.createElement('div');
+    detailsPanel.className = 'loadout-details';
+    detailsPanel.dataset.testid = 'loadout-details';
+    detailsPanel.setAttribute('aria-live', 'polite');
+    detailsPanel.style.cssText =
+      `box-sizing:border-box; min-height:178px; padding:16px 18px; background:${BG_RAISED}; border:1px solid ${HAIRLINE};` +
+      ' border-radius:2px; display:flex; flex-direction:column; gap:8px; margin-bottom:10px;';
+    const detailsTop = document.createElement('div');
+    detailsTop.style.cssText = 'display:flex; justify-content:space-between; align-items:baseline; gap:8px;';
+    const detailsCategory = document.createElement('div');
+    detailsCategory.style.cssText = LABEL_CSS;
+    const detailsStatus = document.createElement('div');
+    detailsStatus.style.cssText = LABEL_CSS;
+    detailsTop.append(detailsCategory, detailsStatus);
+    const detailsName = document.createElement('div');
+    detailsName.style.cssText = `font-family:${DISPLAY_FONT}; font-size:1.2rem; font-weight:300; color:${TEXT};`;
+    const detailsDescription = document.createElement('div');
+    detailsDescription.style.cssText = `font-family:${BODY_FONT}; font-size:0.8rem; line-height:1.4; color:${STEEL};`;
+    const detailsStats = document.createElement('div');
+    detailsStats.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:2px; font-size:0.72rem; opacity:0.8; font-variant-numeric:tabular-nums;';
+    detailsPanel.append(detailsTop, detailsName, detailsDescription, detailsStats);
+    this.details = { category: detailsCategory, status: detailsStatus, name: detailsName, description: detailsDescription, stats: detailsStats };
+    middleColumn.appendChild(detailsPanel);
+
+    this.slotValueElements = {} as Record<LoadoutWeaponSlot | 'grenade', HTMLDivElement>;
+    for (const slot of [...EQUIPPABLE_CATEGORIES, 'grenade'] as const) {
+      const { socket, value } = this.buildSlotSocket(slot);
+      this.slotValueElements[slot] = value;
       middleColumn.appendChild(socket);
     }
 
@@ -251,32 +389,51 @@ export class LoadoutScreen {
     this.overlay.append(header, body);
     root.appendChild(this.overlay);
 
-    for (const card of cards) {
-      const category = WEAPON_CATEGORIES[card.weapon.id];
-      if (!category || category === 'special') continue;
-      const equippableCategory: EquippableCategory = category;
-      card.element.addEventListener('click', () => {
-        this.loadout = { ...this.loadout, [equippableCategory]: card.weapon.id };
+    for (const tile of weaponTiles) {
+      tile.element.addEventListener('click', () => {
+        // Reward-only weapons (the Goose Launcher) just show their details; equipWeapon ignores them.
+        this.loadout = equipWeapon(this.loadout, tile.weapon.id);
         saveLoadout(this.loadout);
-        this.refreshAllSlots();
+        this.detailsTarget = { kind: 'weapon', id: tile.weapon.id };
+        this.refresh();
+      });
+    }
+    for (const tile of grenadeTiles) {
+      tile.element.addEventListener('click', () => {
+        this.loadout = equipGrenade(this.loadout, tile.kind);
+        saveLoadout(this.loadout);
+        this.detailsTarget = { kind: 'grenade', id: tile.kind };
+        this.refresh();
       });
     }
 
-    this.refreshAllSlots();
+    this.refresh();
+    // Escape closes the page, same as Close. Document-level, so it must stay quiet while hidden.
+    this.onKeyDown = (event) => {
+      if (this.overlay.style.display === 'none' || event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', this.onKeyDown);
     // Run once after layout settles, so the hint's initial visibility matches whether the list
     // actually overflows (a short catalog never shows it at all).
-    requestAnimationFrame(updateScrollHint);
+    requestAnimationFrame(this.updateScrollHint);
   }
 
-  private buildSlotSocket(category: EquippableCategory): { socket: HTMLDivElement; value: HTMLDivElement } {
+  /** The throw key as bound now (the player can rebind it in Settings), or "Unbound". */
+  private refreshGrenadeHint(): void {
+    setDeviceHint(this.grenadeKeyCap, keyHint(Settings.getKeyBindings(), 'grenade'), gamepadHint('grenade') ?? 'RB');
+  }
+
+  private buildSlotSocket(slot: LoadoutWeaponSlot | 'grenade'): { socket: HTMLDivElement; value: HTMLDivElement } {
     const socket = document.createElement('div');
-    socket.dataset.testid = `loadout-slot-${category}`;
+    socket.dataset.testid = `loadout-slot-${slot}`;
     socket.style.cssText =
-      `padding:12px 16px; background:${BG_RAISED}; border:1px solid ${HAIRLINE};` +
+      `padding:10px 16px; background:${BG_RAISED}; border:1px solid ${HAIRLINE};` +
       ` border-radius:2px;`;
 
     const label = document.createElement('div');
-    label.textContent = CATEGORY_LABELS[category].toUpperCase();
+    label.textContent = slot === 'grenade' ? 'GRENADE' : CATEGORY_LABELS[slot].toUpperCase();
     label.style.cssText = `${LABEL_CSS} margin-bottom:4px;`;
 
     const value = document.createElement('div');
@@ -286,18 +443,56 @@ export class LoadoutScreen {
     return { socket, value };
   }
 
-  private refreshAllSlots(): void {
-    for (const category of EQUIPPABLE_CATEGORIES) {
-      const equippedId = this.loadout[category] ?? LOADOUT_SLOT_DEFAULTS[category];
-      const name = WEAPON_DEFINITIONS[equippedId]?.name ?? equippedId;
-      this.slotValueElements[category].textContent = name;
+  /** Syncs everything that depends on the loadout or the details target: the slot readout, each
+   * tile's equipped state and the details panel. */
+  private refresh(): void {
+    for (const slot of EQUIPPABLE_CATEGORIES) {
+      const equippedId = equippedWeaponId(this.loadout, slot);
+      this.slotValueElements[slot].textContent = WEAPON_DEFINITIONS[equippedId]?.name ?? equippedId;
     }
-    for (const card of this.cards) {
-      const category = WEAPON_CATEGORIES[card.weapon.id];
-      if (category === 'special') continue;
-      const equippedId = this.loadout[category as EquippableCategory] ?? LOADOUT_SLOT_DEFAULTS[category as EquippableCategory];
-      card.element.style.borderColor = equippedId === card.weapon.id ? ACCENT : HAIRLINE;
+    const grenade = equippedGrenade(this.loadout);
+    this.slotValueElements.grenade.textContent = GRENADE_CHOICES[grenade].name;
+
+    for (const tile of this.weaponTiles) {
+      if (tile.category === 'special') continue;
+      const equipped = equippedWeaponId(this.loadout, tile.category) === tile.weapon.id;
+      tile.element.setAttribute('aria-pressed', String(equipped));
     }
+    for (const tile of this.grenadeTiles) tile.element.setAttribute('aria-pressed', String(tile.kind === grenade));
+
+    this.renderDetails();
+  }
+
+  private renderDetails(): void {
+    const target = this.detailsTarget;
+    const { category, status, name, description, stats } = this.details;
+    if (target.kind === 'grenade') {
+      const choice = GRENADE_CHOICES[target.id];
+      category.textContent = 'Grenade';
+      name.textContent = choice.name;
+      name.style.color = TEXT;
+      description.textContent = choice.description;
+      stats.replaceChildren(...choice.stats.map(([icon, label]) => createStatBadge(icon, label)));
+      LoadoutScreen.setDetailsStatus(status, equippedGrenade(this.loadout) === target.id ? 'equipped' : null);
+      return;
+    }
+    const weapon = WEAPON_DEFINITIONS[target.id];
+    if (!weapon) return;
+    const weaponCategory = WEAPON_CATEGORIES[weapon.id] ?? 'special';
+    category.textContent = CATEGORY_LABELS[weaponCategory];
+    name.textContent = weapon.name;
+    name.style.color = weaponCategory === 'special' ? REWARD_GOLD : TEXT;
+    description.textContent = weapon.description;
+    stats.replaceChildren(...weaponStats(weapon));
+    LoadoutScreen.setDetailsStatus(
+      status,
+      weaponCategory === 'special' ? 'reward' : equippedWeaponId(this.loadout, weaponCategory) === weapon.id ? 'equipped' : null,
+    );
+  }
+
+  private static setDetailsStatus(element: HTMLDivElement, state: 'equipped' | 'reward' | null): void {
+    element.textContent = state === 'equipped' ? 'Equipped' : state === 'reward' ? 'Reward only' : '';
+    element.style.color = state === 'reward' ? REWARD_GOLD : ACCENT;
   }
 
   static async create(root: HTMLElement, onClose: () => void): Promise<LoadoutScreen> {
@@ -310,47 +505,76 @@ export class LoadoutScreen {
     // Thumbnails are cached per weapon for the whole session (see weaponThumbnail.ts), so only the
     // first LoadoutScreen actually renders anything - every later one (Game.ts builds one per
     // match) just reuses the cached data URLs and never touches WebGL at all.
-    let cards: WeaponCard[];
+    let weaponTiles: WeaponTile[];
+    let grenadeTiles: GrenadeTile[];
     try {
-      cards = await Promise.all(
-        orderedWeaponIds.map(async (weaponId): Promise<WeaponCard> => {
+      weaponTiles = await Promise.all(
+        orderedWeaponIds.map(async (weaponId): Promise<WeaponTile> => {
           const weapon = WEAPON_DEFINITIONS[weaponId]!;
           const category = WEAPON_CATEGORIES[weaponId]!;
           let thumbnailDataUrl = getCachedWeaponThumbnail(weapon.id);
           if (thumbnailDataUrl === null) {
             try {
               const { group } = buildWeaponViewModel(weapon.id);
+              const arms: Object3D[] = [];
+              group.traverse((object) => { if (ARM_PART_NAMES.has(object.name)) arms.push(object); });
+              for (const arm of arms) arm.removeFromParent();
               thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
             } catch (error) {
               console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
             }
           }
-          return { element: buildWeaponCard(weapon, thumbnailDataUrl, category), weapon };
+          return { element: buildTile(weapon.name, thumbnailDataUrl, { reward: category === 'special' }), weapon, category };
         }),
       );
+      grenadeTiles = GRENADE_KINDS.map((kind): GrenadeTile => {
+        const cacheKey = `grenade-${kind}`;
+        let thumbnailDataUrl = getCachedWeaponThumbnail(cacheKey);
+        if (thumbnailDataUrl === null) {
+          try {
+            thumbnailDataUrl = renderWeaponThumbnail(cacheKey, buildGrenadeThumbnailModel(kind));
+          } catch (error) {
+            console.warn(`Failed to render loadout thumbnail for the ${kind} grenade`, error);
+          }
+        }
+        const element = buildTile(GRENADE_CHOICES[kind].name, thumbnailDataUrl, { small: true });
+        element.dataset.grenadeId = kind;
+        return { element, kind };
+      });
     } finally {
       // The whole catalog shares one offscreen renderer - release its context as soon as the batch
       // is done rather than holding it for the session.
       releaseThumbnailRenderer();
     }
+    for (const tile of weaponTiles) tile.element.dataset.weaponId = tile.weapon.id;
 
-    return new LoadoutScreen(root, cards, onClose);
+    return new LoadoutScreen(root, weaponTiles, grenadeTiles, onClose);
   }
 
   show(): void {
     this.overlay.style.display = 'flex';
     this.loadout = loadStoredLoadout();
-    this.refreshAllSlots();
+    this.refresh();
+    this.refreshGrenadeHint();
     this.characterPreview.start();
     attachScanSweep(this.overlay);
+    requestAnimationFrame(this.updateScrollHint);
+    // Keyboard focus belongs in the page: on the equipped primary, else Close. Whatever is behind
+    // (the pause menu) goes inert so Tab cannot reach it.
+    const equipped = equippedWeaponId(this.loadout, 'primary');
+    const tile = this.weaponTiles.find((candidate) => candidate.weapon.id === equipped)?.element;
+    this.scope.enter(this.overlay, tile ?? this.closeButton);
   }
 
   hide(): void {
     this.overlay.style.display = 'none';
     this.characterPreview.stop();
+    this.scope.leave();
   }
 
   dispose(): void {
+    document.removeEventListener('keydown', this.onKeyDown);
+    this.scope.leave();
     this.characterPreview.dispose();
     this.overlay.remove();
   }

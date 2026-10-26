@@ -1,5 +1,5 @@
 import type { PlayerSlot } from '../network/protocol.ts';
-import { formatConnection, type ConnectionQuality } from '../network/connectionStats.ts';
+import { formatConnection, formatOpponentPings, type ConnectionQuality } from '../network/connectionStats.ts';
 import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, LABEL_CSS, MONO_FONT, SURFACE, TEXT_SHADOW, THREAT } from './theme.ts';
 
 const HEALTH_BAR_WIDTH = 140;
@@ -14,6 +14,32 @@ const MAX_LABEL_LENGTH = 10;
  * username needs a hard cap or it wraps/overflows onto the health bar next to it. */
 function truncateForLabel(name: string): string {
   return name.length > MAX_LABEL_LENGTH ? `${name.slice(0, MAX_LABEL_LENGTH - 1)}…` : name;
+}
+
+export interface ScoreboardRow {
+  readonly slot: PlayerSlot;
+  readonly name: string;
+  readonly score: number;
+  readonly isYou: boolean;
+}
+
+/** The scoreboard's rows: this player, every opponent in the match (at 0 before their first kill),
+ * and anyone who left with a score, under the name they played as. Highest score first, then by
+ * slot so equal scores never swap places between frames. */
+export function scoreboardRows(
+  ownSlot: PlayerSlot,
+  ownName: string,
+  opponentSlots: Iterable<PlayerSlot>,
+  names: ReadonlyMap<PlayerSlot, string>,
+  scoreboard: ReadonlyMap<PlayerSlot, number>,
+): ScoreboardRow[] {
+  const slots = new Set<PlayerSlot>([ownSlot, ...opponentSlots, ...scoreboard.keys()]);
+  return Array.from(slots, (slot) => ({
+    slot,
+    name: slot === ownSlot ? ownName : names.get(slot) ?? 'Player',
+    score: scoreboard.get(slot) ?? 0,
+    isYou: slot === ownSlot,
+  })).sort((a, b) => b.score - a.score || a.slot - b.slot);
 }
 
 interface HealthRow {
@@ -69,6 +95,7 @@ export class MultiplayerHud {
   private readonly connectionLabel: HTMLDivElement;
   private readonly ownSlot: PlayerSlot;
   private ownName: string;
+  /** Every opponent's name, kept after they leave: a score they leave behind still shows under it. */
   private readonly opponentNames = new Map<PlayerSlot, string>();
 
   constructor(root: HTMLElement, ownSlot: PlayerSlot, ownName: string, roomCode: string) {
@@ -111,8 +138,12 @@ export class MultiplayerHud {
     return this.connectionLabel.textContent ?? '';
   }
 
-  setConnection(quality: ConnectionQuality): void {
-    this.connectionLabel.textContent = formatConnection(quality);
+  /** One round trip per opponent (see connectionStats.ts's formatOpponentPings). */
+  setConnection(perOpponent: ReadonlyMap<PlayerSlot, ConnectionQuality>): void {
+    const entries = [...perOpponent]
+      .sort(([a], [b]) => a - b)
+      .map(([slot, quality]) => ({ name: truncateForLabel(this.opponentNames.get(slot) ?? 'Player'), quality }));
+    this.connectionLabel.textContent = formatOpponentPings(entries);
   }
 
   /** Called once per opponent when they're added to the match (initial roster, a rejoin, or a
@@ -126,10 +157,10 @@ export class MultiplayerHud {
     this.healthContainer.appendChild(row.row);
   }
 
+  /** The name stays (see opponentNames): a score the player leaves behind keeps showing under it. */
   removeOpponentRow(slot: PlayerSlot): void {
     this.opponentHealthRows.get(slot)?.row.remove();
     this.opponentHealthRows.delete(slot);
-    this.opponentNames.delete(slot);
   }
 
   update(
@@ -150,12 +181,8 @@ export class MultiplayerHud {
   }
 
   private renderScoreboard(scoreboard: ReadonlyMap<PlayerSlot, number>, kingOfTheHill?: { pointsToWin: number; carrierSlot: PlayerSlot | null }): void {
-    const entries = Array.from(scoreboard, ([slot, score]) => ({
-      slot,
-      score,
-      name: slot === this.ownSlot ? this.ownName : this.opponentNames.get(slot) ?? 'Player',
-      isYou: slot === this.ownSlot,
-    })).sort((a, b) => b.score - a.score);
+    // Every player in the match gets a row from the start, not only once they have a kill.
+    const entries = scoreboardRows(this.ownSlot, this.ownName, this.opponentHealthRows.keys(), this.opponentNames, scoreboard);
 
     this.scoreboard.replaceChildren(
       ...entries.map((entry) => {

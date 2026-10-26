@@ -7,7 +7,7 @@ import { Player } from '../entities/Player.ts';
 import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { GooseManager } from '../entities/GooseManager.ts';
-import { ThrownGoose } from '../entities/ThrownGoose.ts';
+import { ThrownGoose, throwSegmentBlocked } from '../entities/ThrownGoose.ts';
 import { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
 import { AmmoDropManager } from '../entities/AmmoDropManager.ts';
 import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
@@ -31,7 +31,10 @@ import {
   type FacilityLayout,
 } from '../world/facility/facilityLayout.ts';
 import { FacilityNav } from '../world/facility/facilityNav.ts';
-import { setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
+import { FacilityInteraction } from './facilityInteraction.ts';
+import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
+import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
@@ -41,8 +44,9 @@ import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
 import { DamageArcs } from '../ui/damageArcs.ts';
 import { WorldMarkers } from '../ui/worldMarkers.ts';
-import { MissionState, type MissionView } from './mission/missionState.ts';
+import { MissionState, missionMapMarkers, type MissionView } from './mission/missionState.ts';
 import { UplinkBeacons } from '../world/UplinkBeacons.ts';
+import { FACILITY_CONSOLE_HEIGHT } from '../world/facility/facilityConsoles.ts';
 import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
 import { ScopeOverlay } from '../ui/scope.ts';
@@ -58,8 +62,9 @@ import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap } from '../ui/minimap.ts';
+import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
 import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
-import { MultiplayerHud } from '../ui/multiplayerHud.ts';
+import { MultiplayerHud, scoreboardRows } from '../ui/multiplayerHud.ts';
 import { PauseMenu } from '../ui/menu/PauseMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
@@ -120,7 +125,6 @@ import {
   GOOSE_TOSS_EXPLOSION_RADIUS,
   GOOSE_TOSS_MAX_CONCURRENT,
   GOOSE_TOSS_SPAWN_INTERVAL_SECONDS,
-  DEFAULT_MATCH_WEATHER,
   GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH,
   GOOSE_LAUNCHER_EXPLOSION_MAX_DAMAGE,
   GOOSE_LAUNCHER_EXPLOSION_RADIUS,
@@ -140,10 +144,10 @@ import {
   type MatchWeather,
   type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
-  MULTIPLAYER_CONNECTION_TIMEOUT_MS,
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
+  PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_STRUCTURE_CLEARANCE,
@@ -158,9 +162,14 @@ import {
 } from './config.ts';
 import { getWorldSeed, randomizeWorldSeed, setWorldSeed } from './worldSeed.ts';
 import { findClearSpawnPoint, pickRandomRespawnPoint, type SpawnBlockedCheck } from './multiplayerSpawn.ts';
-import { DEFAULT_GAME_MODE, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
+import { isOpponentSilent, restartOpponentForRejoin } from './opponentLiveness.ts';
+import { DEFAULT_GAME_MODE, grenadesEnabled, resolveWeaponLoadout, modeUsesCustomLoadout, type GameMode } from './gameModes.ts';
+import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
+import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
+import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
+import { withBlastTargets } from '../combat/grenades/grenadeTargets.ts';
 import { MODE_EXPLANATIONS } from './modeExplanations.ts';
-import { loadStoredLoadout } from './loadout.ts';
+import { equippedGrenade, loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
@@ -176,7 +185,11 @@ import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
-import { Flashlight, RemoteTorches } from '../render/Flashlight.ts';
+import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
+import { flashLightsPlayer, visibility } from '../entities/enemies/playerVisibility.ts';
+import { createMatchPickups } from '../pickups/createMatchPickups.ts';
+import { grenadeSupplyFrom } from '../pickups/pickupEffects.ts';
+import type { PickupSystem } from '../pickups/PickupSystem.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
 
@@ -240,15 +253,12 @@ interface FacilityMatch {
   readonly world: FacilityWorld;
   readonly layout: FacilityLayout;
   readonly start: { x: number; z: number };
-  /** The player's torch (section 7). */
-  readonly torch: Flashlight;
-  /** Other players' torches, null in single-player. Created with the match so the light count never
-   * changes mid-match. */
-  readonly remoteTorches: RemoteTorches | null;
   /** The minimap's plan of the layout (section 8). */
   readonly mapLayer: FacilityMapLayer;
   /** Sparks and glass from shot-out lamps (section 11). */
   readonly lampBreak: LampBreakEffect;
+  /** Doors and breaker panels (section 12). */
+  readonly objects: FacilityObjects;
 }
 /** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
 const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
@@ -265,6 +275,8 @@ export interface MatchConfig {
   targetCount: number;
   gooseDifficulty: GooseExplosionDifficulty;
   map: MatchMap;
+  /** Single-player's weather choice (PlaySetupModal); a multiplayer match reads it from its session. */
+  weather: MatchWeather;
   /** Single-player only (see PlaySetupModal) - multiplayer's equivalent is gameMode==='gooseHorde'
    * instead (unused/false here for a multiplayer match, same as enemyCount/targetCount's zeros). */
   hordeMode: boolean;
@@ -382,6 +394,8 @@ export class Game {
    * to build the mid-match Loadout page lazily, the first time the pause menu opens it. */
   private hudRoot: HTMLElement | null = null;
   private readonly hudForward = new THREE.Vector3();
+  private secondsSinceShot = Infinity;
+  private readonly playerVisibility = { value: 1, torchOn: false, eye: new THREE.Vector3(), aim: new THREE.Vector3() };
   private loadoutScreenLoading = false;
   private disposed = false;
   /** See makeSpawnBlockedCheck on the Valley; the layout's own check on the Facility. Built in
@@ -394,11 +408,18 @@ export class Game {
   /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
    * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
   private soloMinimap: Minimap | null = null;
+  /** Health, ammo and grenade pickups (docs/pickups.md); assigned in create() once the Game exists. */
+  private pickups: PickupSystem | null = null;
+  /** The Facility's doors and breakers as gameplay (core/facilityInteraction.ts); null on the Valley. */
+  private facilityInteraction: FacilityInteraction | null = null;
   /** Host only: set once when it announces a scoreboard winner (see endedMatchVerdict). */
   private hostDeclaredWinner: PlayerSlot | null = null;
   private connectionPollAccumulator = 0;
   /** When this client re-broadcasts its dead Facility lamps (see network/lampSync.ts). */
   private readonly lampSync = new LampSyncTracker();
+  /** Bumped by every add and remove of an opponent's slot: an add whose model load finishes after a
+   * newer add or a removal for that slot (a playerLeft during the load) is dropped, not shown. */
+  private readonly opponentGenerations = new Map<PlayerSlot, number>();
   /** Stamps `t` on this player's snapshots, deaths and respawns (see network/stateOrder.ts). */
   private readonly sendClock = createSendClock();
   private connectionPollInFlight = false;
@@ -425,6 +446,10 @@ export class Game {
    * assigned once in create() right after construction, same forward-reference pattern as
    * modeExplanationScreen/loadoutScreen below. Null for every mode but Goose Toss. */
   private gooseTossController: GooseTossController | null = null;
+  /** Frag and flash grenades (combat/grenades/GrenadeSystem.ts); set in create(). */
+  grenades: GrenadeSystem | null = null;
+  /** The grenades' view-model arm, arc preview, HUD marks, white-out and deafness; set in create(). */
+  private grenadeEffects: GrenadeEffects | null = null;
   /** King of the Hill's own claim/drop/scoring controller (see
    * modeControllers/KingOfTheHillController.ts). Null for every mode but King of the Hill. */
   private kingOfTheHillController: KingOfTheHillController | null = null;
@@ -484,6 +509,9 @@ export class Game {
     private readonly watchTowers: WatchTowerManager | null,
     /** Null on the Valley. */
     private readonly facility: FacilityMatch | null,
+    private readonly torch: Flashlight | null,
+    private readonly remoteTorches: RemoteTorches | null,
+    private readonly matchWeather: MatchWeather,
     isSpawnBlocked: SpawnBlockedCheck,
     private readonly entityManager: EntityManager,
     // Mutable, not readonly: a mid-match Loadout change rebuilds this entirely at the player's next
@@ -568,7 +596,12 @@ export class Game {
   /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
    * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. */
   private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number): void {
-    if (!this.facility) return;
+    if (!this.facility) {
+      // A Valley house's ceiling lamp (docs/enterable-buildings.md), synced like a Facility lamp.
+      const lamp = this.buildings?.houses.shootRay(origin, direction, distance);
+      if (lamp) this.houseLampBroken(lamp.id, lamp, true);
+      return;
+    }
     const lamp = this.facility.world.rayHitLamp(origin, direction, distance);
     if (lamp >= 0) this.destroyFacilityLamp(lamp, true);
   }
@@ -589,19 +622,48 @@ export class Game {
     return true;
   }
 
+  /** Shoots out Valley house lamp `id` (another player's lampDestroyed, or the debug API): dark for
+   * good, with sparks and its sound when streamed in. False when it is no lamp or already dark. */
+  private destroyHouseLamp(id: number, broadcast: boolean): boolean {
+    const houses = this.buildings?.houses;
+    if (!houses || !houses.isLampId(id) || houses.lights.isDead(id)) return false;
+    this.houseLampBroken(id, houses.lights.killLamp(id), broadcast);
+    return true;
+  }
+
+  /** A house lamp just broke (`at` where it hangs, null when not streamed in): its sound, and for
+   * this player's own shot the lampDestroyed send. */
+  private houseLampBroken(id: number, at: { x: number; y: number; z: number } | null, broadcast: boolean): void {
+    if (at) {
+      const position = new THREE.Vector3(at.x, at.y, at.z), volume = lampBreakVolume(position.distanceTo(this.player.position));
+      if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, position));
+    }
+    if (broadcast && this.multiplayer) {
+      this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp: id });
+    }
+  }
+
+  /** This map's shot-out lamps as lampSync carries them: Facility indices, or Valley house lamp ids. */
+  private readonly deadLampIds = (): readonly number[] =>
+    this.facility?.world.deadLampIndices() ?? this.buildings?.houses.lights.deadLampIds() ?? [];
+
   /** Another player's whole dead-lamp set (lampSync): every listed lamp still lit goes dark
    * quietly, with no sparks or sound (it broke a while ago, out of this client's hearing). */
   private syncFacilityLamps(lamps: unknown): void {
-    if (!this.facility) return;
+    if (!this.facility) {
+      this.buildings?.houses.killLampsQuietly(lamps);
+      return;
+    }
     this.facility.world.killLamps(parseLampList(lamps, this.facility.world.lampCount));
   }
 
-  /** A playerSnapshot from `slot` on the Facility: the first one sends them this client's dead
-   * lamps, which they may have missed while loading (see network/lampSync.ts). */
+  /** A playerSnapshot from `slot` on the Facility or the Valley: the first one sends them the doors
+   * (host) and this client's dead lamps, which they may have missed while loading (see
+   * network/lampSync.ts). */
   private noteOpponentInMatch(slot: PlayerSlot): void {
-    const facility = this.facility;
-    if (!facility) return;
-    const lamps = this.lampSync.opponentSnapshot(slot, () => facility.world.deadLampIndices());
+    if (!this.facility && !this.buildings) return;
+    this.facilityInteraction?.opponentInMatch(slot);
+    const lamps = this.lampSync.opponentSnapshot(slot, this.deadLampIds);
     if (lamps) this.sendLampSync(lamps);
   }
 
@@ -633,11 +695,12 @@ export class Game {
     this.fillLight.intensity = look.hemiIntensity * peak;
   }
 
-  /** The Facility's torches (docs/facility-map.md, section 7), after the camera's interpolation:
+  /** The match's torches, after the camera's interpolation:
    * the player's own on the gun (its body on the active ranged view model) or the shoulder, and one
    * pooled light per opponent, dark while their torch is off or they are dead. */
   private updateTorches(): void {
-    const { torch, remoteTorches } = this.facility!;
+    const { torch, remoteTorches } = this;
+    if (!torch) return;
     const mount = this.weaponManager.torchMount;
     torch.mountBody(mount);
     torch.update(this.renderer.camera, mount !== null);
@@ -711,6 +774,7 @@ export class Game {
       getLiveEnemyDebug: () => this.entityManager.getLiveEnemyDebug(),
       getSquadDebug: () => this.entityManager.getSquadDebug(),
       placeEnemy: (index, x, z) => this.entityManager.placeEnemy(index, x, z),
+      commandEnemy: (index, target) => this.entityManager.commandEnemy(index, target),
       getCoverNear: (x, z, radius) => this.entityManager.getCoverNear(x, z, radius),
       damageEnemy: (index, amount) => this.entityManager.damageEnemy(index, amount),
       getDirectorDebug: () =>
@@ -727,6 +791,8 @@ export class Game {
         const view = this.mission.view(this.player.position);
         return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
       },
+      getHordeDebug: () =>
+        this.hordeGooseManager ? { wave: this.hordeGooseManager.currentWave, geese: this.hordeGooseManager.listForSync() } : null,
       getFacilityDebug: () => {
         if (!this.facility) return null;
         const { layout, world } = this.facility;
@@ -740,12 +806,26 @@ export class Game {
           lamps: layout.lamps.length,
           bakeMs: world.bakeMs,
           vertexCount: world.vertexCount,
-          torchOn: this.facility.torch.isOn,
+          torchOn: this.torch?.isOn ?? false,
           deadLamps: world.deadLampIndices().length,
+          ...this.facility.objects.counts(),
         };
       },
-      shootLamp: (index) => this.destroyFacilityLamp(index, true),
+      getTorchDebug: () => ({ available: this.torch !== null, on: this.torch?.isOn ?? false, weather: this.matchWeather, facility: this.facility !== null }),
+      facilityDoor: (index) => this.facility?.objects.debugDoor(index) ?? null,
+      setFacilityDoor: (index, open) => this.facilityInteraction?.requestState('door', index, open) ?? false,
+      facilityBreaker: (index) => this.facility?.objects.debugBreaker(index) ?? null,
+      setFacilityBreaker: (index, on) => this.facilityInteraction?.requestState('breaker', index, on) ?? false,
+      facilityLookTarget: () => this.facilityInteraction?.lookTarget() ?? null,
+      getValleyHouses: () => this.buildings?.houses.debugHouses() ?? [],
+      setValleyDoor: (id, open) => (this.buildings ? this.facilityInteraction?.requestState('door', id, open) ?? false : false),
+      getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
+      shootLamp: (index) => (this.facility ? this.destroyFacilityLamp(index, true) : this.destroyHouseLamp(index, true)),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
+      getPickups: () => this.pickups?.views() ?? [],
+      setPickupRespawnSeconds: (seconds) => this.pickups?.setRespawnSeconds(seconds),
+      getGrenadeDebug: () => this.grenades?.debugState() ?? null,
+      throwGrenade: (direction) => this.grenades?.debugThrow(direction) ?? null,
       setPlayerInvulnerable: (invulnerable) => {
         this.player.debugInvulnerable = invulnerable;
       },
@@ -760,7 +840,18 @@ export class Game {
       getNetworkDebug: () => ({
         fastChannelsReady: this.multiplayer?.session.connection.fastChannelReadyCount() ?? 0,
         pingLabel: this.multiplayer?.multiplayerHud.connectionText ?? '',
+        directLinksReady: this.multiplayer?.session.connection.directLinksReady() ?? 0,
       }),
+      getOpponentPositions: () =>
+        Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer: { position: p } }) => ({ slot, x: p.x, y: p.y, z: p.z })).sort(
+          (a, b) => a.slot - b.slot,
+        ),
+      getScoreboardRows: () => {
+        if (!this.multiplayer) return [];
+        const { ownSlot } = this.multiplayer.session;
+        const names = this.multiplayer.usernames;
+        return scoreboardRows(ownSlot, names.get(ownSlot) ?? 'You', this.multiplayer.opponents.keys(), names, this.multiplayerMatchState.scoreboard);
+      },
       getOpponentScore: () => {
         const opponent = this.multiplayer?.opponents.keys().next().value;
         return opponent !== undefined ? this.multiplayerMatchState.scoreboard.get(opponent) ?? 0 : 0;
@@ -810,15 +901,19 @@ export class Game {
     const input = new InputManager(renderer.canvas);
     const physics = await PhysicsWorld.create();
 
-    // Multiplayer-only, host-chosen (see CreateRoomScreen); single-player always 'day'. Applied
+    // Host-chosen in multiplayer (see CreateRoomScreen), picked in single-player's PlaySetupModal. Applied
     // once here, before anything compiles, not live-toggleable like graphics quality - see
     // Renderer.setMatchWeather. The lights then take the same look.
     // The Facility (docs/facility-map.md) is indoors: weather does not apply, it has its own look.
     const isFacility = (multiplayer?.map ?? matchConfig.map) === 'facility';
-    const matchWeather: MatchWeather = multiplayer?.weather ?? DEFAULT_MATCH_WEATHER;
+    const matchWeather: MatchWeather = multiplayer?.weather ?? matchConfig.weather;
     if (isFacility) renderer.setMatchLook(FACILITY_LOOK);
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
+    const map = isFacility ? 'facility' : 'valley';
+    const torch = torchAvailable(map, matchWeather) ? new Flashlight(renderer.scene, quality.shadowsEnabled) : null;
+    torch?.setOn(torchOnByDefault(map, matchWeather));
+    const remoteTorches = torch && multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
 
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
     // here as their chunks load (the Facility's crates and pillars once, when it is built), and
@@ -847,15 +942,15 @@ export class Game {
         lightShafts: quality.postProcessing,
         dust: quality.postProcessing,
       });
+      const objects = FacilityObjects.build(layout, world, nav, { scene: renderer.scene, physics });
       // Single-player starts in a room other than the atrium; plain Math.random like the other
       // single-player spawn picks (nobody else has to agree on it).
       facility = {
+        objects,
         world,
         layout,
         start: playerStart(layout, Math.random),
-        torch: new Flashlight(renderer.scene, quality.shadowsEnabled),
-        remoteTorches: multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null,
-        mapLayer: new FacilityMapLayer(layout),
+        mapLayer: new FacilityMapLayer(layout, objects),
         lampBreak: new LampBreakEffect(renderer.scene),
       };
       // A late joiner starts with the lamps the others already shot out (section 11), quietly.
@@ -866,10 +961,14 @@ export class Game {
       // A failed Facility create could have left these set; the Valley always runs without them.
       setHeightOverride(null);
       setEnemyNavigator(null);
+      setEnemyDoorGate(null);
+      setEnemyFloor(null);
+      setEnemyEntrance(null);
       onProgress?.('Growing vegetation…', 0.02);
       const vegetation = await VegetationManager.create(renderer.scene, physics, obstacles);
       onProgress?.('Constructing buildings…', 0.04);
-      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles);
+      // Houses' ceiling lamps are lit at Night and in Fog (docs/enterable-buildings.md).
+      const valleyBuildings = await BuildingManager.create(renderer.scene, physics, obstacles, { lampsOn: matchWeather !== 'day' });
       const roads = RoadManager.create(renderer.scene, valleyBuildings);
       const valleyTowers = WatchTowerManager.create(renderer.scene, physics);
 
@@ -888,6 +987,12 @@ export class Game {
         },
       });
       buildings = valleyBuildings;
+      // A late joiner starts with the house lamps the others already shot out, quietly.
+      valleyBuildings.houses.killLampsQuietly(multiplayer?.deadLamps);
+      // Enemies walk into and out of the houses on their walk grids (docs/enterable-buildings.md).
+      setEnemyNavigator(valleyBuildings.houses.nav.navigate);
+      setEnemyFloor(valleyBuildings.houses.nav.floorAt);
+      setEnemyEntrance(valleyBuildings.houses.nav.entranceAt);
       watchTowers = valleyTowers;
       isSpawnBlocked = makeSpawnBlockedCheck(valleyBuildings);
     }
@@ -930,6 +1035,7 @@ export class Game {
     const spawnY = sampleHeight(ownSpawn.x, ownSpawn.y) + SPAWN_HEIGHT_OFFSET;
     const player = new Player(physics, renderer.camera, new THREE.Vector3(ownSpawn.x, spawnY, ownSpawn.y), {
       onDamaged: (sourcePosition) => {
+        input.vibrate('damage');
         sound.playPlayerHurt();
         damageVignette.trigger();
         if (sourcePosition) {
@@ -971,7 +1077,8 @@ export class Game {
     // The stored loadout is only ever consumed for the three unrestricted modes (see
     // modeUsesCustomLoadout) - harmless to always read/pass it in otherwise, every restricted
     // mode's own branch ignores the third parameter entirely.
-    const loadout = resolveWeaponLoadout(currentGameMode, Math.random, loadStoredLoadout());
+    const storedLoadout = loadStoredLoadout();
+    const loadout = resolveWeaponLoadout(currentGameMode, Math.random, storedLoadout);
     // Goose Horde multiplayer's limited ammo economy (per explicit user request) - every other
     // mode omits this entirely, keeping the existing unlimited-reload behavior unchanged.
     const isHordeMultiplayer = isHordeMode && !!multiplayer;
@@ -1043,12 +1150,14 @@ export class Game {
           });
         },
         (weaponId) => {
+          input.vibrate(WEAPON_DEFINITIONS[weaponId]?.automatic ? 'automatic' : 'fire');
           if (WEAPON_DEFINITIONS[weaponId]?.kind !== 'melee') sound.playGunshot(weaponId);
         },
         (weaponId) => sound.playReloadClick(weaponId),
         (distance) => longShotCallout.show(distance),
         (point, weaponId) => {
           muzzleFlash.spawn(point);
+          game.secondsSinceShot = 0;
           // Threat perception (2026-07-10 review, enemy AI phase A): a real gunshot alerts nearby
           // idle enemies toward roughly where it came from, same as a real firefight - previously
           // enemies had no hearing at all, only reacting once the player walked inside their much
@@ -1162,6 +1271,7 @@ export class Game {
     const gooseManager = new GooseManager(renderer.scene, physics, {
       onGooseSpawned: () => gooseAnnouncement.show('A goose has appeared!'),
       onExplosion: (position, radius) => {
+        if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
         explosionEffect.spawn(position, radius);
         // Same distance-attenuation/stereo-pan convention as enemy/opponent gunshots (see
         // enemyGunshotVolume/computeStereoPan below) - a goose exploding across the map shouldn't
@@ -1176,13 +1286,16 @@ export class Game {
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseExploded', id, x, y, z }) : undefined,
       onLocalHitReported:
         multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'gooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
-    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT);
+    }, multiplayer?.gameMode === 'gooseToss' ? GOOSE_TOSS_MAX_CONCURRENT : GOOSE_MAX_CONCURRENT,
+    // Indoors every goose lands on clear floor (docs/facility-map.md, "Modes on the Facility").
+    facility ? facilityGoosePlacement(facility.layout, Math.random, facility.objects) : null);
     // Guests don't spawn anything themselves - they wait for the host's own initial-batch
     // gooseSpawned broadcasts (sent from this same call on the host's client) to arrive.
     // Goose Horde is excluded (per explicit user request "no other goose must spawn that are not
     // part of the wave") - the ambient wandering flock is a different mode's feature entirely.
-    // No ambient flock on the Facility either (docs/facility-map.md, section 1).
-    if (!facility && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
+    // No ambient flock on the Facility either (docs/facility-map.md, section 1), except Goose Toss's
+    // pickups, which are the whole mode.
+    if ((!facility || multiplayer?.gameMode === 'gooseToss') && !isHordeMode && (!multiplayer || multiplayer.role === 'host')) {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
@@ -1208,6 +1321,7 @@ export class Game {
             onWaveStart: (wave) => gooseAnnouncement.show(`Wave ${wave} of ${hordeWaveTable.length} incoming...`),
             onCleared: () => gooseAnnouncement.show('The horde has been cleared - you survived!'),
             onExplosion: (position) => {
+              if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
               explosionEffect.spawn(position, HORDE_GOOSE_EXPLOSION_RADIUS);
               const distance = position.distanceTo(player.position);
               sound.playExplosion(enemyGunshotVolume(distance), computeStereoPan(player.position, player.facingYaw, position));
@@ -1246,6 +1360,8 @@ export class Game {
           ownSpawn.y,
           hordeWaveTable,
           !multiplayer || multiplayer.role === 'host',
+          // Indoors they come in through rooms away from every player (docs/facility-map.md).
+          facility ? facilityHordeSite(facility.layout) : null,
         )
       : null;
 
@@ -1320,7 +1436,9 @@ export class Game {
       const roomCode = multiplayer.roomCode;
       const opponents = new Map<PlayerSlot, RemoteOpponent>();
       const usernames = new Map<PlayerSlot, string>([[multiplayer.ownSlot, ownUsername]]);
-      const minimap = new Minimap(hudRoot, facility ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer } : undefined);
+      const minimap = new Minimap(hudRoot, facility
+        ? { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer }
+        : buildings ? { layer: new ValleyHouseMapLayer(buildings.houses) } : undefined);
       const multiplayerHud = new MultiplayerHud(hudRoot, multiplayer.ownSlot, ownUsername, roomCode);
 
       for (const entry of multiplayer.roster) {
@@ -1332,9 +1450,10 @@ export class Game {
           new THREE.Vector3(spawnPoint.x, sampleHeight(spawnPoint.x, spawnPoint.z) + SPAWN_HEIGHT_OFFSET, spawnPoint.z),
           // The target's own client is what actually applies this to its health - see the class
           // comment on RemotePlayer and the DamageEventMessage comment in protocol.ts.
-          (amount) => multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount }),
+          (amount) =>
+            multiplayer.connection.send({ type: 'damageEvent', senderSlot: multiplayer.ownSlot, targetSlot: entry.slot, amount, weaponId: game.weaponManager.activeWeaponId }),
         );
-        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), isDead: false });
+        opponents.set(entry.slot, { slot: entry.slot, remotePlayer, username: entry.username, health: player.maxHealth, lastMessageAt: performance.now(), firstSnapshotAt: null, isDead: false });
         usernames.set(entry.slot, entry.username);
         minimap.addDot(entry.slot);
         multiplayerHud.addOpponentRow(entry.slot, entry.username);
@@ -1386,7 +1505,7 @@ export class Game {
     const pauseMenu = new PauseMenu(
       hudRoot,
       {
-        onResume: () => input.requestPointerLock(),
+        onResume: () => input.resume(),
         onSettings: () => settingsPanel.show(),
         onResetPlay: () => void gameRef.current?.resetPlay(),
         onReturnToLobby: () => onReturnToLobby?.(),
@@ -1414,6 +1533,9 @@ export class Game {
       buildings,
       watchTowers,
       facility,
+      torch,
+      remoteTorches,
+      matchWeather,
       isSpawnBlocked,
       entityManager,
       weaponManager,
@@ -1463,8 +1585,42 @@ export class Game {
     // and each instance used to cost several WebGL contexts (thumbnails plus a live preview) on every
     // match start, restricted modes included.
     game.hudRoot = hudRoot;
+    game.pickups = createMatchPickups({
+      scene: renderer.scene,
+      mode: currentGameMode,
+      facility: facility ? { layout: facility.layout, start: facility.start } : null,
+      buildings,
+      multiplayer: activeMultiplayer,
+      player,
+      weaponManager: () => game.weaponManager,
+      // A grenade crate tops up the match's grenade carry (docs/pickups.md); built further down.
+      grenades: grenadeSupplyFrom(() => game.grenades),
+      onPickedUp: (kind, line) => {
+        gooseAnnouncement.show(line);
+        sound.playPickup(kind);
+      },
+    });
     if (facility && !activeMultiplayer) {
       game.soloMinimap = new Minimap(hudRoot, { worldRadius: FACILITY_MAP_RADIUS, layer: facility.mapLayer });
+    }
+    // Doors and breakers (docs/facility-map.md, section 12): a late joiner starts with the host's.
+    // A door never closes on a living enemy or goose either.
+    const others = () => ({
+      enemies: entityManager.liveEnemyMotion(),
+      geese: [...gooseManager.listForSync(), ...(hordeGooseManager?.listForSync() ?? [])],
+    });
+    if (facility) {
+      const interaction = new FacilityInteraction({ objects: facility.objects, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
+      interaction.applyInitial(multiplayer?.worldObjects);
+      setEnemyDoorGate(interaction.enemyGate, interaction.forgetEnemy);
+      game.facilityInteraction = interaction;
+    } else if (buildings) {
+      // The Valley houses' doors (docs/enterable-buildings.md) run through the same interaction and
+      // messages; enemies open them through the same gate as the Facility's.
+      const interaction = new FacilityInteraction({ objects: buildings.houses.doors, physics, camera: renderer.camera, player, hud, sound, multiplayer: activeMultiplayer, others });
+      interaction.applyInitial(multiplayer?.worldObjects);
+      setEnemyDoorGate(interaction.enemyGate, interaction.forgetEnemy);
+      game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
 
@@ -1482,6 +1638,32 @@ export class Game {
     if (multiplayer?.gameMode === 'gunGame') {
       game.gunGameController = new GunGameController(multiplayer, game.multiplayerMatchState, gooseAnnouncement);
     }
+    // Grenades: the system owns the carry, flight and blasts; these are its hooks into the match.
+    game.grenades = new GrenadeSystem({
+      scene: renderer.scene,
+      physics,
+      camera: renderer.camera,
+      player,
+      enabled: grenadesEnabled(currentGameMode),
+      // The loadout's grenade at match start; a mid-match Loadout change does not touch it.
+      kind: equippedGrenade(storedLoadout),
+      sound,
+      targets: withBlastTargets(entityManager, hordeGooseManager),
+      network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
+      // Goose Horde is co-op: a frag never hurts or pushes a teammate.
+      friendlyFire: currentGameMode !== 'gooseHorde',
+      floor: facility ? undefined : sampleHeight,
+      canStartThrow: () => game.weaponManager.canStartThrow,
+      onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),
+      shootLampsNear: (position, radius) => {
+        if (!facility) return;
+        for (let i = 0; i < facility.world.lampCount; i++) {
+          const lamp = facility.world.lampPosition(i);
+          if (lamp && !facility.world.isLampDead(i) && position.distanceTo(new THREE.Vector3(lamp.x, lamp.y, lamp.z)) <= radius) game.destroyFacilityLamp(i, true);
+        }
+      },
+    });
+    game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot, sound });
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
@@ -1524,23 +1706,35 @@ export class Game {
         hordeGooseManager,
         bonusGooseManager,
         ammoDropManager,
-        applyNetworkDamage: (amount, sourceSlot) => {
+        applyNetworkDamage: (amount, sourceSlot, weaponId) => {
           game.pendingNetworkDamage += amount;
           activeMultiplayer.lastDamageSourceSlot = sourceSlot;
           activeMultiplayer.lastDamageSourceAt = performance.now();
+          activeMultiplayer.lastDamageSourceWeaponId = weaponId;
         },
         healLocalPlayerToFull: () => game.healLocalPlayerToFull(),
         applyHostMatchEnd: (winnerSlot, scoreboard) => game.applyHostMatchEnd(winnerSlot, scoreboard),
         endedMatchVerdict: () => game.endedMatchVerdict(),
         checkHordeAllEliminated: () => game.checkHordeAllEliminated(),
+        matchHasEnded: () => game.multiplayerMatchState.hasEnded,
+        endLostHordeRun: () => game.endMultiplayerMatch(false, 'hordeWipe'),
         receiveModeExplanationReady: (slot) => game.receiveModeExplanationReady(slot),
         removeMultiplayerOpponent: (slot) => game.removeMultiplayerOpponent(slot),
         addMultiplayerOpponent: (slot, username) => game.addMultiplayerOpponent(slot, username),
         onRematchReceived: (params) => game.onMultiplayerRematchReceived?.(params),
         onOpponentLeftRoom: () => game.onOpponentLeftRoom?.(),
-        destroyLamp: (lamp) => void game.destroyFacilityLamp(lamp, false),
+        destroyLamp: (lamp) => void (game.facility ? game.destroyFacilityLamp(lamp, false) : game.destroyHouseLamp(lamp, false)),
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
+        // Getter: assigned right after construction, before any message can arrive.
+        get pickups() {
+          return game.pickups;
+        },
+        worldInteract: (slot, kind, id) => game.facilityInteraction?.receiveInteract(slot, kind, id),
+        worldObjectState: (doors, breakers, valleyDoors) => game.facilityInteraction?.receiveState(doors, breakers, valleyDoors),
+        get grenades() {
+          return game.grenades;
+        },
       };
 
       activeMultiplayer.session.connection.setCallbacks({
@@ -1578,24 +1772,24 @@ export class Game {
         onError: (_message, kind) => {
           if (activeMultiplayer.session.role === 'guest' && kind !== 'brokerLost') game.endMultiplayerMatch(false, 'opponentDisconnected');
         },
-        onMessage: (message, senderSlot) => routeMatchMessage(routerContext, message, senderSlot),
+        onMessage: (message, senderSlot) => {
+          if (message.type === 'gooseThrowExploded'
+            && player.position.distanceTo(new THREE.Vector3(message.x, message.y, message.z)) <= 10) input.vibrate('explosion');
+          routeMatchMessage(routerContext, message, senderSlot);
+        },
         // Host-only - resolves a mid-match join/rejoin's hello into the exact reply to send back,
         // and (for anything past a normal pre-match lobby join, i.e. isMatchInProgress) performs
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
         // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
         // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
-        onHostHello: async (username, rejoinToken, features) => {
+        onHostHello: async (username, rejoinToken, features, peerId) => {
           const hostRoster = activeMultiplayer.hostRoster;
           if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
           // An older build would load the Valley inside a Facility match: turned away before it takes a slot.
           if (!helloSupportsMap(features, activeMultiplayer.map)) return 'outdated';
-          const outcome = hostRoster.handleHello(username, rejoinToken, performance.now());
+          const outcome = hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
           if (outcome.outcome === 'full') return 'full';
 
-          // Connected slots only: the joiner builds a RemotePlayer for every roster entry, and a slot
-          // sitting in its rejoin grace period used to become a frozen ghost on their screen for up to
-          // 90s (guests never run the staleness sweep that would reap it).
-          const roster = hostRoster.connectedRoster();
           if (outcome.outcome === 'joined') {
             // A brand-new player may be handed a departed player's slot; don't let them inherit that
             // score (see the matching reset in MatchMessageRouter's playerJoinedMatch case).
@@ -1607,7 +1801,23 @@ export class Game {
             otherPositions.push({ x: player.position.x, z: player.position.z });
             const spawnPoint = pickRandomRespawnPoint(otherPositions, game.isSpawnBlocked);
             await game.addMultiplayerOpponent(outcome.slot, username);
-            activeMultiplayer.session.connection.send({ type: 'playerJoinedMatch', slot: outcome.slot, username, isRejoin: outcome.outcome === 'rejoined' });
+            // The add was cancelled while the model loaded (removeMultiplayerOpponent ran for this slot,
+            // e.g. another hello took it over): announcing it now would give the other guests a ghost.
+            // A joiner whose own connection dropped meanwhile is not caught here: PeerConnection sees
+            // that close and, once this returns, reports the slot through onPeerDisconnected instead
+            // of sending the welcome, which takes the player out again and sends playerLeft.
+            if (!activeMultiplayer.opponents.has(outcome.slot)) return 'full';
+            // Read after the await: another player joining while this one's model loaded is in the
+            // roster now, though its playerJoinedMatch went out before this player was connected.
+            // Connected slots only: a slot in its rejoin grace period would be a frozen ghost here.
+            const roster = hostRoster.connectedRoster();
+            activeMultiplayer.session.connection.send({
+              type: 'playerJoinedMatch',
+              slot: outcome.slot,
+              username,
+              isRejoin: outcome.outcome === 'rejoined',
+              peerId: hostRoster.peerIdOf(outcome.slot),
+            });
             return {
               type: 'welcome',
               yourSlot: outcome.slot,
@@ -1628,7 +1838,8 @@ export class Game {
                   roster.some((rosterEntry) => rosterEntry.slot === entry.slot),
                 ),
                 spawnPoint: { x: spawnPoint.x, z: spawnPoint.z },
-                ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices() } : {}),
+                ...(game.facility ? { deadLamps: game.facility.world.deadLampIndices(), worldObjects: game.facility.objects.wire() } : {}),
+                ...(game.buildings ? { deadLamps: game.buildings.houses.lights.deadLampIds(), worldObjects: game.buildings.houses.doors.wire() } : {}),
               },
             };
           }
@@ -1638,7 +1849,7 @@ export class Game {
             yourSlot: outcome.slot,
             isRejoin: outcome.outcome === 'rejoined',
             hostUsername: activeMultiplayer.usernames.get(HOST_SLOT) ?? 'Host',
-            roster,
+            roster: hostRoster.connectedRoster(),
           };
         },
       });
@@ -1695,7 +1906,7 @@ export class Game {
     // A locked pointer hides the OS cursor - the player couldn't actually see/click the mode
     // briefing's Skip button if it were requested here while worldBriefingActive is still true.
     // dismissModeExplanation() requests it instead, once the briefing actually closes.
-    if (!this.worldBriefingActive) this.input.requestPointerLock();
+    if (!this.worldBriefingActive) this.input.resume();
   }
 
   /** Tears down everything this Game instance owns - WebGL context, DOM-appended HUD/menu
@@ -1712,11 +1923,17 @@ export class Game {
     // GPU resources. The height override and the enemy navigator are module-level, and the lobby
     // samples the valley again after this match.
     this.facility?.world.dispose();
+    this.facility?.objects.dispose();
+    this.facilityInteraction?.dispose();
+    this.buildings?.houses.dispose();
     this.facility?.lampBreak.dispose();
-    this.facility?.torch.dispose();
-    this.facility?.remoteTorches?.dispose();
+    this.torch?.dispose();
+    this.remoteTorches?.dispose();
     setHeightOverride(null);
     setEnemyNavigator(null);
+    setEnemyDoorGate(null);
+    setEnemyFloor(null);
+    setEnemyEntrance(null);
     document.removeEventListener('keydown', this.onDebugKeyDown);
     this.input.dispose();
     this.renderer.dispose();
@@ -1737,12 +1954,15 @@ export class Game {
     this.modeExplanationScreen?.dispose();
     this.loadoutScreen?.dispose();
     this.explosionEffect.dispose();
+    this.grenadeEffects?.dispose();
+    this.grenades?.dispose();
     this.glintMarkers.dispose();
     this.gooseManager.dispose();
     this.goldenGooseManager?.dispose();
     this.hordeGooseManager?.dispose();
     this.bonusGooseManager?.dispose();
     this.ammoDropManager?.dispose();
+    this.pickups?.dispose();
     for (const thrown of this.thrownGeese.values()) thrown.dispose(this.renderer.scene);
     this.thrownGeese.clear();
     this.gooseTossController?.dispose();
@@ -1805,6 +2025,8 @@ export class Game {
         : clearFixedSpawnPoint(this.isSpawnBlocked);
     const spawnY = sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(spawnPoint.x, spawnY, spawnPoint.y));
+    this.grenades?.resetMatch();
+    this.grenadeEffects?.resetMatch();
     // Re-arm death handling at the respawn itself, not on the next tick: this runs after an await,
     // so a goose explosion landing between here and that tick would otherwise kill the player with
     // deathHandled still true from the previous death, skipping the whole death sequence.
@@ -1836,12 +2058,14 @@ export class Game {
     this.tracers.clear();
     // Every lamp shot out in the last run is lit again (section 11).
     this.facility?.world.relightAll();
+    this.facilityInteraction?.reset();
     this.facility?.lampBreak.clear();
+    this.pickups?.resetAll();
     this.scoreState.value = 0;
     this.deathScreen.hide();
     this.deathScreenVisible = false;
     this.pendingDeathScreenReveal = false;
-    this.input.requestPointerLock();
+    this.input.resume();
   }
 
   /** The hemisphere fill is always created (so applyGraphicsQuality can toggle its intensity live)
@@ -1891,7 +2115,7 @@ export class Game {
     // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
     if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled && !this.facility;
-    this.facility?.torch.setCastShadow(quality.shadowsEnabled);
+    this.torch?.setCastShadow(quality.shadowsEnabled);
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
       this.sun.shadow.map?.dispose();
@@ -1977,10 +2201,15 @@ export class Game {
     this.worldMarkers?.remove('extract');
 
     const position = this.player.position;
-    const mission = new MissionState(getWatchTowerPositions(), { x: position.x, z: position.z });
+    // On the Facility four rooms' consoles stand in for the watch towers (docs/facility-map.md).
+    const facility = this.facility;
+    const points = facility ? facilityMissionObjectives(facility.layout, facility.start) : getWatchTowerPositions();
+    const mission = new MissionState(points, { x: position.x, z: position.z });
     this.mission = mission;
     const view = mission.view(position);
-    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view);
+    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view, facility
+      ? { physics: this.physics, ceilingAt: (x, z) => facilityCeilingAt(facility.layout, x, z) }
+      : null);
     for (const uplink of view.uplinks) {
       this.hud.compass.addMarker(`uplink-${uplink.label}`, () => bearingDeg(uplink.x - this.player.position.x, uplink.z - this.player.position.z));
     }
@@ -1989,7 +2218,7 @@ export class Game {
     this.missionLastHealth = this.player.currentHealth;
     this.missionClock = 0;
     this.missionWon = false;
-    this.hud.setPrompt('E', null);
+    this.hud.setPrompt('interact', null);
   }
 
   /** Feeds the mission this tick's position and interact press, and acts on what it asks for: waves
@@ -2023,7 +2252,7 @@ export class Game {
         this.hud.compass.addMarker('extract', () => bearingDeg(x - this.player.position.x, z - this.player.position.z));
       } else if (event.kind === 'won') {
         this.missionWon = true;
-        this.hud.setPrompt('E', null);
+        this.hud.setPrompt('interact', null);
         this.deathScreen.showMission(this.missionResult(true));
         this.deathScreenVisible = true;
         this.input.releasePointerLock();
@@ -2071,14 +2300,16 @@ export class Game {
       hud.setObjective('UPLINK', 'Bring the uplinks online');
       hud.setObjectiveProgress(view.online, view.uplinks.length);
     }
-    hud.setPrompt('E', this.missionWon ? null : view.prompt);
+    hud.setPrompt('interact', this.missionWon ? null : view.prompt);
     this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
+    // Only the Facility has a single-player map.
+    this.soloMinimap?.setMarkers(missionMapMarkers(view));
 
     const markers = this.worldMarkers;
     if (!markers) return;
     for (const uplink of view.uplinks) {
       if (uplink.status === 'online') continue;
-      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + WATCH_TOWER_ROOF_TOP + 3, uplink.z);
+      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : WATCH_TOWER_ROOF_TOP + 3), uplink.z);
       markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
     }
     if (view.phase === 'extract') {
@@ -2237,8 +2468,21 @@ export class Game {
     report('Ready');
   }
 
+  private readonly crosshairOverEnemy = (): boolean => {
+    const camera = this.renderer.camera;
+    const hit = castHitscan(this.physics, camera.position, camera.getWorldDirection(new THREE.Vector3()), 60, this.player.ownCollider);
+    if (!hit) return false;
+    const entity = this.physics.getEntity(hit.colliderHandle);
+    return (entity instanceof Enemy || entity instanceof RemotePlayer) && !entity.isDead;
+  };
+
   private readonly update = (dt: number): void => {
     this.tickCount++;
+    // The grenades' shake, white-out and blast light run out on every tick, also while the
+    // simulation below is frozen (dead, paused, mission won, match ended): render keeps drawing them.
+    this.grenades?.tickEffects(dt);
+    this.input.update(dt, this.worldBriefingActive || this.deathScreenVisible || this.multiplayerMatchState.hasEnded, this.crosshairOverEnemy);
+    if (this.deathScreenVisible && !this.multiplayerMatchState.hasEnded && this.input.consumeJustPressed('resetPlay')) void this.resetPlay();
     // Match end (MULTIPLAYER_PLAN.md §7 phase 4) freezes simulation permanently for the rest of
     // this Game instance, unlike a single death - MatchEndScreen (shown by App, not Game) is what
     // the player sees, and it stays alive underneath until Rematch/Return to Lobby is clicked.
@@ -2259,13 +2503,12 @@ export class Game {
       return;
     }
 
-    // Pointer lock is the single source of truth for "paused": pressing Escape forces the browser
-    // to release it (can't be prevented), and a freshly loaded match starts unlocked too - both
-    // cases should show the pause menu and freeze simulation. Death has its own overlay instead -
+    // Mouse play needs pointer lock; controller play uses explicit pause state.
+    // Death has its own overlay instead -
     // gated on `deathScreenVisible`, not `player.isDead` directly, so a death detected while
     // already paused (multiplayer only) doesn't auto-hide the pause menu before the player has
     // actually chosen to resume (see pendingDeathScreenReveal's own comment).
-    const isPaused = !this.input.isLocked && !this.deathScreenVisible;
+    const isPaused = !this.input.isEngaged && !this.deathScreenVisible;
     this.pauseMenu.setVisible(isPaused);
     this.pauseMenu.update();
 
@@ -2295,9 +2538,9 @@ export class Game {
       void this.resetPlay();
     }
 
-    // The torch (docs/facility-map.md, section 7). Consumed on the Valley too, where F does nothing.
-    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.facility) {
-      const torch = this.facility.torch;
+    // Consume the toggle even in Valley day, where no torch is available.
+    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.torch) {
+      const torch = this.torch;
       torch.setOn(!torch.isOn);
       this.sound.playTorchClick(torch.isOn);
     }
@@ -2325,7 +2568,12 @@ export class Game {
       for (const opponent of this.multiplayer.opponents.values()) opponent.remotePlayer.update(dt);
     }
 
+    this.secondsSinceShot += dt;
     const freezeLocalPlayer = this.player.isDead || isPaused || this.missionWon;
+    // Facility doors and breakers (section 12): before the mode controllers, which only see an
+    // interact press this did not take (it takes one only while a door or panel is looked at).
+    this.facilityInteraction?.update(dt, freezeLocalPlayer ? null : this.input);
+    this.buildings?.houses.update(dt, this.renderer.camera);
     if (freezeLocalPlayer) {
       // Keep draining look input so it doesn't build up a stale jump in camera angle on
       // respawn/unpause.
@@ -2346,6 +2594,23 @@ export class Game {
       this.weaponManager.update(dt, this.input, this.player);
     }
 
+    const probe = this.facility?.world.probeAt(this.player.position.x, this.player.position.z);
+    const at = this.player.position;
+    this.playerVisibility.value = visibility({
+      map: this.facility ? 'facility' : 'valley',
+      weather: this.matchWeather,
+      probeLuma: probe ? probe[0] * 0.2126 + probe[1] * 0.7152 + probe[2] * 0.0722 : undefined,
+      secondsSinceShot: this.secondsSinceShot,
+      torchOn: this.torch?.isOn ?? false,
+      enemyInTorchBeam: false,
+      houseRoomLit: this.buildings?.houses.roomLampLitAt(at.x, at.y - PLAYER_HEIGHT / 2, at.z) ?? null,
+      flashLit: this.grenades ? flashLightsPlayer(this.grenades.recentDetonations, this.grenades.now, at) : false,
+    });
+    this.playerVisibility.torchOn = this.torch?.isOn ?? false;
+    this.playerVisibility.eye.copy(this.renderer.camera.position);
+    this.renderer.camera.getWorldDirection(this.playerVisibility.aim);
+    this.hud.setVisibility(this.torch ? this.playerVisibility.value : null);
+
     // The shared world - physics (including every RemotePlayer/goose collider), and the
     // host-authoritative goose simulation - must keep advancing regardless of THIS client's own
     // pause/death state in multiplayer (per user request: pausing/dying must never freeze anything
@@ -2361,12 +2626,13 @@ export class Game {
       sectionStart = this.perfLogger.endSection('physics', sectionStart);
       this.chunkManager?.update(this.player.position.x, this.player.position.z);
       sectionStart = this.perfLogger.endSection('world', sectionStart);
-      this.entityManager.update(dt, this.player);
+      this.entityManager.update(dt, this.player, this.playerVisibility);
       this.updateDirector(dt);
       this.updateMission(dt);
       this.perfLogger.endSection('ai', sectionStart);
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
+      this.grenades?.update(dt, freezeLocalPlayer ? null : this.input);
 
       // Goose Horde: no-op for a follower (guest) manager - see HordeGooseManager's isAuthoritative
       // comment. Every living player (own + every opponent) is a valid target so co-op geese chase
@@ -2402,6 +2668,9 @@ export class Game {
 
       // Goose Horde multiplayer's ammo crates.
       if (this.ammoDropManager) this.updateHordeAmmoDrops(dt);
+
+      // Health, ammo and grenade pickups: timers, the walk-over check and the host's claims.
+      this.pickups?.update(dt, this.player.position, !freezeLocalPlayer);
 
       // Goose Toss's constant ambient supply (per user request - "many, many geese... spawned
       // across the map constantly"), independent of the normal spawn-on-death trigger above.
@@ -2439,6 +2708,7 @@ export class Game {
     this.facility?.lampBreak.update(dt);
     this.updateMultiplayer(dt);
     this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
+    if (this.soloMinimap) this.updateMinimapPickups(this.soloMinimap);
 
     if (this.player.isDead && !this.deathHandled) {
       this.deathHandled = true;
@@ -2485,8 +2755,9 @@ export class Game {
         // adjudicated by anyone else, same trust model this protocol already uses for health.
         const recentlyDamaged = performance.now() - this.multiplayer.lastDamageSourceAt <= MULTIPLAYER_KILL_CREDIT_WINDOW_MS;
         const killerSlot = recentlyDamaged ? this.multiplayer.lastDamageSourceSlot : null;
+        const killerWeaponId = killerSlot === null ? undefined : this.multiplayer.lastDamageSourceWeaponId;
         const ownSlot = this.multiplayer.session.ownSlot;
-        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, t: this.sendClock() });
+        this.multiplayer.session.connection.send({ type: 'playerDied', senderSlot: ownSlot, victimSlot: ownSlot, killerSlot, killerWeaponId, t: this.sendClock() });
         // Goose Horde is co-op - per explicit user request, nobody should score points off a
         // teammate's death (accidental friendly fire or otherwise), and there's no kill-limit win
         // condition for this mode anyway (see updateMultiplayer's own gooseHorde skip). Every other
@@ -2495,7 +2766,7 @@ export class Game {
         // and a guest's message never loops back to it either).
         // applyDeath itself already skips Goose Horde internally (see its own comment) - this mode
         // has no kill-limit win condition anyway (see updateMultiplayer's own gooseHorde skip).
-        this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, { victimSlot: ownSlot, killerSlot });
+        this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, this.multiplayer.killLimit, { victimSlot: ownSlot, killerSlot, killerWeaponId });
         // Goose Horde's limited-lives rule (per explicit user request): each player gets
         // HORDE_MAX_RESPAWNS respawns before this exact death permanently eliminates them instead
         // of auto-respawning (see updateMultiplayer's own gate on this). Self-authoritative and
@@ -2533,7 +2804,7 @@ export class Game {
     this.sound.updateAmbience({
       healthRatio: this.player.currentHealth / this.player.maxHealth,
       director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
-      active: this.input.isLocked && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
+      active: this.input.isEngaged && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
     });
     this.hotbar.setActive(this.weaponManager.activeWeaponIndex);
   };
@@ -2549,7 +2820,10 @@ export class Game {
     // tick's hitscan can fire (see that call site's comment) - this just reads the already-updated
     // positions for the minimap.
     const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
+    // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
+    if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions());
+    this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
     this.multiplayer.multiplayerHud.update(
       this.player.currentHealth,
@@ -2569,8 +2843,8 @@ export class Game {
         this.connectionPollInFlight = true;
         void this.multiplayer.session.connection.connectionQuality().then((measured) => {
           if (!this.multiplayer) return;
-          const summary = summarizeConnection(this.multiplayer.session.role, HOST_SLOT, measured, this.multiplayer.opponents.keys());
-          this.multiplayer.multiplayerHud.setConnection(summary.shown);
+          const summary = summarizeConnection(measured, this.multiplayer.opponents.keys());
+          this.multiplayer.multiplayerHud.setConnection(summary.perOpponent);
           for (const [slot, opponent] of this.multiplayer.opponents) {
             opponent.remotePlayer.setLeadSeconds(summary.leadSeconds.get(slot) ?? 0);
           }
@@ -2580,11 +2854,10 @@ export class Game {
       }
     }
 
-    // A periodic resync of this client's dead Facility lamps, for anyone who was loading when a
-    // lampDestroyed went past (see network/lampSync.ts).
-    if (this.facility) {
-      const facility = this.facility;
-      const lamps = this.lampSync.update(dt, () => facility.world.deadLampIndices());
+    // A periodic resync of this client's dead lamps (Facility or Valley houses), for anyone who was
+    // loading when a lampDestroyed went past (see network/lampSync.ts).
+    if (this.facility || this.buildings) {
+      const lamps = this.lampSync.update(dt, this.deadLampIds);
       if (lamps) this.sendLampSync(lamps);
     }
 
@@ -2647,7 +2920,7 @@ export class Game {
           // while whichever client is still alive keeps waiting on a count that can now never be
           // satisfied, which is exactly what "waves never end" looks like from that client's side.
           if (this.multiplayer.gameMode === 'gooseHorde' && this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
-          if (now - opponent.lastMessageAt < MULTIPLAYER_CONNECTION_TIMEOUT_MS) continue;
+          if (!isOpponentSilent(now, opponent.lastMessageAt, opponent.firstSnapshotAt, opponent.isDead)) continue;
           this.multiplayer.hostRoster.handleDisconnect(opponent.slot, now);
           // Actually close their connection too. A silent tab (typically backgrounded, which halts
           // its requestAnimationFrame loop) used to stay connected: removed from everyone's match,
@@ -2689,7 +2962,7 @@ export class Game {
         pitch: this.player.facingPitch,
         health: this.player.currentHealth,
         t: this.sendClock(),
-        ...(this.facility ? { torch: this.facility.torch.isOn } : {}),
+        ...(this.torch ? { torch: this.torch.isOn } : {}),
       });
     }
   }
@@ -2720,6 +2993,7 @@ export class Game {
     const { x, z } = pickRandomRespawnPoint(otherPositions, this.isSpawnBlocked);
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.respawn(new THREE.Vector3(x, spawnY, z));
+    this.grenades?.resetForSpawn();
     this.deathHandled = false; // same reason as resetPlay: re-armed at the respawn, not a tick later
     // Per user request: a fresh life should mean a fresh loadout, not carrying over whatever ammo
     // was left in each weapon at the moment of death - single-player's own resetPlay() already
@@ -2734,11 +3008,11 @@ export class Game {
     // before clearing deathScreenVisible/pendingDeathScreenReveal below, since those flags are
     // exactly what distinguishes "pause menu open" from "death screen was showing" while input is
     // unlocked either way (see the main isPaused formula in update()).
-    const pauseMenuCurrentlyOpen = !this.input.isLocked && !this.deathScreenVisible;
+    const pauseMenuCurrentlyOpen = !this.input.isEngaged && !this.deathScreenVisible;
     this.deathScreen.hide();
     this.deathScreenVisible = false;
     this.pendingDeathScreenReveal = false;
-    if (!pauseMenuCurrentlyOpen) this.input.requestPointerLock();
+    if (!pauseMenuCurrentlyOpen) this.input.resume();
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z, t: this.sendClock() });
   }
 
@@ -2759,6 +3033,12 @@ export class Game {
     const spawnY = sampleHeight(x, z) + SPAWN_HEIGHT_OFFSET;
     this.player.debugTeleport(new THREE.Vector3(x, spawnY, z));
     this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: ownSlot, x, y: spawnY, z, t: this.sendClock() });
+  }
+
+  /** The pickups within reach of the minimap (docs/pickups.md) as small icons. */
+  private updateMinimapPickups(minimap: Minimap): void {
+    const position = this.player.position;
+    minimap.updatePickups(position, this.player.facingYaw, this.pickups?.minimapEntries(position.x, position.z) ?? []);
   }
 
   /** Goose Horde multiplayer's ammo crates: host-only spawn tick (see AmmoDropManager.update's own
@@ -2802,6 +3082,7 @@ export class Game {
     const ownSlot = this.multiplayer?.session.ownSlot ?? null;
 
     for (const thrown of Array.from(this.thrownGeese.values())) {
+      const fromX = thrown.position.x, fromY = thrown.position.y, fromZ = thrown.position.z;
       thrown.update(dt);
 
       if (thrown.throwerSlot !== ownSlot) {
@@ -2816,6 +3097,16 @@ export class Game {
       let hitPosition: THREE.Vector3 | null = null;
       if (thrown.position.y <= groundY + GOOSE_RADIUS) {
         hitPosition = new THREE.Vector3(thrown.position.x, groundY, thrown.position.z);
+      } else if (this.facility && facilityBlocksThrow(this.facility.layout, thrown.position.x, thrown.position.y, thrown.position.z, GOOSE_RADIUS)) {
+        // Indoors a throw bursts on the first wall, crate or ceiling it meets.
+        hitPosition = thrown.position.clone();
+      } else if (this.facility && crossesClosedDoor(this.facility.objects.closedDoors(), fromX, fromZ, thrown.position.x, thrown.position.z)) {
+        // ...and on a closed door, on the side it came from.
+        hitPosition = new THREE.Vector3(fromX, thrown.position.y, fromZ);
+      } else if (this.buildings && (this.buildings.houses.nav.isInside(fromX, fromZ) || this.buildings.houses.nav.isInside(thrown.position.x, thrown.position.z))
+        && throwSegmentBlocked(this.physics.world, { x: fromX, y: fromY, z: fromZ }, thrown.position)) {
+        // On the Valley it bursts on a house wall or closed door too, on the side it came from.
+        hitPosition = new THREE.Vector3(fromX, fromY, fromZ);
       } else if (thrown.position.distanceTo(this.player.position) <= GOOSE_RADIUS + PLAYER_RADIUS) {
         hitPosition = thrown.position.clone();
       } else if (this.multiplayer) {
@@ -2860,6 +3151,7 @@ export class Game {
     const knockbackStrength = source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_KNOCKBACK_STRENGTH : GOOSE_TOSS_EXPLOSION_KNOCKBACK_STRENGTH;
 
     this.explosionEffect.spawn(position, radius);
+    if (position.distanceTo(this.player.position) <= 10) this.input.vibrate('explosion');
     this.sound.playExplosion(
       enemyGunshotVolume(position.distanceTo(this.player.position)),
       computeStereoPan(this.player.position, this.player.facingYaw, position),
@@ -2881,7 +3173,7 @@ export class Game {
     for (const opponent of this.multiplayer.opponents.values()) {
       const amount = computeExplosionDamage(position.distanceTo(opponent.remotePlayer.position), radius, maxDamage);
       if (amount > 0) {
-        this.multiplayer.session.connection.send({ type: 'damageEvent', senderSlot: throwerSlot, targetSlot: opponent.slot, amount });
+        this.multiplayer.session.connection.send({ type: 'damageEvent', senderSlot: throwerSlot, targetSlot: opponent.slot, amount, weaponId: source });
       }
     }
   }
@@ -2964,7 +3256,7 @@ export class Game {
   private dismissModeExplanation(): void {
     this.worldBriefingActive = false;
     this.modeExplanationScreen?.hide();
-    this.input.requestPointerLock();
+    this.input.resume();
     // One last readiness broadcast on the way out: the slowest player may have finished loading only
     // moments ago, after this client's periodic resends had already stopped mattering to anyone else.
     if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'modeExplanationReady', slot: this.multiplayer.session.ownSlot });
@@ -3052,26 +3344,44 @@ export class Game {
     if (!this.multiplayer) return;
     const existing = this.multiplayer.opponents.get(slot);
     if (existing) {
-      // A rejoin that took over this slot before the old connection closed: the new page's clock
-      // starts again near zero, so the old floor would drop its snapshots (see stateOrder.ts).
-      existing.lastStateSentAt = undefined;
+      // A rejoin that took over this slot before the old connection closed: a fresh page, so fresh
+      // liveness and clock (restartOpponentForRejoin), and its catch-ups (lamps, doors, grenades) again.
+      restartOpponentForRejoin(existing, performance.now());
+      this.lampSync.forget(slot);
+      this.facilityInteraction?.forget(slot);
+      this.grenades?.forgetOpponent(slot);
       return;
     }
+    const generation = this.bumpOpponentGeneration(slot);
     const remotePlayer = await RemotePlayer.create(
       this.physics,
       this.renderer.scene,
       this.player.position,
-      (amount) => this.multiplayer!.session.connection.send({ type: 'damageEvent', senderSlot: this.multiplayer!.session.ownSlot, targetSlot: slot, amount }),
+      (amount) =>
+        this.multiplayer!.session.connection.send({
+          type: 'damageEvent',
+          senderSlot: this.multiplayer!.session.ownSlot,
+          targetSlot: slot,
+          amount,
+          weaponId: this.weaponManager.activeWeaponId,
+        }),
     );
-    if (!this.multiplayer || this.multiplayer.opponents.has(slot)) {
-      // Torn down or raced while the GLTF load above was in flight - don't leak the collider/mesh.
+    if (!this.multiplayer || this.multiplayer.opponents.has(slot) || this.opponentGenerations.get(slot) !== generation) {
+      // Torn down, raced, or the slot left (or was added again) while the GLTF load above was in
+      // flight - don't leak the collider/mesh, and never show a player who already left.
       remotePlayer.dispose(this.renderer.scene);
       return;
     }
-    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), isDead: false });
+    this.multiplayer.opponents.set(slot, { slot, remotePlayer, username, health: this.player.maxHealth, lastMessageAt: performance.now(), firstSnapshotAt: null, isDead: false });
     this.multiplayer.usernames.set(slot, username);
     this.multiplayer.minimap.addDot(slot);
     this.multiplayer.multiplayerHud.addOpponentRow(slot, username);
+  }
+
+  private bumpOpponentGeneration(slot: PlayerSlot): number {
+    const generation = (this.opponentGenerations.get(slot) ?? 0) + 1;
+    this.opponentGenerations.set(slot, generation);
+    return generation;
   }
 
   /** Removes a slot that disconnected mid-match (see protocol.ts's PlayerLeftMessage) - the match
@@ -3080,6 +3390,8 @@ export class Game {
    * player's final score still needs to show correctly on the podium. */
   private removeMultiplayerOpponent(slot: PlayerSlot): void {
     if (!this.multiplayer) return;
+    // Before the lookup: a removal while this slot's model is still loading must cancel that add.
+    this.bumpOpponentGeneration(slot);
     const opponent = this.multiplayer.opponents.get(slot);
     if (!opponent) return;
     // King of the Hill: if the departing player was carrying the golden goose, drop it at their
@@ -3092,6 +3404,8 @@ export class Game {
     this.kingOfTheHillController?.dropLocallyIfCarrying(slot, opponent.remotePlayer.position.clone());
     // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
     this.lampSync.forget(slot);
+    this.facilityInteraction?.forget(slot);
+    this.grenades?.forgetOpponent(slot);
     opponent.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);
@@ -3180,6 +3494,10 @@ export class Game {
   private endMultiplayerMatch(won: boolean, reason: MultiplayerMatchEndResult['reason']): void {
     if (this.multiplayerMatchState.hasEnded || !this.multiplayer) return;
     this.multiplayerMatchState.markEnded();
+    this.pauseMenu.setVisible(false);
+    this.settingsPanel.hide();
+    this.loadoutScreen?.hide();
+    this.deathScreen.hide();
     this.input.releasePointerLock();
     const ownSlot = this.multiplayer.session.ownSlot;
     const placements = this.multiplayerMatchState.buildPlacements(this.multiplayer.usernames, ownSlot);
@@ -3217,6 +3535,7 @@ export class Game {
     // through, and unlike interpolating every enemy/target mesh, it needs no new per-entity
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
+    this.grenades?.applyCameraShake(this.renderer.camera, now / 1000);
     this.renderer.camera.getWorldDirection(this.hudForward);
     const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
     const hudDt = Math.max(0, frameMs / 1000);
@@ -3224,14 +3543,16 @@ export class Game {
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);
     this.worldMarkers?.update(this.renderer.camera);
+    this.grenadeEffects?.update(hudDt, this.weaponManager);
     if (this.facility) {
       this.updateFacilityLight(hudDt);
-      this.updateTorches();
     } else {
       this.updateSunFollow();
     }
+    this.updateTorches();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
+    this.grenadeEffects?.afterRender(this.renderer.webgl.domElement);
     this.perfLogger.endSection('render', renderStart);
     this.perfLogger.maybeEmit(this.perfContext);
   };

@@ -64,6 +64,14 @@ export function visibilityFactor(distance: number, detectionRange: number, playe
   return distanceTerm * (1 + ENEMY_AWARENESS_MOVEMENT_BONUS * clamp01(playerMovement));
 }
 
+/** How far an enemy spends a line-of-sight ray on the player. Darkness shortens acquisition only
+ * (an idle or searching enemy noticing the player: detectionRange scaled by the player's
+ * visibility, design section 6); an engaged enemy (alert or chase) keeps tracking a player it has
+ * already found out to its leash range, so a chase in the dark does not drop at a few metres. */
+export function sightRayRange(engaged: boolean, detectionRange: number, leashRange: number, visibility: number): number {
+  return engaged ? leashRange : detectionRange * visibility;
+}
+
 /** One tick of the meter: fills by `seenFactor` (0 when unseen) over ENEMY_AWARENESS_FILL_TIME,
  * or drains over ENEMY_AWARENESS_DRAIN_TIME. */
 export function stepAwareness(awareness: number, seenFactor: number, dt: number): number {

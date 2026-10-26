@@ -3,15 +3,16 @@ import * as THREE from 'three';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { allocateEntityId, type Entity } from '../Entity.ts';
 import type { Player } from '../Player.ts';
+import type { PlayerVisibility } from './playerVisibility.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Damageable } from '../../combat/damage.ts';
 import { sampleHeight } from '../../world/TerrainGenerator.ts';
 import type { EnemyArchetype } from './archetypes.ts';
 import { steerWithAvoidance } from './enemySteering.ts';
-import { hasEnemyNavigator, resolveMoveTarget } from './enemyNavigator.ts';
+import { enemyFloorAt, forgetDoorWait, hasEnemyNavigator, heldAtDoor, resolveMoveTarget } from './enemyNavigator.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
-import type { EnemyBody, EnemyPosition } from './EnemyBody.ts';
+import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
 import { createHitColliders, ENEMY_HIT_SHAPE, yawRotation } from '../characterHitbox.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
@@ -23,7 +24,7 @@ import { crossFadeBase, ENEMY_CHARACTER, instantiateCharacter, RUN_SPEED_THRESHO
 import { ENEMY_HEIGHT, ENEMY_STAGGER_LURCH_RAD, HEADSHOT_MULTIPLIER } from '../../core/config.ts';
 
 export type { EnemyCombatHooks } from './enemyCombat.ts';
-export { setEnemyNavigator, type EnemyNavigator } from './enemyNavigator.ts';
+export { setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator, type EnemyDoorGate, type EnemyNavigator } from './enemyNavigator.ts';
 
 export const ENEMY_MODEL_PATH = ENEMY_CHARACTER.path;
 
@@ -42,6 +43,8 @@ export interface EnemyDebugRecord {
   readonly searchTarget: PlanarPoint | null;
   /** Knocked off balance by a heavy hit right now (step 5). */
   readonly staggered: boolean;
+  /** Seconds of flash-grenade blindness left. */
+  readonly blindSeconds: number;
 }
 
 /** How far an enemy must move horizontally before its ground height is resampled. sampleHeight is
@@ -183,6 +186,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
       pick: brain.pick,
       searchTarget: brain.searchTarget,
       staggered: brain.staggered,
+      blindSeconds: brain.blindSeconds,
     };
   }
 
@@ -222,6 +226,12 @@ export class Enemy implements Entity, Damageable, EnemyBody {
    * layout that stays put. Moving only the body let a placed enemy walk back toward where it
    * spawned, near the player: the hearing check's "enemy 36 m away reacted to a pistol" was that
    * enemy walking home and seeing the player (checkpoint E). Never called by gameplay code. */
+  /** Test-only: the point a commanded enemy walks to (body centre height y), or null to think again. */
+  private debugTarget: { x: number; y: number; z: number } | null = null;
+  debugCommand(target: { x: number; y: number; z: number } | null): void {
+    this.debugTarget = target;
+  }
+
   debugPlace(x: number, z: number): void {
     this.heightSampleX = Number.NaN;
     this.heightSampleZ = Number.NaN;
@@ -253,6 +263,18 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.brain.onHeardGunshot(origin, weaponId);
   }
 
+  /** Grenades: its eyes and facing, for judging a flash (EntityManager.applyFlash). */
+  flashView(): { eye: THREE.Vector3; yaw: number } {
+    const p = this.position;
+    return { eye: new THREE.Vector3(p.x, p.y + ENEMY_HEAD_OFFSET_Y, p.z), yaw: this.facingYaw };
+  }
+
+  /** Blinded by a flash grenade (see EnemyBrain.onFlashed). */
+  onFlashed(seconds: number): void {
+    if (this.dead) return;
+    this.brain.onFlashed(seconds);
+  }
+
   /** A comrade died nearby (see EnemyBrain.onNearbyDeath). */
   onNearbyDeath(deathPosition: THREE.Vector3, killerPosition: THREE.Vector3): void {
     if (this.dead) return;
@@ -265,11 +287,14 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     this.brain.dispatchToward(position);
   }
 
-  update(dt: number, player: Player): void {
+  update(dt: number, player: Player, visibility?: PlayerVisibility): void {
     if (this.dead) return;
     this.moving = false;
     this.moveSpeed = 0;
-    this.brain.update(dt, player);
+    // Test-only: a commanded enemy walks to its point (navigator, door gate and floors included)
+    // instead of thinking.
+    if (this.debugTarget) this.moveToward(this.debugTarget.x, this.debugTarget.z, this.archetype.moveSpeed, dt, this.debugTarget.y);
+    else this.brain.update(dt, player, visibility);
     this.updateBaseAnimation();
     // The hit shapes sit forward of the centre line where the model carries its head and chest,
     // so the body turns with the model.
@@ -283,18 +308,26 @@ export class Enemy implements Entity, Damageable, EnemyBody {
    * moving state (patrol, search, and chase - chase used to beeline without avoidance, which let
    * chasers clip through tree trunks/rocks whose colliders block the ground path even when the
    * head-height LOS ray clears past them). With a navigator set (a Facility match) it steers at the
-   * navigator's next waypoint instead of the raw target. */
-  moveToward(targetX: number, targetZ: number, speed: number, dt: number): void {
+   * navigator's next waypoint instead of the raw target, and walks straight at it without the
+   * whiskers when the navigator says the way is clear (a Valley house's walk grid). `targetY`, the
+   * target's body centre height when known, tells a house's floors apart. */
+  moveToward(targetX: number, targetZ: number, speed: number, dt: number, targetY?: number): void {
     const current = this.rigidBody.translation();
-    const waypoint = resolveMoveTarget(current.x, current.z, targetX, targetZ);
+    const waypoint = resolveMoveTarget(current.x, current.z, targetX, targetZ, current.y, targetY);
     const dx = waypoint.x - current.x;
     const dz = waypoint.z - current.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
     if (distance < 1e-4) return;
+    // A closed door ahead before the waypoint, at the feet's height: stand facing it while the gate
+    // counts down and opens it.
+    if (heldAtDoor(this.id, current.x, current.z, dx / distance, dz / distance, dt, distance, current.y - ENEMY_HEIGHT / 2)) {
+      this.mesh.rotation.y = Math.atan2(dx, dz);
+      return;
+    }
 
     const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
     const chestPos = new THREE.Vector3(current.x, current.y, current.z);
-    const steeredDir = steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
+    const steeredDir = waypoint.direct ? desiredDir : steerWithAvoidance(this.physics, chestPos, desiredDir, this.bodyCollider);
 
     const step = Math.min(distance, speed * dt);
     const nextX = current.x + steeredDir.x * step;
@@ -320,6 +353,8 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     let dx = awayX;
     let dz = awayZ;
     let distance = awayDistance;
+    // How far on the point it backs toward is, for the door gate (unbounded when it backs straight away).
+    let reach = Number.POSITIVE_INFINITY;
     if (hasEnemyNavigator()) {
       const waypoint = resolveMoveTarget(
         current.x,
@@ -335,7 +370,15 @@ export class Enemy implements Entity, Damageable, EnemyBody {
         dx = wx;
         dz = wz;
         distance = waypointDistance;
+        reach = waypointDistance;
       }
+    }
+
+    // Backing into a closed door: it stands its ground facing the threat while the gate counts down
+    // and opens the door, the same as walking into one.
+    if (heldAtDoor(this.id, current.x, current.z, dx / distance, dz / distance, dt, reach, current.y - ENEMY_HEIGHT / 2)) {
+      if (awayDistance > 1e-2) this.mesh.rotation.y = Math.atan2(-awayX, -awayZ);
+      return { x: current.x, y: current.y, z: current.z };
     }
 
     const desiredDir = new THREE.Vector3(dx / distance, 0, dz / distance);
@@ -396,6 +439,13 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   /** Cached terrain height - resampled only after HEIGHT_RESAMPLE_DISTANCE of horizontal movement,
    * not every frame (see the constant's comment for the cost/accuracy reasoning). */
   private groundHeightAt(x: number, z: number): number {
+    // In a Valley house the floor under the feet (ground floor, stair or upper floor), uncached; the
+    // terrain is resampled on the way out.
+    const floor = enemyFloorAt(x, z, this.mesh.position.y - ENEMY_HEIGHT / 2);
+    if (floor !== null) {
+      this.heightSampleX = Number.NaN;
+      return floor;
+    }
     const dx = x - this.heightSampleX;
     const dz = z - this.heightSampleZ;
     if (!(dx * dx + dz * dz < HEIGHT_RESAMPLE_DISTANCE_SQ)) {
@@ -418,6 +468,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    forgetDoorWait(this.id);
     this.brain.dispose();
     this.physics.unregisterCollider(this.bodyCollider);
     this.physics.unregisterCollider(this.headCollider);

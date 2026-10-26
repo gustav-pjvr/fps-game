@@ -24,7 +24,7 @@ import {
   type MatchMap,
   type MatchWeather,
 } from '../../core/config.ts';
-import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, isModeAllowedOnMap, type GameMode } from '../../core/gameModes.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../../core/gameModes.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, MOTION_EASE, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
@@ -271,14 +271,6 @@ export class CreateRoomScreen {
       mapDescription.textContent = MATCH_MAP_DESCRIPTIONS[map];
       this.weatherSelect.disabled = map === 'facility';
       weatherLabel.textContent = map === 'facility' ? 'Indoor' : 'Weather';
-      for (const option of this.gameModeSelect.options) {
-        const mode = option.value as GameMode;
-        option.disabled = !isModeAllowedOnMap(mode, map);
-        option.textContent = GAME_MODE_LABELS[mode] + (option.disabled ? ' (Valley only)' : '');
-      }
-      if (!isModeAllowedOnMap(this.gameModeSelect.value as GameMode, map)) {
-        this.gameModeSelect.value = DEFAULT_GAME_MODE;
-      }
     };
     this.mapSelect.addEventListener('change', updateMapOptions);
     updateMapOptions();
@@ -436,11 +428,11 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onHostHello: (username, rejoinToken, features) => {
+      onHostHello: (username, rejoinToken, features, peerId) => {
         if (!this.hostRoster) return 'full';
         // An older build would load the Valley inside a Facility room: turned away before it takes a slot.
         if (!helloSupportsMap(features, this.mapSelect.value as MatchMap)) return 'outdated';
-        const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now());
+        const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
         if (outcome.outcome === 'full') return 'full';
         // A rejoin may take over a slot whose stale connection was still marked ready. The player on
         // the new connection hasn't readied, so they must click Ready again.

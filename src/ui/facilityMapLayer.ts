@@ -1,5 +1,6 @@
 import { cellOf, OPEN, PROP, SOLID, type FacilityLayout } from '../world/facility/facilityLayout.ts';
 import type { MinimapLayer } from './minimap.ts';
+import { ACCENT, AMBER, THREAT } from './theme.ts';
 
 /** The minimap's world radius on the Facility (docs/facility-map.md, section 8): rooms are a few
  * metres across, so the Valley's 90 m would shrink the plan to a smudge. */
@@ -13,6 +14,24 @@ const FILL_OPEN = 'rgba(147, 168, 160, 0.2)';
 const FILL_OPEN_REVEALED = 'rgba(201, 226, 216, 0.5)';
 const FILL_PROP = 'rgba(147, 168, 160, 0.08)';
 const FILL_PROP_REVEALED = 'rgba(201, 226, 216, 0.2)';
+
+/** Doors and breaker panels on the plan (docs/facility-map.md, section 12): closed doors as short
+ * bars across their doorway, a panel as a small square in its breaker's colour once seen. */
+const DOOR_BAR_DEPTH = 0.7;
+const PANEL_ICON = 1.4;
+
+/** What the plan shows of the Facility's doors and breakers (FacilityObjects). */
+export interface FacilityMapObjects {
+  closedDoors(): readonly { x: number; z: number; axis: 'x' | 'z'; width: number }[];
+  /** Every panel: where it hangs, the floor in front of it, and whether its breaker is on. */
+  breakerMarkers(): readonly { x: number; z: number; floorX: number; floorZ: number; on: boolean }[];
+}
+
+/** A breaker panel shows on the map once the player has entered the room or corridor stretch its
+ * floor belongs to. Pure. */
+export function breakerSeen(reveal: FacilityMapReveal, marker: { floorX: number; floorZ: number }): boolean {
+  return reveal.isRevealed(reveal.groupAt(marker.floorX, marker.floorZ));
+}
 
 /** The fill for a cell of `kind`, or null for a cell left transparent. Pure. */
 export function cellFill(kind: number, revealed: boolean): string | null {
@@ -113,7 +132,7 @@ export class FacilityMapLayer implements MinimapLayer {
   private readonly planContext: CanvasRenderingContext2D;
   private readonly rect: { x: number; z: number; size: number };
 
-  constructor(private readonly layout: FacilityLayout) {
+  constructor(private readonly layout: FacilityLayout, private readonly objects: FacilityMapObjects | null = null) {
     this.reveal = new FacilityMapReveal(layout);
     this.rect = planWorldRect(layout);
     this.plan = document.createElement('canvas');
@@ -137,6 +156,17 @@ export class FacilityMapLayer implements MinimapLayer {
   draw(context: CanvasRenderingContext2D): void {
     context.imageSmoothingEnabled = false;
     context.drawImage(this.plan, this.rect.x, this.rect.z, this.rect.size, this.rect.size);
+    if (!this.objects) return;
+    context.fillStyle = AMBER;
+    for (const door of this.objects.closedDoors()) {
+      const w = door.axis === 'x' ? DOOR_BAR_DEPTH : door.width, d = door.axis === 'x' ? door.width : DOOR_BAR_DEPTH;
+      context.fillRect(door.x - w / 2, door.z - d / 2, w, d);
+    }
+    for (const marker of this.objects.breakerMarkers()) {
+      if (!breakerSeen(this.reveal, marker)) continue;
+      context.fillStyle = marker.on ? ACCENT : THREAT;
+      context.fillRect(marker.x - PANEL_ICON / 2, marker.z - PANEL_ICON / 2, PANEL_ICON, PANEL_ICON);
+    }
   }
 
   private paintCell(index: number, revealed: boolean): void {

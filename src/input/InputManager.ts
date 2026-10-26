@@ -1,5 +1,8 @@
 import type { Action } from './actions.ts';
 import { Settings } from '../settings/Settings.ts';
+import { MOUSE_SENSITIVITY } from '../core/config.ts';
+import { gamepadInput, lookResponse, mergeMoveVectors, type ActiveDevice, type StickVector } from './GamepadInput.ts';
+import { gamepadBack, gamepadFocus, menuControls } from '../ui/gamepadFocus.ts';
 
 const MOUSE_BUTTON_ACTIONS: Record<number, Action> = {
   0: 'fire',
@@ -12,8 +15,16 @@ export class InputManager {
   private lookDeltaX = 0;
   private lookDeltaY = 0;
   private locked = false;
+  private paused = true;
+  private readonly padActions = new Set<Action>();
+  private readonly blockedPadActions = new Set<Action>();
+  private padMove: StickVector = { x: 0, y: 0 };
+  private assistFrame = 0;
+  private lastAssistSample = -1;
+  private aimSlowdown = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
+    gamepadInput.managed = true;
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('pointerlockerror', this.onPointerLockError);
     document.addEventListener('keydown', this.onKeyDown);
@@ -23,11 +34,94 @@ export class InputManager {
     document.addEventListener('mouseup', this.onMouseUp);
     document.addEventListener('wheel', this.onWheel, { passive: true });
     document.addEventListener('contextmenu', this.onContextMenu);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    if (typeof window !== 'undefined') window.addEventListener('blur', this.onWindowBlur);
   }
 
   get isLocked(): boolean {
     return this.locked;
   }
+
+  get activeDevice(): ActiveDevice { return gamepadInput.activeDevice; }
+
+  get isEngaged(): boolean {
+    return !this.paused && (this.locked || this.activeDevice === 'gamepad');
+  }
+
+  resume(): void {
+    this.paused = false;
+    if (this.activeDevice !== 'gamepad') this.requestPointerLock();
+  }
+
+  private pause(): void {
+    this.paused = true;
+    this.clearActions();
+    this.releasePointerLock();
+  }
+
+  private clearActions(): void {
+    this.activeActions.clear();
+    this.justPressedActions.clear();
+    this.padActions.clear();
+    this.padMove = { x: 0, y: 0 };
+    this.lookDeltaX = this.lookDeltaY = 0;
+  }
+
+  update(dt: number = 1 / 60, menuOnly = false, overEnemy: () => boolean = () => false): void {
+    if (document.hidden) return;
+    const frame = gamepadInput.poll();
+    this.padActions.clear();
+    this.padMove = { x: 0, y: 0 };
+    if (frame.pressed.has(9) && !menuOnly) {
+      if (this.isEngaged) this.pause();
+      else {
+        const controls = menuControls();
+        if (controls.some((el) => el.closest('[data-testid="pause-menu"]'))) this.resume();
+        else gamepadBack();
+      }
+      for (const action of frame.actions) this.blockedPadActions.add(action);
+      return;
+    }
+    for (const action of this.blockedPadActions) {
+      if (!frame.actions.has(action)) this.blockedPadActions.delete(action);
+    }
+    if (menuOnly || !this.isEngaged) {
+      if (!this.isEngaged) this.paused = true;
+      this.justPressedActions.clear();
+      for (const action of frame.actions) this.blockedPadActions.add(action);
+      gamepadFocus.update(frame, dt);
+      if (menuOnly && frame.justPressed.has('resetPlay')) this.justPressedActions.add('resetPlay');
+      return;
+    }
+    if (this.activeDevice !== 'gamepad') { this.aimSlowdown = false; return; }
+    for (const action of frame.actions) {
+      if (!this.blockedPadActions.has(action)) this.padActions.add(action);
+    }
+    for (const action of frame.justPressed) {
+      if (!this.blockedPadActions.has(action)) this.justPressedActions.add(action);
+    }
+    this.padMove = frame.move;
+    if (!Settings.getControllerAimAssist()) this.aimSlowdown = false;
+    else if (this.lastAssistSample !== gamepadInput.sampleId) {
+      this.lastAssistSample = gamepadInput.sampleId;
+      if (this.assistFrame++ % 2 === 0) this.aimSlowdown = overEnemy();
+    }
+    // Convert rates to mouse units so Player's existing zoom scaling stays shared.
+    const rate = Math.PI / 180 * dt * Settings.getControllerSensitivity()
+      * (this.aimSlowdown ? 0.55 : 1) / (MOUSE_SENSITIVITY * Settings.getMouseSensitivity());
+    this.lookDeltaX += lookResponse(frame.look.x) * 220 * rate;
+    this.lookDeltaY += lookResponse(frame.look.y) * 150 * rate * (Settings.getControllerInvertY() ? -1 : 1);
+  }
+
+  getMoveVector(): StickVector {
+    if (!this.isEngaged) return { x: 0, y: 0 };
+    return mergeMoveVectors({
+      x: Number(this.activeActions.has('moveRight')) - Number(this.activeActions.has('moveLeft')),
+      y: Number(this.activeActions.has('moveBackward')) - Number(this.activeActions.has('moveForward')),
+    }, this.padMove);
+  }
+
+  vibrate(kind: 'fire' | 'automatic' | 'damage' | 'explosion'): void { gamepadInput.vibrate(kind); }
 
   /** Re-requests pointer lock - safe to call from a click handler (a valid user gesture) even if
    * already locked, e.g. respawning without forcing a second "click to play" step. */
@@ -48,7 +142,7 @@ export class InputManager {
   }
 
   isActionActive(action: Action): boolean {
-    return this.activeActions.has(action);
+    return this.isEngaged && (this.activeActions.has(action) || this.padActions.has(action));
   }
 
   /** True at most once per key/button press — for semi-auto fire, reload, jump-once, etc. */
@@ -67,17 +161,27 @@ export class InputManager {
 
   private readonly onPointerLockChange = (): void => {
     this.locked = document.pointerLockElement === this.canvas;
-    if (!this.locked) {
-      this.activeActions.clear();
-      this.justPressedActions.clear();
-    }
+    if (this.locked) this.paused = false;
+    else if (this.activeDevice !== 'gamepad') this.paused = true;
+    this.clearActions();
   };
 
   private readonly onPointerLockError = (): void => {
     this.locked = false;
   };
 
+  private readonly onVisibilityChange = (): void => {
+    if (document.hidden) this.pause();
+  };
+
+  /** A pad keeps playing without pointer lock, so the lock loss that pauses the mouse never comes
+   * when the window loses focus (alt-tab, a notification): pause here. */
+  private readonly onWindowBlur = (): void => {
+    if (this.activeDevice === 'gamepad' && !this.paused) this.pause();
+  };
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    this.useMouse();
     if (!this.locked) return;
     const action = Settings.getKeyBindings()[event.code];
     if (!action) return;
@@ -91,12 +195,14 @@ export class InputManager {
   };
 
   private readonly onMouseMove = (event: MouseEvent): void => {
+    if (event.movementX || event.movementY) this.useMouse();
     if (!this.locked) return;
     this.lookDeltaX += event.movementX;
     this.lookDeltaY += event.movementY;
   };
 
   private readonly onMouseDown = (event: MouseEvent): void => {
+    this.useMouse();
     if (!this.locked) return;
     const action = MOUSE_BUTTON_ACTIONS[event.button];
     if (!action) return;
@@ -110,6 +216,7 @@ export class InputManager {
   };
 
   private readonly onWheel = (event: WheelEvent): void => {
+    this.useMouse();
     if (!this.locked) return;
     this.justPressedActions.add(event.deltaY > 0 ? 'weaponNext' : 'weaponPrev');
   };
@@ -121,6 +228,7 @@ export class InputManager {
   };
 
   dispose(): void {
+    gamepadInput.managed = false;
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('pointerlockerror', this.onPointerLockError);
     document.removeEventListener('keydown', this.onKeyDown);
@@ -130,5 +238,15 @@ export class InputManager {
     document.removeEventListener('mouseup', this.onMouseUp);
     document.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('contextmenu', this.onContextMenu);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    if (typeof window !== 'undefined') window.removeEventListener('blur', this.onWindowBlur);
+  }
+
+  private useMouse(): void {
+    if (this.padActions.size) this.justPressedActions.clear();
+    gamepadInput.setActiveDevice('mouse');
+    this.padActions.clear();
+    this.padMove = { x: 0, y: 0 };
+    if (!this.locked) this.pause();
   }
 }

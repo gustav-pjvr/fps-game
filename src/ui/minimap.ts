@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { MINIMAP_WORLD_RADIUS } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 import { ACCENT, AMBER, HAIRLINE, SURFACE, THREAT } from './theme.ts';
+import type { PickupKind } from '../pickups/pickupConfig.ts';
 
 const MAP_DIAMETER_PX = 140;
 const MAP_RADIUS_PX = MAP_DIAMETER_PX / 2;
@@ -9,7 +10,8 @@ const DOT_SIZE_PX = 10;
 /** An enemy blip stays up this long after the enemy stops, so a stop-start walk does not flicker. */
 const BLIP_LINGER_MS = 500;
 
-/** Something drawn under the dots (docs/facility-map.md, section 8): the Facility's plan. */
+/** Something drawn under the dots (docs/facility-map.md, section 8): the Facility's plan, or the
+ * Valley houses' plans once entered (ui/valleyHouseMapLayer.ts). */
 export interface MinimapLayer {
   /** data-testid of the canvas the layer is drawn on. */
   readonly testId: string;
@@ -18,12 +20,38 @@ export interface MinimapLayer {
   /** Draws in world metres (x to the right, z down the image); the minimap has already set the
    * transform that puts the player at the centre with their forward up (see minimapTransform). */
   draw(context: CanvasRenderingContext2D): void;
+  /** A closer world radius the map should show for now (inside a Valley house, whose plan is a
+   * few pixels at the Valley's radius), or null for the map's own. Asked after update. */
+  zoomRadius?(): number | null;
+}
+
+/** A mode's objective on the map (the King of the Hill goose, an uplink, the extraction). */
+export interface MinimapMarker {
+  readonly id: string;
+  readonly x: number;
+  readonly z: number;
 }
 
 export interface MinimapOptions {
   /** World metres from the centre to the rim; MINIMAP_WORLD_RADIUS by default. */
   readonly worldRadius?: number;
   readonly layer?: MinimapLayer;
+}
+
+/** A pickup icon's shape (a plus for health, a square for ammo, a diamond for a grenade crate) and
+ * colour (the HUD mint, amber and threat red, as the pickup's ring). */
+const PICKUP_ICON: Readonly<Record<PickupKind, { colour: string; clip: string; radius: string }>> = {
+  health: { colour: ACCENT, radius: '0', clip: 'polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%)' },
+  ammo: { colour: AMBER, radius: '2px', clip: 'none' },
+  grenade: { colour: THREAT, radius: '0', clip: 'polygon(50% 0, 100% 50%, 50% 100%, 0 50%)' },
+};
+
+/** A pickup the minimap draws (docs/pickups.md): the caller passes only those near enough to show. */
+export interface MinimapPickup {
+  readonly id: number;
+  readonly kind: PickupKind;
+  readonly x: number;
+  readonly z: number;
 }
 
 /** A live enemy as the minimap sees it (EntityManager.liveEnemyMotion). */
@@ -70,9 +98,15 @@ export class Minimap {
    * once added (crates don't move) but still needs the same per-frame rotate-with-player-facing
    * treatment as an opponent dot, so it lives in update() too, not a one-time placement. */
   private readonly itemDots = new Map<string, HTMLDivElement>();
+  /** Pickup icons (docs/pickups.md), keyed by pickup id; only the ones near the player exist. */
+  private readonly pickupIcons = new Map<number, HTMLDivElement>();
   /** Single-player Facility enemies (docs/facility-map.md, section 8), keyed by entity id. */
   private readonly enemyDots = new Map<number, { dot: HTMLDivElement; lastMovedAt: number }>();
+  /** Mode objectives (setMarkers), keyed by marker id. */
+  private readonly markers = new Map<string, { dot: HTMLDivElement; x: number; z: number }>();
   private readonly worldRadius: number;
+  /** This update's radius: the map's own, or the layer's zoom. */
+  private radius: number;
   private readonly layer: MinimapLayer | null;
   private readonly layerCanvas: HTMLCanvasElement | null = null;
   private readonly layerContext: CanvasRenderingContext2D | null = null;
@@ -80,6 +114,7 @@ export class Minimap {
 
   constructor(hudRoot: HTMLElement, options: MinimapOptions = {}) {
     this.worldRadius = options.worldRadius ?? MINIMAP_WORLD_RADIUS;
+    this.radius = this.worldRadius;
     this.layer = options.layer ?? null;
     this.root = document.createElement('div');
     this.root.style.cssText =
@@ -146,6 +181,33 @@ export class Minimap {
     this.itemDots.delete(id);
   }
 
+  /** The mode's objectives, replacing the last set: a cyan diamond each, held at the rim like the
+   * other dots while out of range, placed by update(). */
+  setMarkers(markers: readonly MinimapMarker[]): void {
+    const seen = new Set<string>();
+    for (const { id, x, z } of markers) {
+      seen.add(id);
+      let entry = this.markers.get(id);
+      if (!entry) {
+        const dot = document.createElement('div');
+        dot.dataset.testid = `minimap-marker-${id}`;
+        dot.style.cssText =
+          `position:absolute; width:${DOT_SIZE_PX - 1}px; height:${DOT_SIZE_PX - 1}px; background:${ACCENT};` +
+          ` border:1px solid ${SURFACE}; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%) rotate(45deg);`;
+        this.root.insertBefore(dot, this.forwardWedge);
+        entry = { dot, x, z };
+        this.markers.set(id, entry);
+      }
+      entry.x = x;
+      entry.z = z;
+    }
+    for (const [id, entry] of this.markers) {
+      if (seen.has(id)) continue;
+      entry.dot.remove();
+      this.markers.delete(id);
+    }
+  }
+
   /** `localPosition`/positions in `opponents` are full world positions (Y ignored - this is a
    * top-down XZ projection). `localFacingYaw` is the local player's current yaw
    * (Player.facingYaw) - each opponent's world-space offset is rotated by -yaw so the player's
@@ -167,11 +229,12 @@ export class Minimap {
 
     if (this.layer && this.layerCanvas && this.layerContext) {
       this.layer.update(localPosition.x, localPosition.z);
+      this.radius = this.layer.zoomRadius?.() ?? this.worldRadius;
       const context = this.layerContext;
       const pixelRatio = this.layerCanvas.width / MAP_DIAMETER_PX;
       context.setTransform(1, 0, 0, 1, 0, 0);
       context.clearRect(0, 0, this.layerCanvas.width, this.layerCanvas.height);
-      const [a, b, c, d, e, f] = minimapTransform(localPosition.x, localPosition.z, localFacingYaw, MAP_RADIUS_PX / this.worldRadius, MAP_RADIUS_PX);
+      const [a, b, c, d, e, f] = minimapTransform(localPosition.x, localPosition.z, localFacingYaw, MAP_RADIUS_PX / this.radius, MAP_RADIUS_PX);
       context.setTransform(a * pixelRatio, b * pixelRatio, c * pixelRatio, d * pixelRatio, e * pixelRatio, f * pixelRatio);
       this.layer.draw(context);
     }
@@ -181,14 +244,44 @@ export class Minimap {
     for (const [slot, dot] of this.dots) {
       const opponentPosition = opponents.get(slot);
       if (!opponentPosition) continue;
-      placeDot(dot, localPosition, opponentPosition, yawQuat, this.worldRadius);
+      placeDot(dot, localPosition, opponentPosition, yawQuat, this.radius);
     }
+
+    for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.radius);
 
     if (!items) return;
     for (const [id, dot] of this.itemDots) {
       const itemPosition = items.get(id);
       if (!itemPosition) continue;
-      placeDot(dot, localPosition, itemPosition, yawQuat, this.worldRadius);
+      placeDot(dot, localPosition, itemPosition, yawQuat, this.radius);
+    }
+  }
+
+  /** Draws `pickups` (the ones within range) as small icons and removes the icons of any no longer
+   * listed (taken, or out of range). Call after update(), with the same position and yaw. */
+  updatePickups(localPosition: THREE.Vector3, localFacingYaw: number, pickups: readonly MinimapPickup[]): void {
+    const yawQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -localFacingYaw, 0, 'YXZ'));
+    const listed = new Set<number>();
+    for (const pickup of pickups) {
+      listed.add(pickup.id);
+      let icon = this.pickupIcons.get(pickup.id);
+      if (!icon) {
+        const style = PICKUP_ICON[pickup.kind];
+        icon = document.createElement('div');
+        icon.dataset.testid = 'minimap-pickup';
+        icon.dataset.kind = pickup.kind;
+        icon.style.cssText =
+          `position:absolute; width:${DOT_SIZE_PX - 1}px; height:${DOT_SIZE_PX - 1}px; background:${style.colour}; border-radius:${style.radius};` +
+          ` clip-path:${style.clip}; opacity:0.9; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
+        this.root.insertBefore(icon, this.forwardWedge);
+        this.pickupIcons.set(pickup.id, icon);
+      }
+      placeDot(icon, localPosition, pickup, yawQuat, this.radius);
+    }
+    for (const [id, icon] of this.pickupIcons) {
+      if (listed.has(id)) continue;
+      icon.remove();
+      this.pickupIcons.delete(id);
     }
   }
 
@@ -210,10 +303,10 @@ export class Minimap {
         this.enemyDots.set(enemy.id, entry);
       }
       if (enemy.moving) entry.lastMovedAt = now;
-      const inRange = Math.hypot(enemy.x - localPosition.x, enemy.z - localPosition.z) <= this.worldRadius;
+      const inRange = Math.hypot(enemy.x - localPosition.x, enemy.z - localPosition.z) <= this.radius;
       const shown = inRange && now - entry.lastMovedAt <= BLIP_LINGER_MS;
       entry.dot.style.display = shown ? '' : 'none';
-      if (shown) placeDot(entry.dot, localPosition, enemy, yawQuat, this.worldRadius);
+      if (shown) placeDot(entry.dot, localPosition, enemy, yawQuat, this.radius);
     }
     for (const [id, entry] of this.enemyDots) {
       if (seen.has(id)) continue;

@@ -163,6 +163,13 @@ export class BonusGooseManager {
     this.callbacks.onKilled(killerSlot);
   }
 
+  /** The live bonus goose, if any, for a late joiner's sync (network/matchSync.ts): sent as an
+   * ordinary bonusGooseSpawned, same shape as GooseManager.listForSync. */
+  listForSync(): { id: string; x: number; y: number; z: number }[] {
+    if (!this.goose || this.id === null) return [];
+    return [{ id: this.id, x: this.goose.position.x, y: this.goose.position.y, z: this.goose.position.z }];
+  }
+
   // ---- Follower side (multiplayer guest) ------------------------------------------------------
 
   applyRemoteSpawn(id: string, x: number, y: number, z: number): void {

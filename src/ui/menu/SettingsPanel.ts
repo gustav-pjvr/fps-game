@@ -1,5 +1,6 @@
 import { MONO_FONT, LABEL_CSS, ACCENT_INK, INK, SURFACE_RAISED } from '../theme.ts';
 import { Settings } from '../../settings/Settings.ts';
+import { GAMEPAD_MAPPING } from '../../input/GamepadInput.ts';
 import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '../../input/actions.ts';
 import { ACCENT, HAIRLINE, TEXT, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 import { GRAPHICS_QUALITY_LABELS, GRAPHICS_QUALITY_ORDER, type GraphicsQuality } from '../../settings/graphicsQuality.ts';
@@ -53,6 +54,12 @@ export class SettingsPanel {
     onFovChange?: (value: number) => void,
   ) {
     this.overlay = createOverlay();
+    this.overlay.addEventListener('gamepadback', (event) => {
+      if (!this.listeningFor) return;
+      event.preventDefault();
+      this.listeningFor = null;
+      this.refreshKeyLabels();
+    });
     this.onCloseCallback = onClose;
 
     const panel = createPanel();
@@ -73,6 +80,26 @@ export class SettingsPanel {
     }));
     panel.appendChild(this.buildGraphicsQualitySection(onGraphicsQualityChange));
     panel.appendChild(this.buildKeyBindSection());
+    panel.appendChild(this.buildSliderRow('Controller Sensitivity', Settings.getControllerSensitivity(), 0.3, 3, 0.05,
+      (value) => Settings.setControllerSensitivity(value)));
+    for (const [label, checked, onChange] of [
+      ['Controller Invert Y', Settings.getControllerInvertY(), Settings.setControllerInvertY],
+      ['Controller Aim Assist', Settings.getControllerAimAssist(), Settings.setControllerAimAssist],
+      ['Controller Vibration', Settings.getControllerVibration(), Settings.setControllerVibration],
+    ] as const) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex; gap:10px; margin:12px 0;';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = checked;
+      checkbox.addEventListener('change', () => onChange(checkbox.checked));
+      row.append(checkbox, label);
+      panel.appendChild(row);
+    }
+    const mapping = document.createElement('div');
+    mapping.style.cssText = 'white-space:pre-line; font-size:0.85rem; line-height:1.6; margin-top:18px;';
+    mapping.textContent = 'Controller Mapping\n' + GAMEPAD_MAPPING.join('\n');
+    panel.appendChild(mapping);
 
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; margin-top:24px;';

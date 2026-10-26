@@ -17,7 +17,7 @@ import {
 import type { PeerConnection } from '../network/PeerConnection.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
-import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, isModeAllowedOnMap, type GameMode } from '../core/gameModes.ts';
+import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../core/gameModes.ts';
 import { attachScanSweep } from './menu/menuStyles.ts';
 
 /** 'hordeCleared'/'hordeWipe' are Goose Horde's own win/loss reasons - previously both reused
@@ -267,12 +267,6 @@ export class MatchEndScreen {
       this.map = result.map;
       this.weatherSelect.disabled = this.map === 'facility';
       this.weatherLabel.textContent = this.map === 'facility' ? 'Indoor' : 'Weather';
-      for (const option of this.gameModeSelect.options) {
-        const mode = option.value as GameMode;
-        option.disabled = !isModeAllowedOnMap(mode, this.map);
-        option.textContent = GAME_MODE_LABELS[mode] + (option.disabled ? ' (Valley only)' : '');
-      }
-      if (!isModeAllowedOnMap(result.gameMode, this.map)) this.gameModeSelect.value = DEFAULT_GAME_MODE;
     }
 
     this.element.style.display = 'flex';

@@ -1,4 +1,7 @@
 import { Compass, bearingDeg } from './compass.ts';
+import { gamepadHint, setDeviceHint } from '../input/GamepadInput.ts';
+import { keyHint, type Action } from '../input/actions.ts';
+import { Settings } from '../settings/Settings.ts';
 import { ACCENT, AMBER, HAIRLINE, INK, INK_DIM, INK_FAINT, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_SHADOW, THREAT } from './theme.ts';
 
 export class Hud {
@@ -13,14 +16,27 @@ export class Hud {
   private readonly healthFillElement: HTMLDivElement;
   private readonly healthTextElement: HTMLSpanElement;
   private readonly healthStatus: HTMLDivElement;
+  private readonly lightMeter: HTMLSpanElement;
   private readonly weaponNameElement: HTMLDivElement;
   private readonly magazine: HTMLSpanElement;
   private readonly capacity: HTMLSpanElement;
   private readonly reserve: HTMLSpanElement;
+  private readonly grenades: HTMLDivElement;
+  private readonly grenadeName: HTMLSpanElement;
+  private readonly grenadeCount: HTMLSpanElement;
+  private grenadesShown = '';
   private readonly prompt: HTMLDivElement;
   private readonly promptKey: HTMLElement;
   private readonly promptText: HTMLSpanElement;
   private progressShown = '';
+  // The last values written to the DOM: setPrompt and setVisibility run every fixed step, and a
+  // write that changes nothing still costs style and text invalidation.
+  private promptShown = '';
+  /** What the shown prompt was built from, so an unchanged prompt costs no allocation per tick. */
+  private promptAction: Action | null = null;
+  private promptLabel = '';
+  private promptBindings: Readonly<Record<string, Action>> | null = null;
+  private visibilityShown: string | null = null;
 
   constructor(root: HTMLElement) {
     this.container = document.createElement('div');
@@ -70,7 +86,12 @@ export class Hud {
     const percent = document.createElement('span');
     percent.style.cssText = `font-family:${MONO_FONT}; font-size:11px; color:${INK_DIM}; margin-left:7px;`;
     percent.textContent = '%';
-    healthReading.append(this.healthTextElement, percent);
+    this.lightMeter = document.createElement('span');
+    this.lightMeter.style.cssText = `display:none; margin-left:18px; color:${ACCENT}; vertical-align:middle;`;
+    this.lightMeter.title = 'Visibility to enemies';
+    this.lightMeter.setAttribute('role', 'img');
+    this.lightMeter.innerHTML = '<svg width="22" height="16" viewBox="0 0 22 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M1 8 Q11 -4 21 8 Q11 20 1 8Z"/><circle cx="11" cy="8" r="3"/></svg>';
+    healthReading.append(this.healthTextElement, percent, this.lightMeter);
     const track = document.createElement('div');
     track.style.cssText = `height:3px; background:${HAIRLINE};`;
     this.healthFillElement = document.createElement('div');
@@ -95,7 +116,15 @@ export class Hud {
       element.style.cssText = `font-family:${MONO_FONT}; font-size:14px; color:${INK_DIM};`;
     }
     ammo.append(this.magazine, this.capacity, this.reserve);
-    weapon.append(this.weaponNameElement, ammo);
+    // The loadout grenade's name and count under the ammo, hidden in modes without grenades.
+    this.grenades = document.createElement('div');
+    this.grenades.style.cssText = 'display:none; justify-content:flex-end; align-items:baseline; gap:7px; margin-top:10px;';
+    this.grenadeName = document.createElement('span');
+    this.grenadeName.style.cssText = `${LABEL_CSS} font-size:10px;`;
+    this.grenadeCount = document.createElement('span');
+    this.grenadeCount.style.cssText = `font-family:${MONO_FONT}; font-size:14px;`;
+    this.grenades.append(this.grenadeName, this.grenadeCount);
+    weapon.append(this.weaponNameElement, ammo, this.grenades);
     this.container.appendChild(weapon);
 
     // An interaction prompt under the crosshair, e.g. the Uplink mission's `E  START UPLINK`.
@@ -143,15 +172,45 @@ export class Hud {
     this.reserve.textContent = reserve != null && Number.isFinite(reserve) ? ` +${reserve}` : '';
   }
 
-  /** Shows `key` and `text` under the crosshair, or hides the prompt with null. */
-  setPrompt(key: string, text: string | null): void {
+  /** The carried grenade's name and count beside the ammo (FRAG 2, FLASH 2), or null to hide them
+   * (grenades off in this mode). */
+  setGrenades(grenade: { kind: 'frag' | 'flash'; count: number } | null): void {
+    const shown = grenade ? `${grenade.kind}/${grenade.count}` : '';
+    if (shown === this.grenadesShown) return;
+    this.grenadesShown = shown;
+    this.grenades.style.display = grenade ? 'flex' : 'none';
+    if (!grenade) return;
+    this.grenadeName.textContent = grenade.kind === 'frag' ? 'FRAG' : 'FLASH';
+    this.grenadeCount.textContent = String(grenade.count);
+    this.grenadeCount.style.color = grenade.count > 0 ? INK : INK_FAINT;
+  }
+
+  /** Shows the hint for `action` (the player's key, or the pad button) and `text` under the
+   * crosshair, or hides the prompt with null. Writes only when what is shown changes. */
+  setPrompt(action: Action, text: string | null): void {
     if (text === null) {
+      if (this.promptShown === '') return;
+      this.promptShown = '';
+      this.promptBindings = null;
       this.prompt.style.display = 'none';
       return;
     }
-    this.promptKey.textContent = key;
+    const bindings = Settings.getKeyBindings();
+    if (this.promptShown !== '' && action === this.promptAction && text === this.promptLabel && bindings === this.promptBindings) return;
+    this.promptAction = action;
+    this.promptLabel = text;
+    this.promptBindings = bindings;
+    const key = keyHint(bindings, action);
+    const pad = gamepadHint(action) ?? key;
+    const shown = `${key}
+${pad}
+${text}`;
+    if (shown === this.promptShown) return;
+    const first = this.promptShown === '';
+    this.promptShown = shown;
+    setDeviceHint(this.promptKey, key, pad);
     this.promptText.textContent = text;
-    this.prompt.style.display = 'flex';
+    if (first) this.prompt.style.display = 'flex';
   }
 
   setWeaponName(name: string): void {
@@ -168,6 +227,19 @@ export class Hud {
     this.healthFillElement.style.background = ratio < 0.25 ? THREAT : ratio < 0.5 ? AMBER : ACCENT;
     this.healthTextElement.textContent = String(Math.ceil(ratio * 100));
     this.healthStatus.textContent = ratio < 0.25 ? 'CRITICAL' : ratio < 0.5 ? 'WOUNDED' : 'STABLE';
+  }
+
+  setVisibility(value: number | null): void {
+    // Called every fixed step with a continuously changing value: a whole percent is all the
+    // label says and all the eye tells apart, so only a change of a percent writes anything.
+    const percent = value === null ? null : Math.round(value * 100);
+    const shown = percent === null ? null : String(percent);
+    if (shown === this.visibilityShown) return;
+    this.visibilityShown = shown;
+    this.lightMeter.style.display = percent === null ? 'none' : 'inline-block';
+    if (percent === null) return;
+    this.lightMeter.style.opacity = String(percent / 100);
+    this.lightMeter.setAttribute('aria-label', `Visibility to enemies: ${percent}%`);
   }
 
   setScoreVisible(visible: boolean): void {

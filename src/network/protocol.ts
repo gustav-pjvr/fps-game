@@ -4,8 +4,9 @@
  * the host; the host relays gameplay messages between guests (see PeerConnection.ts/Game.ts's
  * relay logic) transparently, unchanged, tagged with the ORIGINAL sender's own slot. */
 
-import type { GooseExplosionDifficulty, MatchMap, MatchWeather } from '../core/config.ts';
+import { KOTH_POINTS_TO_WIN, type GooseExplosionDifficulty, type MatchMap, type MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
+import { isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
 
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
  * the host, slots 1-3 are assigned to guests in join order by the host (see HostRoster.ts) and are
@@ -42,6 +43,10 @@ export function helloSupportsMap(features: unknown, map: MatchMap): boolean {
 export interface RosterEntry {
   slot: PlayerSlot;
   username: string;
+  /** A guest's PeerJS id, which other guests dial for a direct link (see network/GuestMesh.ts).
+   * Missing for the host's own entry and from older hosts; a guest with none is reached through the
+   * host only, as before. */
+  peerId?: string;
 }
 
 /** Host -> the one guest that just sent HelloMessage (targeted, not broadcast - see
@@ -67,9 +72,14 @@ export interface WelcomeMessage {
     map?: MatchMap;
     scoreboard: { slot: PlayerSlot; score: number }[];
     spawnPoint: { x: number; z: number };
-    /** Facility only: the lamps already shot out (indices into the layout's lamps), so a late
-     * joiner sees the same dark rooms. Missing means none (and on older builds). */
+    /** The lamps already shot out, so a late joiner sees the same dark rooms: on the Facility
+     * indices into the layout's lamps, on the Valley house lamp ids (world/houses/valleyHouseIds.ts).
+     * Missing means none (and on older builds). */
     deadLamps?: number[];
+    /** Facility only: which doors are open and which breakers are on (docs/facility-map.md,
+     * section 12), so a late joiner starts with the same ones; on the Valley the open house doors
+     * (`valleyDoors`, docs/enterable-buildings.md). Missing means the match's start. */
+    worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
   };
 }
 
@@ -180,11 +190,16 @@ export interface FireEventMessage {
   endY: number;
   endZ: number;
   weaponId: string;
+  /** Sender's clock, as on PlayerSnapshotMessage. A guest's shot can reach another guest twice for a
+   * moment (over their direct link and through the host, see network/directLinks.ts); this is what
+   * the second copy is recognised by. Stamped by PeerConnection; older builds send none. */
+  t?: number;
 }
 
 /** Self-reported, relayed (see MatchMessageRouter's RELAYABLE_MESSAGE_TYPES): `senderSlot` shot out
  * a Facility lamp (docs/facility-map.md, section 11). `lamp` indexes the layout's lamps, whose order
- * is identical on every client. Receivers kill that lamp the same way, if it is still lit. Older
+ * is identical on every client; on the Valley it is a house lamp id (house key and room,
+ * world/houses/valleyHouseIds.ts). Receivers kill that lamp the same way, if it is still lit. Older
  * builds drop the unknown type. */
 export interface LampDestroyedMessage {
   type: 'lampDestroyed';
@@ -192,13 +207,36 @@ export interface LampDestroyedMessage {
   lamp: number;
 }
 
-/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out Facility lamps, re-broadcast
+/** Relayed like lampDestroyed: `senderSlot`'s whole set of shot-out lamps (Facility indices or Valley
+ * house lamp ids), re-broadcast
  * so a client that was still loading when a lampDestroyed went past catches up (see
  * network/lampSync.ts for when it is sent). Receivers kill any listed lamp still lit, quietly. */
 export interface LampSyncMessage {
   type: 'lampSync';
   senderSlot: PlayerSlot;
   lamps: number[];
+}
+
+/** Guest -> host only, never relayed: this guest pressed interact on a Facility door or breaker
+ * panel (docs/facility-map.md, section 12). `id` indexes the layout's doors or zones, identical on
+ * every client. The host is the authority: it flips the object if the id is valid and the guest
+ * stands within reach of it, then broadcasts the result as worldObjectState. Older hosts drop it. */
+export interface WorldInteractMessage {
+  type: 'worldInteract';
+  kind: 'door' | 'breaker';
+  id: number;
+}
+
+/** Host -> everyone (host-authored broadcast, never relayed): every Facility door ('1' open) and
+ * breaker ('1' on) in id order, sent on each change and to each guest on its first playerSnapshot
+ * (it may have been loading when a change went past). Guests adopt it whole. On the Valley both
+ * strings are empty and `valleyDoors` lists the open house doors' ids (world/houses/valleyHouseIds.ts,
+ * docs/enterable-buildings.md); worldInteract carries those same ids. */
+export interface WorldObjectStateMessage {
+  type: 'worldObjectState';
+  doors: string;
+  breakers: string;
+  valleyDoors?: number[];
 }
 
 /** Sent by the shooter (`senderSlot`, the attacker) when their own hitscan registers a hit on a
@@ -213,7 +251,44 @@ export interface DamageEventMessage {
   senderSlot: PlayerSlot;
   targetSlot: PlayerSlot;
   amount: number;
+  /** The weapon that dealt it ('gooseLauncher' for a launcher blast, 'frag' for a frag grenade). The
+   * victim passes it on as PlayerDiedMessage.killerWeaponId, which Gun Game's finisher rule reads.
+   * Missing on older builds. */
+  weaponId?: string;
 }
+
+/** Grenades (docs/grenades.md, design: docs/squad-arsenal-night.md section 3). Relayed like
+ * gooseThrown: the thrower is authoritative. `senderSlot` threw grenade `id` (unique per thrower):
+ * every other client flies its own copy from `origin` at `velocity` (the game's gravity, the same
+ * sweep), purely for visuals, with `fuseLeft` seconds left (it may have been cooked). `t` is the
+ * sender's performance.now() when sent. The same message is re-sent for each still-live grenade
+ * when an opponent is first seen in the match (late joiners), from where it is at that moment. */
+export interface GrenadeThrownMessage {
+  type: 'grenadeThrown';
+  senderSlot: PlayerSlot;
+  id: string;
+  kind: GrenadeKind;
+  origin: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  fuseLeft: number;
+  t: number;
+}
+
+/** The thrower's copy of grenade `id` went off at `position`: receivers move their copy there and
+ * play the effect. A frag's damage to other players travels separately as damageEvent (weaponId
+ * 'frag'); a flash is judged by each client for its own player. */
+export interface GrenadeDetonatedMessage {
+  type: 'grenadeDetonated';
+  senderSlot: PlayerSlot;
+  id: string;
+  kind: GrenadeKind;
+  position: { x: number; y: number; z: number };
+}
+
+/** Longest grenade id accepted from the network. */
+export const GRENADE_ID_MAX_LENGTH = 48;
+/** Longest fuse a grenadeThrown may carry, in seconds. */
+export const GRENADE_MESSAGE_MAX_FUSE = 10;
 
 /** Sent by a client to everyone the moment its own player's health reaches 0 - `victimSlot` is
  * always the sender's own slot (kept explicit/named for readability at every call site that reads
@@ -230,6 +305,10 @@ export interface PlayerDiedMessage {
   /** Sender's clock, as on PlayerSnapshotMessage: a snapshot sent before this death must not
    * bring the body back to life when it arrives after it. */
   t?: number;
+  /** The weapon of the damage that gave `killerSlot` the kill (DamageEventMessage.weaponId). Gun
+   * Game only credits the winning kill when it is the Goose Launcher (core/multiplayerScoring.ts).
+   * Missing on older builds, which are credited as before. */
+  killerWeaponId?: string;
 }
 
 /** Sent once a dying player actually respawns - lets every other client's RemotePlayer for that
@@ -257,6 +336,8 @@ export interface FootstepEventMessage {
   x: number;
   y: number;
   z: number;
+  /** Sender's clock, for the duplicate check FireEventMessage.t describes. */
+  t?: number;
 }
 
 /** Sent by the host when they click "Return to Lobby" from the podium/match-end screen - every
@@ -287,6 +368,8 @@ export interface PlayerJoinedMatchMessage {
   slot: PlayerSlot;
   username: string;
   isRejoin: boolean;
+  /** The player's PeerJS id (RosterEntry.peerId); a rejoin usually comes back with a new one. */
+  peerId?: string;
 }
 
 /** Host -> everyone (broadcast, never relayed - it's host-authored, not forwarded from a guest):
@@ -588,6 +671,11 @@ export interface HordeSyncRequestMessage {
 export interface HordeSyncStateMessage {
   type: 'hordeSyncState';
   wave: number;
+  /** Slots already out of the run (respawns used up), so a late joiner counts them when it checks
+   * whether everyone is eliminated. Missing on older hosts. */
+  eliminated?: PlayerSlot[];
+  /** Set when the run is already over on the host: a joiner adopts the same result. */
+  result?: 'cleared' | 'wiped';
 }
 
 /** Self-reported, relayed (see Game.ts's RELAYABLE_MESSAGE_TYPES) - `slot` has clicked Skip on the
@@ -613,8 +701,105 @@ export interface MatchEndedMessage {
   scoreboard: { slot: PlayerSlot; score: number }[];
 }
 
+// ---- Pickups (docs/pickups.md): host-authoritative health, ammo and grenade pickups -----------
+// Where each pickup stands is a pure function of the match seed, so every message names one by its
+// index in that list. Never relayed: a guest talks to the host, the host answers everyone.
+
+/** Guest -> host only: this player walked onto pickup `id` and would gain from it. The host
+ * grants the first claim for a pickup that is on the map and whose claimant it sees close by; the
+ * claimant is the transport sender, never a field of the payload. */
+export interface PickupClaimMessage {
+  type: 'pickupClaim';
+  id: number;
+}
+
+/** Host -> everyone: pickup `id` was taken by `slot` and returns in `respawnIn` seconds. Only
+ * `slot` applies the effect (when it receives this, its own grant); everyone else hides the pickup
+ * and shows its faint ring. `respawnIn` is relative because the clients' clocks differ. */
+export interface PickupTakenMessage {
+  type: 'pickupTaken';
+  id: number;
+  slot: PlayerSlot;
+  respawnIn: number;
+}
+
+/** Host -> everyone: pickup `id` is back on the map. */
+export interface PickupRespawnedMessage {
+  type: 'pickupRespawned';
+  id: number;
+}
+
+/** Guest -> host: asks for the whole pickup state. Sent when the guest's match starts (the first
+ * broadcasts may have been lost while it loaded, and a late joiner missed every one) and repeated
+ * until a pickupState answers. */
+export interface PickupSyncRequestMessage {
+  type: 'pickupSyncRequest';
+  senderSlot: PlayerSlot;
+}
+
+/** Host -> the one guest that asked: the whole pickup state, one character per pickup in site
+ * order, '1' on the map and '0' away. */
+export interface PickupStateMessage {
+  type: 'pickupState';
+  available: string;
+}
+
+// ---- Squad (v4.4.0, docs/squad-arsenal-night.md section 1) --------------------------------------
+
+/** Guest <-> guest, on a direct link only (network/GuestMesh.ts): the dialer sends it when the link
+ * opens, the answerer replies once it accepts, and both repeat it as the link's heartbeat. A link
+ * whose hello names another room, or a slot the roster does not have on that peer, is closed. */
+export interface MeshHelloMessage {
+  type: 'meshHello';
+  slot: PlayerSlot;
+  roomCode: string;
+}
+
+/** Guest -> host, whenever the set of this guest's live direct links changes. The host stops
+ * relaying DIRECT_MESSAGE_TYPES (network/directLinks.ts) between two guests while each lists the
+ * other, and resumes the moment either drops it. Never relayed. */
+export interface MeshStatusMessage {
+  type: 'meshStatus';
+  senderSlot: PlayerSlot;
+  linked: PlayerSlot[];
+}
+
+/** Host -> the one guest that just asked for a sync (gooseSyncRequest or hordeSyncRequest): who is
+ * in the match right now. A guest that joined mid-match missed every playerJoinedMatch and
+ * playerLeft sent while it was still loading; this brings its opponents up to date. */
+export interface RosterSyncMessage {
+  type: 'rosterSync';
+  roster: RosterEntry[];
+}
+
+/** Host -> guests, after each connection poll: the host's measured round trip to each guest. A guest
+ * adds its own link to the host to get the round trip to another guest it has no direct link to. */
+export interface LinkQualityMessage {
+  type: 'linkQuality';
+  links: { slot: PlayerSlot; rttMs: number | null; relay: boolean }[];
+}
+
+/** Host -> a late joiner, King of the Hill only: who carries the golden goose, or where it lies.
+ * Applied as is (unlike goldenGooseDropped, which only counts from the carrier). */
+export interface GoldenGooseStateMessage {
+  type: 'goldenGooseState';
+  carrierSlot: PlayerSlot | null;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Host -> the one guest that just asked for a sync (see RosterSyncMessage): every connected slot's
+ * score and death count now. A late joiner's welcome carried the scoreboard from before it started
+ * loading; kills made while it loaded went past unheard. Applied as is: the host's count is the truth. */
+export interface ScoreboardSyncMessage {
+  type: 'scoreboardSync';
+  scores: { slot: PlayerSlot; score: number; deaths: number }[];
+}
+
 export type NetworkMessage =
   | MatchEndedMessage
+  | ScoreboardSyncMessage
   | HelloMessage
   | WelcomeMessage
   | RosterUpdateMessage
@@ -626,6 +811,10 @@ export type NetworkMessage =
   | FireEventMessage
   | LampDestroyedMessage
   | LampSyncMessage
+  | WorldInteractMessage
+  | WorldObjectStateMessage
+  | GrenadeThrownMessage
+  | GrenadeDetonatedMessage
   | DamageEventMessage
   | PlayerDiedMessage
   | RespawnEventMessage
@@ -661,7 +850,17 @@ export type NetworkMessage =
   | BonusGooseKilledMessage
   | ModeExplanationReadyMessage
   | HordeSyncRequestMessage
-  | HordeSyncStateMessage;
+  | HordeSyncStateMessage
+  | PickupClaimMessage
+  | PickupTakenMessage
+  | PickupRespawnedMessage
+  | PickupSyncRequestMessage
+  | PickupStateMessage
+  | MeshHelloMessage
+  | MeshStatusMessage
+  | RosterSyncMessage
+  | LinkQualityMessage
+  | GoldenGooseStateMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchEnded',
@@ -676,6 +875,10 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'fireEvent',
   'lampDestroyed',
   'lampSync',
+  'worldInteract',
+  'worldObjectState',
+  'grenadeThrown',
+  'grenadeDetonated',
   'damageEvent',
   'playerDied',
   'respawnEvent',
@@ -712,12 +915,218 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'modeExplanationReady',
   'hordeSyncRequest',
   'hordeSyncState',
+  'pickupClaim',
+  'pickupTaken',
+  'pickupRespawned',
+  'pickupSyncRequest',
+  'pickupState',
+  'meshHello',
+  'meshStatus',
+  'rosterSync',
+  'linkQuality',
+  'goldenGooseState',
+  'scoreboardSync',
 ]);
+
+function isPlayerSlot(value: unknown): value is PlayerSlot {
+  return value === 0 || value === 1 || value === 2 || value === 3;
+}
+
+function isRosterEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as { slot?: unknown; username?: unknown; peerId?: unknown };
+  return isPlayerSlot(entry.slot) && typeof entry.username === 'string' && (entry.peerId === undefined || typeof entry.peerId === 'string');
+}
+
+function isLinkEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as { slot?: unknown; rttMs?: unknown; relay?: unknown };
+  return isPlayerSlot(entry.slot) && (entry.rttMs === null || typeof entry.rttMs === 'number') && typeof entry.relay === 'boolean';
+}
+
+/** Shape checks for the v4.4.0 types: their fields steer connections and the roster, so a malformed
+ * one is dropped here rather than half applied. Every other type passes on its `type` alone. */
+function hasValidSquadShape(value: Record<string, unknown>): boolean {
+  switch (value.type) {
+    case 'meshHello':
+      return isPlayerSlot(value.slot) && typeof value.roomCode === 'string';
+    case 'meshStatus':
+      return isPlayerSlot(value.senderSlot) && Array.isArray(value.linked) && value.linked.every(isPlayerSlot);
+    case 'rosterSync':
+      return Array.isArray(value.roster) && value.roster.every(isRosterEntry);
+    case 'linkQuality':
+      return Array.isArray(value.links) && value.links.every(isLinkEntry);
+    case 'goldenGooseState':
+      return (value.carrierSlot === null || isPlayerSlot(value.carrierSlot)) && [value.x, value.y, value.z].every((n) => typeof n === 'number');
+    case 'hordeSyncState':
+      return (
+        typeof value.wave === 'number' &&
+        (value.eliminated === undefined || (Array.isArray(value.eliminated) && value.eliminated.every(isPlayerSlot))) &&
+        (value.result === undefined || value.result === 'cleared' || value.result === 'wiped')
+      );
+    case 'scoreboardSync':
+      return Array.isArray(value.scores) && value.scores.length <= 4 && value.scores.every(isScoreEntry);
+    default:
+      return true;
+  }
+}
+
+function isScoreEntry(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as { slot?: unknown; score?: unknown; deaths?: unknown };
+  return isPlayerSlot(entry.slot) && isCount(entry.score) && isCount(entry.deaths);
+}
+
+const isCount = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+
+/** Largest coordinate a position may carry. The Valley's edge is a few hundred metres out, so this
+ * only turns away junk, and the Infinity or 1e300 that would poison every sum it enters. */
+export const NETWORK_MAX_COORD = 10_000;
+/** Largest velocity component a thrown goose or grenade may carry, in metres a second. A throw is
+ * about 17 and a long fall a few tens; 1e200 squared is Infinity, and the whole flight turns NaN. */
+export const NETWORK_MAX_SPEED = 200;
+/** Most damage one damageEvent may carry: a headshot with a one-shot mode's weapon is 300. */
+export const DAMAGE_EVENT_MAX_AMOUNT = 1000;
+/** Highest score a kothScoreTick may report: the win, plus the few ticks a carrier may send before
+ * the host's matchEnded reaches it. */
+export const KOTH_SCORE_TICK_MAX = KOTH_POINTS_TO_WIN + 10;
+/** hello's limits. The name field takes 16 characters and the rejoin token is a UUID (36). */
+export const HELLO_USERNAME_MAX_LENGTH = 32;
+export const HELLO_TOKEN_MAX_LENGTH = 64;
+export const HELLO_MAX_FEATURES = 16;
+export const HELLO_FEATURE_MAX_LENGTH = 32;
+
+const isCoord = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= NETWORK_MAX_COORD;
+const isFiniteNumber = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value);
+const isOptionalFinite = (value: unknown): boolean => value === undefined || isFiniteNumber(value);
+const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === 'string';
+const areCoords = (...values: unknown[]): boolean => values.every(isCoord);
+const isSpeed = (value: unknown): boolean => isFiniteNumber(value) && Math.abs(value as number) <= NETWORK_MAX_SPEED;
+
+function isShortString(value: unknown, maxLength: number): boolean {
+  return typeof value === 'string' && value.length <= maxLength;
+}
+
+/** Numbers a peer reports about itself that every receiver feeds into positions, health or the
+ * scoreboard: finite and in range, or the message is dropped whole. A NaN damage amount used to make
+ * the target immune to every later hit (it poisoned the pending damage sum), and a huge
+ * kothScoreTick won King of the Hill outright. */
+function hasValidGameplayFields(value: Record<string, unknown>): boolean {
+  switch (value.type) {
+    case 'hello':
+      return isShortString(value.username, HELLO_USERNAME_MAX_LENGTH)
+        && (value.rejoinToken === null || isShortString(value.rejoinToken, HELLO_TOKEN_MAX_LENGTH))
+        && (value.features === undefined || (Array.isArray(value.features) && value.features.length <= HELLO_MAX_FEATURES
+          && value.features.every((feature) => isShortString(feature, HELLO_FEATURE_MAX_LENGTH))));
+    case 'playerSnapshot':
+      return areCoords(value.x, value.y, value.z) && isFiniteNumber(value.yaw) && isFiniteNumber(value.pitch)
+        && isFiniteNumber(value.health) && (value.health as number) >= 0 && (value.health as number) <= DAMAGE_EVENT_MAX_AMOUNT
+        && isOptionalFinite(value.t);
+    case 'fireEvent':
+      return areCoords(value.originX, value.originY, value.originZ, value.endX, value.endY, value.endZ) && isOptionalFinite(value.t);
+    case 'footstepEvent':
+    case 'respawnEvent':
+      return areCoords(value.x, value.y, value.z) && isOptionalFinite(value.t);
+    case 'goldenGooseDropped':
+    case 'gooseThrowExploded':
+      return areCoords(value.x, value.y, value.z);
+    case 'gooseThrown':
+      return areCoords(value.originX, value.originY, value.originZ) && [value.velX, value.velY, value.velZ].every(isSpeed);
+    case 'damageEvent':
+      return isPlayerSlot(value.targetSlot) && isFiniteNumber(value.amount)
+        && (value.amount as number) >= 0 && (value.amount as number) <= DAMAGE_EVENT_MAX_AMOUNT && isOptionalString(value.weaponId);
+    case 'playerDied':
+      return isPlayerSlot(value.victimSlot) && (value.killerSlot === null || isPlayerSlot(value.killerSlot))
+        && isOptionalFinite(value.t) && isOptionalString(value.killerWeaponId);
+    case 'kothScoreTick':
+      return Number.isInteger(value.score) && (value.score as number) >= 0 && (value.score as number) <= KOTH_SCORE_TICK_MAX;
+    case 'playerReady':
+    case 'hordePlayerEliminated':
+    case 'modeExplanationReady':
+      return isPlayerSlot(value.slot);
+    default:
+      return true;
+  }
+}
 
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one
  * place that boundary gets narrowed, so nothing downstream has to re-check message shape. */
 export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (typeof value !== 'object' || value === null) return false;
   const type = (value as { type?: unknown }).type;
-  return typeof type === 'string' && MESSAGE_TYPES.has(type as NetworkMessage['type']);
+  if (typeof type !== 'string' || !MESSAGE_TYPES.has(type as NetworkMessage['type'])) return false;
+  // A message that names its sender names a real slot (senderAuthority.ts compares it to the link).
+  if ('senderSlot' in value && !isPlayerSlot((value as { senderSlot?: unknown }).senderSlot)) return false;
+  // The Facility's doors and breakers (section 12) are checked whole here, so a malformed one never
+  // reaches the host's authority or a guest's world.
+  if (type === 'worldInteract') {
+    const { kind, id } = value as { kind?: unknown; id?: unknown };
+    return (kind === 'door' || kind === 'breaker') && Number.isInteger(id) && (id as number) >= 0;
+  }
+  if (type === 'worldObjectState') {
+    const { doors, breakers, valleyDoors } = value as { doors?: unknown; breakers?: unknown; valleyDoors?: unknown };
+    const validDoors = valleyDoors === undefined ||
+      (Array.isArray(valleyDoors) && valleyDoors.length <= 4096 && valleyDoors.every(id => Number.isSafeInteger(id) && (id as number) >= 0));
+    return validDoors && [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
+  }
+  if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
+  if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);
+  if (type.startsWith('pickup')) return hasValidPickupFields(value as Record<string, unknown>);
+  return hasValidSquadShape(value as Record<string, unknown>) && hasValidGameplayFields(value as Record<string, unknown>);
+}
+
+/** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */
+const PICKUP_STATE_MAX_LENGTH = 256;
+
+const isSlot = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 3;
+const isPickupId = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) < PICKUP_STATE_MAX_LENGTH;
+
+/** The pickup messages are the ones whose fields are checked here, at the boundary (the older types
+ * are read defensively where used): an id is a small non-negative integer, a slot is 0 to 3, the
+ * respawn time a finite number of seconds, the state string only '0' and '1'. */
+function hasValidPickupFields(message: Record<string, unknown>): boolean {
+  switch (message.type) {
+    case 'pickupClaim':
+    case 'pickupRespawned':
+      return isPickupId(message.id);
+    case 'pickupTaken':
+      return isPickupId(message.id) && isSlot(message.slot) && typeof message.respawnIn === 'number' && Number.isFinite(message.respawnIn) && message.respawnIn >= 0 && message.respawnIn <= 600;
+    case 'pickupSyncRequest':
+      return isSlot(message.senderSlot);
+    case 'pickupState':
+      return typeof message.available === 'string' && message.available.length <= PICKUP_STATE_MAX_LENGTH && /^[01]*$/.test(message.available);
+    default:
+      return false;
+  }
+}
+
+/** A position: finite and within NETWORK_MAX_COORD on each axis. */
+function isPositionVec3(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return areCoords(v.x, v.y, v.z);
+}
+
+/** A velocity: finite and no faster than NETWORK_MAX_SPEED on each axis. */
+function isVelocityVec3(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return [v.x, v.y, v.z].every(isSpeed);
+}
+
+function isValidGrenadeId(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0 && value.length <= GRENADE_ID_MAX_LENGTH;
+}
+
+/** Grenade messages drive physics and damage on every client, so their fields are checked here
+ * rather than trusted: a known kind, a position in range and a sane speed, a short id and a fuse of
+ * 0 to 10 seconds. */
+function isValidGrenadeThrown(m: Record<string, unknown>): boolean {
+  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isPositionVec3(m.origin) && isVelocityVec3(m.velocity)
+    && Number.isFinite(m.fuseLeft) && (m.fuseLeft as number) >= 0 && (m.fuseLeft as number) <= GRENADE_MESSAGE_MAX_FUSE
+    && Number.isFinite(m.t);
+}
+
+function isValidGrenadeDetonated(m: Record<string, unknown>): boolean {
+  return isValidGrenadeId(m.id) && isGrenadeKind(m.kind) && isPositionVec3(m.position);
 }

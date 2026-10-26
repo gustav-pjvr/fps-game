@@ -110,6 +110,30 @@ export class Weapon {
     this.reserveAmmo += amount;
   }
 
+  /** Whether an ammo box (pickups) would give this weapon anything. The knife, the empty hands and
+   * the Goose Launcher reward never take one. A weapon with a reserve takes magazines until the
+   * reserve holds `maxReserveMagazines` of them; a weapon with unlimited reloads (reserve null) has
+   * nothing to stock, so the box tops up its magazine instead, unless a reload is already doing that. */
+  ammoPickupWouldGive(maxReserveMagazines: number): boolean {
+    const size = this.definition.magazineSize;
+    if (this.definition.kind === 'melee' || this.definition.disableReload || !Number.isFinite(size)) return false;
+    if (this.reserveAmmo === null) return !this.reloading && this.ammoInMagazine < size;
+    return this.reserveAmmo < size * maxReserveMagazines;
+  }
+
+  /** Ammo box: `magazines` magazines into the reserve (never past `maxReserveMagazines`), or the
+   * magazine topped up when reloads are unlimited. Returns whether anything was given. */
+  grantAmmoPickup(magazines: number, maxReserveMagazines: number): boolean {
+    if (!this.ammoPickupWouldGive(maxReserveMagazines)) return false;
+    const size = this.definition.magazineSize;
+    if (this.reserveAmmo === null) {
+      this.ammoInMagazine = size;
+    } else {
+      this.reserveAmmo = Math.min(this.reserveAmmo + size * magazines, size * maxReserveMagazines);
+    }
+    return true;
+  }
+
   /** Instant full refill, cancelling any in-progress reload - for the practice-reset feature and
    * every respawn (WeaponManager.resetAllAmmo), not gameplay. Also tops the reserve back up to full
    * (Goose Horde multiplayer only) rather than leaving it partially drained after a practice reset,

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { TORCH_AIM_DISTANCE, TORCH_GUN_OFFSET, TORCH_SHOULDER_OFFSET, torchPose } from './Flashlight.ts';
+import { TORCH_AIM_DISTANCE, TORCH_GUN_OFFSET, TORCH_SHOULDER_OFFSET, torchPose, torchAvailable, torchOnByDefault } from './Flashlight.ts';
 
 const look = (pitch: number, yaw: number): THREE.Quaternion => new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
 
@@ -41,5 +41,20 @@ describe('torchPose', () => {
       expect(beam.length()).toBeCloseTo(TORCH_AIM_DISTANCE);
       expect(beam.normalize().dot(forward)).toBeCloseTo(1);
     }
+  });
+});
+
+
+describe('torch availability', () => {
+  it.each([
+    ['valley', 'day', false, false],
+    ['valley', 'fog', true, false],
+    ['valley', 'night', true, true],
+    ['facility', 'day', true, true],
+    ['facility', 'fog', true, true],
+    ['facility', 'night', true, true],
+  ] as const)('%s in %s', (map, weather, available, on) => {
+    expect(torchAvailable(map, weather)).toBe(available);
+    expect(torchOnByDefault(map, weather)).toBe(on);
   });
 });

@@ -17,7 +17,9 @@ export type Action =
   | 'weaponPrev'
   | 'resetPlay'
   | 'interact'
-  | 'flashlight';
+  | 'pause'
+  | 'flashlight'
+  | 'grenade';
 
 export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   KeyW: 'moveForward',
@@ -35,6 +37,7 @@ export const DEFAULT_KEY_BINDINGS: Record<string, Action> = {
   KeyT: 'resetPlay',
   KeyE: 'interact',
   KeyF: 'flashlight',
+  KeyQ: 'grenade',
 };
 
 /** Actions a player can rebind in the settings panel - excludes number keys/mouse, which stay fixed. */
@@ -48,6 +51,7 @@ export const REBINDABLE_ACTIONS: Action[] = [
   'reload',
   'resetPlay',
   'flashlight',
+  'grenade',
 ];
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -69,7 +73,9 @@ export const ACTION_LABELS: Record<Action, string> = {
   weaponPrev: 'Previous Weapon',
   resetPlay: 'Reset Match',
   interact: 'Interact',
+  pause: 'Pause',
   flashlight: 'Torch',
+  grenade: 'Throw Grenade',
 };
 
 /** Human-readable key names for the few codes that don't read well as-is (KeyW -> W is fine; Space -> "Space" needed). */
@@ -81,4 +87,12 @@ export function formatKeyCode(code: string): string {
   if (code === 'ControlLeft' || code === 'ControlRight') return 'Ctrl';
   if (code === 'AltLeft' || code === 'AltRight') return 'Alt';
   return code;
+}
+
+/** The key hint for `action` from the player's bindings: the first key bound to it, or "Unbound"
+ * (an old save can hold the action's default key for another action, and bindings are never taken
+ * from a player). */
+export function keyHint(bindings: Readonly<Record<string, Action>>, action: Action): string {
+  const code = Object.keys(bindings).find((candidate) => bindings[candidate] === action);
+  return code ? formatKeyCode(code) : 'Unbound';
 }

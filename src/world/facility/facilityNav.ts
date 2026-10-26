@@ -1,3 +1,4 @@
+import { FACILITY_DOOR_NAV_COST } from '../../core/config.ts';
 import { OPEN, cellCentre, cellOf, isWalkable, type FacilityLayout } from './facilityLayout.ts';
 
 const CLEARANCE = 0.45;
@@ -56,10 +57,47 @@ export function segmentClear(layout: FacilityLayout, ax: number, az: number, bx:
   }
 }
 
+/**
+ * The flow toward `target`: for each cell, the neighbouring cell to step to next (the target points
+ * at itself, unreachable cells hold -1). 8 neighbours, no corner cutting, one unit per step plus
+ * `extraCost(from, to)` for a step (closed doors, docs/facility-map.md section 12). A bucket queue
+ * keeps it exact for integer costs; with no extra cost it visits cells in plain BFS order, so it
+ * picks the same flow a BFS would.
+ */
+export function flowField(layout: FacilityLayout, target: number, extraCost?: (from: number, to: number) => number): Int32Array {
+  const { size, kinds } = layout;
+  const next = new Int32Array(kinds.length).fill(-1), distance = new Int32Array(kinds.length).fill(0x7fffffff);
+  const buckets: number[][] = [[target]];
+  next[target] = target; distance[target] = 0;
+  for (let cost = 0; cost < buckets.length; cost++) {
+    const bucket = buckets[cost];
+    if (!bucket) continue;
+    for (let k = 0; k < bucket.length; k++) {
+      const id = bucket[k]!;
+      if (distance[id] !== cost) continue;
+      const i = id % size, j = Math.floor(id / size);
+      for (const [di, dj] of NEIGHBOURS) {
+        const x = i + di, z = j + dj, neighbour = z * size + x;
+        if (x < 0 || z < 0 || x >= size || z >= size || kinds[neighbour] !== OPEN) continue;
+        if (di !== 0 && dj !== 0 && (kinds[j * size + x] !== OPEN || kinds[z * size + i] !== OPEN)) continue;
+        // The field runs from the target outward, so the walk it describes goes neighbour to id.
+        const reached = cost + 1 + (extraCost ? extraCost(neighbour, id) : 0);
+        if (reached >= distance[neighbour]!) continue;
+        distance[neighbour] = reached; next[neighbour] = id;
+        (buckets[reached] ??= []).push(neighbour);
+      }
+    }
+  }
+  return next;
+}
+
 export class FacilityNav {
   private readonly fields = new Map<number, Int32Array>();
   /** Where a blocked target in each grid cell snaps to (see nearestTarget), keyed by cell. */
   private readonly snapped = new Map<number, Point>();
+  /** Flow-field edges each door blocks while closed (facilityDoors.ts doorCrossings). */
+  private crossings: ReadonlyMap<number, number> = new Map();
+  private readonly closedDoors = new Set<number>();
 
   constructor(private readonly layout: FacilityLayout) {}
 
@@ -99,22 +137,28 @@ export class FacilityNav {
   private field(target: number): Int32Array {
     const cached = this.fields.get(target);
     if (cached) { this.fields.delete(target); this.fields.set(target, cached); return cached; }
-    const { size, kinds } = this.layout;
-    const next = new Int32Array(kinds.length).fill(-1), queue = new Int32Array(kinds.length);
-    let head = 0, tail = 1;
-    queue[0] = target; next[target] = target;
-    while (head < tail) {
-      const id = queue[head++]!, i = id % size, j = Math.floor(id / size);
-      for (const [di, dj] of NEIGHBOURS) {
-        const x = i + di, z = j + dj, neighbour = z * size + x;
-        if (x < 0 || z < 0 || x >= size || z >= size || next[neighbour] !== -1 || kinds[neighbour] !== OPEN) continue;
-        if (di !== 0 && dj !== 0 && (kinds[j * size + x] !== OPEN || kinds[z * size + i] !== OPEN)) continue;
-        next[neighbour] = id; queue[tail++] = neighbour;
-      }
-    }
+    const { crossings, closedDoors } = this, cells = this.layout.kinds.length;
+    const next = flowField(this.layout, target, crossings.size && closedDoors.size ? (from, to) => {
+      const door = crossings.get(from * cells + to);
+      return door !== undefined && closedDoors.has(door) ? FACILITY_DOOR_NAV_COST : 0;
+    } : undefined);
     if (this.fields.size === 24) this.fields.delete(this.fields.keys().next().value!);
     this.fields.set(target, next);
     return next;
+  }
+
+  /** The doors' flow-field edges (facilityDoors.ts doorCrossings), set once a match's doors exist. */
+  setDoorCrossings(crossings: ReadonlyMap<number, number>): void {
+    this.crossings = crossings;
+    this.fields.clear();
+  }
+
+  /** A door opened or closed. A closed door stays passable, at FACILITY_DOOR_NAV_COST extra: an
+   * enemy that reaches it stops and opens it. Cached fields priced the old state, so they go. */
+  setDoorClosed(door: number, closed: boolean): void {
+    if (this.closedDoors.has(door) === closed) return;
+    if (closed) this.closedDoors.add(door); else this.closedDoors.delete(door);
+    if (this.crossings.size) this.fields.clear();
   }
 
   nextWaypoint(fromX: number, fromZ: number, toX: number, toZ: number): Point {

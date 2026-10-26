@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import type { Player } from '../Player.ts';
+import { visibilityForEnemy, type PlayerVisibility } from './playerVisibility.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import { hasLineOfSight, horizontalDistance, pickPatrolDestination } from './enemySteering.ts';
 import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
-import type { EnemyCombatHooks } from './enemyCombat.ts';
+import { fireWideShot, type EnemyCombatHooks } from './enemyCombat.ts';
+import { FlashBlindState } from './flashBlind.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { CombatBehaviour, type PickDebug } from './combatBehaviour.ts';
-import { awarenessLevel, hearingRangeFor, isInViewCone, stepAwareness, visibilityFactor, type PlanarPoint } from './perception.ts';
+import { awarenessLevel, hearingRangeFor, isInViewCone, sightRayRange, stepAwareness, visibilityFactor, type PlanarPoint } from './perception.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import type { IntentKind, IntentSink } from './calloutDirector.ts';
 import { StuckDetector } from './stuckDetector.ts';
@@ -15,6 +17,7 @@ import {
   ENEMY_AWARENESS_SUSPICIOUS,
   ENEMY_COMBAT_BLIND_GRACE,
   ENEMY_DEATH_ALERT_RADIUS,
+  ENEMY_FLASH_FIRE_SPREAD_DEG,
   ENEMY_KNOWLEDGE_SHARE_MAX_AGE,
   ENEMY_KNOWLEDGE_SHARE_RADIUS,
   ENEMY_LOS_CHECK_INTERVAL,
@@ -43,6 +46,8 @@ export interface EnemyBrainDebug {
   readonly searchTarget: PlanarPoint | null;
   /** Knocked off balance by a heavy hit right now (step 5). */
   readonly staggered: boolean;
+  /** Seconds of flash-grenade blindness left (0 when it can see). */
+  readonly blindSeconds: number;
 }
 
 function headOf(position: EnemyPosition): THREE.Vector3 {
@@ -87,6 +92,11 @@ export class EnemyBrain {
   private searchTarget: PlanarPoint | null = null;
   /** Where this enemy itself last had the player in sight - what an 'alert' enemy stares at. */
   private readonly lastSeenPosition: THREE.Vector3;
+  /** Whether this enemy itself has had the player in sight since it last went idle: lastSeenPosition
+   * only means something once it has (until then it is just the spawn point). */
+  private hasSeenPlayer = false;
+  /** The latest noise heard while flash-blinded, acted on when the blindness ends (null: none). */
+  private blindNoise: THREE.Vector3 | null = null;
   /** Throttled (ENEMY_LOS_CHECK_INTERVAL), not recomputed every frame - a raycast per enemy per
    * frame adds up once several are chasing at once. Randomized initial offset so many enemies'
    * checks don't all land on the same frame. */
@@ -94,7 +104,11 @@ export class EnemyBrain {
   private hasLineOfSightToPlayer = false;
   /** 0 (oblivious) to 1 (detected) - see perception.ts. */
   private awareness = 0;
+  private playerVisibility = 1;
   private readonly combat: CombatBehaviour;
+  /** Grenades: blinded by a flash (flashBlind.ts). */
+  private readonly flashBlind = new FlashBlindState();
+  private readonly combatHooks: EnemyCombatHooks;
 
   /** `patrolRng` is a seeded per-enemy stream (EntityManager derives it from the world seed and
    * spawn order) - patrol destinations, repath timers, and the LOS-check phase offset all draw
@@ -118,6 +132,7 @@ export class EnemyBrain {
     this.lastSeenPosition = spawnPosition.clone();
     this.patrolStuck = new StuckDetector(spawnPosition);
     this.combat = new CombatBehaviour(body, physics, coordinator, knowledge, intents, combatHooks, tacticsRng, spawnPosition);
+    this.combatHooks = combatHooks;
     this.losCheckTimer = this.patrolRng() * ENEMY_LOS_CHECK_INTERVAL;
   }
 
@@ -135,6 +150,7 @@ export class EnemyBrain {
       pick: inCombat ? this.combat.pickDebug : null,
       searchTarget: this.state === 'search' ? this.searchTarget : null,
       staggered: this.combat.isStaggered,
+      blindSeconds: this.flashBlind.secondsLeft,
     };
   }
 
@@ -220,12 +236,41 @@ export class EnemyBrain {
   /** A player gunshot. Heard only within that weapon's loudness range (perception.ts's
    * hearingRangeFor - a pistol carries less far than a sniper). An idle enemy searches toward
    * roughly where it came from; a searching one takes the fresh evidence too. Engaged enemies
-   * (alert/chase) learn nothing new from it. */
+   * (alert/chase) learn nothing new from it, and neither does a flash-blinded one (the blindness
+   * decides what it does next; a flash's own bang reaches it after onFlashed). It does remember the
+   * latest noise and searches there once the blindness ends. */
   onHeardGunshot(origin: THREE.Vector3, weaponId?: string): void {
+    if (this.flashBlind.active) {
+      // Blind: it cannot react now, but it remembers the latest noise it heard and goes there when
+      // it can see again (updateBlind).
+      if (horizontalDistance(this.body.position, origin) <= hearingRangeFor(weaponId)) {
+        this.blindNoise = origin.clone();
+      }
+      return;
+    }
     if (this.state !== 'idle' && this.state !== 'search') return;
     if (horizontalDistance(this.body.position, origin) > hearingRangeFor(weaponId)) return;
     this.enterSearchToward(origin, true);
     this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
+  }
+
+  /** Blinded by a flash grenade for `seconds` (grenades): it loses its target and its awareness
+   * and staggers; then, if it had actually seen the player, it stands firing wide at where it last
+   * saw them until it can see again (updateBlind), and searches there after. One that never saw the
+   * player (idle, or searching toward a noise or a comrade's sighting: last-seen is still its spawn
+   * point) only stands blind and keeps its search destination, or goes back to its patrol. */
+  onFlashed(seconds: number): void {
+    if (!(seconds > 0)) return;
+    const hadTarget = this.state !== 'idle' && this.hasSeenPlayer;
+    if (this.state === 'chase') {
+      this.combat.standDown();
+      this.knowledge.reportLost(this.body.id);
+    }
+    this.combat.onHeavyHit(Number.POSITIVE_INFINITY);
+    this.awareness = 0;
+    this.hasLineOfSightToPlayer = false;
+    this.flashBlind.blind(seconds, hadTarget);
+    if (hadTarget) this.enterSearchToward(this.lastSeenPosition, false);
   }
 
   /** Sent in by the pacing director (step 6): a reinforcement comes looking for the player, roughly
@@ -247,22 +292,32 @@ export class EnemyBrain {
     this.enterSearchToward(killerPosition, false);
   }
 
-  update(dt: number, player: Player): void {
+  update(dt: number, player: Player, visibility?: PlayerVisibility): void {
     this.combat.tickCooldowns(dt);
+    if (this.flashBlind.active) {
+      this.updateBlind(dt, player);
+      return;
+    }
 
     const current = this.body.position;
+    this.playerVisibility = visibility ? visibilityForEnemy(visibility, headOf(current)) : 1;
     const distanceToPlayer = horizontalDistance(current, player.position);
 
     this.losCheckTimer -= dt;
     if (this.losCheckTimer <= 0) {
       this.losCheckTimer = ENEMY_LOS_CHECK_INTERVAL;
-      // No ray once the player's beyond leash range (no state cares about LOS there), nor for an
-      // oblivious enemy facing the other way - it could not start noticing the player anyway.
+      // No ray beyond the visible detection range while acquiring (leash range once engaged), nor
+      // for an oblivious enemy facing the other way - it could not start noticing the player anyway.
+      const archetype = this.body.archetype;
+      const engaged = this.state === 'alert' || this.state === 'chase';
       this.hasLineOfSightToPlayer =
-        distanceToPlayer <= this.body.archetype.leashRange &&
+        distanceToPlayer <= sightRayRange(engaged, archetype.detectionRange, archetype.leashRange, this.playerVisibility) &&
         this.isWorthLooking(current, player) &&
         this.computeLineOfSight(current, player);
-      if (this.hasLineOfSightToPlayer) this.lastSeenPosition.copy(player.position);
+      if (this.hasLineOfSightToPlayer) {
+        this.lastSeenPosition.copy(player.position);
+        this.hasSeenPlayer = true;
+      }
       if (this.state === 'chase') this.reportSighting(player);
     }
 
@@ -287,6 +342,36 @@ export class EnemyBrain {
       default:
         this.updatePatrol(dt, current);
     }
+  }
+
+  /** Flash-blinded: no perception and no moving. Once the stagger ends it faces where it last saw
+   * the player and, with a gun and a target before the flash, fires wide there. The search toward
+   * that spot starts in full when it can see again. */
+  private updateBlind(dt: number, player: Player): void {
+    const archetype = this.body.archetype;
+    const fire = this.flashBlind.update(dt, archetype.rangedRange > 0 && !this.combat.isStaggered);
+    this.awareness = 0;
+    this.hasLineOfSightToPlayer = false;
+    this.searchTimer = ENEMY_SEARCH_DURATION;
+    if (!this.flashBlind.active) this.actOnBlindNoise();
+    if (this.combat.isStaggered) return;
+    if (!this.flashBlind.firingBack) return;
+    this.body.faceToward(this.lastSeenPosition.x, this.lastSeenPosition.z);
+    if (!fire) return;
+    const target = this.lastSeenPosition.clone();
+    target.y += EYE_OFFSET;
+    fireWideShot(this.physics, headOf(this.body.position), target, ENEMY_FLASH_FIRE_SPREAD_DEG, player, archetype, this.body.excludeRigidBody, this.combatHooks);
+    this.body.onFired?.();
+  }
+
+  /** The blindness just ended: search toward the latest noise heard while blind, if any. */
+  private actOnBlindNoise(): void {
+    const noise = this.blindNoise;
+    if (!noise) return;
+    this.blindNoise = null;
+    if (this.state !== 'idle' && this.state !== 'search') return;
+    this.enterSearchToward(noise, true);
+    this.awareness = Math.max(this.awareness, ENEMY_AWARENESS_SUSPICIOUS);
   }
 
   /** Gives up this enemy's role and its place among the squad's watchers - called from the shell's
@@ -318,7 +403,7 @@ export class EnemyBrain {
    * suspicious or engaged it keeps looking wherever the player is. */
   private isWorthLooking(current: EnemyPosition, player: Player): boolean {
     if (this.state !== 'idle' || this.awareness > 0) return true;
-    return isInViewCone(current, this.body.facingYaw, player.position, this.body.archetype.detectionRange);
+    return isInViewCone(current, this.body.facingYaw, player.position, this.body.archetype.detectionRange * this.playerVisibility);
   }
 
   private computeLineOfSight(current: EnemyPosition, player: Player): boolean {
@@ -331,9 +416,9 @@ export class EnemyBrain {
    * the view cone or beyond detection range. */
   private sightFactor(current: EnemyPosition, player: Player, distanceToPlayer: number): number {
     if (!this.hasLineOfSightToPlayer) return 0;
-    const detectionRange = this.body.archetype.detectionRange;
+    const detectionRange = this.body.archetype.detectionRange * this.playerVisibility;
     if (!isInViewCone(current, this.body.facingYaw, player.position, detectionRange)) return 0;
-    return visibilityFactor(distanceToPlayer, detectionRange, player.movementBobStrength);
+    return visibilityFactor(distanceToPlayer, detectionRange, player.movementBobStrength) * this.playerVisibility;
   }
 
   /** Tells the squad's callout director what this enemy just did (step 5). */
@@ -374,6 +459,7 @@ export class EnemyBrain {
           this.announce('spotted');
         } else if (level === 'oblivious') {
           this.state = 'idle';
+          this.hasSeenPlayer = false;
         }
         break;
       }
@@ -388,7 +474,7 @@ export class EnemyBrain {
         }
         break;
       case 'search':
-        if (distanceToPlayer <= archetype.detectionRange && this.hasLineOfSightToPlayer) {
+        if (distanceToPlayer <= archetype.detectionRange * this.playerVisibility && this.hasLineOfSightToPlayer) {
           this.state = 'chase';
           this.awareness = 1;
           this.reportSighting(player);
@@ -398,7 +484,10 @@ export class EnemyBrain {
         this.awareness = stepAwareness(this.awareness, 0, dt);
         this.followFreshSighting(current);
         this.searchTimer -= dt;
-        if (this.searchTimer <= 0) this.state = 'idle';
+        if (this.searchTimer <= 0) {
+          this.state = 'idle';
+          this.hasSeenPlayer = false;
+        }
         break;
     }
   }
@@ -407,6 +496,7 @@ export class EnemyBrain {
    * too, so a still-full meter cannot bounce the enemy straight back into 'alert'. */
   private giveUp(): void {
     this.state = 'idle';
+    this.hasSeenPlayer = false;
     this.awareness = 0;
     this.combat.standDown();
     this.knowledge.reportLost(this.body.id);

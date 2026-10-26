@@ -39,6 +39,17 @@ export interface GooseManagerCallbacks {
   onLocalHitReported?: (id: string) => void;
 }
 
+/** Where geese may go on an indoor map (the Facility: world/facility/facilityModes.ts's
+ * facilityGoosePlacement). Absent on the Valley, where any point of the terrain will do. */
+export interface GoosePlacement {
+  /** A clear floor point anywhere, or null for none. */
+  randomPoint(): { x: number; z: number } | null;
+  /** A clear floor point `min` to `max` metres from (x, z), or the nearest to that. */
+  near(x: number, z: number, min: number, max: number): { x: number; z: number } | null;
+  /** Whether a straight wander between two points is clear. */
+  canWander(fromX: number, fromZ: number, toX: number, toZ: number): boolean;
+}
+
 /** Owns the live flock. Single-player and the multiplayer host run every goose "authoritative"
  * (spawns, wander AI, hit counting, explosion all decided locally) - a multiplayer guest instead
  * mirrors the host's authoritative geese as "follower" copies (see Goose.ts's class comment),
@@ -57,6 +68,8 @@ export class GooseManager {
     /** Overrides GOOSE_MAX_CONCURRENT - Goose Toss mode passes GOOSE_TOSS_MAX_CONCURRENT (25)
      * instead, since throwing geese at each other is the entire game there. */
     private readonly maxConcurrent: number = GOOSE_MAX_CONCURRENT,
+    /** Indoors only: every authoritative spawn lands on clear floor and wanders in clear lines. */
+    private readonly placement: GoosePlacement | null = null,
   ) {}
 
   // ---- Authoritative side (single-player, multiplayer host) ----------------------------------
@@ -66,6 +79,11 @@ export class GooseManager {
    * not a notable event the way a mid-match spawn is. */
   spawnInitialBatch(centerX: number, centerZ: number): void {
     for (let i = 0; i < GOOSE_SPAWN_COUNT_INITIAL; i++) {
+      if (this.placement) {
+        const point = this.placement.randomPoint();
+        if (point) this.spawnAuthoritative(point.x, point.z);
+        continue;
+      }
       const angle = (i / GOOSE_SPAWN_COUNT_INITIAL) * Math.PI * 2;
       const radius = GOOSE_ROAM_RADIUS * 0.5;
       this.spawnAuthoritative(centerX + Math.cos(angle) * radius, centerZ + Math.sin(angle) * radius);
@@ -77,6 +95,13 @@ export class GooseManager {
    * accumulate an unbounded flock (my own addition, not explicitly requested but necessary). */
   spawnNear(x: number, z: number): void {
     if (this.geese.size >= this.maxConcurrent) return;
+    if (this.placement) {
+      const point = this.placement.near(x, z, GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER, GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER * 2);
+      if (!point) return;
+      this.spawnAuthoritative(point.x, point.z);
+      this.callbacks.onGooseSpawned();
+      return;
+    }
     const angle = Math.random() * Math.PI * 2;
     const distance = GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER + Math.random() * GOOSE_SPAWN_MIN_DISTANCE_FROM_PLAYER;
     this.spawnAuthoritative(x + Math.cos(angle) * distance, z + Math.sin(angle) * distance);
@@ -89,6 +114,14 @@ export class GooseManager {
    * every other spawn path here. */
   spawnRandomOnMap(centerX: number, centerZ: number): void {
     if (this.geese.size >= this.maxConcurrent) return;
+    // Indoors: anywhere on clear floor, the whole facility rather than a radius around its centre.
+    if (this.placement) {
+      const point = this.placement.randomPoint();
+      if (!point) return;
+      this.spawnAuthoritative(point.x, point.z);
+      this.callbacks.onGooseSpawned();
+      return;
+    }
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.random() * GOOSE_ROAM_RADIUS;
     this.spawnAuthoritative(centerX + Math.cos(angle) * radius, centerZ + Math.sin(angle) * radius);
@@ -132,7 +165,7 @@ export class GooseManager {
     const y = sampleHeight(x, z) + GOOSE_HEIGHT / 2;
     const id = crypto.randomUUID();
     const patrolRng = mulberry32(getWorldSeed() + PATROL_SEED_OFFSET + this.patrolSeedCounter++);
-    const goose = new Goose(this.physics, new THREE.Vector3(x, y, z), id, patrolRng);
+    const goose = new Goose(this.physics, new THREE.Vector3(x, y, z), id, patrolRng, undefined, false, this.placement?.canWander);
     this.scene.add(goose.mesh);
     this.geese.set(id, goose);
     this.callbacks.onNetworkSpawn?.(id, x, y, z);

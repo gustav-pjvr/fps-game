@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { awarenessLevel, hearingRangeFor, isInViewCone, stepAwareness, viewHalfAngleDeg, visibilityFactor } from './perception.ts';
+import { awarenessLevel, hearingRangeFor, isInViewCone, sightRayRange, stepAwareness, viewHalfAngleDeg, visibilityFactor } from './perception.ts';
 import { ENEMY_ARCHETYPES } from './archetypes.ts';
 import {
   ENEMY_AWARENESS_DRAIN_TIME,
@@ -110,5 +110,24 @@ describe('hearing', () => {
   it('falls back to the default hearing range for an unknown or missing weapon', () => {
     expect(hearingRangeFor('railgun')).toBe(ENEMY_HEARING_RANGE);
     expect(hearingRangeFor(undefined)).toBe(ENEMY_HEARING_RANGE);
+  });
+});
+
+describe('sight ray range', () => {
+  const gunner = ENEMY_ARCHETYPES.find((archetype) => archetype.name === 'Ridge Walker')!;
+
+  it('an engaged enemy (alert or chase) keeps its sight ray out to leash range in any light', () => {
+    for (const visibility of [1, 0.75, 0.4, 0.25]) {
+      expect(sightRayRange(true, gunner.detectionRange, gunner.leashRange, visibility)).toBe(gunner.leashRange);
+    }
+    // A chasing gunner still sees a daylight player at 25 m, past its detection range.
+    expect(25).toBeGreaterThan(gunner.detectionRange);
+    expect(25).toBeLessThanOrEqual(sightRayRange(true, gunner.detectionRange, gunner.leashRange, 1));
+  });
+
+  it('an acquiring enemy (idle or search) looks only as far as detection range scaled by visibility', () => {
+    expect(sightRayRange(false, gunner.detectionRange, gunner.leashRange, 1)).toBe(gunner.detectionRange);
+    expect(sightRayRange(false, gunner.detectionRange, gunner.leashRange, 0.4)).toBeCloseTo(gunner.detectionRange * 0.4);
+    expect(sightRayRange(false, gunner.detectionRange, gunner.leashRange, 0.25)).toBeCloseTo(gunner.detectionRange * 0.25);
   });
 });

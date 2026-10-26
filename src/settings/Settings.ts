@@ -1,4 +1,4 @@
-import { DEFAULT_KEY_BINDINGS, REBINDABLE_ACTIONS, type Action } from '../input/actions.ts';
+import { ACTION_LABELS, DEFAULT_KEY_BINDINGS, REBINDABLE_ACTIONS, type Action } from '../input/actions.ts';
 import { isGraphicsQuality, type GraphicsQuality } from './graphicsQuality.ts';
 import { CAMERA_FOV, CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../core/config.ts';
 
@@ -8,6 +8,10 @@ interface StoredSettings {
   masterVolume: number;
   musicVolume: number;
   mouseSensitivity: number;
+  controllerSensitivity: number;
+  controllerInvertY: boolean;
+  controllerAimAssist: boolean;
+  controllerVibration: boolean;
   keyBindings: Record<string, Action>;
   graphicsQuality: GraphicsQuality;
   fov: number;
@@ -18,6 +22,10 @@ function defaults(): StoredSettings {
     masterVolume: 0.5,
     musicVolume: 0.6,
     mouseSensitivity: 1,
+    controllerSensitivity: 1,
+    controllerInvertY: false,
+    controllerAimAssist: true,
+    controllerVibration: true,
     keyBindings: { ...DEFAULT_KEY_BINDINGS },
     // Matches what this project's own e2e suite is verified against - see the comment on
     // GRAPHICS_QUALITY_PRESETS in graphicsQuality.ts for why Medium, not High, is the safe default.
@@ -30,9 +38,15 @@ function defaults(): StoredSettings {
  * binding added since they saved, such as KeyF for the torch) on its default key, but only while
  * that key is free: a player's own binding is never taken away, and an action they moved to another
  * key is not bound twice. Rebindable actions first, so they get their key ahead of fixed ones. A
- * player who had put another action on KeyF keeps it, and binds the torch in Settings. */
+ * player who had put another action on KeyF keeps it, and binds the torch in Settings. Bindings to
+ * actions that no longer exist (the separate 'grenadeFrag' on G and 'grenadeFlash' on Q of earlier
+ * builds) are dropped first, which frees G and Q: the one 'grenade' action then lands on Q unless
+ * the player has put something else there. */
 export function mergeKeyBindings(stored: Record<string, Action>): Record<string, Action> {
-  const merged: Record<string, Action> = { ...stored };
+  const merged: Record<string, Action> = {};
+  for (const [code, action] of Object.entries(stored)) {
+    if (Object.hasOwn(ACTION_LABELS, action)) merged[code] = action;
+  }
   const bound = new Set(Object.values(merged));
   const defaults = Object.entries(DEFAULT_KEY_BINDINGS);
   const order = [...REBINDABLE_ACTIONS, ...defaults.map(([, action]) => action)];
@@ -60,6 +74,11 @@ function loadFromStorage(): StoredSettings {
       masterVolume: typeof parsed.masterVolume === 'number' ? parsed.masterVolume : base.masterVolume,
       musicVolume: typeof parsed.musicVolume === 'number' ? Math.max(0, Math.min(1, parsed.musicVolume)) : base.musicVolume,
       mouseSensitivity: typeof parsed.mouseSensitivity === 'number' ? parsed.mouseSensitivity : base.mouseSensitivity,
+      controllerSensitivity: typeof parsed.controllerSensitivity === 'number' && Number.isFinite(parsed.controllerSensitivity)
+        ? Math.max(0.3, Math.min(3, parsed.controllerSensitivity)) : base.controllerSensitivity,
+      controllerInvertY: typeof parsed.controllerInvertY === 'boolean' ? parsed.controllerInvertY : base.controllerInvertY,
+      controllerAimAssist: typeof parsed.controllerAimAssist === 'boolean' ? parsed.controllerAimAssist : base.controllerAimAssist,
+      controllerVibration: typeof parsed.controllerVibration === 'boolean' ? parsed.controllerVibration : base.controllerVibration,
       keyBindings:
         parsed.keyBindings && typeof parsed.keyBindings === 'object'
           ? mergeKeyBindings(parsed.keyBindings)
@@ -73,6 +92,8 @@ function loadFromStorage(): StoredSettings {
 }
 
 let state = loadFromStorage();
+/** getKeyBindings()'s snapshot of state.keyBindings, rebuilt after they change. */
+let bindingsSnapshot: Readonly<Record<string, Action>> | null = null;
 
 function persist(): void {
   try {
@@ -85,6 +106,17 @@ function persist(): void {
 /** Persisted (localStorage) user settings: volume, mouse sensitivity, key bindings. Module-level
  * singleton, not a class - there's exactly one settings state for the whole app. */
 export const Settings = {
+  getControllerSensitivity(): number { return state.controllerSensitivity; },
+  setControllerSensitivity(value: number): void {
+    state.controllerSensitivity = Number.isFinite(value) ? Math.max(0.3, Math.min(3, value)) : 1;
+    persist();
+  },
+  getControllerInvertY(): boolean { return state.controllerInvertY; },
+  setControllerInvertY(value: boolean): void { state.controllerInvertY = value; persist(); },
+  getControllerAimAssist(): boolean { return state.controllerAimAssist; },
+  setControllerAimAssist(value: boolean): void { state.controllerAimAssist = value; persist(); },
+  getControllerVibration(): boolean { return state.controllerVibration; },
+  setControllerVibration(value: boolean): void { state.controllerVibration = value; persist(); },
   getMasterVolume(): number {
     return state.masterVolume;
   },
@@ -111,10 +143,12 @@ export const Settings = {
     persist();
   },
 
-  /** Returns a copy - handing out the internal object would let a caller's mutation silently
-   * persist wrong bindings on the next persist(). All rebinding goes through rebindKey. */
-  getKeyBindings(): Record<string, Action> {
-    return { ...state.keyBindings };
+  /** A frozen snapshot, the same object until the bindings change (the HUD and the input manager
+   * read it every tick or key event, so it must not copy each time) - handing out the internal
+   * object would let a caller's mutation silently persist wrong bindings on the next persist(). All
+   * rebinding goes through rebindKey. */
+  getKeyBindings(): Readonly<Record<string, Action>> {
+    return bindingsSnapshot ??= Object.freeze({ ...state.keyBindings });
   },
   /** Clears any existing binding for this action and any existing binding on the new key, then binds them. */
   rebindKey(action: Action, newCode: string): void {
@@ -124,10 +158,12 @@ export const Settings = {
     }
     next[newCode] = action;
     state.keyBindings = next;
+    bindingsSnapshot = null;
     persist();
   },
   resetKeyBindings(): void {
     state.keyBindings = { ...DEFAULT_KEY_BINDINGS };
+    bindingsSnapshot = null;
     persist();
   },
 

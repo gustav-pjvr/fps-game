@@ -25,6 +25,16 @@ export interface MissionPoint {
 
 export type UplinkStatus = 'pending' | 'uploading' | 'online';
 
+/** What the minimap marks for the mission (the Facility's map, docs/facility-map.md): every uplink
+ * not yet online, then the extraction once it is open. */
+export function missionMapMarkers(view: MissionView): { id: string; x: number; z: number }[] {
+  const markers = view.uplinks
+    .filter((uplink) => uplink.status !== 'online')
+    .map((uplink) => ({ id: `uplink-${uplink.label}`, x: uplink.x, z: uplink.z }));
+  if (view.phase === 'extract') markers.push({ id: 'extract', x: view.extraction.x, z: view.extraction.z });
+  return markers;
+}
+
 export interface UplinkView {
   readonly label: string;
   readonly x: number;

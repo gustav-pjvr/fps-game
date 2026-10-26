@@ -39,6 +39,15 @@ export interface HordeGooseManagerCallbacks {
 
 type Phase = 'active' | 'intermission' | 'cleared';
 
+/** An indoor map's horde site (the Facility: world/facility/facilityModes.ts's facilityHordeSite).
+ * Absent on the Valley, where geese come in on a ring around the centre and flyers drop from the sky. */
+export interface HordeIndoorSite {
+  /** Where the next goose comes in, given every live target; null falls back to the ring. */
+  spawnPoint(players: readonly { x: number; z: number }[]): { x: number; z: number } | null;
+  /** A flyer's height over a point, under the local ceiling. */
+  flightHeight(x: number, z: number): number;
+}
+
 /** Pure: how many geese are allowed alive at once during `waveIndex` - scales with the current
  * wave (M5) up to a hard ceiling, rather than a flat cap. Exported so wave-progression accounting
  * can be unit tested without a live PhysicsWorld/THREE.Scene (2026-07-10 review, Phase 6 test-
@@ -114,8 +123,15 @@ export class HordeGooseManager {
      * (which only stops a guest's individual geese from self-adjudicating, not this manager-level
      * wave state). */
     private readonly isAuthoritative: boolean = true,
+    /** Indoors only: spawn points away from the players and flight under the ceiling. */
+    private readonly indoor: HordeIndoorSite | null = null,
   ) {
     if (this.isAuthoritative) this.beginWave();
+  }
+
+  private get indoorFlightHeight(): ((x: number, z: number) => number) | undefined {
+    const indoor = this.indoor;
+    return indoor ? (x, z) => indoor.flightHeight(x, z) : undefined;
   }
 
   get currentWave(): number {
@@ -156,7 +172,7 @@ export class HordeGooseManager {
     const spawnBudget = computeSpawnBudget(this.spawnQueueRemaining, this.geese.size, concurrentCap);
     for (let i = 0; i < spawnBudget; i++) {
       this.spawnQueueRemaining--;
-      this.spawnOne();
+      this.spawnOne(targetPositions);
     }
 
     for (const goose of Array.from(this.geese.values())) {
@@ -289,18 +305,19 @@ export class HordeGooseManager {
     }));
   }
 
-  private spawnOne(): void {
+  private spawnOne(targetPositions: readonly THREE.Vector3[]): void {
     const spec = this.waveTable[this.waveIndex]!;
     const angle = Math.random() * Math.PI * 2;
-    const x = this.centerX + Math.cos(angle) * HORDE_GOOSE_SPAWN_RADIUS;
-    const z = this.centerZ + Math.sin(angle) * HORDE_GOOSE_SPAWN_RADIUS;
+    const indoorPoint = this.indoor?.spawnPoint(targetPositions) ?? null;
+    const x = indoorPoint ? indoorPoint.x : this.centerX + Math.cos(angle) * HORDE_GOOSE_SPAWN_RADIUS;
+    const z = indoorPoint ? indoorPoint.z : this.centerZ + Math.sin(angle) * HORDE_GOOSE_SPAWN_RADIUS;
     const y = sampleHeight(x, z) + GOOSE_HEIGHT / 2;
     const roll = Math.random();
     const flavor: HordeGooseFlavor = roll < spec.flyerChance ? 'flyer' : roll < spec.flyerChance + spec.jumperChance ? 'jumper' : 'walker';
     const speed = HORDE_GOOSE_BASE_SPEED * spec.speedMultiplier;
     const id = `horde-${this.idCounter++}`;
 
-    const goose = new HordeGoose(this.physics, new THREE.Vector3(x, y, z), flavor, speed, id);
+    const goose = new HordeGoose(this.physics, new THREE.Vector3(x, y, z), flavor, speed, id, undefined, this.indoorFlightHeight);
     this.scene.add(goose.mesh);
     this.geese.set(id, goose);
     this.callbacks.onNetworkSpawn?.(id, x, y, z, flavor);
@@ -310,7 +327,7 @@ export class HordeGooseManager {
 
   applyRemoteSpawn(id: string, x: number, y: number, z: number, flavor: HordeGooseFlavor): void {
     if (this.geese.has(id)) return;
-    const goose = new HordeGoose(this.physics, new THREE.Vector3(x, y, z), flavor, 0, id, () => this.callbacks.onLocalHitReported?.(id));
+    const goose = new HordeGoose(this.physics, new THREE.Vector3(x, y, z), flavor, 0, id, () => this.callbacks.onLocalHitReported?.(id), this.indoorFlightHeight);
     this.scene.add(goose.mesh);
     this.geese.set(id, goose);
   }
@@ -322,6 +339,20 @@ export class HordeGooseManager {
   applyExplosion(id: string, position: THREE.Vector3): void {
     this.removeLocal(id);
     this.callbacks.onExplosion(position);
+  }
+
+  /** A frag (combat/grenades): every live goose it reaches takes a hit, through the same path a
+   * bullet does (HordeGoose.takeDamage: the host or single-player kills it, a guest reports it). */
+  applyBlast(
+    position: THREE.Vector3,
+    damageAt: (distance: number) => number,
+    reaches: (center: THREE.Vector3, entity: object) => boolean,
+  ): void {
+    for (const goose of this.geese.values()) {
+      if (goose.isDead) continue;
+      const amount = damageAt(goose.position.distanceTo(position));
+      if (amount > 0 && reaches(goose.position, goose)) goose.takeDamage(amount, -1);
+    }
   }
 
   applyRemove(id: string): void {

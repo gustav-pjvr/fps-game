@@ -44,6 +44,19 @@ export const MULTIPLAYER_REJOIN_GRACE_PERIOD_MS = 90_000;
  * signal something is wrong, not a false positive from one dropped packet. */
 export const MULTIPLAYER_CONNECTION_TIMEOUT_MS = 8_000;
 
+/** How long the host waits on an opponent that is still LOADING before treating it as silent. A player
+ * sends no snapshots until its own world is built, and building it, plus the first frames after it
+ * (shader compiles), takes tens of seconds on a slow device or with several players loading at once,
+ * well past MULTIPLAYER_CONNECTION_TIMEOUT_MS: the host used to drop that player and end its match as
+ * "opponent disconnected" (found by the four-player browser test: a late joiner and a rejoiner were
+ * dropped right after their world appeared, one stalling about 10 s after its first snapshots). A
+ * player that really died while loading still ends through the connection's own close event; this is
+ * only the backstop. */
+export const MULTIPLAYER_LOADING_TIMEOUT_MS = 120_000;
+
+/** How long after its first playerSnapshot an opponent still counts as loading. */
+export const MULTIPLAYER_SETTLE_MS = 30_000;
+
 /** The radius every multiplayer spawn ring (initial match-start spawns, mid-match respawns) is
  * placed on - see multiplayerSpawn.ts's pickMultiplayerSpawnPoints/pickRandomRespawnPoint. */
 export const MULTIPLAYER_SPAWN_RADIUS = 35;
@@ -215,8 +228,8 @@ export const MATCH_MAP_DESCRIPTIONS: Record<MatchMap, string> = {
   facility: 'Indoor complex, a new layout every match',
 };
 
-/** Host-chosen in multiplayer (see CreateRoomScreen), fixed at 'day' in single-player - purely
- * cosmetic/atmospheric, mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
+/** Host-chosen in multiplayer (see CreateRoomScreen), chosen in single-player's PlaySetupModal -
+ * purely cosmetic/atmospheric (plus the night torch, see render/Flashlight.ts), mirrors the gooseDifficulty/gameMode threading pattern exactly (same 4
  * sites: MatchStartMessage, WelcomeMessage.activeMatch, MultiplayerSession,
  * MultiplayerMatchStartParams). Each has a look in render/look.ts (sky, fog, lights, grade); 'day'
  * keeps its id for the network protocol but is the stylised dusk the art direction is built on. */
@@ -404,6 +417,9 @@ export const ENEMY_WEAPON_LOUDNESS_RANGE: Readonly<Record<string, number>> = {
   gooseLauncher: 45,
   knife: 0,
   unarmed: 0,
+  // Grenades (combat/grenades/GrenadeSystem.ts) go through the same hearing path as a shot.
+  frag: 70,
+  flash: 55,
 };
 
 /**
@@ -575,6 +591,10 @@ export const ENEMY_STAGGER_DAMAGE_THRESHOLD = 25;
 export const ENEMY_STAGGER_DURATION = 0.5;
 /** How far a staggered enemy tips back, in radians, at the moment of the hit. */
 export const ENEMY_STAGGER_LURCH_RAD = 0.35;
+/** A flash-blinded enemy (grenades, entities/enemies/flashBlind.ts) that had a target fires one wide
+ * shot this often at where it last saw the player, through a cone this wide (half-angle, degrees). */
+export const ENEMY_FLASH_FIRE_INTERVAL = 0.7;
+export const ENEMY_FLASH_FIRE_SPREAD_DEG = 15;
 
 /**
  * Enemy AI v2, step 6 (docs/enemy-ai-v2.md): the pacing director behind the opt-in "Director" solo
@@ -646,6 +666,9 @@ export const KNIFE_SWING_FULL_VOLUME_RANGE = 5;
 export const KNIFE_SWING_AUDIBLE_RANGE = 15;
 /** A Facility lamp breaking: full volume as near as a gunshot is, fading to silence at 40 m. */
 export const LAMP_BREAK_AUDIBLE_RANGE = 40;
+/** Facility doors sliding and breakers thrown: full volume within 8 m, silent beyond 30 m. */
+export const FACILITY_OBJECT_FULL_VOLUME_RANGE = 8;
+export const FACILITY_OBJECT_AUDIBLE_RANGE = 30;
 
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
@@ -1004,6 +1027,24 @@ export const FACILITY_LAMP_FALLOFF_M2 = 1.2;
  * the 7 m atrium is lit like a 3.5 m office instead of fading to black under the tight falloff. */
 export const FACILITY_LAMP_REFERENCE_HEIGHT = 3.4;
 export const FACILITY_LAMP_HEIGHT_EXPONENT = 1.6;
+/** Facility doors and breaker switches (docs/facility-map.md, section 12). Independent random
+ * streams for which openings get a door and for the power zones, clear of the other offsets. */
+export const FACILITY_DOOR_SEED_OFFSET = 613;
+export const FACILITY_POWER_SEED_OFFSET = 617;
+/** Share of openings that get a door (dark rooms' openings always do). */
+export const FACILITY_DOOR_CHANCE = 0.6;
+/** Openings wider than this many cells stay open archways: a corridor running along a room's wall
+ * opens into it over its whole length, which no sliding door spans. */
+export const FACILITY_DOOR_MAX_CELLS = 3;
+/** Seconds a door's leaves take to slide fully open or shut. */
+export const FACILITY_DOOR_SLIDE_SECONDS = 0.6;
+/** How far (m) a player reaches to work a door or a breaker panel. */
+export const FACILITY_INTERACT_REACH = 2.2;
+/** Extra flow-field cost (in cell steps) of crossing a closed door: enemies take a slightly longer
+ * open route, but not a long detour, over stopping to open one. */
+export const FACILITY_DOOR_NAV_COST = 4;
+/** Seconds an enemy stands at a closed door before it opens it. */
+export const FACILITY_ENEMY_DOOR_WAIT = 0.8;
 
 export const TERRAIN_CHUNK_SIZE = 100;
 export const TERRAIN_RESOLUTION = 64;

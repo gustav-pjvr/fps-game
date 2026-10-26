@@ -10,6 +10,9 @@ interface RosterSlotState {
   /** Timestamp (ms) the slot went disconnected, only while connected===false and still within its
    * grace period - null once connected, or once the grace period has been swept away. */
   disconnectedAt: number | null;
+  /** The guest's PeerJS id on its current connection (a rejoin brings a new one), handed to the
+   * other guests in every roster so they can open direct links (network/GuestMesh.ts). */
+  peerId?: string;
 }
 
 export type HelloOutcome = { outcome: 'rejoined'; slot: PlayerSlot } | { outcome: 'joined'; slot: PlayerSlot } | { outcome: 'full' };
@@ -24,6 +27,10 @@ export type HelloOutcome = { outcome: 'rejoined'; slot: PlayerSlot } | { outcome
  * `slots` is handed to the next joiner (see handleHello). */
 const GUEST_SLOTS: readonly PlayerSlot[] = [1, 2, 3];
 
+function rosterEntryOf(state: RosterSlotState): RosterEntry {
+  return state.peerId === undefined ? { slot: state.slot, username: state.username } : { slot: state.slot, username: state.username, peerId: state.peerId };
+}
+
 export class HostRoster {
   private readonly slots = new Map<PlayerSlot, RosterSlotState>();
   private matchInProgress = false;
@@ -36,7 +43,7 @@ export class HostRoster {
    * against capacity (favors letting the original player back in over instantly admitting a
    * stranger) - a genuinely new distinct player can see 'full' even though one slot is only
    * reserved, not actively connected. */
-  handleHello(username: string, rejoinToken: string | null, _now: number): HelloOutcome {
+  handleHello(username: string, rejoinToken: string | null, _now: number, peerId?: string): HelloOutcome {
     if (rejoinToken !== null) {
       for (const slot of this.slots.values()) {
         // A token match counts even while the slot still reads as connected: a player who reloads
@@ -48,6 +55,7 @@ export class HostRoster {
           slot.connected = true;
           slot.disconnectedAt = null;
           slot.username = username;
+          slot.peerId = peerId;
           return { outcome: 'rejoined', slot: slot.slot };
         }
       }
@@ -62,7 +70,7 @@ export class HostRoster {
     // already guarantees one of these is free.
     const slot = GUEST_SLOTS.find((candidate) => !this.slots.has(candidate));
     if (slot === undefined) return { outcome: 'full' }; // defensive - unreachable given the size check above
-    this.slots.set(slot, { slot, username, rejoinToken, connected: true, disconnectedAt: null });
+    this.slots.set(slot, { slot, username, rejoinToken, connected: true, disconnectedAt: null, peerId });
     return { outcome: 'joined', slot };
   }
 
@@ -102,7 +110,7 @@ export class HostRoster {
   }
 
   currentRoster(): RosterEntry[] {
-    return Array.from(this.slots.values(), (s) => ({ slot: s.slot, username: s.username }));
+    return Array.from(this.slots.values(), rosterEntryOf);
   }
 
   /** Only slots with a live connection, excluding grace-period reservations. What a match actually
@@ -114,7 +122,12 @@ export class HostRoster {
   connectedRoster(): RosterEntry[] {
     return Array.from(this.slots.values())
       .filter((s) => s.connected)
-      .map((s) => ({ slot: s.slot, username: s.username }));
+      .map(rosterEntryOf);
+  }
+
+  /** The PeerJS id a slot's player is on now, if known (playerJoinedMatch carries it). */
+  peerIdOf(slot: PlayerSlot): string | undefined {
+    return this.slots.get(slot)?.peerId;
   }
 
   startMatch(): void {

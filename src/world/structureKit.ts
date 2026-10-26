@@ -62,8 +62,40 @@ export function createHullCollider(world: RAPIER.World, body: RAPIER.RigidBody, 
 }
 
 /** Material slots a structure draws with: the procedural surfaces, lit and dark window glass, and
- * small lamps. */
-export type PieceMaterial = StructureMaterialKey | 'window' | 'glass' | 'lamp' | 'warning';
+ * small lamps. `inner-` surfaces are the same materials for inside a building (docs/enterable-
+ * buildings.md): sky and ambient light reach them only at INTERIOR_INDIRECT_LIGHT, so a room is dim
+ * by day while the sun through a window and the lamps (direct light) still light it fully. */
+export type PieceMaterial = StructureMaterialKey | `inner-${StructureMaterialKey}` | 'window' | 'glass' | 'lamp' | 'warning';
+
+/** How much of the sky and ambient (indirect) light reaches inside a building. */
+export const INTERIOR_INDIRECT_LIGHT = 0.3;
+
+const innerMaterials = new Map<StructureMaterialKey, THREE.MeshStandardMaterial>();
+let interiorShade: THREE.DataTexture | null = null;
+
+/** A structure material for inside a building: shared textures, with a flat ambient occlusion map,
+ * which in three's standard material scales only indirect light. */
+function interiorMaterial(key: StructureMaterialKey): THREE.MeshStandardMaterial {
+  const cached = innerMaterials.get(key);
+  if (cached) return cached;
+  if (!interiorShade) {
+    const shade = Math.round(INTERIOR_INDIRECT_LIGHT * 255);
+    interiorShade = new THREE.DataTexture(new Uint8Array([shade, shade, shade, 255]), 1, 1);
+    interiorShade.needsUpdate = true;
+  }
+  const material = getStructureMaterials()[key].clone();
+  material.name = `structure-inner-${key}`;
+  material.aoMap = interiorShade;
+  material.aoMapIntensity = 1;
+  innerMaterials.set(key, material);
+  return material;
+}
+
+/** The procedural surface a material slot uses (its tile size), if any. */
+function surfaceOf(key: PieceMaterial): StructureMaterialKey | null {
+  const base = key.startsWith('inner-') ? key.slice(6) : key;
+  return base in STRUCTURE_TILE_METRES ? (base as StructureMaterialKey) : null;
+}
 
 let sharedLamps: { lamp: THREE.MeshStandardMaterial; warning: THREE.MeshStandardMaterial; window: THREE.Material; glass: THREE.Material } | null = null;
 
@@ -82,7 +114,8 @@ function accentMaterials() {
 
 function materialFor(key: PieceMaterial): THREE.Material {
   if (key === 'window' || key === 'glass' || key === 'lamp' || key === 'warning') return accentMaterials()[key];
-  return getStructureMaterials()[key];
+  if (key.startsWith('inner-')) return interiorMaterial(surfaceOf(key)!);
+  return getStructureMaterials()[key as StructureMaterialKey];
 }
 
 /**
@@ -96,8 +129,30 @@ export class PieceCollector {
   /** A box in the given material. */
   addBox(material: PieceMaterial, transform: BoxTransform): void {
     const h = transform.halfExtents;
-    const tile = material in STRUCTURE_TILE_METRES ? STRUCTURE_TILE_METRES[material as StructureMaterialKey] : 1;
+    const surface = surfaceOf(material);
+    const tile = surface ? STRUCTURE_TILE_METRES[surface] : 1;
     this.add(material, worldBox(h.x * 2, h.y * 2, h.z * 2, tile), boxMatrix(transform));
+  }
+
+  /** An axis-aligned box from its bounds whose texture is laid in the structure's own frame rather
+   * than per box (each face's UVs are its position over the tile size), so the pieces a wall is cut
+   * into around its openings line up as one surface. */
+  addPlanarBox(material: PieceMaterial, minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number): void {
+    const surface = surfaceOf(material);
+    const tile = surface ? STRUCTURE_TILE_METRES[surface] : 1;
+    const geometry = new THREE.BoxGeometry(maxX - minX, maxY - minY, maxZ - minZ);
+    geometry.translate((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+    const position = geometry.getAttribute('position'), normal = geometry.getAttribute('normal'), uv = geometry.getAttribute('uv');
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i), y = position.getY(i), z = position.getZ(i);
+      const nx = normal.getX(i), ny = normal.getY(i), nz = normal.getZ(i);
+      // Faces across x read along z, faces across z along x (mirrored on the back faces so the
+      // texture reads the right way round from outside); top and bottom read x by z.
+      if (Math.abs(nx) > 0.5) uv.setXY(i, (nx > 0 ? -z : z) / tile, y / tile);
+      else if (Math.abs(nz) > 0.5) uv.setXY(i, (nz > 0 ? x : -x) / tile, y / tile);
+      else uv.setXY(i, x / tile, (ny > 0 ? -z : z) / tile);
+    }
+    this.add(material, geometry, new THREE.Matrix4());
   }
 
   /** Any geometry with position, normal and uv, placed by `matrix`. */

@@ -120,4 +120,62 @@ describe('HostRoster', () => {
     roster.startMatch();
     expect(roster.isMatchInProgress()).toBe(true);
   });
+
+  describe('PeerJS ids', () => {
+    it('carries each guest id into the roster, and leaves the host entry without one', () => {
+      const roster = new HostRoster('Alice');
+      roster.handleHello('Bob', 'token-bob', 0, 'peer-bob');
+      roster.handleHello('Cara', 'token-cara', 0, 'peer-cara');
+      expect(roster.currentRoster()).toEqual([
+        { slot: HOST_SLOT, username: 'Alice' },
+        { slot: 1, username: 'Bob', peerId: 'peer-bob' },
+        { slot: 2, username: 'Cara', peerId: 'peer-cara' },
+      ]);
+      expect(roster.peerIdOf(1)).toBe('peer-bob');
+      expect(roster.peerIdOf(2)).toBe('peer-cara');
+      expect(roster.peerIdOf(HOST_SLOT)).toBeUndefined();
+      expect(roster.peerIdOf(3)).toBeUndefined();
+    });
+
+    it('a hello without an id lists the guest without a peerId key', () => {
+      const roster = new HostRoster('Alice');
+      roster.handleHello('Bob', null, 0);
+      expect(roster.currentRoster()[1]).toEqual({ slot: 1, username: 'Bob' });
+      expect('peerId' in roster.currentRoster()[1]!).toBe(false);
+    });
+
+    it('a rejoin replaces the old id with the new connection id', () => {
+      const roster = new HostRoster('Alice');
+      roster.handleHello('Bob', 'token-bob', 0, 'peer-old');
+      roster.handleDisconnect(1, 1000);
+      expect(roster.handleHello('Bob', 'token-bob', 2000, 'peer-new')).toEqual({ outcome: 'rejoined', slot: 1 });
+      expect(roster.peerIdOf(1)).toBe('peer-new');
+      expect(roster.connectedRoster()).toContainEqual({ slot: 1, username: 'Bob', peerId: 'peer-new' });
+    });
+
+    it('a takeover while the old connection still reads as connected also switches the id', () => {
+      const roster = new HostRoster('Alice');
+      roster.handleHello('Bob', 'token-bob', 0, 'peer-old');
+      roster.handleHello('Bob', 'token-bob', 500, 'peer-new');
+      expect(roster.peerIdOf(1)).toBe('peer-new');
+    });
+
+    it('a new player on a freed slot gets its own id, not the departed one', () => {
+      const roster = new HostRoster('Alice');
+      roster.handleHello('Bob', 'token-bob', 0, 'peer-bob');
+      roster.handleDisconnect(1, 1000);
+      roster.sweepExpiredReservations(1000 + MULTIPLAYER_REJOIN_GRACE_PERIOD_MS);
+      expect(roster.peerIdOf(1)).toBeUndefined();
+      roster.handleHello('Dan', 'token-dan', 2000, 'peer-dan');
+      expect(roster.peerIdOf(1)).toBe('peer-dan');
+    });
+
+    it('connectedRoster leaves out a disconnected guest and its id', () => {
+      const roster = new HostRoster('Alice');
+      roster.handleHello('Bob', 'token-bob', 0, 'peer-bob');
+      roster.handleHello('Cara', 'token-cara', 0, 'peer-cara');
+      roster.handleDisconnect(1, 1000);
+      expect(roster.connectedRoster().map((entry) => entry.peerId)).toEqual([undefined, 'peer-cara']);
+    });
+  });
 });

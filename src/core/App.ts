@@ -9,7 +9,7 @@ import { CreateRoomScreen } from '../ui/menu/CreateRoomScreen.ts';
 import { JoinRoomScreen } from '../ui/menu/JoinRoomScreen.ts';
 import { MatchEndScreen, type MultiplayerMatchEndResult, type RematchSettings } from '../ui/matchEndScreen.ts';
 import { Game } from './Game.ts';
-import { DEFAULT_ENEMY_COUNT, DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, DEFAULT_MATCH_MAP, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
+import { DEFAULT_ENEMY_COUNT, DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, DEFAULT_MATCH_MAP, DEFAULT_MATCH_WEATHER, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 import { generateMultiplayerSeed } from './worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from './multiplayerSpawn.ts';
 import type { PeerConnection } from '../network/PeerConnection.ts';
@@ -105,6 +105,7 @@ export class App {
         targetCount: DEFAULT_TARGET_COUNT,
         gooseDifficulty: DEFAULT_GOOSE_EXPLOSION_DIFFICULTY,
         map: DEFAULT_MATCH_MAP,
+        weather: DEFAULT_MATCH_WEATHER,
         hordeMode: false,
         directorMode: false,
         missionMode: false,
@@ -165,7 +166,7 @@ export class App {
       // gooseDifficulty here is unused - multiplayer reads it from the session (params.gooseDifficulty)
       // instead, see Game.ts's ActiveMultiplayer.gooseDifficulty. Present only to satisfy MatchConfig's
       // shape, same reasoning as the enemyCount/targetCount zeros above.
-      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, map: params.map, hordeMode: false, directorMode: false, missionMode: false },
+      { enemyCount: 0, targetCount: 0, gooseDifficulty: params.gooseDifficulty, map: params.map, weather: params.weather, hordeMode: false, directorMode: false, missionMode: false },
       (status, ratio) => this.loadingScreen.setProgress(status, ratio),
       () => void this.returnToLobby(),
       { connection, role, ...params },

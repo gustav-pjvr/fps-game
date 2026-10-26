@@ -3,6 +3,7 @@ import { ACCENT, HAIRLINE, INK, INK_DIM, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_S
 import { DEFAULT_ENEMY_COUNT, DEFAULT_TARGET_COUNT } from '../../core/config.ts';
 import { GAME_VERSION } from '../../core/version.ts';
 import { getWorldSeed } from '../../core/worldSeed.ts';
+import { setDeviceHint } from '../../input/GamepadInput.ts';
 import { lookFor } from '../../render/look.ts';
 
 export interface MainMenuCallbacks {
@@ -89,7 +90,7 @@ export class MainMenu {
     for (const [key, action] of [['WASD', 'MOVE'], ['MOUSE', 'AIM / FIRE'], ['SHIFT', 'SPRINT'], ['R', 'RELOAD']] as const) {
       const hint = document.createElement('span');
       const kbd = document.createElement('kbd');
-      kbd.textContent = key;
+      setDeviceHint(kbd, key, { WASD: 'Left stick', MOUSE: 'LT / RT (L2 / R2)', SHIFT: 'L3', R: 'X (Square)' }[key]);
       kbd.style.cssText =
         `font-family:${MONO_FONT}; font-size:9px; font-weight:400; letter-spacing:0.04em; color:${INK};` +
         ` border:1px solid ${HAIRLINE}; border-radius:2px; padding:3px 5px; margin-right:6px;`;

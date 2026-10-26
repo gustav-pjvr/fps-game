@@ -86,6 +86,12 @@ export class AmmoDropManager {
     this.drops.set(id, { id, mesh, position: mesh.position });
   }
 
+  /** Every live drop, for a late joiner's sync (network/matchSync.ts): each is sent as an ordinary
+   * hordeAmmoDropSpawned, same shape as GooseManager.listForSync. */
+  listForSync(): { id: string; x: number; y: number; z: number }[] {
+    return Array.from(this.drops.values(), (drop) => ({ id: drop.id, x: drop.position.x, y: drop.position.y, z: drop.position.z }));
+  }
+
   /** The nearest live drop within `radius` of `position`, or null - used to resolve a walk-over
    * pickup, same shape as GooseManager.findNearestWithinRadius. */
   findNearestWithinRadius(position: THREE.Vector3, radius: number): string | null {

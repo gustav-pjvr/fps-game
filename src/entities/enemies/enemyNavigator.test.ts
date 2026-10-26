@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { hasEnemyNavigator, resolveMoveTarget, setEnemyNavigator } from './enemyNavigator.ts';
+import { enemyFloorAt, hasEnemyNavigator, resolveMoveTarget, setEnemyFloor, setEnemyNavigator } from './enemyNavigator.ts';
 import { generateFacilityLayout, isWalkable } from '../../world/facility/facilityLayout.ts';
 import { FacilityNav, segmentClear } from '../../world/facility/facilityNav.ts';
 
@@ -43,5 +43,22 @@ describe('enemy navigator hook', () => {
       checked++;
     }
     expect(checked).toBeGreaterThan(0);
+  });
+
+  it('passes body heights through to the navigator, and asks the floor hook only while one is set', () => {
+    const seen: (number | undefined)[][] = [];
+    setEnemyNavigator((_fromX, _fromZ, toX, toZ, fromY, toY) => {
+      seen.push([fromY, toY]);
+      return { x: toX, z: toZ, direct: true };
+    });
+    expect(resolveMoveTarget(0, 0, 1, 1, 2.5, 5.5)).toEqual({ x: 1, z: 1, direct: true });
+    expect(resolveMoveTarget(0, 0, 1, 1)).toEqual({ x: 1, z: 1, direct: true });
+    expect(seen).toEqual([[2.5, 5.5], [undefined, undefined]]);
+    expect(enemyFloorAt(3, 4, 1)).toBeNull();
+    setEnemyFloor((x, _z, feetY) => (x > 0 ? feetY + 0.5 : null));
+    expect(enemyFloorAt(3, 4, 1)).toBe(1.5);
+    expect(enemyFloorAt(-3, 4, 1)).toBeNull();
+    setEnemyFloor(null);
+    expect(enemyFloorAt(3, 4, 1)).toBeNull();
   });
 });

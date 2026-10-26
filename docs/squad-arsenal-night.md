@@ -5,6 +5,8 @@ Gustav, 2026-10-25: "Go full out on 1; 2: grenades (flash and normal), doors, sw
 enemies, more modes on the Facility, the torch on the Valley at night, enterable buildings on the
 Valley.
 
+**Status (2026-10-26): all of it shipped together as v4.4.0** (see docs/CHANGELOG.md); the release split below was the plan.
+
 Three releases, each merged, reviewed (one independent Opus audit plus one re-check) and deployed
 before the next is called done. Work inside a release runs in parallel on separate branches.
 
@@ -94,8 +96,8 @@ Standard-mapping gamepads through the Gamepad API (Xbox and PlayStation names in
     `Player.applyLook`'s zoom scaling applies unchanged.
 - **Mapping.** Left stick move, L3 sprint (stays on while moving forward), right stick look, RT
   (R2) fire, LT (L2) aim, A (Cross) jump, X (Square) reload, B (Circle) interact, Y (Triangle) next
-  weapon, D-pad left and right previous and next weapon, D-pad up torch, RB (R1) frag grenade and
-  LB (L1) flash grenade (wired once grenades land in v4.5.0; until then unbound), Start (Options)
+  weapon, D-pad left and right previous and next weapon, D-pad up torch, RB (R1) throws the
+  grenade (wired once grenades land in v4.5.0; until then unbound), Start (Options)
   pause, View (Share) reset match where `resetPlay` applies.
 - **Playing without pointer lock.** The game pauses whenever pointer lock is lost. With a pad, a
   player must be able to play without it: `InputManager.isEngaged` is true when pointer lock is
@@ -126,8 +128,12 @@ Standard-mapping gamepads through the Gamepad API (Xbox and PlayStation names in
 
 Two thrown items carried beside the guns (not weapon slots): **frag** and **flash**.
 
-- **Carry:** 2 of each at spawn and on respawn, at most 3. HUD shows both counts beside the ammo.
-- **Input:** G frag, Q flash (rebindable; pad RB and LB). Press and hold to cook: an arc preview
+- **Loadout (Gustav, 2026-10-25):** the player picks one grenade type, frag or flash, in a small
+  Grenade section of the Loadout screen (saved with the loadout, default frag).
+- **Carry:** 2 of the chosen type at spawn and on respawn, at most 3. HUD shows the count beside
+  the ammo.
+- **Input (Gustav, 2026-10-25):** Q throws the chosen grenade (rebindable; pad RB); E stays
+  interact. Press and hold to cook: an arc preview
   (dotted line and a landing ring) shows while held; release throws. A tap throws at once. You
   cannot throw while reloading or during the knife swing; throwing lowers the gun briefly
   (0.45 s) with a throw animation on the view model (arm and grenade).
@@ -188,7 +194,7 @@ Two thrown items carried beside the guns (not weapon slots): **frag** and **flas
 ## 5. v4.5.0: pickups
 
 - **Kinds:** health pack (+40 health, up to 100), ammo box (one magazine to every gun's reserve),
-  grenade crate (+1 frag, +1 flash, up to the cap). Walk-over pickup within 1.4 m; skipped if it
+  grenade crate (+1 of the chosen grenade, up to the cap). Walk-over pickup within 1.4 m; skipped if it
   would give nothing (full health, full ammo, full grenades).
 - **Placement** from the match seed: Facility: one pickup per room on average, never in the
   player start room, against a wall, mix about 45 percent health, 40 ammo, 15 grenade; Valley:

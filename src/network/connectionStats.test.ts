@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatConnection, readConnectionQuality, summarizeConnection } from './connectionStats.ts';
+import { combineRelayedQuality, formatConnection, formatOpponentPings, readConnectionQuality, summarizeConnection } from './connectionStats.ts';
 
 function report(entries: Record<string, unknown>[]): Pick<RTCStatsReport, 'forEach' | 'get'> {
   const map = new Map(entries.map((entry) => [entry.id as string, entry]));
@@ -54,31 +54,71 @@ describe('readConnectionQuality', () => {
 });
 
 describe('summarizeConnection', () => {
-  it('a guest shows its link to the host and doubles the lead for other guests', () => {
-    const summary = summarizeConnection('guest', 0, new Map([[0, { rttMs: 80, route: 'direct' as const }]]), [0, 2]);
-    expect(summary.shown).toEqual({ rttMs: 80, route: 'direct' });
-    expect(summary.leadSeconds.get(0)).toBeCloseTo(0.04);
-    expect(summary.leadSeconds.get(2)).toBeCloseTo(0.08);
-  });
-
-  it('the host shows its slowest guest and flags a relay', () => {
+  it('gives every opponent its own round trip and half of it as lead', () => {
     const summary = summarizeConnection(
-      'host',
-      0,
       new Map([
         [1, { rttMs: 30, route: 'direct' as const }],
         [2, { rttMs: 140, route: 'relay' as const }],
       ]),
-      [1, 2, 3],
+      [1, 2],
     );
-    expect(summary.shown).toEqual({ rttMs: 140, route: 'relay' });
+    expect(summary.perOpponent.get(1)).toEqual({ rttMs: 30, route: 'direct' });
+    expect(summary.perOpponent.get(2)).toEqual({ rttMs: 140, route: 'relay' });
     expect(summary.leadSeconds.get(1)).toBeCloseTo(0.015);
+    expect(summary.leadSeconds.get(2)).toBeCloseTo(0.07);
+  });
+
+  it('an opponent with no measurement yet is unknown with no lead, and unlisted slots are left out', () => {
+    const summary = summarizeConnection(new Map([[5, { rttMs: 50, route: 'direct' as const }]]), [0, 3]);
+    expect(summary.perOpponent.get(3)).toEqual({ rttMs: null, route: null });
     expect(summary.leadSeconds.get(3)).toBe(0);
+    expect([...summary.perOpponent.keys()]).toEqual([0, 3]);
   });
 
   it('formats the HUD line', () => {
     expect(formatConnection({ rttMs: 42, route: 'direct' })).toBe('Ping 42 ms');
     expect(formatConnection({ rttMs: 120, route: 'relay' })).toBe('Ping 120 ms, relay');
     expect(formatConnection({ rttMs: null, route: null })).toBe('Ping --');
+  });
+});
+
+describe('combineRelayedQuality', () => {
+  it('adds the guest link to the host and the host link to the other guest', () => {
+    expect(combineRelayedQuality({ rttMs: 30, route: 'direct' }, { rttMs: 45, relay: false })).toEqual({ rttMs: 75, route: 'direct' });
+  });
+
+  it('is unknown until both halves are known', () => {
+    expect(combineRelayedQuality({ rttMs: null, route: 'direct' }, { rttMs: 45, relay: false }).rttMs).toBeNull();
+    expect(combineRelayedQuality({ rttMs: 30, route: 'direct' }, { rttMs: null, relay: false }).rttMs).toBeNull();
+  });
+
+  it('is a relay when either half goes through a relay', () => {
+    expect(combineRelayedQuality({ rttMs: 30, route: 'relay' }, { rttMs: 45, relay: false }).route).toBe('relay');
+    expect(combineRelayedQuality({ rttMs: 30, route: 'direct' }, { rttMs: 45, relay: true }).route).toBe('relay');
+  });
+
+  it('keeps an unmeasured route unmeasured when nothing is a relay', () => {
+    expect(combineRelayedQuality({ rttMs: null, route: null }, { rttMs: null, relay: false })).toEqual({ rttMs: null, route: null });
+  });
+});
+
+describe('formatOpponentPings', () => {
+  it('shows the plain ping line before any opponent is known', () => {
+    expect(formatOpponentPings([])).toBe('Ping --');
+  });
+
+  it('shows one opponent as the two-player line', () => {
+    expect(formatOpponentPings([{ name: 'Ann', quality: { rttMs: 42, route: 'direct' } }])).toBe('Ping 42 ms');
+    expect(formatOpponentPings([{ name: 'Ann', quality: { rttMs: 120, route: 'relay' } }])).toBe('Ping 120 ms, relay');
+  });
+
+  it('names each opponent with its own round trip, marking relays and unmeasured ones', () => {
+    expect(
+      formatOpponentPings([
+        { name: 'Ann', quality: { rttMs: 42, route: 'direct' } },
+        { name: 'Bob', quality: { rttMs: 61, route: 'relay' } },
+        { name: 'Cat', quality: { rttMs: null, route: null } },
+      ]),
+    ).toBe('Ping Ann 42 ms, Bob 61 ms relay, Cat --');
   });
 });
