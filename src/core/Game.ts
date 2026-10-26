@@ -147,6 +147,7 @@ import {
   MULTIPLAYER_KILL_CREDIT_WINDOW_MS,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_RESPAWN_DELAY,
+  PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PLAYER_SNAPSHOT_SEND_INTERVAL,
   SPAWN_STRUCTURE_CLEARANCE,
@@ -185,7 +186,7 @@ import { KingOfTheHillController } from './modeControllers/KingOfTheHillControll
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
 import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
-import { visibility } from '../entities/enemies/playerVisibility.ts';
+import { flashLightsPlayer, visibility } from '../entities/enemies/playerVisibility.ts';
 import { createMatchPickups } from '../pickups/createMatchPickups.ts';
 import { grenadeSupplyFrom } from '../pickups/pickupEffects.ts';
 import type { PickupSystem } from '../pickups/PickupSystem.ts';
@@ -2589,6 +2590,7 @@ export class Game {
     }
 
     const probe = this.facility?.world.probeAt(this.player.position.x, this.player.position.z);
+    const at = this.player.position;
     this.playerVisibility.value = visibility({
       map: this.facility ? 'facility' : 'valley',
       weather: this.matchWeather,
@@ -2596,6 +2598,8 @@ export class Game {
       secondsSinceShot: this.secondsSinceShot,
       torchOn: this.torch?.isOn ?? false,
       enemyInTorchBeam: false,
+      houseRoomLit: this.buildings?.houses.roomLampLitAt(at.x, at.y - PLAYER_HEIGHT / 2, at.z) ?? null,
+      flashLit: this.grenades ? flashLightsPlayer(this.grenades.recentDetonations, this.grenades.now, at) : false,
     });
     this.playerVisibility.torchOn = this.torch?.isOn ?? false;
     this.playerVisibility.eye.copy(this.renderer.camera.position);

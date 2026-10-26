@@ -11,6 +11,10 @@ import { ValleyDoors } from './ValleyDoors.ts';
 
 /** Interiors (furniture, partitions, the stair) are hidden past this distance from the camera. */
 export const INTERIOR_DRAW_DISTANCE = 70;
+/** Every house's footprint lies within this distance (m) of its origin. */
+const HOUSE_REACH = 8;
+/** Feet this far (m) under a room's floor (a step, the ground at the door) still count as in it. */
+const ROOM_FEET_BELOW = 0.3;
 
 /** Where a house stands, from the seeded town layout (BuildingManager.houseAt). */
 export interface HousePlacement {
@@ -98,6 +102,26 @@ export class ValleyHouses {
       house.interior.visible = dx * dx + dz * dz < far;
     }
     this.lights.update(dt, this.cameraPosition);
+  }
+
+  /** Whether the lamp of the house room a body with its feet at feetY stands in at (x, z) is lit
+   * (enemies see a player in a dark room less well, entities/enemies/playerVisibility.ts); null
+   * outside every streamed-in house's rooms. */
+  roomLampLitAt(x: number, feetY: number, z: number): boolean | null {
+    for (const house of this.loaded.values()) {
+      const { placement } = house, dx = x - placement.x, dz = z - placement.z;
+      if (dx * dx + dz * dz > HOUSE_REACH * HOUSE_REACH) continue;
+      const c = Math.cos(placement.rotationY), s = Math.sin(placement.rotationY);
+      const lx = dx * c - dz * s, lz = dx * s + dz * c, ly = feetY - placement.groundY;
+      const rooms = HOUSE_DESIGNS[placement.design]!.layout.rooms;
+      for (let i = 0; i < rooms.length; i++) {
+        const b = rooms[i]!.bounds;
+        if (lx >= b.minX && lx <= b.maxX && lz >= b.minZ && lz <= b.maxZ && ly >= b.minY - ROOM_FEET_BELOW && ly < b.maxY) {
+          return this.lights.isLit(house.lampIds[i]!);
+        }
+      }
+    }
+    return null;
   }
 
   /** Whether `id` names a ceiling lamp of a house in this world, streamed in or not (a lamp id from

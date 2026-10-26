@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { HOUSE_LIGHT_POOL } from './HouseLights.ts';
-import { HOUSE_LAYOUTS } from './houseLayout.ts';
+import { HOUSE_LAYOUTS, houseToWorld } from './houseLayout.ts';
 import { houseKey, houseObjectId, type HouseRef } from './valleyHouseIds.ts';
 import { FRONT_DOOR_SLOT, ValleyHouses, type HousePlacement } from './ValleyHouses.ts';
 
@@ -138,6 +138,30 @@ describe('Valley house lamps', () => {
     day.place(0);
     expect(day.houses.lights.debug()).toMatchObject({ lit: 0, lights: [] });
     expect(day.scene.children.some((c) => c instanceof THREE.PointLight)).toBe(false);
+  });
+
+  it('tell whether the room a player stands in has its lamp lit, by floor, and nothing outside', () => {
+    const { houses, place } = setup(true);
+    place(0);
+    place(1);
+    const ground = (i: number, room: number) => {
+      const p = PLACEMENTS[i]!, b = HOUSE_LAYOUTS[p.design]!.rooms[room]!.bounds;
+      return { ...houseToWorld((b.minX + b.maxX) / 2, b.minY, (b.minZ + b.maxZ) / 2, p.x, p.groundY, p.z, p.rotationY) };
+    };
+    const room = ground(0, 0);
+    expect(houses.roomLampLitAt(room.x, room.y, room.z)).toBe(true);
+    // The block (turned a quarter): its upper floor room, and below it the ground floor room.
+    const upper = ground(1, 1), lower = ground(1, 0);
+    expect(upper.y).toBeGreaterThan(lower.y + 2);
+    expect(houses.roomLampLitAt(upper.x, upper.y, upper.z)).toBe(true);
+    houses.lights.killLamp(houseObjectId(houseKey(PLACEMENTS[1]!.ref), 1), false);
+    expect(houses.roomLampLitAt(upper.x, upper.y, upper.z)).toBe(false);
+    expect(houses.roomLampLitAt(lower.x, lower.y, lower.z)).toBe(true);
+    expect(houses.roomLampLitAt(10, 2, 40)).toBeNull();
+    // By day no lamp is lit.
+    const day = setup(false);
+    day.place(0);
+    expect(day.houses.roomLampLitAt(room.x, room.y, room.z)).toBe(false);
   });
 
   it('break a lamp a pellet reaches first, keep it dead through streaming, and hide far interiors', () => {
