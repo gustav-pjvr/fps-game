@@ -8,7 +8,7 @@ import { fireWideShot, type EnemyCombatHooks } from './enemyCombat.ts';
 import { FlashBlindState } from './flashBlind.ts';
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { CombatBehaviour, type PickDebug } from './combatBehaviour.ts';
-import { awarenessLevel, hearingRangeFor, isInViewCone, stepAwareness, visibilityFactor, type PlanarPoint } from './perception.ts';
+import { awarenessLevel, hearingRangeFor, isInViewCone, sightRayRange, stepAwareness, visibilityFactor, type PlanarPoint } from './perception.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import type { IntentKind, IntentSink } from './calloutDirector.ts';
 import { StuckDetector } from './stuckDetector.ts';
@@ -289,10 +289,12 @@ export class EnemyBrain {
     this.losCheckTimer -= dt;
     if (this.losCheckTimer <= 0) {
       this.losCheckTimer = ENEMY_LOS_CHECK_INTERVAL;
-      // No ray beyond the visible detection range, nor for an
-      // oblivious enemy facing the other way - it could not start noticing the player anyway.
+      // No ray beyond the visible detection range while acquiring (leash range once engaged), nor
+      // for an oblivious enemy facing the other way - it could not start noticing the player anyway.
+      const archetype = this.body.archetype;
+      const engaged = this.state === 'alert' || this.state === 'chase';
       this.hasLineOfSightToPlayer =
-        distanceToPlayer <= this.body.archetype.detectionRange * this.playerVisibility &&
+        distanceToPlayer <= sightRayRange(engaged, archetype.detectionRange, archetype.leashRange, this.playerVisibility) &&
         this.isWorthLooking(current, player) &&
         this.computeLineOfSight(current, player);
       if (this.hasLineOfSightToPlayer) this.lastSeenPosition.copy(player.position);
