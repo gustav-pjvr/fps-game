@@ -11,6 +11,18 @@ export const GAMEPAD_ACTIONS: Readonly<Partial<Record<number, Action>>> = {
   12: 'flashlight', 14: 'weaponPrev', 15: 'weaponNext',
 };
 
+const BUTTON_NAMES: Readonly<Record<number, string>> = {
+  0: 'A (Cross)', 1: 'B (Circle)', 2: 'X (Square)', 3: 'Y (Triangle)', 5: 'RB (R1)',
+  12: 'D-pad up', 14: 'D-pad left', 15: 'D-pad right',
+};
+
+/** The controller button hint for `action`, from GAMEPAD_ACTIONS (the first button that triggers it),
+ * or null when no standard button does. */
+export function gamepadHint(action: Action): string | null {
+  const button = Object.keys(GAMEPAD_ACTIONS).map(Number).find((index) => GAMEPAD_ACTIONS[index] === action);
+  return button === undefined ? null : BUTTON_NAMES[button] ?? `Button ${button}`;
+}
+
 export const GAMEPAD_MAPPING = [
   'Left stick: move; L3: sprint while moving forward',
   'Right stick: look; RT (R2): fire; LT (L2): aim',
@@ -58,6 +70,10 @@ export class GamepadInput {
   activeDevice: ActiveDevice = 'mouse';
   managed = false;
   private pad: Gamepad | null = null;
+  // Per connected pad: what it reported last sample and when it last did something. Steam Input
+  // or DS4Windows can list a virtual pad first, so the pad in use is the one touched most recently.
+  private readonly snapshots = new Map<number, { buttons: Set<number>; axes: number[] }>();
+  private readonly lastActivity = new Map<number, number>();
   private previousButtons = new Set<number>();
   private previousAxes: number[] = [];
   private sprinting = false;
@@ -89,7 +105,7 @@ export class GamepadInput {
     if (!pads && this.cachedFrame) return { ...this.cachedFrame, pressed: new Set(), justPressed: new Set() };
     this.sampleNumber++;
     const available = (pads ?? connectedGamepads()).filter((pad): pad is Gamepad => !!pad && pad.connected && pad.mapping === 'standard');
-    const pad = available.find((candidate) => candidate.index === this.pad?.index) ?? available[0] ?? null;
+    const pad = this.choosePad(available);
     if (pad?.index !== this.pad?.index) {
       this.previousButtons.clear();
       this.previousAxes = [];
@@ -129,6 +145,30 @@ export class GamepadInput {
     const frame = { move, look, buttons, pressed, actions, justPressed };
     if (!pads && this.frameManaged) this.cachedFrame = frame;
     return frame;
+  }
+
+  private choosePad(available: readonly Gamepad[]): Gamepad | null {
+    for (const index of [...this.snapshots.keys()]) {
+      if (!available.some((candidate) => candidate.index === index)) { this.snapshots.delete(index); this.lastActivity.delete(index); }
+    }
+    for (const candidate of available) {
+      const buttons = new Set<number>();
+      candidate.buttons.forEach((button, index) => { if (button.pressed || button.value > 0.5) buttons.add(index); });
+      const move = radialDeadZone(candidate.axes[0] ?? 0, candidate.axes[1] ?? 0, 0.15);
+      const look = radialDeadZone(candidate.axes[2] ?? 0, candidate.axes[3] ?? 0, 0.12);
+      const axes = [move.x, move.y, look.x, look.y];
+      const before = this.snapshots.get(candidate.index);
+      const touched = [...buttons].some((index) => !before?.buttons.has(index))
+        || axes.some((v, i) => Math.abs(v) > 0.02 && Math.abs(v - (before?.axes[i] ?? 0)) > 0.02);
+      if (touched) this.lastActivity.set(candidate.index, this.sampleNumber);
+      this.snapshots.set(candidate.index, { buttons, axes });
+    }
+    // The pad in use keeps the seat on a tie; only a strictly newer touch moves it.
+    let best = available.find((candidate) => candidate.index === this.pad?.index) ?? available[0] ?? null;
+    for (const candidate of available) {
+      if ((this.lastActivity.get(candidate.index) ?? -1) > (this.lastActivity.get(best?.index ?? -1) ?? -1)) best = candidate;
+    }
+    return best;
   }
 
   vibrate(kind: 'fire' | 'automatic' | 'damage' | 'explosion'): void {

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GamepadInput, GAMEPAD_ACTIONS, lookResponse, mergeMoveVectors, radialDeadZone } from './GamepadInput.ts';
 import { Settings } from '../settings/Settings.ts';
 
-function pad(axes = [0, 0, 0, 0], down: number[] = []): Gamepad {
-  return { index: 0, connected: true, mapping: 'standard', axes,
+function pad(axes = [0, 0, 0, 0], down: number[] = [], index = 0): Gamepad {
+  return { index, connected: true, mapping: 'standard', axes,
     buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: down.includes(i), value: down.includes(i) ? 1 : 0, touched: false })),
   } as unknown as Gamepad;
 }
@@ -80,6 +80,26 @@ describe('standard mapping and lifecycle', () => {
     expect(input.poll([]).actions.size).toBe(0);
     expect(input.activeDevice).toBe('mouse');
     expect(input.poll([{ ...pad([], [7]), mapping: '' }]).actions.size).toBe(0);
+  });
+
+  it('follows the pad that was touched most recently, not the first one listed', () => {
+    const input = new GamepadInput();
+    // A virtual pad (Steam Input, DS4Windows) sits at index 0; the real pad is index 1.
+    expect(input.poll([pad(), pad([], [], 1)]).actions.size).toBe(0);
+    expect(input.poll([pad(), pad([], [7], 1)]).justPressed.has('fire')).toBe(true);
+    expect(input.poll([pad(), pad([], [7], 1)]).actions.has('fire')).toBe(true);
+    expect(input.poll([pad([0, -1], []), pad([], [7], 1)]).actions.has('moveForward')).toBe(true);
+    // Nothing new on either pad: the pad in use keeps the seat.
+    expect(input.poll([pad([0, -1], []), pad([], [7], 1)]).actions.has('moveForward')).toBe(true);
+    expect(input.poll([pad([0, -1], []), pad([], [7, 2], 1)]).justPressed.has('reload')).toBe(true);
+  });
+
+  it('keeps the current pad when two pads are touched in the same sample, and drops one that disconnects', () => {
+    const input = new GamepadInput();
+    input.poll([pad(), pad([], [], 1)]);
+    input.poll([pad([], [2], 0), pad([], [], 1)]);
+    expect(input.poll([pad([], [2, 3], 0), pad([], [7], 1)]).justPressed.has('weaponNext')).toBe(true);
+    expect(input.poll([pad([], [2], 0)]).actions.has('reload')).toBe(true);
   });
 
   it('uses weaker automatic pulses and respects the vibration setting and device', () => {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { nearestFocus, type FocusRect } from './gamepadFocus.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { backControl, GamepadFocus, nearestFocus, type FocusRect } from './gamepadFocus.ts';
+import { gamepadInput, type GamepadFrame } from '../input/GamepadInput.ts';
 
 const rect = (x: number, y: number, width = 20, height = 20): FocusRect => ({ x, y, width, height });
 
@@ -22,5 +23,78 @@ describe('spatial controller focus', () => {
   it('starts on the first control and safely handles an empty screen', () => {
     expect(nearestFocus([rect(10, 10)], -1, 'down')).toBe(0);
     expect(nearestFocus([], -1, 'down')).toBe(-1);
+  });
+});
+
+class FakeControl {
+  isConnected = true;
+  clicks = 0;
+  constructor(readonly textContent: string, private readonly doc: { activeElement: unknown }) {}
+  focus(): void { this.doc.activeElement = this; }
+  click(): void { this.clicks++; }
+  getBoundingClientRect(): FocusRect { return { x: 0, y: 0, width: 10, height: 10 }; }
+}
+
+const frame = (down: number[], pressed: number[]): GamepadFrame => ({
+  move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, buttons: new Set(down), pressed: new Set(pressed),
+  actions: new Set(), justPressed: new Set(),
+});
+
+describe('controller menu button gate', () => {
+  afterEach(() => { vi.unstubAllGlobals(); gamepadInput.setActiveDevice('mouse'); });
+
+  function setup(): { menu: GamepadFocus; respawn: FakeControl; doc: { activeElement: unknown } } {
+    gamepadInput.setActiveDevice('gamepad');
+    const doc: { activeElement: unknown } = { activeElement: null };
+    vi.stubGlobal('document', doc);
+    vi.stubGlobal('HTMLInputElement', class {});
+    vi.stubGlobal('HTMLSelectElement', class {});
+    const respawn = new FakeControl('Respawn', doc);
+    const menu = new GamepadFocus(() => [respawn as unknown as HTMLElement]);
+    return { menu, respawn, doc };
+  }
+  const flush = (): Promise<void> => Promise.resolve();
+
+  it('ignores an A that was already down when the menu took focus, until it is released', async () => {
+    const { menu, respawn } = setup();
+    menu.update(frame([0], [0]), 0.016);   // jump pressed as the results screen appears
+    menu.update(frame([0], []), 0.016);    // still held
+    await flush();
+    expect(respawn.clicks).toBe(0);
+    menu.update(frame([], []), 0.016);     // released
+    menu.update(frame([0], [0]), 0.016);   // a new press
+    await flush();
+    expect(respawn.clicks).toBe(1);
+  });
+
+  it('ignores a held A in the very frame the menu gets focus even when it reads as a fresh edge', async () => {
+    const { menu, respawn } = setup();
+    menu.update(frame([0], [0]), 0.016);
+    await flush();
+    expect(respawn.clicks).toBe(0);
+  });
+
+  it('accepts a press that begins after the menu has focus', async () => {
+    const { menu, respawn } = setup();
+    menu.update(frame([], []), 0.016);
+    menu.update(frame([0], [0]), 0.016);
+    await flush();
+    expect(respawn.clicks).toBe(1);
+  });
+});
+
+describe('B back control', () => {
+  const labelled = (...labels: string[]) => labels.map((textContent) => ({ textContent }));
+
+  it('picks Back, Cancel, Close, Done or Resume', () => {
+    for (const label of ['Back', 'cancel', 'Close', 'Done', 'Resume']) {
+      const controls = labelled('Respawn', label);
+      expect(backControl(controls)).toBe(controls[1]);
+    }
+  });
+
+  it('never picks Return to Lobby, so B cannot leave a match from the death or match-end screen', () => {
+    expect(backControl(labelled('Respawn', 'Return to Lobby'))).toBeUndefined();
+    expect(backControl(labelled('Return to Lobby'))).toBeUndefined();
   });
 });

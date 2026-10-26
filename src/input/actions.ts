@@ -88,3 +88,11 @@ export function formatKeyCode(code: string): string {
   if (code === 'AltLeft' || code === 'AltRight') return 'Alt';
   return code;
 }
+
+/** The key hint for `action` from the player's bindings: the first key bound to it, or "Unbound"
+ * (an old save can hold the action's default key for another action, and bindings are never taken
+ * from a player). */
+export function keyHint(bindings: Readonly<Record<string, Action>>, action: Action): string {
+  const code = Object.keys(bindings).find((candidate) => bindings[candidate] === action);
+  return code ? formatKeyCode(code) : 'Unbound';
+}

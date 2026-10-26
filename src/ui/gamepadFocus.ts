@@ -89,12 +89,19 @@ function openKeyboard(input: HTMLInputElement): void {
   document.body.appendChild(overlay);
 }
 
+/**
+ * The control B presses. Only a plain back-out qualifies: B is also interact in play, so a B that
+ * lands on the death or match-end screen must never leave a match ("Return to Lobby" is not one).
+ */
+export function backControl<T extends { textContent: string | null }>(controls: readonly T[]): T | undefined {
+  return controls.find((element) => /^(back|cancel|close|done|resume)$/i.test(element.textContent?.trim() ?? ''));
+}
+
 export function gamepadBack(): void {
   const controls = menuControls();
   const root = controls[0] && menuRoot(controls[0]);
   if (root && !root.dispatchEvent(new Event('gamepadback', { cancelable: true }))) return;
-  const back = controls.find((element) => /^(back|cancel|close|done|resume)$/i.test(element.textContent?.trim() ?? ''))
-    ?? controls.find((element) => /^return to lobby$/i.test(element.textContent?.trim() ?? ''));
+  const back = backControl(controls);
   if (back) activate(back);
 }
 
@@ -106,13 +113,24 @@ function activate(element: HTMLElement): void {
 export class GamepadFocus {
   private direction: FocusDirection | null = null;
   private repeatIn = 0;
+  // Buttons held when a menu took focus. A (jump) or B (interact) still down from play must be
+  // released before it can press anything, or it would fire the screen's first button.
+  private readonly heldAtFocus = new Set<number>();
+
+  constructor(private readonly findControls: () => HTMLElement[] = menuControls) {}
 
   update(frame: GamepadFrame, dt: number): void {
     if (gamepadInput.activeDevice !== 'gamepad') return;
-    const controls = menuControls();
+    const controls = this.findControls();
     if (!controls.length) return;
     let focused = controls.indexOf(document.activeElement as HTMLElement);
-    if (focused < 0) { focused = 0; controls[0]!.focus(); }
+    if (focused < 0) {
+      focused = 0;
+      controls[0]!.focus();
+      this.heldAtFocus.clear();
+      for (const button of frame.buttons) this.heldAtFocus.add(button);
+    }
+    for (const button of this.heldAtFocus) if (!frame.buttons.has(button)) this.heldAtFocus.delete(button);
     const direction = frame.buttons.has(14) ? 'left' : frame.buttons.has(15) ? 'right'
       : frame.buttons.has(12) ? 'up' : frame.buttons.has(13) ? 'down'
       : Math.abs(frame.move.x) > Math.abs(frame.move.y) && Math.abs(frame.move.x) > 0.45
@@ -129,8 +147,8 @@ export class GamepadFocus {
       this.repeatIn = direction !== this.direction ? 0.35 : 0.12;
     }
     this.direction = direction;
-    if (frame.pressed.has(1)) { gamepadBack(); return; }
-    if (frame.pressed.has(0)) {
+    if (frame.pressed.has(1) && !this.heldAtFocus.has(1)) { gamepadBack(); return; }
+    if (frame.pressed.has(0) && !this.heldAtFocus.has(0)) {
       const element = document.activeElement as HTMLElement;
       if (element instanceof HTMLInputElement && ['text', 'search', 'email'].includes(element.type)) openKeyboard(element);
       else if (element instanceof HTMLSelectElement) changeControl(element, 1);

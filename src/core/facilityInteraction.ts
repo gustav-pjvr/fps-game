@@ -65,11 +65,11 @@ export class FacilityInteraction {
     this.deps.objects.update(dt);
     const target = input ? this.lookTarget() : null;
     if (target) {
-      this.deps.hud.setPrompt('E', interactPrompt(target.kind, this.deps.objects.state.isActive(target.kind, target.id)));
+      this.deps.hud.setPrompt('interact', interactPrompt(target.kind, this.deps.objects.state.isActive(target.kind, target.id)));
       this.promptShown = true;
       if (input!.consumeJustPressed('interact')) this.request(target.kind, target.id);
     } else if (this.promptShown) {
-      this.deps.hud.setPrompt('E', null);
+      this.deps.hud.setPrompt('interact', null);
       this.promptShown = false;
     }
   }
@@ -205,7 +205,7 @@ export class FacilityInteraction {
   }
 
   dispose(): void {
-    if (this.promptShown) this.deps.hud.setPrompt('E', null);
+    if (this.promptShown) this.deps.hud.setPrompt('interact', null);
     this.promptShown = false;
   }
 }
