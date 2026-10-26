@@ -5,6 +5,7 @@ import { combineRelayedQuality, readConnectionQuality, UNKNOWN_QUALITY, type Con
 import { GuestMesh, type MeshConnection } from './GuestMesh.ts';
 import { DIRECT_EVENT_TYPES, DuplicateEventFilter, MeshRelayPolicy } from './directLinks.ts';
 import { createSendClock } from './stateOrder.ts';
+import { acceptsFromSender } from './senderAuthority.ts';
 
 /** Namespaces this game's rooms on PeerJS's shared public signaling broker - the broker is a free
  * service shared by every app using PeerJS's default config, so a short, human-typeable room code
@@ -193,7 +194,7 @@ export class PeerConnection {
     private readonly role: MultiplayerRole,
     private callbacks: PeerConnectionCallbacks,
   ) {
-    peer.on('error', (error) => this.reportError(error));
+    peer.on('error', (error) => this.reportError(error, 'peer'));
     // A host whose broker websocket drops (network blip, sleeping laptop, a long-backgrounded tab)
     // stays reachable for players already connected, but PeerJS leaves it "disconnected": the room
     // code is no longer registered, so every new join or rejoin gets "No room found" until the host
@@ -206,11 +207,18 @@ export class PeerConnection {
     });
   }
 
-  private reportError(error: PeerError<string>): void {
+  /** `source`: the Peer itself, or one DataConnection (whose own errors always concern that link). */
+  private reportError(error: PeerError<string>, source: 'peer' | 'connection'): void {
     // After its welcome a guest only ever dials other guests, so an unknown peer id is a direct-link
     // dial to a player who left or reloaded, not "no room found": it must never end the match.
     if (this.role === 'guest' && this.welcomed && error.type === 'peer-unavailable') {
       this.mesh?.dialFailed(error.message.replace(/^Could not connect to peer /, ''));
+      return;
+    }
+    // Likewise a Peer-level WebRTC failure after the welcome comes from a direct link's negotiation
+    // (GuestMesh.ts, which drops a failed link itself) while the host connection is still open: the
+    // match goes on. A failing host connection closes, and that close ends the match.
+    if (source === 'peer' && this.role === 'guest' && this.welcomed && error.type === 'webrtc' && this.connections.get(HOST_SLOT)?.open === true) {
       return;
     }
     const { kind, message } = classifyPeerError(error.type, error.message);
@@ -269,10 +277,28 @@ export class PeerConnection {
    * this is (see onHostHello). PeerJS's own DataConnection 'data' event only ever fires once the
    * channel is actually open, so there's no need to separately gate this on an 'open' event. */
   private attachIncomingGuestConnection(connection: DataConnection): void {
-    connection.on('error', (error) => this.reportError(error));
+    connection.on('error', (error) => this.reportError(error, 'connection'));
+    // One hello per connection: a second one sent before the first resolved used to take a second slot.
+    let helloSeen = false;
+    // A joiner can drop while the host resolves its hello (a mid-match join loads the player's model
+    // first); the slot-keyed close handler below only exists once that is done, so watch from here.
+    let closedInLimbo = false;
+    connection.on('close', () => {
+      closedInLimbo = true;
+    });
     connection.on('data', (data) => {
-      if (!isNetworkMessage(data) || data.type !== 'hello') return; // ignore anything before hello resolves
+      if (helloSeen || !isNetworkMessage(data) || data.type !== 'hello') return; // ignore anything before hello resolves
+      helloSeen = true;
       void Promise.resolve(this.callbacks.onHostHello?.(data.username, data.rejoinToken, data.features, connection.peer)).then((result) => {
+        if (closedInLimbo) {
+          // Gone before its welcome: never registered. The roster already counts the slot it was
+          // given, so report it disconnected (a rejoin's grace period, a playerLeft mid-match),
+          // unless another connection holds that slot and will report its own close.
+          if (result && result !== 'full' && result !== 'outdated' && !this.connections.has(result.yourSlot)) {
+            this.callbacks.onPeerDisconnected(result.yourSlot);
+          }
+          return;
+        }
         if (!result || result === 'full' || result === 'outdated') {
           connection.send(result === 'outdated' ? { type: 'roomFull', reason: 'outdated' } : { type: 'roomFull' });
           // Closing immediately after send() can race the DataChannel's own flush - confirmed via
@@ -309,7 +335,7 @@ export class PeerConnection {
         // through the normal onMessage callback instead.
         connection.removeAllListeners('data');
         connection.on('data', (message) => {
-          if (!isNetworkMessage(message)) return;
+          if (!isNetworkMessage(message) || !acceptsFromSender(message, slot, this.role)) return;
           // The guest's direct links, for the relay decision only: never routed or relayed.
           if (message.type === 'meshStatus') {
             this.relayPolicy.report(slot, message.linked);
@@ -335,9 +361,9 @@ export class PeerConnection {
       this.closeFastChannel(HOST_SLOT);
       this.callbacks.onPeerDisconnected(HOST_SLOT);
     });
-    connection.on('error', (error) => this.reportError(error));
+    connection.on('error', (error) => this.reportError(error, 'connection'));
     connection.on('data', (data) => {
-      if (!isNetworkMessage(data)) return;
+      if (!isNetworkMessage(data) || !acceptsFromSender(data, HOST_SLOT, this.role)) return;
       if (data.type === 'welcome') {
         this.ownSlotValue = data.yourSlot;
         this.welcomed = true;
@@ -373,6 +399,7 @@ export class PeerConnection {
       },
       openFastChannel: (connection, onMessage) => (connection.peerConnection ? FastChannel.open(connection.peerConnection, onMessage) : null),
       onMessage: (message, slot) => {
+        if (!acceptsFromSender(message, slot, this.role)) return;
         if (DIRECT_EVENT_TYPES.has(message.type) && !this.duplicateEvents.accept(slot, (message as { t?: number }).t)) return;
         this.callbacks.onMessage(message, slot);
       },
@@ -481,7 +508,7 @@ export class PeerConnection {
     const peerConnection = connection.peerConnection as RTCPeerConnection | undefined;
     if (!peerConnection) return;
     const fast = FastChannel.open(peerConnection, (message) => {
-      if (this.connections.get(slot) === connection) this.callbacks.onMessage(message, slot);
+      if (this.connections.get(slot) === connection && acceptsFromSender(message, slot, this.role)) this.callbacks.onMessage(message, slot);
     });
     if (fast) this.fastChannels.set(slot, fast);
   }

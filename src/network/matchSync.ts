@@ -45,17 +45,26 @@ export interface MatchSyncSource {
   readonly bonusGeese: readonly SyncPoint[];
   /** Geese thrown or launched and still in the air. */
   readonly thrownGeese: Iterable<ThrownGooseSync>;
+  /** The running score and death count per slot (MultiplayerMatchState). */
+  readonly scoreboard: ReadonlyMap<PlayerSlot, number>;
+  readonly deathCounts: ReadonlyMap<PlayerSlot, number>;
   /** The host's announced result, once the scoreboard win condition was met. */
   readonly verdict: { winnerSlot: PlayerSlot; scoreboard: { slot: PlayerSlot; score: number }[] } | null;
 }
 
 /** The messages the host sends one late joiner, in order: the roster first (so the opponents the
- * rest refers to exist), then the world state, and the result last. Every message is an ordinary
+ * rest refers to exist), then the scoreboard, then the world state, and the result last. Every message is an ordinary
  * type the joiner already handles; each handler ignores an id it already has, so a sync that
  * crosses a live message changes nothing. */
 export function buildMatchSync(source: MatchSyncSource): NetworkMessage[] {
   const messages: NetworkMessage[] = [];
-  if (source.roster) messages.push({ type: 'rosterSync', roster: [...source.roster] });
+  if (source.roster) {
+    messages.push({ type: 'rosterSync', roster: [...source.roster] });
+    // Every connected slot, a missing entry as 0: a slot a newcomer took over since the joiner's
+    // welcome has had its old player's score cleared on the host, and must be cleared here too.
+    const scores = source.roster.map(({ slot }) => ({ slot, score: source.scoreboard.get(slot) ?? 0, deaths: source.deathCounts.get(slot) ?? 0 }));
+    messages.push({ type: 'scoreboardSync', scores });
+  }
   if (source.goldenGoose) {
     const { carrierSlot, position } = source.goldenGoose;
     messages.push({ type: 'goldenGooseState', carrierSlot, x: position.x, y: position.y, z: position.z });

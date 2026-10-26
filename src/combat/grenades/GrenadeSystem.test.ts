@@ -36,6 +36,11 @@ function fixedCuboid(physics: PhysicsWorld, x: number, y: number, z: number, hx:
   return physics.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z));
 }
 
+/** A remote grenade from slot 1 thrown and gone off at `position` (a detonation needs its throw). */
+function remoteDetonation(system: GrenadeSystem, id: string, kind: GrenadeKind, position: { x: number; y: number; z: number }): void {
+  system.receiveThrown({ type: 'grenadeThrown', senderSlot: 1, id, kind, origin: position, velocity: { x: 0, y: 0, z: 0 }, fuseLeft: 5, t: 1 });
+  system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id, kind, position });
+}
 async function rig(options: { enabled?: boolean; kind?: GrenadeKind; network?: boolean; wallAt?: number; friendlyFire?: boolean } = {}): Promise<Rig> {
   const physics = await PhysicsWorld.create();
   // Floor: top surface at y = 0.
@@ -156,6 +161,10 @@ describe('GrenadeSystem flight', () => {
   it('finds the wall a frag went off against, and no surface in the air', async () => {
     const r = await rig({ network: true, wallAt: -3 });
     // Wall face at z = -2.9: a copy that goes off just in front of it, a metre up, and one in the air.
+    const copy = (id: string, z: number) =>
+      r.system.receiveThrown({ type: 'grenadeThrown', senderSlot: 1, id, kind: 'frag', origin: { x: 0, y: 1, z }, velocity: { x: 0, y: 0, z: 0 }, fuseLeft: 1, t: 1 });
+    copy('wall', -2.75);
+    copy('air', 6);
     r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'wall', kind: 'frag', position: { x: 0, y: 1, z: -2.75 } });
     const wall = r.system.debugState().lastDetonation!.surface!;
     expect(wall.normal.z).toBeCloseTo(1, 3);
@@ -302,6 +311,7 @@ describe('GrenadeSystem flash', () => {
   it('does nothing to a player behind a wall from it', async () => {
     const r = await rig({ wallAt: -1.5 });
     // Over the wall it cannot go: it bounces back, so judge a remote flash beyond the wall instead.
+    r.system.receiveThrown({ type: 'grenadeThrown', senderSlot: 1, id: 'x-1', kind: 'flash', origin: { x: 0, y: 0.5, z: -4 }, velocity: { x: 0, y: 0, z: 0 }, fuseLeft: 1, t: 1 });
     r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-1', kind: 'flash', position: { x: 0, y: 0.5, z: -4 } });
     expect(r.system.blindLevel).toBe(0);
   });
@@ -321,7 +331,7 @@ describe('GrenadeSystem effects while the simulation is frozen', () => {
     expect(light.intensity).toBe(0);
 
     const flash = await rig({ kind: 'flash' });
-    flash.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-2', kind: 'flash', position: { x: 0, y: 1.5, z: -1 } });
+    remoteDetonation(flash.system, 'x-2', 'flash', { x: 0, y: 1.5, z: -1 });
     const blind = flash.system.blindLevel;
     expect(blind).toBeGreaterThan(0.5);
     // The simulation tick alone leaves the white-out where it is.
@@ -360,7 +370,7 @@ describe('GrenadeSystem blast rays and sweeps', () => {
     const r = await rig();
     r.physics.world.createCollider(RAPIER.ColliderDesc.ball(3).setSensor(true).setTranslation(0, 1.5, -2));
     r.physics.world.step();
-    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-3', kind: 'flash', position: { x: 0, y: 1.5, z: -2 } });
+    remoteDetonation(r.system, 'x-3', 'flash', { x: 0, y: 1.5, z: -2 });
     expect(r.system.blindLevel).toBeGreaterThan(0.5);
   });
 
@@ -369,7 +379,7 @@ describe('GrenadeSystem blast rays and sweeps', () => {
     // The slab spans z -2.3 to -1.7: the blast sits 0.15 m inside its near face, the player looks at it.
     fixedCuboid(r.physics, 0, 1.5, -2, 2, 1.5, 0.3);
     r.physics.world.step();
-    r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot: 1, id: 'x-6', kind: 'flash', position: { x: 0, y: 1.4, z: -1.85 } });
+    remoteDetonation(r.system, 'x-6', 'flash', { x: 0, y: 1.4, z: -1.85 });
     expect(r.system.blindLevel).toBeGreaterThan(0.5);
   });
 
@@ -548,6 +558,25 @@ describe('GrenadeSystem network copies', () => {
     // A late resend of a grenade already gone off is ignored.
     r.system.receiveThrown({ ...thrown, t: 200 });
     expect(r.system.liveGrenades()).toHaveLength(0);
+  });
+
+  it("sets off only a copy it is flying, and only on its own thrower's word", async () => {
+    const r = await rig({ network: true });
+    const detonate = (senderSlot: PlayerSlot, id: string) =>
+      r.system.receiveDetonated({ type: 'grenadeDetonated', senderSlot, id, kind: 'frag', position: { x: 0, y: 0.1, z: -1 } });
+    // No throw first: a blast out of nowhere, beside the player.
+    detonate(1, 'never-thrown');
+    expect(r.explosions).not.toHaveBeenCalled();
+    expect(r.player.applyKnockback).not.toHaveBeenCalled();
+    r.system.receiveThrown(thrown);
+    // Another player naming slot 1's grenade can neither set it off nor move it.
+    detonate(2, thrown.id);
+    r.system.receiveThrown({ ...thrown, senderSlot: 2, origin: { x: 50, y: 1.5, z: 50 }, t: 500 });
+    expect(r.explosions).not.toHaveBeenCalled();
+    expect(r.system.liveGrenades()[0]!.position.x).toBeCloseTo(0, 3);
+    detonate(1, thrown.id);
+    expect(r.explosions).toHaveBeenCalledTimes(1);
+    expect(r.player.applyKnockback).toHaveBeenCalledTimes(1);
   });
 
   it('re-sends its own live grenades the first time an opponent is seen', async () => {

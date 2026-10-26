@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import { HostRoster } from './HostRoster.ts';
 import { buildMatchSync } from './matchSync.ts';
-import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
+import { KOTH_SCORE_STEP_MAX, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import { isNetworkMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 
 /** A context with only what the cases under test touch; everything else is left out on purpose. */
-function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; carrier?: PlayerSlot | null } = {}) {
+function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; carrier?: PlayerSlot | null; map?: string } = {}) {
   const goldenGoose = { carrierSlot: overrides.carrier ?? null, claim: vi.fn(), drop: vi.fn() };
   goldenGoose.claim.mockImplementation((slot: PlayerSlot) => (goldenGoose.carrierSlot = slot));
   const opponents = new Map<PlayerSlot, unknown>();
@@ -20,6 +20,8 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
       killLimit: overrides.killLimit ?? 10,
       hordeEliminatedSlots: new Set<PlayerSlot>(),
       hostRoster: null,
+      map: overrides.map ?? 'valley',
+      weather: 'day',
     },
     scoreboard: new Map<PlayerSlot, number>(),
     deathCounts: new Map<PlayerSlot, number>(),
@@ -33,6 +35,8 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
     endLostHordeRun: vi.fn(),
     addMultiplayerOpponent: vi.fn(async () => {}),
     removeMultiplayerOpponent: vi.fn(),
+    opponentInMatch: vi.fn(),
+    grenades: null,
   };
   return ctx;
 }
@@ -45,10 +49,10 @@ function route(ctx: object, message: NetworkMessage, senderSlot: PlayerSlot = 0)
 
 describe('routeMatchMessage, 3 to 4 players', () => {
   it('the host relays through relay(), which skips directly linked guest pairs', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0 });
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 4 }, 2);
+    const ctx = makeContext({ role: 'host', ownSlot: 0, carrier: 2 });
+    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);
     expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'kothScoreTick' }), 2);
-    expect(ctx.scoreboard.get(2)).toBe(4);
+    expect(ctx.scoreboard.get(2)).toBe(1);
   });
 
   it('a drop from a claimant that lost the tie-break leaves the real carrier', () => {
@@ -94,7 +98,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
       firstSnapshotAt: null as number | null,
       isDead: false,
       health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
     };
     ctx.multiplayer.opponents.set(3, opponent);
     // The connection layer talks while the world is still being built: that is not "playing".
@@ -106,6 +110,48 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(first).not.toBeNull();
     route(ctx, { type: 'playerSnapshot', senderSlot: 3, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 3);
     expect(opponent.firstSnapshotAt).toBe(first);
+  });
+
+  it('a King of the Hill score only rises: a lower one is neither applied nor relayed', () => {
+    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill', carrier: 2 });
+    ctx.scoreboard.set(2, 30);
+    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 3 }, 2);
+    expect(ctx.scoreboard.get(2)).toBe(30);
+    expect(ctx.multiplayer.session.connection.relay).not.toHaveBeenCalled();
+    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 31 }, 2);
+    expect(ctx.scoreboard.get(2)).toBe(31);
+  });
+
+  it('a King of the Hill score counts only from the carrier, and rises at most KOTH_SCORE_STEP_MAX per tick', () => {
+    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill', carrier: 1 });
+    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);   // not the carrier
+    expect(ctx.scoreboard.get(2) ?? 0).toBe(0);
+    route(ctx, { type: 'kothScoreTick', senderSlot: 1, score: 90 }, 1);  // claims the win at once
+    expect(ctx.scoreboard.get(1)).toBe(KOTH_SCORE_STEP_MAX);
+    route(ctx, { type: 'kothScoreTick', senderSlot: 1, score: 4 }, 1);   // catches up after a mismatch
+    expect(ctx.scoreboard.get(1)).toBe(4);
+  });
+
+  it.each(['valley', 'facility'])("an opponent's snapshot on the %s cues the lamp and door catch-up", (map) => {
+    const ctx = makeContext({ role: 'host', ownSlot: 0, map });
+    ctx.multiplayer.opponents.set(2, {
+      lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+    });
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
+    expect(ctx.opponentInMatch).toHaveBeenCalledWith(2);
+  });
+
+  it("a joiner takes the host's scoreboardSync as is; the host ignores one", () => {
+    const ctx = makeContext({ ownSlot: 3 });
+    ctx.scoreboard.set(1, 4);
+    ctx.scoreboard.set(2, 6);
+    route(ctx, { type: 'scoreboardSync', scores: [{ slot: 1, score: 5, deaths: 1 }, { slot: 2, score: 0, deaths: 0 }, { slot: 3, score: 0, deaths: 0 }] });
+    expect([...ctx.scoreboard]).toEqual([[1, 5], [2, 0], [3, 0]]);
+    expect(ctx.deathCounts.get(1)).toBe(1);
+    const host = makeContext({ role: 'host', ownSlot: 0 });
+    route(host, { type: 'scoreboardSync', scores: [{ slot: 1, score: 50, deaths: 0 }] }, 1);
+    expect(host.scoreboard.size).toBe(0);
   });
 
   it('rosterSync adds missing opponents and removes departed ones', () => {
@@ -198,6 +244,8 @@ describe('routeMatchMessage, the host answers a sync request', () => {
         ammoDrops: [],
         bonusGeese: [],
         thrownGeese: ctx.thrownGeese.values(),
+        scoreboard: ctx.scoreboard,
+        deathCounts: ctx.deathCounts,
         verdict: verdictOverride,
       });
     return { ctx, expected, verdict };
@@ -207,15 +255,22 @@ describe('routeMatchMessage, the host answers a sync request', () => {
 
   it('sends each buildMatchSync message to the requester only, for a gooseSyncRequest', () => {
     const { ctx, expected } = hostContext('default');
+    // A kill made while the joiner loaded reaches it in the sync.
+    ctx.scoreboard.set(1, 3);
     route(ctx, { type: 'gooseSyncRequest', senderSlot: 2 }, 2);
     expect(ctx.multiplayer.session.connection.sendTo.mock.calls.every(([slot]) => slot === 2)).toBe(true);
     const messages = sentMessages(ctx);
     expect(messages).toEqual(expected());
     const types = messages.map((message) => message.type);
     expect(types[0]).toBe('rosterSync');
+    expect(types[1]).toBe('scoreboardSync');
     expect(types).toContain('gooseSpawned');
     expect(types).toContain('gooseThrown');
     expect(types).not.toContain('hordeSyncState');
+    expect(messages[1]).toEqual({
+      type: 'scoreboardSync',
+      scores: [{ slot: 0, score: 0, deaths: 0 }, { slot: 1, score: 3, deaths: 0 }, { slot: 2, score: 0, deaths: 0 }],
+    });
   });
 
   it('answers a hordeSyncRequest with the same kind of full sync, with the horde state in it', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MULTIPLAYER_CONNECTION_TIMEOUT_MS, MULTIPLAYER_LOADING_TIMEOUT_MS, MULTIPLAYER_SETTLE_MS } from './config.ts';
-import { isOpponentSilent } from './opponentLiveness.ts';
+import { isOpponentSilent, restartOpponentForRejoin } from './opponentLiveness.ts';
 
 describe('isOpponentSilent', () => {
   it('drops a player that has been playing and went quiet for the connection timeout', () => {
@@ -39,5 +39,19 @@ describe('isOpponentSilent', () => {
   it('still gives up on a player that never settles', () => {
     expect(isOpponentSilent(1000 + MULTIPLAYER_LOADING_TIMEOUT_MS, 1000, null)).toBe(true);
     expect(isOpponentSilent(1000 + MULTIPLAYER_LOADING_TIMEOUT_MS, 1000, 900)).toBe(true);
+  });
+});
+
+describe('restartOpponentForRejoin', () => {
+  it('turns a dead, long-settled slot into a fresh, loading, living player the sweep waits for', () => {
+    const settledAt = MULTIPLAYER_SETTLE_MS + 1000;
+    const opponent = { lastMessageAt: settledAt, firstSnapshotAt: 0, isDead: true, lastStateSentAt: 987_654 };
+    const now = settledAt + MULTIPLAYER_CONNECTION_TIMEOUT_MS + 5000;
+    // Before: settled long ago and silent since, so the next sweep would drop the rejoiner.
+    expect(isOpponentSilent(now, opponent.lastMessageAt, opponent.firstSnapshotAt, false)).toBe(true);
+    restartOpponentForRejoin(opponent, now);
+    expect(opponent).toEqual({ lastMessageAt: now, firstSnapshotAt: null, isDead: false, lastStateSentAt: undefined });
+    // Its first frames may stall far past the connection timeout without it counting as gone.
+    expect(isOpponentSilent(now + MULTIPLAYER_CONNECTION_TIMEOUT_MS + 1000, opponent.lastMessageAt, opponent.firstSnapshotAt, opponent.isDead)).toBe(false);
   });
 });

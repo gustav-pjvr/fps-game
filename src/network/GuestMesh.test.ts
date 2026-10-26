@@ -428,7 +428,8 @@ describe('GuestMesh heartbeat', () => {
 });
 
 describe('GuestMesh messages', () => {
-  const snapshot = (senderSlot: PlayerSlot, t?: number) => ({ type: 'playerSnapshot', senderSlot, ...(t === undefined ? {} : { t }) }) as unknown as NetworkMessage;
+  const snapshot = (senderSlot: PlayerSlot, t?: number) =>
+    ({ type: 'playerSnapshot', senderSlot, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, health: 100, ...(t === undefined ? {} : { t }) }) as NetworkMessage;
 
   it('sends only direct message types, on live links', () => {
     const { mesh, connection } = liveDialedLink(2, 'p2');

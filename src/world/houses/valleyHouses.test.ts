@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { HOUSE_LIGHT_POOL } from './HouseLights.ts';
 import { HOUSE_LAYOUTS, houseToWorld } from './houseLayout.ts';
-import { houseKey, houseObjectId, type HouseRef } from './valleyHouseIds.ts';
+import { HOUSE_CELL_REACH, houseKey, houseObjectId, isHouseInWorld, type HouseRef } from './valleyHouseIds.ts';
 import { FRONT_DOOR_SLOT, ValleyHouses, type HousePlacement } from './ValleyHouses.ts';
 
 // Two towns' worth of houses the fake layout knows about; anything else is not a house.
@@ -219,5 +219,30 @@ describe('Valley house lamps', () => {
     expect(houses.lights.isLit(houseObjectId(block, 1))).toBe(true);
     houses.killLampsQuietly('not a list');
     expect(houses.lights.deadLampIds()).toHaveLength(2);
+  });
+
+  it('never look up a house whose town lies outside the world, for a door or a lamp id from the network', () => {
+    const lookups: HouseRef[] = [];
+    const counting = (ref: HouseRef) => {
+      lookups.push(ref);
+      return houseAt(ref);
+    };
+    const houses = new ValleyHouses(new THREE.Scene(), new RAPIER.World({ x: 0, y: -9.81, z: 0 }), counting, true);
+    // A peer's lampSync or worldInteract full of well-formed ids for towns up to 2048 cells away.
+    const far: number[] = [];
+    for (let gx = -2048; gx < 2048; gx += 37) far.push(houseObjectId(houseKey({ gx, gz: 2047 - Math.abs(gx), index: 0 }), 0));
+    expect(far.length).toBeGreaterThan(100);
+    houses.killLampsQuietly(far);
+    for (const id of far) {
+      expect(houses.isLampId(id)).toBe(false);
+      expect(houses.doors.state.has('door', id)).toBe(false);
+    }
+    expect(lookups).toEqual([]);
+    expect(houses.lights.deadLampIds()).toEqual([]);
+    // The edge of the world is still asked; one cell past it is not.
+    expect(isHouseInWorld({ gx: HOUSE_CELL_REACH, gz: -HOUSE_CELL_REACH, index: 0 })).toBe(true);
+    expect(isHouseInWorld({ gx: HOUSE_CELL_REACH + 1, gz: 0, index: 0 })).toBe(false);
+    expect(houses.isLampId(houseObjectId(houseKey(PLACEMENTS[2]!.ref), 0))).toBe(true);
+    expect(lookups).toHaveLength(1);
   });
 });
