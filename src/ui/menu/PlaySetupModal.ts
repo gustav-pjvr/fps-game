@@ -80,9 +80,9 @@ export class PlaySetupModal {
     modeGrid.style.cssText = 'display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;';
     const selectedMode = defaults.hordeMode ? 'horde' : defaults.directorMode ? 'director' : defaults.missionMode ? 'mission' : 'elimination';
     const eliminationRadio = this.buildModeCard(modeGrid, 'elimination', 'Elimination', 'Clear the hostiles and targets', selectedMode);
-    this.hordeModeRadio = this.buildModeCard(modeGrid, 'horde', 'Goose Horde', 'survive 10 waves', selectedMode);
-    this.directorModeRadio = this.buildModeCard(modeGrid, 'director', 'Director', 'waves paced to the fight', selectedMode);
-    this.missionModeRadio = this.buildModeCard(modeGrid, 'mission', 'Uplink mission', 'bring 3 towers online, then extract', selectedMode);
+    this.hordeModeRadio = this.buildModeCard(modeGrid, 'horde', 'Goose Horde', 'Survive 10 waves', selectedMode);
+    this.directorModeRadio = this.buildModeCard(modeGrid, 'director', 'Director', 'Waves paced to the fight', selectedMode);
+    this.missionModeRadio = this.buildModeCard(modeGrid, 'mission', 'Uplink mission', 'Bring 3 towers online, then extract', selectedMode);
     modeGroup.append(modeLabel, modeGrid);
     panel.appendChild(modeGroup);
 
@@ -304,7 +304,7 @@ export class PlaySetupModal {
 
     const controls = document.createElement('div');
     controls.style.cssText = 'display:flex; align-items:stretch; gap:6px;';
-    const fewer = createButton('-');
+    const fewer = createButton('−');
     const more = createButton('+');
     for (const [button, amount, action] of [[fewer, -1, 'Fewer'], [more, 1, 'More']] as const) {
       button.type = 'button';
