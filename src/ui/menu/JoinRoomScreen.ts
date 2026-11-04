@@ -6,7 +6,7 @@ import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/
 import { getOrCreateRejoinToken } from '../../core/multiplayerRejoin.ts';
 import { DEFAULT_MATCH_MAP, MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
 import { createPlayerRow } from './CreateRoomScreen.ts';
-import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
+import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
 /** How long a join attempt may go without the host's `welcome` before giving up. A healthy join
  * (including one relayed through TURN) completes in a few seconds. */
@@ -69,6 +69,9 @@ export class JoinRoomScreen {
     private readonly onStartMatch: (connection: PeerConnection, params: MultiplayerMatchStartParams) => void,
   ) {
     this.overlay = createOverlay();
+    closeOnBackdropClick(this.overlay, () => {
+      if (this.ownSlot === null) this.close();
+    });
 
     const panel = createPanel();
     this.panel = panel;
@@ -175,6 +178,7 @@ export class JoinRoomScreen {
     this.codeInput.style.display = 'block';
     this.joinButton.style.display = 'block';
     this.lobbyView.style.display = 'none';
+    this.ownSlot = null;
     this.ownReady = false;
     this.readySlots = new Set();
     this.refreshReadyButton();

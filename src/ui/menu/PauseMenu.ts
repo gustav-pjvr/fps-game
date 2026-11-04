@@ -1,4 +1,4 @@
-import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, MOTION_EASE } from './menuStyles.ts';
+import { attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle, MOTION_EASE } from './menuStyles.ts';
 
 export interface PauseMenuCallbacks {
   onResume: () => void;
@@ -38,6 +38,7 @@ export class PauseMenu {
    * nothing meaningful to change mid-match. */
   constructor(root: HTMLElement, callbacks: PauseMenuCallbacks, isMultiplayer: boolean, showLoadoutButton: boolean) {
     this.overlay = createOverlay();
+    closeOnBackdropClick(this.overlay, callbacks.onResume);
     this.overlay.dataset.testid = 'pause-menu';
 
     const panel = createPanel();

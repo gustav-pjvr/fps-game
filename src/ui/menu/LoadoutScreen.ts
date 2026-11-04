@@ -99,7 +99,13 @@ function ensureLoadoutStyleInjected(): void {
     '  transition: border-color 150ms ease-out, background-color 150ms ease-out;' +
     '}' +
     '.loadout-tile-small { width: var(--loadout-grenade-tile); height: calc(var(--loadout-grenade-tile) * 0.66); }' +
-    '.loadout-tile img { display: block; flex: 1; min-height: 0; width: 100%; height: 0; object-fit: contain; pointer-events: none; }' +
+    // The renders are square with the design centred and empty margins round it, so a square a
+    // little wider than the tile is tall fills the tile, its empty top and bottom clipped by the
+    // tile. Grenades stand upright, so their tiles show the whole render.
+    '.loadout-tile img { position: absolute; left: 50%; top: calc(50% - 12px); width: 74%; aspect-ratio: 1; height: auto;' +
+    '  transform: translate(-50%, -50%); object-fit: contain; pointer-events: none; }' +
+    '.loadout-tile-small img { width: auto; height: calc(100% - 24px); top: calc(50% - 12px); }' +
+    '.loadout-tile-caption { position: relative; z-index: 1; }' +
     `.loadout-tile:hover { border-color: ${INK_FAINT}; }` +
     `.loadout-tile[aria-pressed="true"] { border-color: ${ACCENT}; box-shadow: inset 0 0 0 1px ${ACCENT}; background-color: ${SURFACE_RAISED}; }` +
     // The equipped corner: a solid accent triangle, so equipped reads even while another tile has focus.
@@ -231,7 +237,7 @@ export class LoadoutScreen {
     this.overlay.style.cssText =
       `position:absolute; inset:0; display:none; flex-direction:column; background:${BG_VOID};` +
       ` color:${TEXT}; font-family:${BODY_FONT}; z-index:30; pointer-events:auto; padding:36px 48px; box-sizing:border-box;` +
-      ' --loadout-tile-w:clamp(124px, 10.5vw, 168px); --loadout-grenade-tile:calc(var(--loadout-tile-w) * 0.62);';
+      ' --loadout-tile-w:clamp(112px, min(10.5vw, 16.5vh), 168px); --loadout-grenade-tile:calc(var(--loadout-tile-w) * 0.8);';
 
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; flex-shrink:0;';
@@ -264,17 +270,18 @@ export class LoadoutScreen {
     leftColumn.setAttribute('aria-label', 'Weapon catalog');
     // The 5px padding (cancelled by the margin) keeps a focused tile's outline inside the scroll box.
     leftColumn.style.cssText =
-      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:26px; padding:5px; margin:-5px;' +
+      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:5px; margin:-5px;' +
       ' scrollbar-width:none; -ms-overflow-style:none;';
 
-    // Category bands stack in order, with a heading above each tile row.
+    // Category bands stack in order, one per row: the label in a fixed column on the left, its
+    // tiles beside it, so the five bands fit a 900 px tall window without scrolling.
     const weaponSections = document.createElement('div');
-    weaponSections.style.cssText = 'display:flex; flex-direction:column; flex-shrink:0; gap:22px;';
+    weaponSections.style.cssText = 'display:flex; flex-direction:column; flex-shrink:0; gap:14px;';
     for (const category of ['primary', 'secondary', 'melee', 'special'] as const) {
       const section = document.createElement('div');
-      section.style.cssText = 'display:flex; flex-direction:column; width:100%; gap:10px;';
+      section.style.cssText = 'display:flex; align-items:center; width:100%; gap:16px;';
       const heading = document.createElement('div');
-      heading.style.cssText = 'display:flex; align-items:baseline; gap:12px;';
+      heading.style.cssText = 'flex:0 0 112px; display:flex; flex-direction:column; gap:6px;';
       // The Goose Launcher's section says what it is in gold instead of "Special".
       const eyebrow = createEyebrow(category === 'special' ? 'Reward only' : CATEGORY_LABELS[category]);
       if (category === 'special') eyebrow.style.color = REWARD_GOLD;
@@ -287,9 +294,9 @@ export class LoadoutScreen {
     // The grenade: a smaller section below the weapons, with its throw key.
     const grenadeSection = document.createElement('div');
     grenadeSection.dataset.testid = 'loadout-grenades';
-    grenadeSection.style.cssText = `display:flex; flex-direction:column; flex-shrink:0; gap:10px; padding-top:18px; border-top:1px solid ${HAIRLINE};`;
+    grenadeSection.style.cssText = `display:flex; align-items:center; flex-shrink:0; gap:16px; padding-top:14px; border-top:1px solid ${HAIRLINE};`;
     const grenadeHeading = document.createElement('div');
-    grenadeHeading.style.cssText = 'display:flex; align-items:center; gap:12px;';
+    grenadeHeading.style.cssText = 'flex:0 0 112px; display:flex; flex-direction:column; align-items:flex-start; gap:8px;';
     const throwHint = document.createElement('div');
     throwHint.style.cssText = `display:flex; align-items:center; gap:6px; ${LABEL_CSS}`;
     const keyCap = document.createElement('span');
