@@ -26,6 +26,13 @@
         color: #e9efe9;
         font-family: 'Manrope', system-ui, sans-serif;
       }
+      /* No visible scrollbars anywhere in the game: panels still scroll by wheel, touch and keys. */
+      * {
+        scrollbar-width: none;
+      }
+      *::-webkit-scrollbar {
+        display: none;
+      }
       #lobby, #app {
         position: fixed;
         inset: 0;

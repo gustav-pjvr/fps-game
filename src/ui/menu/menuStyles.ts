@@ -120,6 +120,22 @@ export function createOverlay(): HTMLDivElement {
   return overlay;
 }
 
+/** A click on the dimmed backdrop around a popup (the overlay itself, not anything inside its
+ * panel) calls `onClose`, the same as its Close or Cancel button. Both the press and the release
+ * must land on the backdrop, so a drag that starts inside the panel (a slider, a text selection)
+ * and ends outside it never closes anything. */
+export function closeOnBackdropClick(overlay: HTMLElement, onClose: () => void): void {
+  let pressedOnBackdrop = false;
+  overlay.addEventListener('pointerdown', (event) => {
+    pressedOnBackdrop = event.target === overlay;
+  });
+  overlay.addEventListener('click', (event) => {
+    const outside = pressedOnBackdrop && event.target === overlay;
+    pressedOnBackdrop = false;
+    if (outside) onClose();
+  });
+}
+
 export function createPanelTitle(text: string): HTMLDivElement {
   ensureMotionKeyframesInjected();
   const wrap = document.createElement('div');
