@@ -8,6 +8,7 @@ import { MultiplayerMenu } from '../ui/menu/MultiplayerMenu.ts';
 import { CreateRoomScreen } from '../ui/menu/CreateRoomScreen.ts';
 import { JoinRoomScreen } from '../ui/menu/JoinRoomScreen.ts';
 import { MatchEndScreen, type MultiplayerMatchEndResult, type RematchSettings } from '../ui/matchEndScreen.ts';
+import { LobbyMusic } from '../audio/LobbyMusic.ts';
 import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, DEFAULT_MATCH_MAP, DEFAULT_MATCH_WEATHER, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 import { generateMultiplayerSeed } from './worldSeed.ts';
@@ -20,6 +21,8 @@ import type { MultiplayerMatchStartParams, MultiplayerRole, MultiplayerSession }
 export class App {
   private lobby: LobbyScene | null = null;
   private currentGame: Game | null = null;
+  /** The lobby's shuffled music: on in every menu, faded out while a match loads and plays. */
+  private readonly lobbyMusic = new LobbyMusic();
   private readonly mainMenu: MainMenu;
   private readonly settingsPanel: SettingsPanel;
   // Assigned in create() before enterLobby() shows the menu that can open it - LoadoutScreen's
@@ -94,6 +97,7 @@ export class App {
     this.lobby = await LobbyScene.create(this.lobbyContainer);
     this.lobby.start();
     this.mainMenu.show();
+    this.lobbyMusic.start();
   }
 
   private openPlaySetup(): void {
@@ -120,6 +124,7 @@ export class App {
   private async startMatch(config: MatchSetupConfig): Promise<void> {
     this.playSetupModal?.hide();
     this.mainMenu.hide();
+    this.lobbyMusic.stop();
     this.loadingScreen.show();
 
     this.lobby?.dispose();
@@ -154,6 +159,7 @@ export class App {
   private async createMultiplayerGame(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     this.mainMenu.hide();
     this.matchEndScreen.hide();
+    this.lobbyMusic.stop();
     this.loadingScreen.show();
 
     this.lobby?.dispose();

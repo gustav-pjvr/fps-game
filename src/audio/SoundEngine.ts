@@ -58,6 +58,12 @@ const CALLOUT_PATTERNS: Readonly<Record<CalloutSound, readonly (readonly [number
  */
 /** Overall level of the music bus before the music volume setting: music sits under the fight. */
 const MUSIC_LEVEL = 0.2;
+/** The recorded track that loops under an indoor (Facility) match; see startBedMusic. */
+export const INDOOR_MATCH_TRACK = '/assets/music/floating-in-the-abyss.mp3';
+/** Level of the indoor match track before the music volume setting: softer than the combat mix. */
+const BED_LEVEL = 0.22;
+/** Seconds (a time constant) the indoor track takes to fade in and out with pausing and death. */
+const BED_SMOOTHING = 0.8;
 /** Seconds the music mix takes to follow the director (a time constant, about a third of a fade). */
 const MUSIC_SMOOTHING = 1.4;
 /** Eighth notes at 104 beats a minute for the pulse and the bass. */
@@ -102,6 +108,9 @@ export class SoundEngine {
   private readonly reverbSend: GainNode;
   private readonly musicBus: GainNode;
   private music: MusicNodes | null = null;
+  /** The looping recorded track of an indoor match (startBedMusic), null until it has loaded. */
+  private bed: { readonly source: AudioBufferSourceNode; readonly gain: GainNode } | null = null;
+  private bedLoading = false;
   private mix: MusicMix = MUSIC_SILENT;
   private nextPulseTime = 0;
   private pulseStep = 0;
@@ -166,7 +175,38 @@ export class SoundEngine {
     this.ring = null;
     for (const oscillator of this.music?.oscillators ?? []) oscillator.stop();
     this.music = null;
+    this.bed?.source.stop();
+    this.bed = null;
     void this.ctx.close();
+  }
+
+  /**
+   * Loops a recorded track softly under the match (the Facility's indoor music, docs/music.md). It
+   * rides the master bus, so it follows the volume settings and a flash grenade's muffle, and
+   * updateAmbience fades it with pausing and death. While it plays the synthesized combat mix stays
+   * silent, so two pieces of music never fight. A track that fails to load leaves the match as it was.
+   */
+  async startBedMusic(path: string): Promise<void> {
+    if (this.bed || this.bedLoading) return;
+    this.bedLoading = true;
+    try {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const buffer = await this.ctx.decodeAudioData(await response.arrayBuffer());
+      if (this.ctx.state === 'closed') return;
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      source.connect(gain).connect(this.master);
+      source.start();
+      this.bed = { source, gain };
+    } catch (error) {
+      console.warn(`Failed to load the match music from ${path}`, error);
+    } finally {
+      this.bedLoading = false;
+    }
   }
 
   setMasterVolume(value: number): void {
@@ -381,7 +421,8 @@ export class SoundEngine {
    */
   updateAmbience(state: AmbienceState): void {
     const now = this.ctx.currentTime;
-    const target = state.active && state.director ? musicMix(state.director.phase, state.director.intensity) : MUSIC_SILENT;
+    const target = state.active && state.director && !this.bed ? musicMix(state.director.phase, state.director.intensity) : MUSIC_SILENT;
+    this.bed?.gain.gain.setTargetAtTime(state.active ? BED_LEVEL * Settings.getMusicVolume() : 0, now, BED_SMOOTHING);
     if (!this.music && target.pad > 0) this.music = this.buildMusic();
     const music = this.music;
     if (music) {

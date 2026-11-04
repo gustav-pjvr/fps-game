@@ -10,7 +10,20 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.4.0 (current)
+## v4.5.0 (current)
+
+Music, 2026-11-04. Details and the licence in `docs/music.md`.
+
+- **Lobby music.** Seven recorded tracks play in every menu and the lobby, shuffled so a track you
+  have not heard yet always comes before one you have. A new visit picks up where the last one
+  left off, and nothing plays twice in a row. It fades in on the first click and out when a match
+  starts, and follows the master and music volume sliders.
+- **Indoor match music.** A softer recorded track loops under every Facility match and fades with
+  pausing and death. The Facility no longer plays the synthesized combat mix on top of it.
+- The music files are kept out of the public repository on purpose (the pack's licence forbids
+  distributing them); the deployed game carries them.
+
+## v4.4.0
 
 Squad, arsenal and night, 2026-10-26. The design is in `docs/squad-arsenal-night.md`, with the
 as-built details in `docs/grenades.md`, `docs/pickups.md`, `docs/enterable-buildings.md`,

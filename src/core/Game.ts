@@ -70,7 +70,7 @@ import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { isDamageable } from '../combat/damage.ts';
 import { computeExplosionDamage, computeKnockbackStrength } from '../combat/explosion.ts';
-import { SoundEngine } from '../audio/SoundEngine.ts';
+import { INDOOR_MATCH_TRACK, SoundEngine } from '../audio/SoundEngine.ts';
 import { FpsMeter } from './FpsMeter.ts';
 import { PerfOverlay } from '../ui/perfOverlay.ts';
 import { PerfLogger, type PerfContext } from './perfStats.ts';
@@ -1027,6 +1027,7 @@ export class Game {
     }
 
     const sound = await SoundEngine.create();
+    if (facility) void sound.startBedMusic(INDOOR_MATCH_TRACK);
     document.addEventListener('click', () => sound.resume(), { once: true });
 
     const damageVignette = new DamageVignette(hudRoot);

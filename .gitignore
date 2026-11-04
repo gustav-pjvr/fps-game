@@ -8,3 +8,7 @@ blob-report/
 playwright/.cache/
 .vscode/
 production/STEAM_PUBLISHING_PLAN.md
+
+# Music: licensed for use in the game, not for redistribution, and this repo is public (docs/music.md)
+public/assets/music/*
+!public/assets/music/README.md
