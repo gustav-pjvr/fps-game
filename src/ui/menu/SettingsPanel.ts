@@ -43,6 +43,8 @@ function ensureSettingsStyleInjected(): void {
     `  color: ${INK_DIM}; cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;` +
     '  transition: color 150ms ease-out, border-color 150ms ease-out;' +
     '}' +
+    // A phone-width panel has no room for four padded tabs: they share the row equally instead.
+    '@media (max-width: 560px) { .settings-panel .settings-tab { flex: 1 1 0; min-width: 0; padding: 12px 2px; letter-spacing: 0.04em; font-size: 10px; } }' +
     `.settings-panel .settings-tab:hover { color: ${INK}; }` +
     `.settings-panel .settings-tab[aria-selected="true"] { color: ${INK}; border-bottom-color: ${ACCENT}; }` +
     // menuStyles.ts colours a focused button's border with !important; an unselected tab must not read as selected.

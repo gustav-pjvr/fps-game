@@ -31,7 +31,8 @@ function ensureSetupStyleInjected(): void {
   const style = document.createElement('style');
   style.textContent =
     `.play-setup-mode-card { border:1px solid ${HAIRLINE}; }` +
-    '.play-setup-mode-input { position:absolute; inset:0; width:100%; height:100%; padding:0; margin:0; opacity:0; cursor:pointer; }' +
+    // The invisible radio covers its card and sits above the card's text, so a click lands on it.
+    '.play-setup-mode-input { position:absolute; inset:0; z-index:1; width:100%; height:100%; padding:0; margin:0; opacity:0; cursor:pointer; }' +
     `.play-setup-mode-input:checked + .play-setup-mode-card { border-color:${ACCENT}; box-shadow:inset 0 0 0 1px ${ACCENT}; }` +
     `.play-setup-mode-input:focus-visible + .play-setup-mode-card { outline:2px solid ${ACCENT}; outline-offset:3px; }` +
     '@media (max-width: 480px) { .play-setup-counts { flex-direction:column; gap:0 !important; } }';
