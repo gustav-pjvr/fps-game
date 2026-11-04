@@ -91,7 +91,7 @@ test('F01-H1 a keyboard alone opens match setup, picks the Uplink mission and ca
   expect(await play.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe('none');
   await page.keyboard.press('Enter');
 
-  const mission = page.getByRole('checkbox', { name: /Uplink mission/ });
+  const mission = page.getByRole('radio', { name: /Uplink mission/ });
   await expect(mission).toBeVisible();
   await mission.focus();
   await page.keyboard.press('Space');

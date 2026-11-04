@@ -12,7 +12,7 @@ async function startFacilityMode(page: Page, mode: RegExp): Promise<void> {
   await page.goto('/');
   await page.getByRole('button', { name: 'PLAY', exact: true }).click();
   await page.locator('#match-setup-map').selectOption('facility');
-  await page.getByRole('checkbox', { name: mode }).check();
+  await page.getByRole('radio', { name: mode }).check();
   await page.getByRole('button', { name: 'Start Match', exact: true }).click();
   await page.waitForFunction(() => window.__gameDebug?.getFacilityDebug?.() != null, undefined, { timeout: 40000 });
   // Goose Horde opens on its mode briefing, which holds the world until skipped.

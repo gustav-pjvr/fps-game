@@ -51,7 +51,7 @@ export interface WeaponDefinition {
 export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   pistol: {
     id: 'pistol',
-    name: 'Kestrel P9',
+    name: 'P9 Pistol',
     description: 'Accurate semi-auto sidearm with a fast reload.',
     damage: 20,
     fireRate: 4,
@@ -73,7 +73,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
    * power curve - a controlled-burst niche neither existing gun covers. */
   mp5: {
     id: 'mp5',
-    name: 'Sable MP-5',
+    name: 'S5 Burst SMG',
     description: 'Three-round bursts reward controlled aim at close to mid range.',
     damage: 17,
     fireRate: 2.6,
@@ -93,7 +93,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   rifle: {
     id: 'rifle',
-    name: 'VR-4 Fieldhand',
+    name: 'VR-4 Assault Rifle',
     description: 'Automatic fire for sustained pressure at mid range.',
     damage: 15,
     fireRate: 10,
@@ -112,7 +112,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   shotgun: {
     id: 'shotgun',
-    name: 'Hedgerow 12',
+    name: 'H12 Shotgun',
     description: 'Eight pellets deliver lethal damage at close range.',
     // Per user request ("shotgun is not great") - bumped from 10/pellet (80 max/shot, never a
     // guaranteed kill even at point-blank with all 8 pellets landing) to 13 (104 max/shot, now
@@ -140,7 +140,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   sniper: {
     id: 'sniper',
-    name: 'Marchand Longview',
+    name: 'L7 Sniper Rifle',
     description: 'High damage and precise scoped fire reward patient aim.',
     damage: 90,
     fireRate: 0.8,
@@ -159,7 +159,7 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
   },
   knife: {
     id: 'knife',
-    name: 'Bicknell Trench Knife',
+    name: 'Combat Knife',
     description: 'Fast melee strikes for close-range engagements without ammo.',
     damage: 45,
     fireRate: 1.8,

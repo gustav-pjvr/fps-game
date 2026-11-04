@@ -1,4 +1,4 @@
-import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 
 export interface MultiplayerMenuCallbacks {
   onCreateRoom: () => void;
@@ -16,6 +16,7 @@ export class MultiplayerMenu {
 
   constructor(root: HTMLElement, callbacks: MultiplayerMenuCallbacks) {
     this.overlay = createOverlay();
+    closeOnBackdropClick(this.overlay, callbacks.onClose);
 
     const panel = createPanel();
     this.panel = panel;
