@@ -36,14 +36,14 @@ export async function lockPointer(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, undefined, { timeout: 5000 });
 }
 
-/** Switches to the Kestrel P9 pistol (slot 2 of the default rifle/pistol/knife loadout, v3.8.0) and
+/** Switches to the P9 Pistol (slot 2 of the default rifle/pistol/knife loadout, v3.8.0) and
  * waits for the switch to finish. The multiplayer combat tests are written around the pistol's 20
  * damage per shot, and they fire with a quick mouse down/up: that click never fires the slot-1 rifle,
  * which is automatic and only shoots while fire is held at the moment a tick samples input, whereas
  * a semi-automatic pistol queues the press. Requires pointer lock (keys are ignored while unlocked). */
 export async function equipPistol(page: Page): Promise<void> {
   await page.keyboard.press('Digit2');
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Kestrel P9', { timeout: 5000 });
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'P9 Pistol', { timeout: 5000 });
   // The switch animation (WEAPON_SWITCH_DURATION, 0.35s) blocks firing until it completes.
   await page.waitForTimeout(500);
 }

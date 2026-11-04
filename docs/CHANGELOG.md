@@ -10,7 +10,31 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.5.0 (current)
+## v4.6.0 (current)
+
+Menus and aiming, 2026-11-04. As built in `docs/ui-lobby.md` ("Loadout and menus") and
+`docs/weapons-combat.md` (last section).
+
+- **Aiming no longer hides the crosshair.** Every gun except the sniper has open iron sights: a
+  rear notch and a thin front post whose glowing tip sits on the crosshair, with nothing else above
+  the line of aim. The gun also sits a little further from the eye when aimed. A unit test fails if
+  any part of a gun rises into the line of aim again.
+- **Loadout stacked.** Primary, Secondary, Melee, Reward only and Grenade sit one under the other,
+  each with its label on the left. Tiles are landscape and always show the weapon's name.
+- **Clearer weapon names.** VR-4 Assault Rifle, H12 Shotgun, L7 Sniper Rifle, P9 Pistol, S5 Burst
+  SMG, Combat Knife (was VR-4 Fieldhand, Hedgerow 12, Marchand Longview, Kestrel P9, Sable MP-5,
+  Bicknell Trench Knife).
+- **Settings in tabs.** General, Audio, Keyboard and Controller, so the panel never scrolls. Sliders
+  show their values, the controller options are switches, each graphics preset says what it does,
+  and the controller map lists one button per entry.
+- **Match Setup.** One Mode choice of four cards (Elimination, Goose Horde, Director, Uplink
+  mission) replaces three checkboxes; Enemies and Targets have minus and plus buttons; Cancel and
+  Start Match are the same size.
+- **Click outside closes a popup** (Match Setup, Settings, Multiplayer, Join Room before joining,
+  and the pause menu, which resumes). A room lobby does not, so a stray click never drops a player.
+- **No visible scrollbars** anywhere in the game.
+
+## v4.5.0
 
 Music, 2026-11-04. Details and the licence in `docs/music.md`.
 

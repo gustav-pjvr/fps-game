@@ -89,18 +89,23 @@ function ensureLoadoutStyleInjected(): void {
   const style = document.createElement('style');
   style.textContent =
     '.loadout-scroll-hide::-webkit-scrollbar { display: none; }' +
-    // Tiles: equal squares that show only the rendered design. The name is a caption laid over the
-    // tile's foot (absolutely placed, so showing it never moves anything) on hover or focus.
+    // Landscape tiles reserve a caption strip below the rendered design.
     '.loadout-tile {' +
     '  position: relative; flex: 0 0 auto; box-sizing: border-box; margin: 0; padding: 0; overflow: hidden;' +
-    '  width: var(--loadout-tile); height: var(--loadout-tile); display: flex; align-items: center; justify-content: center;' +
+    '  width: var(--loadout-tile-w); height: calc(var(--loadout-tile-w) * 0.66); display: flex; flex-direction: column;' +
     // A faint pool of light behind the design lifts the dark gunmetal renders off the tile.
     `  background: radial-gradient(circle at 50% 50%, rgba(111, 240, 220, 0.07), transparent 70%), ${SURFACE};` +
     `  border: 1px solid ${HAIRLINE}; border-radius: 2px; color: ${TEXT}; cursor: pointer;` +
     '  transition: border-color 150ms ease-out, background-color 150ms ease-out;' +
     '}' +
-    '.loadout-tile-small { width: var(--loadout-grenade-tile); height: var(--loadout-grenade-tile); }' +
-    '.loadout-tile img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }' +
+    '.loadout-tile-small { width: var(--loadout-grenade-tile); height: calc(var(--loadout-grenade-tile) * 0.66); }' +
+    // The renders are square with the design centred and empty margins round it, so a square a
+    // little wider than the tile is tall fills the tile, its empty top and bottom clipped by the
+    // tile. Grenades stand upright, so their tiles show the whole render.
+    '.loadout-tile img { position: absolute; left: 50%; top: calc(50% - 12px); width: 74%; aspect-ratio: 1; height: auto;' +
+    '  transform: translate(-50%, -50%); object-fit: contain; pointer-events: none; }' +
+    '.loadout-tile-small img { width: auto; height: calc(100% - 24px); top: calc(50% - 12px); }' +
+    '.loadout-tile-caption { position: relative; z-index: 1; }' +
     `.loadout-tile:hover { border-color: ${INK_FAINT}; }` +
     `.loadout-tile[aria-pressed="true"] { border-color: ${ACCENT}; box-shadow: inset 0 0 0 1px ${ACCENT}; background-color: ${SURFACE_RAISED}; }` +
     // The equipped corner: a solid accent triangle, so equipped reads even while another tile has focus.
@@ -110,22 +115,23 @@ function ensureLoadoutStyleInjected(): void {
     '}' +
     `.loadout-tile-reward, .loadout-tile-reward:hover { border-color: ${REWARD_GOLD}; }` +
     '.loadout-tile-caption {' +
-    '  position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 6px 6px; pointer-events: none;' +
-    `  font-family: ${BODY_FONT}; font-size: 11.5px; font-weight: 600; line-height: 1.2; text-align: center; color: ${TEXT};` +
-    `  background: linear-gradient(to bottom, transparent, ${BG_VOID} 55%); opacity: 0; transition: opacity 150ms ease-out;` +
+    '  flex: 0 0 auto; box-sizing: border-box; width: 100%; margin-top: auto; padding: 5px 8px; pointer-events: none;' +
+    `  font-family: ${BODY_FONT}; font-size: 11.5px; font-weight: 600; line-height: 1.2; text-align: left; color: ${TEXT};` +
+    // Two lines at most, so a long name wraps on a narrow tile instead of being cut.
+    `  background: ${BG_VOID}; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;` +
     '}' +
-    '.loadout-tile:hover .loadout-tile-caption, .loadout-tile:focus-visible .loadout-tile-caption,' +
-    ' [data-input-device="gamepad"] .loadout-tile:focus .loadout-tile-caption { opacity: 1; }' +
-    '@media (prefers-reduced-motion: reduce) { .loadout-tile, .loadout-tile-caption { transition: none; } }' +
+    '@media (prefers-reduced-motion: reduce) { .loadout-tile { transition: none; } }' +
     // Small-viewport clamp: below 980px the fixed 3-column layout (catalog / details and equipped
     // slots / character rim) has no room left for any of the three to breathe, so it collapses to a
     // single scrollable column instead - the body itself (normally unscrolled, each column
     // scrolls independently) becomes the scroll container, and the character rim shrinks to a
     // fixed height rather than the vh-based sizing that assumes a tall desktop viewport.
     '@media (max-width: 980px) {' +
-    '  .loadout-body { flex-direction: column; overflow-y: auto; }' +
+    '  .loadout-body { flex-direction: column; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }' +
     // Each column takes its content's height (the body scrolls, not the catalog).
     '  .loadout-body > * { flex: none !important; }' +
+    '  .loadout-catalog-wrap { width: 100%; }' +
+    '  .loadout-catalog { flex: none !important; width: 100%; overflow-y: visible !important; }' +
     '  .loadout-middle { width: 100% !important; }' +
     '  .loadout-rim { width: 100% !important; height: 340px !important; }' +
     '}';
@@ -145,8 +151,8 @@ interface GrenadeTile {
 
 type DetailsTarget = { readonly kind: 'weapon'; readonly id: string } | { readonly kind: 'grenade'; readonly id: GrenadeKind };
 
-/** A square tile showing only the rendered design. `name` is its accessible name and its hover or
- * focus caption; the details panel carries everything else. */
+/** A landscape tile with a rendered design and permanent name caption.
+ * `name` is also its accessible name; the details panel carries everything else. */
 function buildTile(name: string, thumbnailDataUrl: string | null, options: { small?: boolean; reward?: boolean } = {}): HTMLButtonElement {
   const tile = document.createElement('button');
   tile.type = 'button';
@@ -178,7 +184,7 @@ function weaponStats(weapon: WeaponDefinition): HTMLSpanElement[] {
   return stats;
 }
 
-/** A tile row: equal squares side by side, wrapping when the column is narrow. */
+/** A tile row: landscape tiles side by side, wrapping when the column is narrow. */
 function buildTileRow(label: string, tiles: readonly HTMLButtonElement[]): HTMLDivElement {
   const row = document.createElement('div');
   row.setAttribute('role', 'group');
@@ -189,7 +195,7 @@ function buildTileRow(label: string, tiles: readonly HTMLButtonElement[]): HTMLD
 }
 
 /** Full-page loadout management (per explicit user request - replaces the old read-only
- * "Inventory" showcase): weapons as square tiles grouped by category on the left (clicked to
+ * "Inventory" showcase): weapons as landscape tiles grouped by category on the left (clicked to
  * equip), with a smaller Grenade section below them; the clicked item's details and the equipped
  * Primary/Secondary/Melee/Grenade readout in the middle; and the player's character spinning inside
  * a tall rim on the right. The category is the whole point - it's what stops a player stacking
@@ -228,12 +234,11 @@ export class LoadoutScreen {
     this.overlay = document.createElement('div');
     this.overlay.dataset.testid = 'loadout-screen';
     this.overlay.className = 'menu-surface';
-    // Tile sizes follow the viewport (the height for the rows, the width so Secondary, Melee and
-    // Special still share a row), so the whole catalog fits unscrolled from 1280x720 up.
+    // Tile widths follow the viewport; each category occupies its own full-width band.
     this.overlay.style.cssText =
       `position:absolute; inset:0; display:none; flex-direction:column; background:${BG_VOID};` +
       ` color:${TEXT}; font-family:${BODY_FONT}; z-index:30; pointer-events:auto; padding:36px 48px; box-sizing:border-box;` +
-      ' --loadout-tile:clamp(84px, min(14vh, 8vw), 132px); --loadout-grenade-tile:calc(var(--loadout-tile) * 0.66);';
+      ' --loadout-tile-w:clamp(112px, min(10.5vw, 16.5vh), 168px); --loadout-grenade-tile:calc(var(--loadout-tile-w) * 0.8);';
 
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; flex-shrink:0;';
@@ -250,35 +255,35 @@ export class LoadoutScreen {
     header.append(titleWrap, closeButton);
 
     const body = document.createElement('div');
-    body.className = 'loadout-body';
+    body.className = 'loadout-body loadout-scroll-hide';
     body.style.cssText = 'flex:1; min-height:0; display:flex; gap:32px;';
 
     // --- Left: the weapon catalog, grouped/ordered by category, scrollbar-free (see below) ---
     const leftColumnWrap = document.createElement('div');
+    leftColumnWrap.className = 'loadout-catalog-wrap';
     leftColumnWrap.style.cssText = 'flex:1.3; min-width:0; position:relative; display:flex; min-height:0;';
 
     const leftColumn = document.createElement('div');
-    leftColumn.className = 'loadout-scroll-hide';
+    leftColumn.className = 'loadout-catalog loadout-scroll-hide';
     // It scrolls with its scrollbar hidden, so keyboard users need to be able to focus it.
     leftColumn.tabIndex = 0;
     leftColumn.setAttribute('role', 'region');
     leftColumn.setAttribute('aria-label', 'Weapon catalog');
     // The 5px padding (cancelled by the margin) keeps a focused tile's outline inside the scroll box.
     leftColumn.style.cssText =
-      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:26px; padding:5px; margin:-5px;' +
+      'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:5px; margin:-5px;' +
       ' scrollbar-width:none; -ms-overflow-style:none;';
 
-    // Category sections sit side by side and wrap, so the short ones (Secondary, Melee, Special)
-    // share a row instead of each taking a full-width band.
+    // Category bands stack in order, one per row: the label in a fixed column on the left, its
+    // tiles beside it, so the five bands fit a 900 px tall window without scrolling.
     const weaponSections = document.createElement('div');
-    weaponSections.style.cssText = 'display:flex; flex-wrap:wrap; align-items:flex-start; gap:22px 32px;';
+    weaponSections.style.cssText = 'display:flex; flex-direction:column; flex-shrink:0; gap:14px;';
     for (const category of ['primary', 'secondary', 'melee', 'special'] as const) {
       const section = document.createElement('div');
-      section.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
+      section.style.cssText = 'display:flex; align-items:center; width:100%; gap:16px;';
       const heading = document.createElement('div');
-      heading.style.cssText = 'display:flex; align-items:baseline; gap:12px;';
-      // The Goose Launcher's section says what it is in gold instead of "Special": a heading no
-      // wider than its one tile, so the section still fits beside Secondary and Melee.
+      heading.style.cssText = 'flex:0 0 112px; display:flex; flex-direction:column; gap:6px;';
+      // The Goose Launcher's section says what it is in gold instead of "Special".
       const eyebrow = createEyebrow(category === 'special' ? 'Reward only' : CATEGORY_LABELS[category]);
       if (category === 'special') eyebrow.style.color = REWARD_GOLD;
       heading.appendChild(eyebrow);
@@ -290,9 +295,9 @@ export class LoadoutScreen {
     // The grenade: a smaller section below the weapons, with its throw key.
     const grenadeSection = document.createElement('div');
     grenadeSection.dataset.testid = 'loadout-grenades';
-    grenadeSection.style.cssText = `display:flex; flex-direction:column; gap:10px; padding-top:18px; border-top:1px solid ${HAIRLINE};`;
+    grenadeSection.style.cssText = `display:flex; align-items:center; flex-shrink:0; gap:16px; padding-top:14px; border-top:1px solid ${HAIRLINE};`;
     const grenadeHeading = document.createElement('div');
-    grenadeHeading.style.cssText = 'display:flex; align-items:center; gap:12px;';
+    grenadeHeading.style.cssText = 'flex:0 0 112px; display:flex; flex-direction:column; align-items:flex-start; gap:8px;';
     const throwHint = document.createElement('div');
     throwHint.style.cssText = `display:flex; align-items:center; gap:6px; ${LABEL_CSS}`;
     const keyCap = document.createElement('span');

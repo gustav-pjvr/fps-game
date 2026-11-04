@@ -240,7 +240,7 @@ Tune an archetype in that file, not in `config.ts`.
   `firePellet`), bursts (`WEAPON_BURST_SHOT_INTERVAL_SECONDS`), the melee swing, grenade throw lowering,
   the Goose Launcher grant and restore, ammo pickups, torch mount. `HITSCAN_RANGE` is 500 m.
 - View models: `models/arsenal.ts` (`buildWeaponViewModel`, `WEAPON_MODEL_TUNING`), `viewModel.ts`
-  (ADS pose from the sight dot), `GrenadeViewModel.ts`, `meleeSwing.ts`, `grenadeThrowPose.ts`.
+  (ADS pose from the aim point of the open iron sights, `Parts.ironSights` in `arsenal.ts`; the sniper aims by its scope's sight dot), `GrenadeViewModel.ts`, `meleeSwing.ts`, `grenadeThrowPose.ts`.
 - Who gets which weapons: `src/core/gameModes.ts` (`resolveWeaponLoadout`, `FIXED_LOADOUTS`,
   `WEAPON_CATEGORIES`, `grenadesEnabled`) and `src/core/loadout.ts`.
 - Hooks into Game: `WeaponManager.create` is built in `Game.create` through `buildWeaponManager` with

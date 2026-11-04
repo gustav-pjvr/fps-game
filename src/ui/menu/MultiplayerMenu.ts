@@ -1,4 +1,5 @@
-import { attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { ModalScope } from './modalScope.ts';
 
 export interface MultiplayerMenuCallbacks {
   onCreateRoom: () => void;
@@ -13,9 +14,11 @@ export class MultiplayerMenu {
   private readonly overlay: HTMLDivElement;
   private readonly panel: HTMLDivElement;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
+  private readonly scope = new ModalScope();
 
   constructor(root: HTMLElement, callbacks: MultiplayerMenuCallbacks) {
     this.overlay = createOverlay();
+    closeOnBackdropClick(this.overlay, callbacks.onClose);
 
     const panel = createPanel();
     this.panel = panel;
@@ -65,14 +68,17 @@ export class MultiplayerMenu {
   show(): void {
     this.overlay.style.display = 'flex';
     attachScanSweep(this.panel);
+    this.scope.enter(this.overlay, this.panel.querySelector<HTMLButtonElement>('button'));
   }
 
   hide(): void {
     this.overlay.style.display = 'none';
+    this.scope.leave();
   }
 
   dispose(): void {
     document.removeEventListener('keydown', this.onKeyDown);
+    this.scope.leave();
     this.overlay.remove();
   }
 }

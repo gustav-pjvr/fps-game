@@ -29,7 +29,8 @@ describe('Opus arsenal', () => {
         return;
       }
       expect(parts.length).toBeGreaterThanOrEqual(12);
-      expect(parts.length).toBeLessThanOrEqual(25);
+      // 26 since the open iron sights (two rear ears and a front post) replaced the solid sight blocks.
+      expect(parts.length).toBeLessThanOrEqual(26);
       const gunmetal = getWeaponMaterials().gunmetal;
       const firstMetal = parts.find((part) => part.material === gunmetal)!;
       const secondMetal = meshes(second.group).find((part) => part.material === gunmetal)!;
@@ -68,7 +69,7 @@ describe('Opus arsenal', () => {
 
   it('ports the rifle dimensions, hands and magazine without baking the hip pose into its muzzle', () => {
     const model = buildWeaponViewModel('rifle');
-    expect(meshes(model.group)).toHaveLength(24);
+    expect(meshes(model.group)).toHaveLength(25);
     const receiver = model.group.getObjectByName('receiver') as THREE.Mesh<THREE.BoxGeometry>;
     expect(receiver.geometry.parameters).toMatchObject({ width: 0.085, height: 0.11, depth: 0.42 });
     expect(model.group.getObjectByName('trigger-hand')!.rotation.x).toBeCloseTo(0.25);
@@ -109,10 +110,29 @@ describe('Opus arsenal', () => {
       const model = buildWeaponViewModel(definition.id);
       model.group.position.copy(model.adsPosition);
       model.group.updateMatrixWorld(true);
+      const aim = model.group.getObjectByName('aim-point') ?? model.group.getObjectByName('sight-dot');
+      expect(aim).toBeDefined();
+      const aimCentre = aim!.getWorldPosition(new THREE.Vector3());
+      expect(aimCentre.distanceTo(new THREE.Vector3(0, 0, -ADS_SIGHT_DISTANCE))).toBeLessThan(0.001);
       const sight = model.group.getObjectByName('sight-dot') as THREE.Mesh<THREE.BoxGeometry>;
-      expect(sight).toBeDefined();
       const centre = sight.getWorldPosition(new THREE.Vector3());
-      expect(centre.distanceTo(new THREE.Vector3(0, 0, -ADS_SIGHT_DISTANCE))).toBeLessThan(0.001);
+      expect(Math.hypot(centre.x, centre.y)).toBeLessThan(0.001);
+      expect(centre.z).toBeLessThanOrEqual(-ADS_SIGHT_DISTANCE + 0.001);
+    });
+  }
+
+  // Gustav, 2026-11-04: the sight blocked the crosshair. At full aim nothing but the front post's
+  // tip may rise into the line of aim; the sniper is exempt because its scope hides the model.
+  for (const definition of Object.values(WEAPON_DEFINITIONS).filter((d) => d.kind === 'ranged' && !d.hasScope)) {
+    it(`keeps ${definition.id}'s body below the crosshair at full aim`, () => {
+      const model = buildWeaponViewModel(definition.id);
+      model.group.position.copy(model.adsPosition);
+      model.group.updateMatrixWorld(true);
+      const blocking = meshes(model.group)
+        .filter((part) => part.name !== 'sight-dot')
+        .filter((part) => new THREE.Box3().setFromObject(part).max.y > -0.0005)
+        .map((part) => part.name);
+      expect(blocking).toEqual([]);
     });
   }
 

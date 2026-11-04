@@ -201,41 +201,49 @@ succeeds. Not yet live-playtested (drag-and-drop interaction, the rotating chara
 the mid-match deferred-apply timing are all visual/gameplay-feel concerns a clean build can't
 confirm) - single-player first, then a 2-browser multiplayer pass, is the real sign-off here.
 
-## Loadout and menus (v4.4)
+## Loadout and menus (v4.4, reworked in v4.6)
 
-As built in v4.4.0 and unchanged in v4.5.0. This replaces the card layout of the 2026-07-10
+As built in v4.4.0, with the v4.6.0 rework (stacked Loadout, tabbed Settings, Match Setup mode cards, click outside to close) folded in. This replaces the card layout of the 2026-07-10
 section above. Its three-column page, categories, click to equip, persistence and "applies on the
 next respawn" rule all still hold; the tiles, the details panel and the Grenade section are new.
 
 ### Loadout screen (`src/ui/menu/LoadoutScreen.ts`)
 
-- **Square weapon tiles, design only.** Every weapon is an equal square button
-  (`.loadout-tile`) holding nothing but its rendered model: the view model with the arms removed
-  (`ARM_PART_NAMES`, the hand and sleeve parts of `weapons/models/arsenal.ts`). The size follows
-  the viewport, `--loadout-tile: clamp(84px, min(14vh, 8vw), 132px)`, so the whole catalog fits
-  unscrolled from 1280 by 720. Tiles are grouped Primary (sniper, rifle, shotgun), Secondary
-  (pistol, MP5), Melee (knife) and a gold "Reward only" section for the Goose Launcher, which can be
-  clicked for details but never equipped.
-- **Name on hover.** The name is a caption laid over the foot of the tile (`.loadout-tile-caption`,
-  absolutely placed so showing it moves nothing). It appears on hover, on keyboard focus
-  (`:focus-visible`) and on pad focus (`[data-input-device="gamepad"]`), and is `aria-hidden`;
-  the tile's `aria-label` carries the name for screen readers.
+v4.6.0 restacked the catalog (Gustav, 2026-11-04: "sections should be stacked, not next to each
+other") and made every name visible.
+
+- **Stacked bands.** Primary, Secondary, Melee, Reward only and Grenade each take one full-width
+  band, one under the other: the label sits in a fixed 112 px column on the left, the tiles beside
+  it. At 1600 by 900 the whole catalog fits without scrolling; shorter windows scroll the catalog
+  with its scrollbar hidden and the fade hint at the foot.
+- **Landscape tiles with the name always shown.** Each weapon is a landscape button
+  (`.loadout-tile`, width `--loadout-tile-w: clamp(112px, min(10.5vw, 16.5vh), 168px)`, height 0.66
+  of that) showing its rendered model (the view model with the arms removed, `ARM_PART_NAMES`) above
+  a caption strip with the name. The square render is drawn a little wider than the tile is tall and
+  centred, so its empty top and bottom are clipped. Grenade tiles are 0.8 of a weapon tile and show
+  the whole upright render. The tile's `aria-label` carries the name for screen readers.
 - **Stats on click.** Clicking a tile equips it (its own category slot only) and opens it in the
   middle column's details panel (`aria-live="polite"`): category, an "Equipped" or "Reward only"
   tag, name, description and stat badges (damage, fire rate per second, magazine, reload seconds,
   and Scope or burst count where the weapon has them, `weaponStats`). The page saves on every click.
-- **Grenade section.** Below the weapons, under a rule, a smaller section (`loadout-grenades`,
-  tiles at `--loadout-grenade-tile`, 0.66 of the weapon tile) offers Frag Grenade and Flash
-  Grenade. Its heading carries the throw key as a key cap (`keyHint` from the player's bindings,
-  Q by default, "RB (R1)" on a pad through `setDeviceHint`), re-read every time the page opens so a
-  rebind in Settings shows. Clicking a grenade equips it and shows its details. The numbers come
-  from `combat/grenades/grenadeTuning.ts`: frag 130 damage near, 7 m radius, 3.0 s fuse; flash
-  blinds up to 3.5 s, 22 m reach, 1.6 s fuse.
+  The Goose Launcher can be clicked for details but never equipped.
+- **Grenade band.** Under a rule, Frag Grenade and Flash Grenade. Its label carries the throw key as
+  a key cap (`keyHint` from the player's bindings, Q by default, "RB (R1)" on a pad through
+  `setDeviceHint`), re-read every time the page opens so a rebind in Settings shows. The numbers come
+  from `combat/grenades/grenadeTuning.ts`.
 - **Middle column.** Under the details, one readout per slot (Primary, Secondary, Melee, Grenade).
-  Right column: the turning character (`loadoutCharacterPreview.ts`), unchanged. Below 980 px wide
-  the page collapses to one scrolling column.
-- **Closing.** Close, Escape (a document listener that stays quiet while the page is hidden), or B
-  on a pad (B presses the control labelled Close).
+  Right column: the turning character (`loadoutCharacterPreview.ts`). Below 980 px wide the page
+  collapses to one scrolling column.
+- **Closing.** Close, Escape, or B on a pad. The page fills the screen, so there is no backdrop to
+  click.
+
+### Weapon names (v4.6.0)
+
+The names say what each weapon is (`name` in `src/weapons/definitions.ts`, shown in the Loadout,
+the hotbar, the weapon caption and the kill feed): VR-4 Assault Rifle, H12 Shotgun, L7 Sniper
+Rifle, P9 Pistol, S5 Burst SMG, Combat Knife, Goose Launcher. They replaced VR-4 Fieldhand,
+Hedgerow 12, Marchand Longview, Kestrel P9, Sable MP-5 and Bicknell Trench Knife. The e2e specs
+compare `getWeaponName()` with these strings.
 
 ### Thumbnails
 
@@ -286,12 +294,23 @@ All are built from the `menuStyles.ts` helpers (`createPanel`, `createOverlay`, 
 | Screen | File | What it is |
 |---|---|---|
 | Main menu | `src/ui/menu/MainMenu.ts` | Title, PLAY, MULTIPLAYER, LOADOUT, SETTINGS, key hints that switch to pad names, version |
-| Match setup | `src/ui/menu/PlaySetupModal.ts` | Solo options: enemy and target counts, goose difficulty, Map and Weather, Horde, Director and Mission |
-| Settings | `src/ui/menu/SettingsPanel.ts` | Volume, sensitivity, FOV, graphics, key bindings, controller (lobby and pause) |
+| Match setup | `src/ui/menu/PlaySetupModal.ts` | Solo options: a Mode radio group of four cards (Elimination, Goose Horde, Director, Uplink mission), enemy and target counts with minus and plus buttons, goose difficulty, Map and Weather |
+| Settings | `src/ui/menu/SettingsPanel.ts` | Tabs General (FOV, mouse sensitivity, graphics preset with a one-line description), Audio (master, music), Keyboard (rebinding in two columns, Reset keys), Controller (sensitivity, Invert Y, Aim Assist and Vibration switches, button map). Sliders show their value. Fixed height, no scrolling at 1280 by 720; the last tab is remembered |
 | Pause menu | `src/ui/menu/PauseMenu.ts` | Resume, Settings, Restart (solo) or Respawn (multiplayer, unlocks after 5 s), Loadout (three modes), Return to Lobby |
 | Multiplayer menu | `src/ui/menu/MultiplayerMenu.ts` | Create Room or Join Room |
 | Room screens | `src/ui/menu/CreateRoomScreen.ts`, `JoinRoomScreen.ts` | Host settings and player list; guest join and ready |
 | Loading screen | `src/ui/menu/LoadingScreen.ts` | "DEPLOYING" with a progress bar while a match builds |
+
+**Click outside to close (v4.6.0).** `closeOnBackdropClick(overlay, onClose)` in `menuStyles.ts`
+calls the popup's own Close or Cancel handler when both the press and the release land on the
+dimmed backdrop (a drag that starts on a slider inside the panel never closes it). It is wired on
+Match Setup (Cancel), Settings (Close), the Multiplayer menu (Close), the pause menu (Resume) and
+Join Room while not yet in a room. A room lobby, created or joined, does not close on an outside
+click, because one stray click would drop everyone; Esc and Leave still work there.
+
+**No visible scrollbars (v4.6.0).** `index.html` hides scrollbars on every element
+(`scrollbar-width: none` and `::-webkit-scrollbar { display: none }`); panels still scroll by wheel,
+touch and keys.
 
 Match end and the mode briefing are `src/ui/matchEndScreen.ts` and
 `src/ui/modeExplanationScreen.ts`. `App.ts` wires the lobby screens.

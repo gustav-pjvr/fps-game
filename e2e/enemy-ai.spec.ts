@@ -502,7 +502,7 @@ test('a rifle shot carries farther than a pistol shot', async ({ page }) => {
 
   // Rifle (heard to 40 m): an enemy 34 m away must react.
   await page.keyboard.press('Digit1');
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() !== 'Kestrel P9', undefined, { timeout: 5000 });
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() !== 'P9 Pistol', undefined, { timeout: 5000 });
   await waitForGameTime(page, 0.5);
   await page.evaluate(({ x, z }) => window.__gameDebug?.placeEnemy(1, x, z + 34), player);
   await waitForGameTime(page, 0.3);

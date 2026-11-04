@@ -251,3 +251,24 @@ live-playtested (burst-fire feel/timing and both reworked models are visual/game
 a clean build can't confirm) - same "trust the user's live test" pattern as every other
 gameplay-feel feature in this project.
 
+## Open iron sights: the crosshair stays clear when aiming (v4.6.0, 2026-11-04)
+
+Gustav: aiming had improved, but the sight now sat in front of the crosshair and hid a lot of the
+space you aim into. The cause: each gun's aim pose put a `sight-dot` on the screen centre, and that
+dot sat on the back face of a solid rear-sight block (rifle) or on top of a rail (pistol, MP5,
+shotgun, Goose Launcher), so the block covered the crosshair.
+
+- **The fix** (`weapons/models/arsenal.ts`, `Parts.ironSights`): every gun except the sniper now
+  has open iron sights on a line of aim `lineY` above the whole body. A rear notch of two thin ears
+  stands below that line, and a thin front post rises to it with the glowing `sight-dot` as its tip.
+  An invisible `aim-point` at the rear sight is what the aim pose puts on the screen centre
+  (`adsPositionForSight`), so the crosshair sits on the post tip with clear view above and to both
+  sides. The shotgun has a bead on the muzzle end; the Goose Launcher's line clears its flared
+  muzzle. The sniper keeps its scope (the scope overlay hides the model at full aim) and still aims
+  by its `sight-dot`.
+- **Eye relief.** `ADS_SIGHT_DISTANCE` (`core/config.ts`) went from 0.32 to 0.4 m, so the gun sits
+  a little further from the eye and fills less of the lower middle of the screen.
+- **Tests** (`weapons/models/arsenal.test.ts`): the aim point lands on the screen centre at
+  `ADS_SIGHT_DISTANCE` and the post tip lands on the centre line; a new test fails if any part of a
+  non-scoped gun except the post tip rises above the crosshair at full aim. The part budget per model
+  rose from 25 to 26 meshes for the ears and the post.

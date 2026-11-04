@@ -9,9 +9,9 @@ import { lockPointer, waitForGameTime } from './helpers.ts';
 async function startMission(page: Page): Promise<void> {
   await page.goto('/');
   await page.getByRole('button', { name: 'PLAY', exact: true }).click();
-  await page.getByRole('checkbox', { name: /Uplink mission/ }).check();
+  await page.getByRole('radio', { name: /Uplink mission/ }).check();
   // The three modes are exclusive: checking the mission clears the others.
-  await expect(page.getByRole('checkbox', { name: /Director/ })).not.toBeChecked();
+  await expect(page.getByRole('radio', { name: /Director/ })).not.toBeChecked();
   await page.getByRole('button', { name: 'Start Match', exact: true }).click();
   await page.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 60000 });
   await lockPointer(page);

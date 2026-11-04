@@ -1130,7 +1130,7 @@ export class Game {
             endY: end.y,
             endZ: end.z,
             // activeWeaponId, not weaponSlotNames[activeWeaponIndex] - the latter returns the
-            // display name (e.g. "Kestrel P9"), which playGunshot's `${weaponId}_shot` buffer
+            // display name (e.g. "P9 Pistol"), which playGunshot's `${weaponId}_shot` buffer
             // lookup never matches, silently falling through to its generic fallback sound. This is
             // why every multiplayer opponent's gunshot sounded the same regardless of weapon.
             weaponId: game.weaponManager.activeWeaponId,

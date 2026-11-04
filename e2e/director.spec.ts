@@ -7,7 +7,7 @@ import { lockPointer, waitForGameTime } from './helpers.ts';
 async function startMatch(page: Page, director: boolean): Promise<void> {
   await page.goto('/');
   await page.getByRole('button', { name: 'PLAY', exact: true }).click();
-  if (director) await page.getByRole('checkbox', { name: /Director/ }).check();
+  if (director) await page.getByRole('radio', { name: /Director/ }).check();
   await page.getByRole('button', { name: 'Start Match', exact: true }).click();
   await page.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 60000 });
   await lockPointer(page);

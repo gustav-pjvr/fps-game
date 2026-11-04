@@ -187,14 +187,14 @@ test('weapon switching changes the active weapon name', async ({ page }) => {
   await waitForGameReady(page);
   await lockPointer(page);
 
-  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('VR-4 Fieldhand'); // slot 1, rifle
+  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('VR-4 Assault Rifle'); // slot 1, rifle
 
   // Weapon switch plays a holster/draw animation (WEAPON_SWITCH_DURATION) before the swap lands.
   await page.keyboard.press('Digit2');
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Kestrel P9', undefined, { timeout: SLOW_POLL_TIMEOUT });
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'P9 Pistol', undefined, { timeout: SLOW_POLL_TIMEOUT });
 
   await page.keyboard.press('Digit3');
-  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Bicknell Trench Knife', undefined, {
+  await page.waitForFunction(() => window.__gameDebug?.getWeaponName() === 'Combat Knife', undefined, {
     timeout: SLOW_POLL_TIMEOUT,
   });
 
@@ -202,7 +202,7 @@ test('weapon switching changes the active weapon name', async ({ page }) => {
   // time covers the rest of the knife's draw plus the midpoint of a hypothetical fourth-slot switch.
   await page.keyboard.press('Digit4');
   await waitForGameTime(page, 0.5);
-  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('Bicknell Trench Knife');
+  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('Combat Knife');
 });
 
 test('assault rifle fires automatically while the trigger is held', async ({ page }) => {
@@ -211,7 +211,7 @@ test('assault rifle fires automatically while the trigger is held', async ({ pag
   await waitForGameReady(page);
   await lockPointer(page);
 
-  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('VR-4 Fieldhand'); // slot 1
+  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('VR-4 Assault Rifle'); // slot 1
   expect(await readAmmo(page)).toBe(RIFLE_MAGAZINE);
 
   // One press, held: several rounds without repeated clicks proves the automatic path
@@ -236,7 +236,7 @@ test('aiming down sights narrows the camera FOV and releasing restores it', asyn
   await waitForGameReady(page);
   await lockPointer(page);
 
-  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('Marchand Longview');
+  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('L7 Sniper Rifle');
   const hipFov = await page.evaluate(() => window.__gameDebug?.getCameraFov() ?? 0);
   expect(hipFov).toBeGreaterThan(sniperAdsFov + 5);
 
@@ -432,7 +432,7 @@ test('dying releases pointer lock and Respawn resets the match without leaving i
     timeout: SLOW_POLL_TIMEOUT,
   });
   // Still the slot-1 rifle (nothing switched weapons), with a full magazine.
-  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('VR-4 Fieldhand');
+  expect(await page.evaluate(() => window.__gameDebug?.getWeaponName())).toBe('VR-4 Assault Rifle');
   expect(await readAmmo(page)).toBe(RIFLE_MAGAZINE);
   // Respawn re-requests pointer lock as part of the same click, so play can continue immediately.
   await page.waitForFunction(() => window.__gameDebug?.isPointerLocked() === true, undefined, { timeout: SLOW_POLL_TIMEOUT });
