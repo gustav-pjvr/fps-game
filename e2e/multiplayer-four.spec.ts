@@ -146,7 +146,7 @@ async function lockPointerPatiently(page: Page): Promise<void> {
 /** Pistol equipped, with a longer wait than helpers.ts's equipPistol (the switch is a game tick). */
 async function equipPistolPatiently(page: Page): Promise<void> {
   await page.keyboard.press('Digit2');
-  await page.waitForFunction(() => window.__gameDebug!.getWeaponName() === 'Kestrel P9', undefined, { timeout: 30000 });
+  await page.waitForFunction(() => window.__gameDebug!.getWeaponName() === 'P9 Pistol', undefined, { timeout: 30000 });
   await page.waitForTimeout(1500);
 }
 
