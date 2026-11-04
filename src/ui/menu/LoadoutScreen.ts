@@ -117,7 +117,8 @@ function ensureLoadoutStyleInjected(): void {
     '.loadout-tile-caption {' +
     '  flex: 0 0 auto; box-sizing: border-box; width: 100%; margin-top: auto; padding: 5px 8px; pointer-events: none;' +
     `  font-family: ${BODY_FONT}; font-size: 11.5px; font-weight: 600; line-height: 1.2; text-align: left; color: ${TEXT};` +
-    `  background: ${BG_VOID}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;` +
+    // Two lines at most, so a long name wraps on a narrow tile instead of being cut.
+    `  background: ${BG_VOID}; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;` +
     '}' +
     '@media (prefers-reduced-motion: reduce) { .loadout-tile { transition: none; } }' +
     // Small-viewport clamp: below 980px the fixed 3-column layout (catalog / details and equipped

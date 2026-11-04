@@ -28,7 +28,7 @@ export const GAMEPAD_MAPPING = [
   'Right stick: look; RT (R2): fire; LT (L2): aim',
   'A (Cross): jump / activate; B (Circle): interact / back',
   'X (Square): reload; Y (Triangle): next weapon',
-  'D-pad left / right: previous / next weapon; up: torch',
+  'D-pad left / right: previous / next weapon; D-pad up: torch',
   'Start (Options): pause; View (Share): reset match',
   'RB (R1): throw grenade (hold to cook); LB (L1): unbound',
   'Menus: D-pad or left stick moves focus, left / right changes a value',

@@ -125,13 +125,20 @@ export function createOverlay(): HTMLDivElement {
  * must land on the backdrop, so a drag that starts inside the panel (a slider, a text selection)
  * and ends outside it never closes anything. */
 export function closeOnBackdropClick(overlay: HTMLElement, onClose: () => void): void {
+  // A press on the backdrop released inside the panel still fires `click` on the overlay (their
+  // common ancestor), so the release target is checked on its own.
   let pressedOnBackdrop = false;
+  let releasedOnBackdrop = false;
   overlay.addEventListener('pointerdown', (event) => {
     pressedOnBackdrop = event.target === overlay;
   });
+  overlay.addEventListener('pointerup', (event) => {
+    releasedOnBackdrop = event.target === overlay;
+  });
   overlay.addEventListener('click', (event) => {
-    const outside = pressedOnBackdrop && event.target === overlay;
+    const outside = pressedOnBackdrop && releasedOnBackdrop && event.target === overlay;
     pressedOnBackdrop = false;
+    releasedOnBackdrop = false;
     if (outside) onClose();
   });
 }
@@ -140,10 +147,10 @@ export function createPanelTitle(text: string): HTMLDivElement {
   ensureMotionKeyframesInjected();
   const wrap = document.createElement('div');
   wrap.style.cssText = 'margin-bottom:22px;';
-  const title = document.createElement('div');
+  const title = document.createElement('h2');
   title.textContent = text;
   title.className = 'menu-panel-title';
-  title.style.cssText = `font-family:${SANS_FONT}; font-size:1.9rem; font-weight:300; letter-spacing:-0.01em; color:${INK};`;
+  title.style.cssText = `margin:0; font-family:${SANS_FONT}; font-size:1.9rem; font-weight:300; letter-spacing:-0.01em; color:${INK};`;
   wrap.appendChild(title);
   return wrap;
 }

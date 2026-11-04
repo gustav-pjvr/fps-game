@@ -5,6 +5,7 @@ import { REBINDABLE_ACTIONS, ACTION_LABELS, formatKeyCode, type Action } from '.
 import { ACCENT, HAIRLINE, attachScanSweep, closeOnBackdropClick, createButton, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
 import { GRAPHICS_QUALITY_LABELS, GRAPHICS_QUALITY_ORDER, type GraphicsQuality } from '../../settings/graphicsQuality.ts';
 import { CAMERA_FOV_MAX, CAMERA_FOV_MIN } from '../../core/config.ts';
+import { ModalScope } from './modalScope.ts';
 
 type TabId = 'general' | 'audio' | 'keyboard' | 'controller';
 const TABS: readonly { readonly id: TabId; readonly label: string }[] = [
@@ -108,6 +109,8 @@ export class SettingsPanel {
   private readonly qualityButtons = new Map<GraphicsQuality, HTMLButtonElement>();
   private readonly tabButtons = new Map<TabId, HTMLButtonElement>();
   private readonly tabPanels = new Map<TabId, HTMLDivElement>();
+  /** Keeps Tab inside the panel while it is open and returns focus to the opener on close. */
+  private readonly scope = new ModalScope();
   private qualityHint!: HTMLDivElement;
   private readonly instanceId = ++panelIdCounter;
   private onCloseCallback: () => void = () => {};
@@ -182,6 +185,9 @@ export class SettingsPanel {
     panel.appendChild(this.buildTabList());
     const body = document.createElement('div');
     body.className = 'settings-body';
+    // Focusable, so a keyboard can scroll it on a window too short for the Controller tab.
+    body.tabIndex = 0;
+    body.setAttribute('aria-label', 'Settings options');
     panel.appendChild(body);
 
     const general = this.addTabPanel(body, 'general');
@@ -408,6 +414,7 @@ export class SettingsPanel {
         this.cancelCapture();
         this.listeningFor = action;
         keyButton.textContent = 'Press a key…';
+        keyButton.setAttribute('aria-label', `${ACTION_LABELS[action]}: press a key`);
         keyButton.dataset.listening = 'true';
       });
 
@@ -419,7 +426,7 @@ export class SettingsPanel {
 
     const resetRow = document.createElement('div');
     resetRow.style.cssText = 'display:flex; justify-content:flex-end; margin-top:20px;';
-    const resetButton = createButton('Reset keys');
+    const resetButton = createButton('Reset Keys');
     resetButton.addEventListener('click', () => {
       this.listeningFor = null;
       Settings.resetKeyBindings();
@@ -489,6 +496,7 @@ export class SettingsPanel {
     for (const [action, button] of this.keyButtons) {
       const code = codeByAction.get(action);
       button.textContent = code ? formatKeyCode(code) : 'None';
+      button.setAttribute('aria-label', `${ACTION_LABELS[action]}: ${button.textContent}`);
       delete button.dataset.listening;
     }
   }
@@ -504,16 +512,19 @@ export class SettingsPanel {
     this.selectTab(lastOpenTab);
     this.overlay.style.display = 'flex';
     attachScanSweep(this.panel);
+    this.scope.enter(this.overlay, this.tabButtons.get(lastOpenTab) ?? null);
   }
 
   hide(): void {
     this.overlay.style.display = 'none';
+    this.scope.leave();
     // Disarm any "Press a key…" capture still pending, and put its button label back.
     this.cancelCapture();
   }
 
   dispose(): void {
     document.removeEventListener('keydown', this.onKeyDown);
+    this.scope.leave();
     this.overlay.remove();
   }
 }

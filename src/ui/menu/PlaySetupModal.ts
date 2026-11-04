@@ -1,4 +1,5 @@
 import { MONO_FONT, LABEL_CSS, INK, SURFACE_RAISED } from '../theme.ts';
+import { ModalScope } from './modalScope.ts';
 import { ACCENT, attachScanSweep, closeOnBackdropClick, createButton, createOverlay, createPanel, createPanelTitle, TEXT, BG_RAISED, HAIRLINE } from './menuStyles.ts';
 import { GOOSE_EXPLOSION_DIFFICULTIES, GOOSE_EXPLOSION_DIFFICULTY_LABELS, MATCH_MAPS, MATCH_MAP_LABELS, MATCH_MAP_DESCRIPTIONS, MATCH_WEATHERS, MATCH_WEATHER_LABELS, type GooseExplosionDifficulty, type MatchMap, type MatchWeather } from '../../core/config.ts';
 
@@ -53,6 +54,7 @@ export class PlaySetupModal {
   private readonly directorModeRadio: HTMLInputElement;
   private readonly missionModeRadio: HTMLInputElement;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
+  private readonly scope = new ModalScope();
 
   constructor(
     root: HTMLElement,
@@ -68,11 +70,17 @@ export class PlaySetupModal {
     const panel = createPanel();
     this.panel = panel;
     panel.style.width = '520px';
+    // Taller than the shared 80vh cap, so the footer buttons show at 1280 by 720 without scrolling.
+    panel.style.maxHeight = '94vh';
+    panel.style.padding = '24px 30px';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', 'Match setup');
     panel.appendChild(createPanelTitle('MATCH SETUP'));
 
     const modeGroup = document.createElement('fieldset');
     modeGroup.setAttribute('role', 'radiogroup');
-    modeGroup.style.cssText = 'border:0; padding:0; margin:0 0 20px; min-width:0;';
+    modeGroup.style.cssText = 'border:0; padding:0; margin:0 0 14px; min-width:0;';
     const modeLabel = document.createElement('legend');
     modeLabel.textContent = 'Mode';
     modeLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
@@ -115,7 +123,7 @@ export class PlaySetupModal {
     updateCountInputs();
 
     const footer = document.createElement('div');
-    footer.style.cssText = 'display:flex; justify-content:flex-end; align-items:stretch; gap:10px; margin-top:24px;';
+    footer.style.cssText = 'display:flex; justify-content:flex-end; align-items:stretch; gap:10px; margin-top:16px;';
 
     const cancelButton = createButton('Cancel');
     cancelButton.style.cssText += 'height:50px; flex:1; min-width:0; padding:12px;';
@@ -189,7 +197,7 @@ export class PlaySetupModal {
     row.style.cssText = 'margin-bottom:16px;';
 
     const labelEl = document.createElement('label');
-    labelEl.textContent = 'Goose explosions';
+    labelEl.textContent = 'Goose Explosions';
     labelEl.htmlFor = 'match-setup-goose-difficulty';
     labelEl.style.cssText = `display:block; ${LABEL_CSS} margin-bottom:6px;`;
 
@@ -329,14 +337,17 @@ export class PlaySetupModal {
   show(): void {
     this.overlay.style.display = 'flex';
     attachScanSweep(this.panel);
+    this.scope.enter(this.overlay, this.panel.querySelector<HTMLInputElement>('input[type="radio"]:checked'));
   }
 
   hide(): void {
     this.overlay.style.display = 'none';
+    this.scope.leave();
   }
 
   dispose(): void {
     document.removeEventListener('keydown', this.onKeyDown);
+    this.scope.leave();
     this.overlay.remove();
   }
 }
