@@ -262,9 +262,10 @@ export const KNOCKBACK_DECAY_PER_SECOND = 6;
 
 export const ADS_LERP_SPEED = 12;
 export const SCOPE_REVEAL_THRESHOLD = 0.92;
-/** How far in front of the eye (metres, along the view axis) a weapon's sight-dot sits when fully
- * aimed (see weapons/viewModel.ts adsPositionForSight). */
-export const ADS_SIGHT_DISTANCE = 0.32;
+/** How far in front of the eye (metres, along the view axis) a weapon's aim point (its rear sight)
+ * sits when fully aimed (see weapons/viewModel.ts adsPositionForSight). Far enough back that the
+ * gun fills only the lower middle of the screen. */
+export const ADS_SIGHT_DISTANCE = 0.4;
 /** Share of the weapon bob and look sway removed at full aim, so the sight stays on the centre. */
 export const ADS_MOTION_DAMPING = 0.85;
 

@@ -76,6 +76,24 @@ class Parts {
     return magazine;
   }
 
+  /** Open iron sights on the line of aim `lineY` (model space). Everything stays below that line
+   * except the front post's glowing tip, so at full aim the crosshair sits on the tip with clear
+   * view above and around it: a rear notch (two ears standing on `rearBaseY`) and a thin
+   * front post rising from `frontBaseY`. The `aim-point` is what the aim pose puts on the screen
+   * centre, `ADS_SIGHT_DISTANCE` in front of the eye. */
+  ironSights(lineY: number, rearZ: number, rearBaseY: number, frontZ: number, frontBaseY: number, bead = 0.008): void {
+    const earTop = lineY - 0.003;
+    const earHeight = earTop - rearBaseY;
+    for (const x of [-0.017, 0.017]) this.box(`rear-sight-ear-${x}`, [0.01, earHeight, 0.02], [x, rearBaseY + earHeight / 2, rearZ]);
+    const postTop = lineY - bead / 2;
+    this.box('front-post', [0.006, postTop - frontBaseY, 0.01], [0, (postTop + frontBaseY) / 2, frontZ]);
+    this.box('sight-dot', [bead, bead, bead], [0, lineY, frontZ], this.sight);
+    const aim = new THREE.Object3D();
+    aim.name = 'aim-point';
+    aim.position.set(0, lineY, rearZ);
+    this.group.add(aim);
+  }
+
   hands(support = true, supportZ = -0.33): void {
     this.box('trigger-hand', [0.08, 0.09, 0.1], [0.005, -0.13, 0.08], this.materials.glove, [0, 0.25, 0]);
     this.box('trigger-sleeve', [0.1, 0.1, 0.32], [0.04, -0.2, 0.28], this.materials.sleeve, [0, 0.5, 0]);
@@ -95,8 +113,7 @@ function rifle(): Parts {
   p.tube('barrel', [0, 0, -0.46], [0, 0, -0.62], 0.019);
   p.tube('muzzle', [0, 0, -0.6], [0, 0, -0.66], 0.027, gunmetal);
   p.box('sight-rail', [0.035, 0.045, 0.2], [0, 0.085, -0.02]);
-  p.box('rear-sight', [0.05, 0.05, 0.05], [0, 0.1, 0.07]);
-  p.box('front-sight', [0.05, 0.05, 0.04], [0, 0.1, -0.11]);
+  p.ironSights(0.122, 0.07, 0.1, -0.11, 0.1075);
   p.box('grip', [0.05, 0.13, 0.065], [0, -0.1, 0.08], gunmetal, [0, 0.25, 0]);
   p.box('stock', [0.055, 0.09, 0.17], [0, -0.01, 0.28]);
   p.box('stock-pad', [0.06, 0.12, 0.04], [0, -0.04, 0.37]);
@@ -104,7 +121,6 @@ function rifle(): Parts {
   p.hands();
   for (const x of [-0.044, 0.044]) p.box(`energy-strip-${x}`, [0.012, 0.035, 0.14], [x, 0, -0.06], p.glow);
   p.box('top-energy-strip', [0.06, 0.008, 0.2], [0, 0.054, -0.33], p.glow);
-  p.box('sight-dot', [0.012, 0.012, 0.005], [0, 0.112, 0.09], p.sight);
   p.box('magazine-body', [0.05, 0.12, 0.07], [0, 0, 0], gunmetal, [0, 0, 0], p.mag([0, -0.1, -0.08]));
   p.muzzle = [0, 0, -0.66];
   return p;
@@ -121,9 +137,7 @@ function pistol(): Parts {
   const magazine = p.mag([0, -0.16, 0.065]);
   p.box('flush-magazine', [0.045, 0.025, 0.06], [0, 0, 0], pipe, [0, 0.25, 0], magazine);
   p.box('trigger-guard', [0.025, 0.015, 0.08], [0, -0.092, -0.005]);
-  p.box('rear-sight', [0.05, 0.025, 0.025], [0, 0.073, 0.055]);
-  p.box('front-sight', [0.012, 0.02, 0.02], [0, 0.07, -0.165]);
-  p.box('sight-dot', [0.009, 0.009, 0.005], [0, 0.077, 0.07], p.sight);
+  p.ironSights(0.082, 0.055, 0.0625, -0.165, 0.0625, 0.007);
   for (const x of [-0.037, 0.037]) p.box(`energy-strip-${x}`, [0.008, 0.016, 0.12], [x, 0.02, -0.05], p.glow);
   p.box('hazard-plate', [0.062, 0.015, 0.05], [0, -0.064, -0.08], trim);
   p.hands(false);
@@ -145,7 +159,7 @@ function mp5(): Parts {
   p.box('stock-pad', [0.075, 0.1, 0.025], [0, -0.02, 0.3]);
   p.box('grip', [0.045, 0.13, 0.06], [0, -0.1, 0.08], gunmetal, [0, 0.25, 0]);
   p.box('sight-rail', [0.035, 0.025, 0.2], [0, 0.06, -0.025]);
-  p.box('sight-dot', [0.01, 0.01, 0.005], [0, 0.078, 0.065], p.sight);
+  p.ironSights(0.09, 0.06, 0.0725, -0.115, 0.0725);
   p.box('hazard-plate', [0.077, 0.02, 0.05], [0, -0.03, -0.025], trim);
   for (let k = 0; k < 3; k++) {
     const glow = k === 0 ? p.glow : createWeaponGlow();
@@ -172,7 +186,8 @@ function shotgun(): Parts {
   p.box('stock', [0.065, 0.09, 0.22], [0, -0.02, 0.24]);
   p.box('stock-pad', [0.075, 0.14, 0.035], [0, -0.04, 0.36]);
   p.box('sight-rail', [0.025, 0.025, 0.25], [0, 0.08, -0.01]);
-  p.box('sight-dot', [0.012, 0.012, 0.006], [0, 0.097, 0.09], p.sight);
+  // A bead sight: the front post stands on the muzzle end of the upper barrel.
+  p.ironSights(0.102, 0.09, 0.0925, -0.6, 0.061, 0.011);
   p.box('shell-magazine', [0.065, 0.08, 0.085], [0, 0, 0], gunmetal, [0, 0, 0], p.mag([0, -0.085, -0.035]));
   p.hands(true, -0.32);
   p.muzzle = [0, 0.035, -0.64];
@@ -245,7 +260,8 @@ function gooseLauncher(): Parts {
   p.box('stock-pad', [0.08, 0.14, 0.035], [0, -0.045, 0.34]);
   p.box('gold-stock-band', [0.085, 0.03, 0.04], [0, -0.015, 0.34], gold);
   p.box('sight-rail', [0.04, 0.03, 0.18], [0, 0.075, 0.015]);
-  p.box('sight-dot', [0.012, 0.012, 0.005], [0, 0.095, 0.09], p.sight);
+  // The line clears the flared muzzle's gold lip (top about 0.11).
+  p.ironSights(0.118, 0.09, 0.09, -0.38, 0.073, 0.01);
   p.hands(true, -0.3);
   p.muzzle = [0, 0.015, -0.548];
   return p;
@@ -275,11 +291,12 @@ export function buildWeaponViewModel(id: string): WeaponViewModel {
   parts.group.scale.setScalar(tuning.scale);
   parts.group.position.set(...tuning.offset);
   group.add(parts.group);
-  // The sight-dot is a direct child of the tuning group, so its centre in the outer group's space
-  // is its own position through the tuning scale and offset.
-  const sightDot = parts.group.getObjectByName('sight-dot');
-  const adsPosition = sightDot
-    ? adsPositionForSight(sightDot.position.clone().multiplyScalar(tuning.scale).add(parts.group.position))
+  // The aim point (iron sights) or the sight-dot (the sniper's scope) is a direct child of the
+  // tuning group, so its centre in the outer group's space is its own position through the tuning
+  // scale and offset.
+  const aimPoint = parts.group.getObjectByName('aim-point') ?? parts.group.getObjectByName('sight-dot');
+  const adsPosition = aimPoint
+    ? adsPositionForSight(aimPoint.position.clone().multiplyScalar(tuning.scale).add(parts.group.position))
     : WEAPON_ADS_POSITION.clone();
   return {
     group,
