@@ -158,7 +158,7 @@ function pickRandomGunGameWeapon(rng: () => number): string {
 
 /** Gun Game's kill-upgrade: a random weapon other than whatever the player currently has (falls
  * back to the full pool if that would leave nothing to pick from - unreachable today since the
- * pool has 4 entries, but a real fallback costs nothing). */
+ * pool has 5 entries, but a real fallback costs nothing). */
 export function pickGunGameUpgrade(currentWeaponId: string, rng: () => number = Math.random): string {
   const candidates = GUN_GAME_POOL.filter((id) => id !== currentWeaponId);
   const pool = candidates.length > 0 ? candidates : GUN_GAME_POOL;

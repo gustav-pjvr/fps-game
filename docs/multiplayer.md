@@ -1,5 +1,7 @@
 # Multiplayer
 
+> **Reading this file.** It is a dated diary: later entries correct earlier ones, and the early sections describe two players. For how multiplayer works now, read [architecture/multiplayer-and-modes.md](architecture/multiplayer-and-modes.md) first. Known corrections: player snapshots go out at 30 Hz (not 18); the host decides the winner and sends `matchEnded`; the kill limit is a number from 1 to 100; the TURN relay is `functions/api/turn-credentials.ts` (STUN plus Metered).
+
 Development notes for the room-code connection layer, movement/combat sync, match lifecycle, playtest fixes, and post-launch multiplayer polish, extracted from the original NOTES.md.
 
 ## Multiplayer, Phase 1: room-code connection layer (2026-07-06)

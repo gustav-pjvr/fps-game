@@ -9,7 +9,7 @@ import {
 /**
  * The town houses, rebuilt in the Opus station language (docs/world-redesign.md): prefab outpost
  * buildings in concrete, ribbed sage cladding and corrugated roofing, with a work lamp at each door.
- * Since v4.6 they are enterable (docs/enterable-buildings.md): walls with thickness and real
+ * Since v4.4.0 they are enterable (docs/enterable-buildings.md): walls with thickness and real
  * openings, floors, ceilings, rooms with furniture, and on the block a stair to the upper floor. The
  * rooms, walls and openings are the pure layout in world/houses/houseLayout.ts; this file builds the
  * colliders and meshes from it.

@@ -1,4 +1,4 @@
-# Pickups (v4.5.0)
+# Pickups (v4.4.0)
 
 Health packs, ammo boxes and grenade crates that stand on the map and return after a while. The
 design is `docs/squad-arsenal-night.md` section 5; this file describes what was built, where it

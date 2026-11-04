@@ -2,8 +2,8 @@ import type { MissionView } from './mission/missionState.ts';
 import type { PerfLogEntry } from './perfStats.ts';
 import type { GrenadeDebug } from '../combat/grenades/GrenadeSystem.ts';
 
-/** Read/aim-only hooks for the Playwright e2e suite (e2e/) - no gameplay-affecting cheats beyond
- * aiming, with one deliberate exception: damagePlayer, which exists so death-*UI-flow* tests don't
+/** Hooks for the Playwright e2e suite (e2e/). Mostly read and aim; a few change state on purpose
+ * (teleport, placeEnemy, commandEnemy, setFacilityDoor, throwGrenade and the like), and damagePlayer, which exists so death-*UI-flow* tests don't
  * have to stage up to ~90s of real combat just to reach the death screen. One death-flow test
  * still uses real combat (see e2e/helpers.ts killPlayerByEnemy) so the genuine
  * enemy-damages-player path stays covered end to end. */

@@ -575,7 +575,7 @@ export class Game {
 
   /** Re-centers the shadow camera's ortho box on the player every frame (see the
    * SUN_SHADOW_* comment in config.ts) - keeps the box small/high-res while still covering
-   * wherever the player currently is in the 800x800m world. Target/position offset snaps to
+   * wherever the player currently is in the 400x400m world. Target/position offset snaps to
    * shadow-texel increments so shadow edges don't visibly crawl ("swim") as the player moves a
    * sub-texel distance between frames. */
   private updateSunFollow(): void {
@@ -2812,7 +2812,7 @@ export class Game {
 
   /** RemotePlayer always smooths toward its last snapshot every tick, independent of send timing -
    * `snapshotAccumulator` only gates how often *this* client broadcasts its own state
-   * (PLAYER_SNAPSHOT_SEND_INTERVAL, ~18Hz), not how often an opponent's visual position gets
+   * (PLAYER_SNAPSHOT_SEND_INTERVAL, ~30Hz), not how often an opponent's visual position gets
    * smoothed. */
   private updateMultiplayer(dt: number): void {
     if (!this.multiplayer) return;

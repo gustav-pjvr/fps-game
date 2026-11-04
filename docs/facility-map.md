@@ -13,7 +13,7 @@ This file is the design. Sections are referenced by the build jobs.
 - A second map, **Facility**, picked before a match: in the single-player setup and in Create Room.
   The Valley (today's outdoor world) stays the default.
 - Modes on the Facility. Single-player: Elimination and Director. Multiplayer: Default, 1 Shot 1
-  Kill, Sniper Duel, Gun Game, Knife Only. Since v4.6.0 every other mode too (section 12):
+  Kill, Sniper Duel, Gun Game, Knife Only. Since v4.4.0 every other mode too (section 12):
   single-player Horde and Mission, multiplayer Goose Toss, King of the Hill and Goose Horde.
 - No ambient goose flock and no bonus golden goose on the Facility (Goose Toss's pickups are the
   one exception, section 12).
@@ -171,7 +171,7 @@ lit opponents and in a dark room sees only what the torch shows.
 - A small torch body with an emissive lens mounted at the front of each ranged view model, near its
   muzzle; the knife has none and the light then comes from the shoulder.
 - New action `flashlight`, default key F, rebindable, labelled "Torch". On by default on the
-  Facility; F toggles it with a click. Not available on the Valley in this release.
+  Facility; F toggles it with a click. Since v4.4.0 it also works on the Valley at night and in fog (docs/night-and-visibility.md).
 - Other players: a pool of 3 extra spotlights (no shadows), created at match start so the shader
   never recompiles mid-match, each following one opponent's head with their yaw and pitch, plus a
   small glowing lens on the avatar. `playerSnapshot` gains an optional `torch?: boolean`; missing
@@ -276,7 +276,7 @@ Debug hooks: `facilityDoor`, `setFacilityDoor`, `facilityBreaker`, `setFacilityB
 `facilityLookTarget` and the door and breaker counts in `getFacilityDebug()`. Debug setters use
 the interaction rules, including refusing to close on players.
 
-## 13. Modes on the Facility (v4.6.0, docs/squad-arsenal-night.md section 7)
+## 13. Modes on the Facility (v4.4.0, docs/squad-arsenal-night.md section 7)
 
 Every mode now runs on the Facility; the map gates in `core/gameModes.ts` and the "Valley only"
 notes in Create Room, the match end screen's Rematch picker and the single-player setup are gone.

@@ -1,4 +1,4 @@
-# Grenades (v4.5.0, as built)
+# Grenades (v4.4.0, as built)
 
 Frag and flash grenades, carried beside the guns (not weapon slots). The player picks one kind in the
 Loadout screen and carries only that kind. Design:

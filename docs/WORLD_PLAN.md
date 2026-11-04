@@ -1,3 +1,5 @@
+> **Historical document (written before v4.0).** It records the original plan and what was decided then; the game has changed since (the world was redesigned in v4.1, see `world-redesign.md`). For how the game works now, see [ARCHITECTURE.md](ARCHITECTURE.md) and the index in [README.md](README.md).
+
 # World Improvement Plan
 
 Scope: everything **world-related** — terrain, buildings, vegetation, sky, lighting, atmosphere.

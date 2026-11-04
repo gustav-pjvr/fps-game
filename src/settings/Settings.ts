@@ -171,7 +171,8 @@ export const Settings = {
    * running match - shadow map resolution is baked into a GPU render target at creation, and
    * hot-swapping it mid-match is real risk (a stale/disposed render target, or a frame where the
    * light and renderer disagree on size) for a setting a player only changes occasionally. A
-   * change here takes effect next match, same as most games' graphics settings. */
+   * change made in the main menu takes effect next match; the in-match settings panel applies the
+   * preset live through Game.applyGraphicsQuality. */
   getGraphicsQuality(): GraphicsQuality {
     return state.graphicsQuality;
   },

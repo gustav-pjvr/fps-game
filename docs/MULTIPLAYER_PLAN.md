@@ -1,3 +1,5 @@
+> **Historical document (written before v4.0).** It records the original plan and what was decided then; the game has changed since (multiplayer now supports 4 players with direct guest links, see `multiplayer.md`). For how the game works now, see [ARCHITECTURE.md](ARCHITECTURE.md) and the index in [README.md](README.md).
+
 # Multiplayer Plan — fps-game
 
 Status: **Phases 1-4 (connection layer, shared world + movement sync, combat sync, host match

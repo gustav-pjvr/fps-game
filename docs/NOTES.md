@@ -1,5 +1,7 @@
 # Dev Notes — Index
 
+> This indexes the early development logs only. For the current documentation (architecture, as-built feature docs, workflow), start at [README.md](README.md).
+
 This file used to be one long chronological development log. It has been split into one file per
 system/process for easier reference. Each file preserves its original entries verbatim, in
 chronological order.

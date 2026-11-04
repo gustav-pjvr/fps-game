@@ -201,3 +201,100 @@ succeeds. Not yet live-playtested (drag-and-drop interaction, the rotating chara
 the mid-match deferred-apply timing are all visual/gameplay-feel concerns a clean build can't
 confirm) - single-player first, then a 2-browser multiplayer pass, is the real sign-off here.
 
+## Loadout and menus (v4.4)
+
+As built in v4.4.0 and unchanged in v4.5.0. This replaces the card layout of the 2026-07-10
+section above. Its three-column page, categories, click to equip, persistence and "applies on the
+next respawn" rule all still hold; the tiles, the details panel and the Grenade section are new.
+
+### Loadout screen (`src/ui/menu/LoadoutScreen.ts`)
+
+- **Square weapon tiles, design only.** Every weapon is an equal square button
+  (`.loadout-tile`) holding nothing but its rendered model: the view model with the arms removed
+  (`ARM_PART_NAMES`, the hand and sleeve parts of `weapons/models/arsenal.ts`). The size follows
+  the viewport, `--loadout-tile: clamp(84px, min(14vh, 8vw), 132px)`, so the whole catalog fits
+  unscrolled from 1280 by 720. Tiles are grouped Primary (sniper, rifle, shotgun), Secondary
+  (pistol, MP5), Melee (knife) and a gold "Reward only" section for the Goose Launcher, which can be
+  clicked for details but never equipped.
+- **Name on hover.** The name is a caption laid over the foot of the tile (`.loadout-tile-caption`,
+  absolutely placed so showing it moves nothing). It appears on hover, on keyboard focus
+  (`:focus-visible`) and on pad focus (`[data-input-device="gamepad"]`), and is `aria-hidden`;
+  the tile's `aria-label` carries the name for screen readers.
+- **Stats on click.** Clicking a tile equips it (its own category slot only) and opens it in the
+  middle column's details panel (`aria-live="polite"`): category, an "Equipped" or "Reward only"
+  tag, name, description and stat badges (damage, fire rate per second, magazine, reload seconds,
+  and Scope or burst count where the weapon has them, `weaponStats`). The page saves on every click.
+- **Grenade section.** Below the weapons, under a rule, a smaller section (`loadout-grenades`,
+  tiles at `--loadout-grenade-tile`, 0.66 of the weapon tile) offers Frag Grenade and Flash
+  Grenade. Its heading carries the throw key as a key cap (`keyHint` from the player's bindings,
+  Q by default, "RB (R1)" on a pad through `setDeviceHint`), re-read every time the page opens so a
+  rebind in Settings shows. Clicking a grenade equips it and shows its details. The numbers come
+  from `combat/grenades/grenadeTuning.ts`: frag 130 damage near, 7 m radius, 3.0 s fuse; flash
+  blinds up to 3.5 s, 22 m reach, 1.6 s fuse.
+- **Middle column.** Under the details, one readout per slot (Primary, Secondary, Melee, Grenade).
+  Right column: the turning character (`loadoutCharacterPreview.ts`), unchanged. Below 980 px wide
+  the page collapses to one scrolling column.
+- **Closing.** Close, Escape (a document listener that stays quiet while the page is hidden), or B
+  on a pad (B presses the control labelled Close).
+
+### Thumbnails
+
+- `weaponThumbnail.ts` renders each model once: a clone scaled to 1.4 units, a 3/4 camera at
+  (1.4, 0.9, 1.6), then `fitCameraToModel` zooms and centres the projection on the projected
+  vertices so the silhouette fills 86 percent of the square (`FRAME_FILL`). The output is a 192 px
+  PNG data URL (`THUMBNAIL_SIZE`).
+- One offscreen WebGL renderer serves the whole batch and is released with `forceContextLoss()` when
+  `LoadoutScreen.create` finishes, to stay under Chrome's live-context cap.
+- Results are cached for the session in a module-level map keyed by weapon id, so the lobby's screen
+  renders them and every per-match screen reuses them without touching WebGL.
+- `grenadeThumbnailModel.ts` returns `buildGrenadeModel(kind)`, the same model the game throws
+  (`combat/grenades/grenadeModels.ts`); its cache keys are `grenade-frag` and `grenade-flash`.
+
+### How the loadout is stored and read (`src/core/loadout.ts`)
+
+- **Shape.** `PlayerLoadout` (`core/gameModes.ts`): `primary`, `secondary`, `melee` (a weapon id or
+  null) and `grenade` (`'frag'` or `'flash'`). Saved as JSON in `localStorage` key
+  `fps-game-loadout`, like the username (`core/username.ts`).
+- **Defaults.** Null slots read as rifle, pistol and knife (`LOADOUT_SLOT_DEFAULTS`), the grenade as
+  frag (`LOADOUT_GRENADE_DEFAULT`). `loadStoredLoadout` returns a fresh object every call and falls
+  back to the empty loadout on missing or malformed data; a loadout saved before grenades existed
+  keeps its weapons and gets the frag; an unknown grenade becomes frag.
+- **Equip.** `equipWeapon` fills only the weapon's own category slot and ignores reward-only and
+  unknown ids; `equipGrenade` swaps the grenade alone. Tests: `src/core/loadout.test.ts`.
+- **Who reads it.** `LoadoutScreen` on construction and on every `show()`. `Game.create` at match
+  start: `resolveWeaponLoadout` uses the weapons only in Default, King of the Hill and Goose Horde
+  (`modeUsesCustomLoadout`), which covers every solo mode (solo Horde runs as Goose Horde); and
+  `equippedGrenade(...)` sets the carried grenade kind in every mode that has grenades. The
+  mid-match page (pause menu "Loadout" button, those three modes only) rebuilds the weapons at the
+  next respawn or Restart (`applyPendingLoadoutIfNeeded`). The grenade kind is not touched
+  mid-match: it changes at the next match.
+
+### `modalScope.ts`
+
+`ModalScope` is the keyboard scope of the full-page Loadout overlay. `enter(overlay, focusTarget)`
+marks every sibling of the overlay `inert` (whatever shares its parent: the lobby's other menus, or
+in a match the layer the page was added to), remembers where focus was, and focuses the equipped primary tile, else Close.
+`leave()` restores exactly the siblings it inerted (ones already inert stay as they were) and
+returns focus if that element is still in the page. Tab therefore cannot reach Return to Lobby
+behind the page. Tests: `src/ui/menu/modalScope.test.ts`. Only `LoadoutScreen` uses it.
+
+### The menu screens
+
+All are built from the `menuStyles.ts` helpers (`createPanel`, `createOverlay`, `createButton`,
+`createPanelTitle`, scan sweep on open).
+
+| Screen | File | What it is |
+|---|---|---|
+| Main menu | `src/ui/menu/MainMenu.ts` | Title, PLAY, MULTIPLAYER, LOADOUT, SETTINGS, key hints that switch to pad names, version |
+| Match setup | `src/ui/menu/PlaySetupModal.ts` | Solo options: enemy and target counts, goose difficulty, Map and Weather, Horde, Director and Mission |
+| Settings | `src/ui/menu/SettingsPanel.ts` | Volume, sensitivity, FOV, graphics, key bindings, controller (lobby and pause) |
+| Pause menu | `src/ui/menu/PauseMenu.ts` | Resume, Settings, Restart (solo) or Respawn (multiplayer, unlocks after 5 s), Loadout (three modes), Return to Lobby |
+| Multiplayer menu | `src/ui/menu/MultiplayerMenu.ts` | Create Room or Join Room |
+| Room screens | `src/ui/menu/CreateRoomScreen.ts`, `JoinRoomScreen.ts` | Host settings and player list; guest join and ready |
+| Loading screen | `src/ui/menu/LoadingScreen.ts` | "DEPLOYING" with a progress bar while a match builds |
+
+Match end and the mode briefing are `src/ui/matchEndScreen.ts` and
+`src/ui/modeExplanationScreen.ts`. `App.ts` wires the lobby screens.
+
+**Lobby music.** `App.enterLobby` calls `LobbyMusic.start()` once the main menu shows, and
+`startMatch` stops it. Tracks, shuffle and volume are in `docs/music.md`.

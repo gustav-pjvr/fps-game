@@ -1,3 +1,5 @@
+> **Historical document (written before v4.0).** It records the original plan and what was decided then; the game has changed since (the plan below is the first version of the whole game, and most of it has since been built, changed or replaced). For how the game works now, see [ARCHITECTURE.md](ARCHITECTURE.md) and the index in [README.md](README.md).
+
 # 3D Browser FPS Game — Project Plan
 
 Status: **Planning only** — no code written yet.

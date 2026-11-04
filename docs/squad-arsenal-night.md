@@ -5,7 +5,7 @@ Gustav, 2026-10-25: "Go full out on 1; 2: grenades (flash and normal), doors, sw
 enemies, more modes on the Facility, the torch on the Valley at night, enterable buildings on the
 Valley.
 
-**Status (2026-10-26): all of it shipped together as v4.4.0** (see docs/CHANGELOG.md); the release split below was the plan.
+**Status (2026-10-26): all of it shipped together as v4.4.0** (see docs/CHANGELOG.md); the release split below was the plan. Wherever this design says v4.5.0 or v4.6.0 (the planned later releases), read v4.4.0.
 
 Three releases, each merged, reviewed (one independent Opus audit plus one re-check) and deployed
 before the next is called done. Work inside a release runs in parallel on separate branches.
@@ -262,3 +262,25 @@ All three house designs become enterable:
   target is inside goes to the door first. Cover points inside.
 - Spawns never inside a building. The minimap draws building interiors once entered.
 - Performance: interiors are merged geometry per building, culled by distance like the exteriors.
+
+## As built: where the code differs from this design
+
+The as-built documents are [controller.md](controller.md), [night-and-visibility.md](night-and-visibility.md),
+[grenades.md](grenades.md), [pickups.md](pickups.md), [enterable-buildings.md](enterable-buildings.md) and
+[multiplayer.md](multiplayer.md) (last section). Where they disagree with the sections above, they are right.
+The differences found when they were written (2026-11-04):
+
+- **Controller:** only `standard`-mapping pads count; the pad touched most recently takes the seat and keeps it
+  until idle for `PAD_SWITCH_IDLE_SAMPLES`; window blur pauses pad play; menus have a press grace and a
+  held-button gate; B clicks only a Back, Cancel, Close, Done or Resume control; aim assist is a 60 m hitscan
+  over living enemies and remote players. There is no on-screen torch hint, and the hotbar shows one pad hint
+  under every slot.
+- **Night:** darkness scales acquisition only, never the leash range of an alert or chasing enemy. Dark house
+  interiors use 0.3 in Night and Fog whenever the room lamp is off or shot out. The visibility eye shows
+  whenever a torch exists (so in Fog too) and hides at Dusk. Visibility is computed per fixed tick, not per
+  frame, and the torch beam test is per enemy. The weather with id `day` is labelled Dusk and is the default.
+- **Flash grenades:** only the thrower's client blinds enemies; a blinded enemy fires wide only if it had seen
+  the player before the flash. Multiplayer is pure PvP, so enemy visibility is computed there but unused.
+- **Loadout:** the grenade kind is read once at match start; a Loadout change mid-match applies to weapons at
+  the next respawn but not to the grenade.
+- **Versions:** everything shipped as v4.4.0; wherever this document says v4.5.0 or v4.6.0, read v4.4.0.

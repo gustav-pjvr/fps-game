@@ -35,7 +35,7 @@ export const PICKUP_RESPAWN_SECONDS: Readonly<Record<PickupKind, number>> = { he
  * allow gives its share to the others in proportion. */
 export const PICKUP_MIX: Readonly<Record<PickupKind, number>> = { health: 0.45, ammo: 0.4, grenade: 0.15 };
 
-/** Offsets the match seed for placement, clear of every other seed offset in the game. */
+/** Offsets the match seed for placement. Shares its value with FACILITY_POWER_SEED_OFFSET: harmless, since the two streams draw for unrelated things. */
 export const PICKUP_SEED_OFFSET = 617;
 
 /** Facility: expected pickups per room by room kind (one per room on average). */

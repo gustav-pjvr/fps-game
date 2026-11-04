@@ -1,4 +1,4 @@
-# Enterable Valley buildings (v4.6, section 9 of docs/squad-arsenal-night.md)
+# Enterable Valley buildings (v4.4.0, section 9 of docs/squad-arsenal-night.md)
 
 ## Part 1, as built (branch feature/houses)
 
@@ -11,7 +11,7 @@
 - **Doors** (`world/houses/ValleyDoors.ts`): start closed; interact within 2.2 m while looking at one; refuses to close on a player (the interaction's existing rule). State is the set of open door ids, kept while a house streams out. Ids (`valleyHouseIds.ts`): house key from (town cell gx, gz, index in the town layout), times 4, plus slot (door 0; lamps use the room index). Multiplayer reuses `worldInteract` unchanged and `worldObjectState` / the welcome's `worldObjects` with a new optional `valleyDoors: number[]` (empty `doors`/`breakers` strings on the Valley). The host checks a guest's door against `BuildingManager.houseAt`, so it works for houses the host has not streamed in.
 - **Lamps** (`world/houses/HouseLights.ts`): one instanced emissive panel per room (the Facility's USE_COLOR tint pattern), lit at Night and in Fog; 4 point lights created at match start and moved each frame to the lit lamps nearest the camera (Day creates none). Shooting one breaks it locally (`Game.handleHitscanRay`, sparks and sound); dead lamps stay dead through streaming.
 - **Spawns**: `BuildingManager.isPointInsideBuilding` already tests each design's full footprint (eaves included) plus the clearance, which contains every interior, and enemy position picks use the same check. No pickup placement exists on this branch.
-- **Testing aids**: `?weather=night` (or fog) gives a solo match that weather (`core/devWeather.ts`). Debug API: `getValleyHouses()`, `setValleyDoor(id, open)`, `getHouseLights()`.
+- **Testing aids**: the solo weather choice in Match Setup gives a night or fog match (the earlier `?weather=` query parameter was removed in v4.4.0). Debug API: `getValleyHouses()`, `setValleyDoor(id, open)`, `getHouseLights()`.
 
 ## Part 2, as built
 

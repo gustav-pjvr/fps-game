@@ -40,7 +40,7 @@ export const MULTIPLAYER_REJOIN_GRACE_PERIOD_MS = 90_000;
  * (as opposed to a graceful page unload) doesn't always fire a prompt 'close'/'disconnected' event,
  * sometimes leaving a stale RemotePlayer standing indefinitely until the browser's own ICE timeout
  * eventually fires, if it ever does. Each client sends a playerSnapshot roughly every
- * PLAYER_SNAPSHOT_SEND_INTERVAL (~18Hz), so several seconds of total silence is already a strong
+ * PLAYER_SNAPSHOT_SEND_INTERVAL (~30Hz), so several seconds of total silence is already a strong
  * signal something is wrong, not a false positive from one dropped packet. */
 export const MULTIPLAYER_CONNECTION_TIMEOUT_MS = 8_000;
 
@@ -144,7 +144,7 @@ export const CAMERA_FAR = 2000;
 export const VIEW_MODEL_FOV = 75;
 
 /** Directional-light shadow camera (VISUAL_REALISM.md §1) - an unconfigured Three.js shadow camera
- * defaults to a +/-5 unit ortho box centered on the origin, so in this ~800x800m world shadows only
+ * defaults to a +/-5 unit ortho box centered on the origin, so in this ~400x400m world shadows only
  * ever rendered in a tiny patch near spawn. The camera is re-centered on the player every frame
  * (see Game.updateSunFollow) so this box only needs to cover the player's immediate surroundings,
  * not the whole world.
@@ -1423,8 +1423,8 @@ export const WATCH_TOWER_MIN_SEPARATION = 22;
 export const WATCH_TOWER_CLEARING_BLEND_MARGIN = 8;
 
 /**
- * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): solid exteriors,
- * not enterable yet - three prefab outpost designs built in code (houseDesigns.ts), each on the
+ * Buildings (WORLD_PLAN.md §3, later revised into town clusters per user feedback): solid exteriors
+ * (enterable since v4.4.0, see src/world/houses) - three prefab outpost designs built in code (houseDesigns.ts), each on the
  * footprint of the Kenney house it replaced. Placement is town-clustered within flat zones - see
  * TOWN_* constants near the zone system below, and BuildingManager.ts. Every solid part of a design
  * is both its collider and its mesh, so shots stop where the walls and roof are drawn.

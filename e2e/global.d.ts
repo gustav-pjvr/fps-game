@@ -1,4 +1,4 @@
-import type { GameDebugApi } from '../src/core/Game.ts';
+import type { GameDebugApi } from '../src/core/gameDebugApi.ts';
 
 declare global {
   interface Window {
