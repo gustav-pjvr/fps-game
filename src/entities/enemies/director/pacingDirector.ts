@@ -26,6 +26,7 @@ export interface DirectorSignals {
   /** Enemies chasing the player right now. */
   readonly engagedEnemies: number;
   readonly aliveEnemies: number;
+  readonly allPlayersUnderground: boolean;
 }
 
 export type DirectorCommand = { readonly kind: 'spawnWave'; readonly count: number; readonly bias: WaveBias } | { readonly kind: 'none' };
@@ -102,6 +103,10 @@ export class PacingDirector {
       1,
       this.intensityValue + signals.damageTaken * options.intensityPerDamage + signals.nearbyKills * options.intensityPerKill,
     );
+    if (signals.allPlayersUnderground) {
+      if (this.phaseValue !== 'relax') this.enter('relax', this.roll(options.relaxMin, options.relaxMax));
+      return NONE;
+    }
     this.phaseElapsedValue += signals.dt;
 
     switch (this.phaseValue) {

@@ -62,7 +62,7 @@ export function createMatchPickups(options: MatchPickupsOptions): PickupSystem {
         sendTo: (slot: PlayerSlot, message: NetworkMessage) => multiplayer.session.connection.sendTo(slot, message),
         opponentPosition: (slot: PlayerSlot) => {
           const position = multiplayer.opponents.get(slot)?.remotePlayer.position;
-          return position ? { x: position.x, z: position.z } : null;
+          return position ? { x: position.x, y: position.y, z: position.z } : null;
         },
       }
     : null;

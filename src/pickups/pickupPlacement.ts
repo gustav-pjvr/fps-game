@@ -139,6 +139,7 @@ export interface ValleyPlacementInput {
   /** Every town road centre line. */
   readonly roads: readonly RoadSegment[];
   readonly towers: readonly Spot[];
+  readonly labSites?: readonly Omit<PickupSite, 'id'>[];
   readonly towerRadius: number;
   /** Half the road width: a pickup keeps PICKUP_VALLEY_ROAD_MARGIN beyond it. */
   readonly roadHalfWidth: number;
@@ -229,5 +230,9 @@ export function placeValleyPickups(input: ValleyPlacementInput, allowed: readonl
       chosen.push(candidates[best]!);
     }
   }
-  return toSites(chosen, assignPickupKinds(chosen.length, allowed, rng), input.groundHeight);
+  const sites = toSites(chosen, assignPickupKinds(chosen.length, allowed, rng), input.groundHeight);
+  for (const site of input.labSites ?? []) {
+    if (allowed.includes(site.kind)) sites.push({ ...site, id: sites.length });
+  }
+  return sites;
 }

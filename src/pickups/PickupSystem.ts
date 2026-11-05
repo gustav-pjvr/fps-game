@@ -24,7 +24,7 @@ export interface PickupNetwork {
   /** Host only: to one guest. */
   sendTo(slot: PlayerSlot, message: NetworkMessage): void;
   /** Where the host sees another player's avatar, or null if that slot is not in the match. */
-  opponentPosition(slot: PlayerSlot): { x: number; z: number } | null;
+  opponentPosition(slot: PlayerSlot): { x: number; y: number; z: number } | null;
 }
 
 export interface PickupSystemOptions {
@@ -149,7 +149,7 @@ export class PickupSystem {
         // The host only grants a claim it can believe: the claimant's avatar is near the pickup.
         const site = this.sites[message.id]!;
         const where = network.opponentPosition(transportSlot);
-        if (!where || Math.hypot(where.x - site.x, where.z - site.z) > PICKUP_CLAIM_TOLERANCE) return;
+        if (!where || Math.hypot(where.x - site.x, where.y - (site.y + PICKUP_HOVER_HEIGHT), where.z - site.z) > PICKUP_CLAIM_TOLERANCE) return;
         this.grant(message.id, transportSlot);
         return;
       }

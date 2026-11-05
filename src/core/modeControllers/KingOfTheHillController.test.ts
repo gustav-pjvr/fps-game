@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GoldenGooseManager } from '../../entities/GoldenGooseManager.ts';
 import type { InputManager } from '../../input/InputManager.ts';
 import type { MultiplayerMatchState } from '../../network/MultiplayerMatchState.ts';
 import type { MultiplayerSession } from '../../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../../network/protocol.ts';
 import { GOOSE_PICKUP_RADIUS, KOTH_POINT_INTERVAL_SECONDS } from '../config.ts';
+import { clearUnderground, registerUndergroundVolume } from '../../world/underground.ts';
 import { acceptsGoldenGooseClaim, acceptsGoldenGooseDrop, KingOfTheHillController } from './KingOfTheHillController.ts';
 
 describe('acceptsGoldenGooseClaim', () => {
@@ -33,6 +34,8 @@ describe('acceptsGoldenGooseDrop', () => {
 });
 
 describe('KingOfTheHillController', () => {
+  afterEach(() => clearUnderground());
+
   function setup(ownSlot: PlayerSlot = 1) {
     const goose = new GoldenGooseManager({ add: vi.fn() } as unknown as THREE.Scene, new THREE.Vector3(0, 0, 0));
     const send = vi.fn();
@@ -73,6 +76,30 @@ describe('KingOfTheHillController', () => {
     controller.update(KOTH_POINT_INTERVAL_SECONDS * 0.6, new THREE.Vector3(), input);
     expect(matchState.scoreboard.get(1)).toBe(1);
     expect(send).toHaveBeenCalledWith({ type: 'kothScoreTick', senderSlot: 1, score: 1 });
+  });
+
+  it('counts only surface carry time using the carrier position, not the goose position', () => {
+    registerUndergroundVolume({ minX: -5, maxX: 5, minZ: -5, maxZ: 5, floorY: -10, ceilY: -4 });
+    const { goose, send, matchState, controller, input } = setup(1);
+    goose.claim(1);
+    controller.update(KOTH_POINT_INTERVAL_SECONDS * 0.5, new THREE.Vector3(), input);
+    for (let i = 0; i < 10; i++) controller.update(KOTH_POINT_INTERVAL_SECONDS, new THREE.Vector3(0, -9, 0), input);
+    expect(matchState.scoreboard.get(1)).toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+    controller.update(KOTH_POINT_INTERVAL_SECONDS * 0.5, new THREE.Vector3(), input);
+    expect(matchState.scoreboard.get(1)).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ type: 'kothScoreTick', senderSlot: 1, score: 1 });
+  });
+
+  it('still lets the carrier drop underground', () => {
+    registerUndergroundVolume({ minX: -5, maxX: 5, minZ: -5, maxZ: 5, floorY: -10, ceilY: -4 });
+    const { goose, send, controller, pressed, input } = setup(1);
+    goose.claim(1);
+    pressed.add('fire');
+    controller.update(KOTH_POINT_INTERVAL_SECONDS, new THREE.Vector3(0, -9, 0), input);
+    expect(goose.carrierSlot).toBeNull();
+    expect(send).toHaveBeenCalledWith({ type: 'goldenGooseDropped', senderSlot: 1, x: 0, y: -9, z: 0 });
   });
 
   it('drops on fire at the carrier position, broadcasts the drop and restarts the hold clock', () => {

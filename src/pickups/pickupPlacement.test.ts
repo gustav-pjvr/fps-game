@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Scene } from 'three';
+import { Box3, Scene, Vector3 } from 'three';
 import { setWorldSeedForTesting } from '../core/worldSeed.ts';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
@@ -9,7 +9,10 @@ import { mulberry32 } from '../utils/rng.ts';
 import { ROAD_WIDTH } from '../core/config.ts';
 import { PICKUP_FACILITY_MIN_SPACING, PICKUP_VALLEY_COUNT, type PickupKind } from './pickupConfig.ts';
 import { assignPickupKinds, pickupKindsForMode, placeFacilityPickups, placeValleyPickups } from './pickupPlacement.ts';
-import { gatherValleyPlacementInput } from './valleyPickupInputs.ts';
+import { gatherLabPickupSites, gatherValleyPlacementInput } from './valleyPickupInputs.ts';
+import { buildTowerLab, computeTowerLabs } from '../world/towerUnderground.ts';
+import { buildLabInterior } from '../world/labInterior.ts';
+import { boxMatrix } from '../world/structureKit.ts';
 
 const ALL: PickupKind[] = ['health', 'ammo', 'grenade'];
 const count = (kinds: readonly PickupKind[], kind: PickupKind): number => kinds.filter((k) => k === kind).length;
@@ -150,13 +153,32 @@ describe('placeValleyPickups', () => {
   afterAll(() => physics.dispose());
   const seeds = Array.from({ length: 25 }, (_, i) => i + 1);
 
+  it('appends deterministic lab sites without changing any surface site or id', () => {
+    for (const seed of seeds) {
+      setWorldSeedForTesting(seed);
+      const input = gatherValleyPlacementInput(buildings);
+      const labs = computeTowerLabs();
+      expect(input.labSites).toEqual(gatherLabPickupSites(labs));
+      expect(input.labSites!.length).toBe(labs.reduce((n, lab) => n + (lab.kind === 'full' ? 3 : lab.kind === 'compact' ? 1 : 0), 0));
+      for (const allowed of [ALL, ['health', 'ammo'] as PickupKind[], ['health'] as PickupKind[]]) {
+        const surface = placeValleyPickups({ ...input, labSites: [] }, allowed);
+        const sites = placeValleyPickups(input, allowed);
+        expect(sites.slice(0, surface.length)).toEqual(surface);
+        expect(sites.slice(surface.length)).toEqual(input.labSites!.filter(site => allowed.includes(site.kind))
+          .map((site, index) => ({ ...site, id: surface.length + index })));
+        expect(sites.map(site => site.id)).toEqual(sites.map((_, index) => index));
+        expect(placeValleyPickups(gatherValleyPlacementInput(buildings), allowed)).toEqual(sites);
+      }
+    }
+  });
+
   it('places about PICKUP_VALLEY_COUNT, clear of every house, road and tower, on the ground, inside the world', () => {
     let atTower = 0;
     let towers = 0;
     for (const seed of seeds) {
       setWorldSeedForTesting(seed);
       const input = gatherValleyPlacementInput(buildings);
-      const sites = placeValleyPickups(input, ALL);
+      const sites = placeValleyPickups({ ...input, labSites: [] }, ALL);
       expect(sites.length).toBeGreaterThanOrEqual(12);
       expect(sites.length).toBeLessThanOrEqual(PICKUP_VALLEY_COUNT);
       for (const site of sites) {
@@ -183,8 +205,8 @@ describe('placeValleyPickups', () => {
   it('is deterministic per seed, spread out, with the mix and the mode rules', () => {
     setWorldSeedForTesting(7);
     const input = gatherValleyPlacementInput(buildings);
-    const sites = placeValleyPickups(input, ALL);
-    expect(placeValleyPickups(gatherValleyPlacementInput(buildings), ALL)).toEqual(sites);
+    const sites = placeValleyPickups({ ...input, labSites: [] }, ALL);
+    expect(placeValleyPickups({ ...gatherValleyPlacementInput(buildings), labSites: [] }, ALL)).toEqual(sites);
     for (const a of sites) {
       for (const b of sites) {
         if (a !== b) expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThanOrEqual(8);
@@ -195,7 +217,7 @@ describe('placeValleyPickups', () => {
     expect(placeValleyPickups(input, ['health']).every((s) => s.kind === 'health')).toBe(true);
     expect(placeValleyPickups(input, ['health', 'ammo']).some((s) => s.kind === 'grenade')).toBe(false);
     setWorldSeedForTesting(8);
-    expect(placeValleyPickups(gatherValleyPlacementInput(buildings), ALL)).not.toEqual(sites);
+    expect(placeValleyPickups({ ...gatherValleyPlacementInput(buildings), labSites: [] }, ALL)).not.toEqual(sites);
   });
 
   it('copes with a world that has nothing in it', () => {
@@ -211,6 +233,43 @@ describe('placeValleyPickups', () => {
     for (const site of sites) {
       expect(isPointNearFootprint(site.x, site.z, footprint, 0.9)).toBe(false);
       expect(isPointNearFootprint(site.x, site.z, footprint, 3)).toBe(true);
+    }
+  });
+});
+
+describe('lab pickup floor sites', () => {
+  it('puts three sites in full labs, one ammo in compact labs and none at dead ends', () => {
+    for (const orientation of ['south', 'west', 'north'] as const) for (const flights of [3, 4, 5]) {
+      for (const kind of ['full', 'compact', 'dead-end'] as const) {
+        const lab = buildTowerLab(0, { x: 100, z: -100 }, orientation, flights, kind);
+        const sites = gatherLabPickupSites([lab]);
+        expect(sites.map(site => site.kind)).toEqual(kind === 'full' ? ALL : kind === 'compact' ? ['ammo'] : []);
+        for (const site of sites) {
+          expect(site.y).toBe(lab.floorY);
+          const volume = lab.volumes.at(-1)!;
+          expect(site.x).toBeGreaterThanOrEqual(volume.minX + 1.3);
+          expect(site.x).toBeLessThanOrEqual(volume.maxX - 1.3);
+          expect(site.z).toBeGreaterThanOrEqual(volume.minZ + 1.3);
+          expect(site.z).toBeLessThanOrEqual(volume.maxZ - 1.3);
+          expect(site.y).toBeGreaterThan(volume.floorY);
+          expect(site.y).toBeLessThan(volume.ceilY);
+        }
+      }
+    }
+  });
+
+  it('keeps the pickup and player clear of every interior collider for every seed', () => {
+    for (let seed = 0; seed < 32; seed++) for (const kind of ['full', 'compact', 'ground'] as const) {
+      const interior = buildLabInterior(kind, seed);
+      expect(buildLabInterior(kind, seed).pickupSites).toEqual(interior.pickupSites);
+      for (const site of interior.pickupSites) {
+        expect(site.y).toBe(0);
+        const occupied = new Box3(site.clone().add(new Vector3(-0.5, 0.01, -0.5)), site.clone().add(new Vector3(0.5, 1.8, 0.5)));
+        for (const part of interior.parts) {
+          const bounds = new Box3(part.box.halfExtents.clone().negate(), part.box.halfExtents.clone()).applyMatrix4(boxMatrix(part.box));
+          expect(occupied.intersectsBox(bounds), `${kind} seed ${seed}: ${part.box.center.toArray()}`).toBe(false);
+        }
+      }
     }
   });
 });

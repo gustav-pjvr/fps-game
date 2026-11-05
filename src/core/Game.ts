@@ -2220,7 +2220,13 @@ export class Game {
       (kill) => Math.hypot(kill.x - position.x, kill.z - position.z) <= ENEMY_DIRECTOR_KILL_RADIUS,
     ).length;
     const counts = this.entityManager.enemyCounts();
-    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive });
+    const livingPositions = this.player.isDead ? [] : [position];
+    for (const opponent of this.multiplayer?.opponents.values() ?? []) {
+      if (!opponent.isDead) livingPositions.push(opponent.remotePlayer.position);
+    }
+    const allPlayersUnderground = !this.facility && livingPositions.length > 0 &&
+      livingPositions.every(at => isUnderground(at.x, at.y, at.z));
+    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive, allPlayersUnderground });
     if (command.kind === 'spawnWave') director.confirmSpawned(this.spawnDirectorWave(command.count, command.bias));
   }
 
@@ -2278,6 +2284,7 @@ export class Game {
       player: { x: position.x, z: position.z },
       interactPressed: this.input.consumeJustPressed('interact'),
       playerDead: false,
+      underground: !this.facility && isUnderground(position.x, position.y, position.z),
     });
     for (const event of events) {
       if (event.kind === 'waveRequested') {
@@ -2319,7 +2326,7 @@ export class Game {
    * Respawn restarts it). */
   private showDeathScreen(): void {
     if (this.mission) {
-      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true });
+      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true, underground: false });
       this.deathScreen.showMission(this.missionResult(false));
     } else {
       this.deathScreen.show(this.scoreState.value);
@@ -2843,7 +2850,8 @@ export class Game {
       this.gooseTossController ? (this.gooseTossController.isHolding ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
     );
     if (this.mission) {
-      this.updateMissionHud(this.mission.view(this.player.position));
+      const at = this.player.position;
+      this.updateMissionHud(this.mission.view(at, !this.facility && isUnderground(at.x, at.y, at.z)));
     } else {
       this.hud.setScore(this.scoreState.value);
       if (this.director) {

@@ -59,6 +59,7 @@ export interface MissionInput {
   readonly player: MissionPoint;
   readonly interactPressed: boolean;
   readonly playerDead: boolean;
+  readonly underground: boolean;
 }
 
 /** What the HUD shows this frame (docs/visual-overhaul.md, "Mission mode: Uplink"). */
@@ -132,7 +133,7 @@ export class MissionState {
     this.elapsed += dt;
 
     if (this.phase === 'uplinks') {
-      if (input.interactPressed) {
+      if (input.interactPressed && !input.underground) {
         const near = this.startableUplinkAt(input.player);
         if (near !== null && near !== this.activeIndex) {
           if (this.activeIndex !== null) this.uplinks[this.activeIndex]!.status = 'pending';
@@ -143,7 +144,7 @@ export class MissionState {
         }
       }
       const active = this.activeIndex === null ? null : this.uplinks[this.activeIndex]!;
-      if (active && distance(active, input.player) <= UPLINK_HOLD_RADIUS) {
+      if (active && !input.underground && distance(active, input.player) <= UPLINK_HOLD_RADIUS) {
         active.seconds = Math.min(UPLINK_DURATION, active.seconds + dt);
         while (active.wavesSent < Math.floor(active.seconds / UPLINK_WAVE_INTERVAL) && (active.wavesSent + 1) * UPLINK_WAVE_INTERVAL < UPLINK_DURATION) {
           events.push({ kind: 'waveRequested', count: UPLINK_WAVE_SIZE, bias: UPLINK_WAVE_BIASES[active.wavesSent % UPLINK_WAVE_BIASES.length]! });
@@ -165,7 +166,7 @@ export class MissionState {
     }
 
     // Extraction: stand in the ring; stepping out resets the count, so the last seconds are a stand.
-    if (distance(this.extraction, input.player) <= EXTRACTION_RADIUS) {
+    if (!input.underground && distance(this.extraction, input.player) <= EXTRACTION_RADIUS) {
       this.extractionSeconds += dt;
       if (this.extractionSeconds >= EXTRACTION_HOLD) {
         this.phase = 'won';
@@ -177,10 +178,10 @@ export class MissionState {
     return events;
   }
 
-  view(player: MissionPoint): MissionView {
+  view(player: MissionPoint, underground = false): MissionView {
     const active = this.activeIndex === null ? null : this.uplinks[this.activeIndex]!;
     let prompt: string | null = null;
-    if (this.phase === 'uplinks') {
+    if (this.phase === 'uplinks' && !underground) {
       const near = this.startableUplinkAt(player);
       if (near !== null && near !== this.activeIndex) {
         prompt = this.uplinks[near]!.seconds > 0 ? 'RESUME UPLINK' : 'START UPLINK';
@@ -192,7 +193,7 @@ export class MissionState {
       extraction: this.extraction,
       online: this.onlineCount(),
       active: active
-        ? { label: active.label, progress: active.seconds / UPLINK_DURATION, paused: distance(active, player) > UPLINK_HOLD_RADIUS }
+        ? { label: active.label, progress: active.seconds / UPLINK_DURATION, paused: underground || distance(active, player) > UPLINK_HOLD_RADIUS }
         : null,
       prompt,
       extractionProgress: this.phase === 'extract' || this.phase === 'won' ? Math.min(1, this.extractionSeconds / EXTRACTION_HOLD) : 0,

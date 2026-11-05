@@ -22,6 +22,8 @@ export interface LabInterior {
   readonly details: Detail[];
   readonly lamps: THREE.Vector3[];
   readonly rooms: THREE.Vector3[];
+  /** Free floor sites, at least 1 m from walls and clear of the interior solids. */
+  readonly pickupSites: THREE.Vector3[];
   readonly crackedTank: number;
 }
 
@@ -72,7 +74,7 @@ export function buildLabInterior(kind: LabInteriorKind, seed: number): LabInteri
       bar(point(0.6 + dx, 2.4, -0.7 + dz), point(0.6 + dx, 2.75, -0.7 + dz), 0.025);
     }
     detail(STEEL, box(0.6, 2.4, -0.7, 0.3, 0.025, 0.3));
-    return { kind, parts, details, lamps, rooms, crackedTank: -1 };
+    return { kind, parts, details, lamps, rooms, pickupSites: [], crackedTank: -1 };
   }
 
   const full = kind === 'full';
@@ -189,7 +191,8 @@ export function buildLabInterior(kind: LabInteriorKind, seed: number): LabInteri
     }
     for (const x of [-11.64, -10.36]) rail(point(x, 0.425, -12.9), point(x, 1.925, -16.4));
   }
-  return { kind, parts, details, lamps, rooms, crackedTank };
+  const pickupSites = full ? [point(-6, 0, -7), point(8, 0, -6.5), point(0, 0, -13)] : [point(0, 0, -4)];
+  return { kind, parts, details, lamps, rooms, pickupSites, crackedTank };
 }
 
 function materials(): Map<PieceMaterial, THREE.MeshStandardMaterial> {
