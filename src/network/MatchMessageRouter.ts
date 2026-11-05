@@ -28,33 +28,8 @@ import { acceptsSnapshot, afterStateEvent } from './stateOrder.ts';
 import { buildMatchSync } from './matchSync.ts';
 import type { MultiplayerMatchStartParams } from './MultiplayerSession.ts';
 
-/** Message types the host transparently re-broadcasts to every other connected guest, unchanged,
- * tagged with the original sender's own slot - see the doc on routeMatchMessage below.
- * Lobby/roster messages (hello/welcome/rosterUpdate/roomFull) and host-authored broadcasts
- * (matchStart/hostLeftRoom/playerLeft/playerJoinedMatch, the full list is senderAuthority.ts's
- * HOST_AUTHORED_MESSAGE_TYPES) are deliberately excluded - the host authors those itself, and the
- * connection drops any that arrive from a guest. */
-export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  'playerSnapshot',
-  'fireEvent',
-  'lampDestroyed',
-  'lampSync',
-  'grenadeThrown',
-  'grenadeDetonated',
-  'damageEvent',
-  'playerDied',
-  'respawnEvent',
-  'footstepEvent',
-  'goosePickedUp',
-  'gooseThrown',
-  'gooseThrowExploded',
-  'goldenGoosePickedUp',
-  'goldenGooseDropped',
-  'kothScoreTick',
-  'hordePlayerEliminated',
-  'hordeAmmoDropPickedUp',
-  'modeExplanationReady',
-]);
+import { RELAYABLE_MESSAGE_TYPES } from './routing.ts';
+export { RELAYABLE_MESSAGE_TYPES } from './routing.ts';
 
 /** The grenade system's network side (combat/grenades/GrenadeSystem.ts implements it). */
 export interface GrenadeMessageReceiver {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RELAYABLE_MESSAGE_TYPES } from './MatchMessageRouter.ts';
 import { DIRECT_MESSAGE_TYPES } from './directLinks.ts';
 import type { NetworkMessage } from './protocol.ts';
-import { acceptsFromSender, HOST_AUTHORED_MESSAGE_TYPES } from './senderAuthority.ts';
+import { acceptsFromSender, HOST_AUTHORED_MESSAGE_TYPES, serverAccepts } from './senderAuthority.ts';
 
 const hostOnly: NetworkMessage[] = [
   { type: 'matchStart', seed: 1, killLimit: 10, gooseDifficulty: 'normal', gameMode: 'default', weather: 'day', spawns: [], roster: [] },
@@ -84,5 +84,35 @@ describe('acceptsFromSender: messages about their sender', () => {
     expect(acceptsFromSender({ type: 'pickupClaim', id: 3 }, 2, 'host')).toBe(true);
     expect(acceptsFromSender({ type: 'worldInteract', kind: 'door', id: 4 }, 1, 'host')).toBe(true);
     expect(acceptsFromSender({ type: 'gooseThrowExploded', id: 'x', x: 0, y: 0, z: 0, source: 'gooseToss' }, 1, 'host')).toBe(true);
+  });
+});
+
+describe('serverAccepts', () => {
+  it('accepts host-authored messages only from slot 0', () => {
+    for (const message of hostOnly) {
+      expect(serverAccepts(message, 0)).toBe(true);
+      for (const slot of [1, 2, 3] as const) expect(serverAccepts(message, slot)).toBe(false);
+    }
+  });
+
+  it('requires host and guest self-reported messages to name their transport slot', () => {
+    for (const slot of [0, 1, 2, 3] as const) {
+      expect(serverAccepts({ type: 'kothScoreTick', senderSlot: slot, score: 1 }, slot)).toBe(true);
+      expect(serverAccepts({ type: 'kothScoreTick', senderSlot: slot === 0 ? 1 : 0, score: 1 }, slot)).toBe(false);
+      const selfMessages: NetworkMessage[] = [
+        { type: 'playerReady', slot, ready: true },
+        { type: 'hordePlayerEliminated', slot },
+        { type: 'modeExplanationReady', slot },
+        { type: 'meshHello', slot, roomCode: 'ABCDEF' },
+      ];
+      for (const message of selfMessages) {
+        expect(serverAccepts(message, slot)).toBe(true);
+        expect(serverAccepts(message, slot === 0 ? 1 : 0)).toBe(false);
+      }
+      expect(serverAccepts({ type: 'playerDied', senderSlot: slot, victimSlot: slot, killerSlot: null }, slot)).toBe(true);
+      expect(serverAccepts({ type: 'playerDied', senderSlot: slot, victimSlot: slot === 0 ? 1 : 0, killerSlot: null }, slot)).toBe(false);
+      expect(serverAccepts({ type: 'playerDied', senderSlot: slot === 0 ? 1 : 0, victimSlot: slot === 0 ? 1 : 0, killerSlot: null }, slot)).toBe(false);
+      expect(serverAccepts({ type: 'pickupClaim', id: 1 }, slot)).toBe(true);
+    }
   });
 });

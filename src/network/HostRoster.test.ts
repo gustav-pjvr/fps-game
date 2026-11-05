@@ -179,3 +179,67 @@ describe('HostRoster', () => {
     });
   });
 });
+
+describe('HostRoster server policy', () => {
+  it.each([1, 2, 3, 4, 10])('derives guest slots from capacity %s, capped at the protocol limit', (capacity) => {
+    const roster = new HostRoster('Host', { capacity });
+    const limit = Math.min(capacity, 4);
+    for (let slot = 1; slot < limit; slot++) {
+      expect(roster.handleHello('Guest', null, 0)).toEqual({ outcome: 'joined', slot });
+    }
+    expect(roster.handleHello('Extra', null, 0)).toEqual({ outcome: 'full' });
+    expect(roster.currentRoster()).toHaveLength(limit);
+  });
+
+  it('uses the configured grace period, retaining reservations until expiry', () => {
+    const roster = new HostRoster('Host', { capacity: 2, graceMs: 50 });
+    roster.handleHello('Guest', 'token', 0);
+    roster.handleDisconnect(1, 10);
+    expect(roster.handleHello('Extra', null, 20)).toEqual({ outcome: 'full' });
+    expect(roster.sweepExpiredReservations(59)).toEqual([]);
+    expect(roster.sweepExpiredReservations(60)).toEqual([1]);
+    expect(roster.handleHello('Extra', null, 60)).toEqual({ outcome: 'joined', slot: 1 });
+  });
+
+  it('adopts the assigned slot and identity without running local allocation', () => {
+    const roster = new HostRoster('Host');
+    roster.adopt({ outcome: 'joined', slot: 3 }, 'Guest', 'token', 'srv-3-1');
+    expect(roster.connectedRoster()).toContainEqual({ slot: 3, username: 'Guest', peerId: 'srv-3-1' });
+    expect(roster.handleHello('Guest', 'token', 0)).toEqual({ outcome: 'rejoined', slot: 3 });
+    expect(roster.handleHello('Other', null, 0)).toEqual({ outcome: 'joined', slot: 1 });
+  });
+
+  it('adopts a rejoin with refreshed identity and clears its reservation timer', () => {
+    const roster = new HostRoster('Host', { graceMs: 50 });
+    roster.handleHello('Old name', 'token', 0, 'old-peer');
+    roster.handleDisconnect(1, 10);
+    roster.adopt({ outcome: 'rejoined', slot: 1 }, 'New name', 'token', 'srv-1-2');
+    expect(roster.sweepExpiredReservations(100)).toEqual([]);
+    expect(roster.connectedRoster()).toContainEqual({ slot: 1, username: 'New name', peerId: 'srv-1-2' });
+    expect(roster.handleHello('Guest', 'token', 100)).toEqual({ outcome: 'rejoined', slot: 1 });
+  });
+
+  it('ignores full outcomes and assignments outside the room guest slots', () => {
+    const roster = new HostRoster('Host', { capacity: 2 });
+    roster.adopt({ outcome: 'full' }, 'Guest', null);
+    roster.adopt({ outcome: 'joined', slot: 0 }, 'Guest', null);
+    roster.adopt({ outcome: 'joined', slot: 2 }, 'Guest', null);
+    expect(roster.currentRoster()).toEqual([{ slot: 0, username: 'Host' }]);
+  });
+
+  it('releases live and reserved guests immediately, including their tokens, but keeps the host', () => {
+    const roster = new HostRoster('Host');
+    roster.handleHello('Guest', 'token', 0, 'peer');
+    roster.handleHello('Reserved', 'reserved-token', 0);
+    roster.handleDisconnect(2, 10);
+    roster.release(1);
+    roster.release(2);
+    roster.release(3);
+    roster.release(0);
+    expect(roster.currentRoster()).toEqual([{ slot: 0, username: 'Host' }]);
+    expect(roster.connectedRoster()).toEqual(roster.currentRoster());
+    expect(roster.peerIdOf(1)).toBeUndefined();
+    expect(roster.sweepExpiredReservations(1000000)).toEqual([]);
+    expect(roster.handleHello('Guest', 'token', 20)).toEqual({ outcome: 'joined', slot: 1 });
+  });
+});

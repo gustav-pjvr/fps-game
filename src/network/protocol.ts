@@ -13,6 +13,7 @@ import { isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTunin
  * the one identity primitive threaded through every message and every per-opponent data structure
  * (RemotePlayer, HUD row, minimap dot, scoreboard entry) instead of a singular "opponent" field. */
 export type PlayerSlot = 0 | 1 | 2 | 3;
+export const PLAYER_SLOT_COUNT = 4;
 export const HOST_SLOT: PlayerSlot = 0;
 
 /** Sent guest -> host the moment a guest's connection opens, before it knows anything about the
@@ -862,7 +863,7 @@ export type NetworkMessage =
   | LinkQualityMessage
   | GoldenGooseStateMessage;
 
-const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
+export const ALL_MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchEnded',
   'hello',
   'welcome',
@@ -929,7 +930,7 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
 ]);
 
 function isPlayerSlot(value: unknown): value is PlayerSlot {
-  return value === 0 || value === 1 || value === 2 || value === 3;
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) < PLAYER_SLOT_COUNT;
 }
 
 function isRosterEntry(value: unknown): boolean {
@@ -965,7 +966,7 @@ function hasValidSquadShape(value: Record<string, unknown>): boolean {
         (value.result === undefined || value.result === 'cleared' || value.result === 'wiped')
       );
     case 'scoreboardSync':
-      return Array.isArray(value.scores) && value.scores.length <= 4 && value.scores.every(isScoreEntry);
+      return Array.isArray(value.scores) && value.scores.length <= PLAYER_SLOT_COUNT && value.scores.every(isScoreEntry);
     default:
       return true;
   }
@@ -1054,7 +1055,7 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
 export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (typeof value !== 'object' || value === null) return false;
   const type = (value as { type?: unknown }).type;
-  if (typeof type !== 'string' || !MESSAGE_TYPES.has(type as NetworkMessage['type'])) return false;
+  if (typeof type !== 'string' || !ALL_MESSAGE_TYPES.has(type as NetworkMessage['type'])) return false;
   // A message that names its sender names a real slot (senderAuthority.ts compares it to the link).
   if ('senderSlot' in value && !isPlayerSlot((value as { senderSlot?: unknown }).senderSlot)) return false;
   // The Facility's doors and breakers (section 12) are checked whole here, so a malformed one never
@@ -1078,7 +1079,7 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
 /** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */
 const PICKUP_STATE_MAX_LENGTH = 256;
 
-const isSlot = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 3;
+const isSlot = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) < PLAYER_SLOT_COUNT;
 const isPickupId = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) < PICKUP_STATE_MAX_LENGTH;
 
 /** The pickup messages are the ones whose fields are checked here, at the boundary (the older types

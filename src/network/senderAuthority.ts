@@ -69,3 +69,10 @@ export function acceptsFromSender(message: NetworkMessage, transportSlot: Player
   if (SELF_SLOT_MESSAGE_TYPES.has(message.type) && fields.slot !== transportSlot) return false;
   return true;
 }
+
+/** Server side: may the member in `fromSlot` send this? The host may author host-authored types;
+ *  everything else must name its own slot, exactly as today's host checked its guests. */
+export function serverAccepts(message: NetworkMessage, fromSlot: PlayerSlot): boolean {
+  if (fromSlot === HOST_SLOT && HOST_AUTHORED_MESSAGE_TYPES.has(message.type)) return true;
+  return acceptsFromSender(message, fromSlot, 'host');
+}

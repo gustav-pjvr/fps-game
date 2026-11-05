@@ -1,5 +1,5 @@
 import { MULTIPLAYER_MAX_PLAYERS, MULTIPLAYER_REJOIN_GRACE_PERIOD_MS } from '../core/config.ts';
-import { HOST_SLOT, type PlayerSlot, type RosterEntry } from './protocol.ts';
+import { HOST_SLOT, PLAYER_SLOT_COUNT, type PlayerSlot, type RosterEntry } from './protocol.ts';
 
 interface RosterSlotState {
   slot: PlayerSlot;
@@ -23,10 +23,6 @@ export type HelloOutcome = { outcome: 'rejoined'; slot: PlayerSlot } | { outcome
  * computeWatchTowerPositions/computeGuaranteedSites were kept pure and separate from actual
  * THREE/RAPIER construction elsewhere in this codebase - here the "actual construction" being
  * separated out is real PeerJS connection objects. */
-/** Every guest slot in ascending allocation order - the lowest one not currently present in
- * `slots` is handed to the next joiner (see handleHello). */
-const GUEST_SLOTS: readonly PlayerSlot[] = [1, 2, 3];
-
 function rosterEntryOf(state: RosterSlotState): RosterEntry {
   return state.peerId === undefined ? { slot: state.slot, username: state.username } : { slot: state.slot, username: state.username, peerId: state.peerId };
 }
@@ -35,7 +31,14 @@ export class HostRoster {
   private readonly slots = new Map<PlayerSlot, RosterSlotState>();
   private matchInProgress = false;
 
-  constructor(hostUsername: string) {
+  private readonly guestSlots: readonly PlayerSlot[];
+  private readonly capacity: number;
+  private readonly graceMs: number;
+
+  constructor(hostUsername: string, { capacity = MULTIPLAYER_MAX_PLAYERS, graceMs = MULTIPLAYER_REJOIN_GRACE_PERIOD_MS }: { capacity?: number; graceMs?: number } = {}) {
+    this.capacity = Math.max(1, Math.min(PLAYER_SLOT_COUNT, Math.floor(capacity)));
+    this.graceMs = graceMs;
+    this.guestSlots = Array.from({ length: this.capacity - 1 }, (_, index) => (index + 1) as PlayerSlot);
     this.slots.set(HOST_SLOT, { slot: HOST_SLOT, username: hostUsername, rejoinToken: null, connected: true, disconnectedAt: null });
   }
 
@@ -61,17 +64,25 @@ export class HostRoster {
       }
     }
 
-    if (this.slots.size >= MULTIPLAYER_MAX_PLAYERS) return { outcome: 'full' };
+    if (this.slots.size >= this.capacity) return { outcome: 'full' };
 
-    // Lowest free slot in 1..3, not an ever-incrementing counter - a counter would eventually
-    // allocate slot 4/5/... once an earlier reservation was swept away (slots.size drops below 4
-    // while the counter keeps climbing), silently breaking the protocol's 0-3 PlayerSlot domain.
-    // Confirmed bug, fixed in the 2026-07-10 review. `slots.size < MULTIPLAYER_MAX_PLAYERS` above
-    // already guarantees one of these is free.
-    const slot = GUEST_SLOTS.find((candidate) => !this.slots.has(candidate));
+    // Allocate the lowest free guest slot within this room capacity and the protocol domain.
+    const slot = this.guestSlots.find((candidate) => !this.slots.has(candidate));
     if (slot === undefined) return { outcome: 'full' }; // defensive - unreachable given the size check above
     this.slots.set(slot, { slot, username, rejoinToken, connected: true, disconnectedAt: null, peerId });
     return { outcome: 'joined', slot };
+  }
+
+  /** Mirror a server-assigned join or rejoin without allocating a local slot. */
+  adopt(outcome: HelloOutcome, username: string, rejoinToken: string | null, peerId?: string): void {
+    if (outcome.outcome === 'full' || !this.guestSlots.includes(outcome.slot)) return;
+    const slot = outcome.slot;
+    this.slots.set(slot, { slot, username, rejoinToken, connected: true, disconnectedAt: null, peerId });
+  }
+
+  /** Immediately free a rejected, timed-out or expired guest slot. */
+  release(slot: PlayerSlot): void {
+    if (slot !== HOST_SLOT) this.slots.delete(slot);
   }
 
   /** Marks a slot disconnected and starts its grace-period timer. Does NOT remove the slot's
@@ -91,7 +102,7 @@ export class HostRoster {
     const expired: PlayerSlot[] = [];
     for (const state of this.slots.values()) {
       if (state.connected || state.disconnectedAt === null) continue;
-      if (now - state.disconnectedAt >= MULTIPLAYER_REJOIN_GRACE_PERIOD_MS) {
+      if (now - state.disconnectedAt >= this.graceMs) {
         this.slots.delete(state.slot);
         expired.push(state.slot);
       }

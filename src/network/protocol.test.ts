@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MATCH_MAPS } from '../core/config.ts';
 import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import {
-  CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
+  ALL_MESSAGE_TYPES, PLAYER_SLOT_COUNT, CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
   type MatchStartMessage, type WelcomeMessage,
 } from './protocol.ts';
 
@@ -321,5 +321,30 @@ describe('self-reported numbers and hello fields', () => {
     expect(ok({ type: 'modeExplanationReady', slot: 'everyone' })).toBe(false);
     expect(ok({ type: 'hordePlayerEliminated', slot: 9 })).toBe(false);
     expect(ok({ type: 'playerReady', slot: -1, ready: true })).toBe(false);
+  });
+});
+
+describe('shared protocol domain', () => {
+  it('exports all 63 known message types', () => {
+    expect(ALL_MESSAGE_TYPES.size).toBe(63);
+    expect(ALL_MESSAGE_TYPES.has('hello')).toBe(true);
+    expect(ALL_MESSAGE_TYPES.has('scoreboardSync')).toBe(true);
+    expect(isNetworkMessage({ type: 'unknown' })).toBe(false);
+  });
+
+  it('bounds sender slots, pickup slots and scoreboard slots by PLAYER_SLOT_COUNT', () => {
+    expect(PLAYER_SLOT_COUNT).toBe(4);
+    for (let slot = 0; slot < PLAYER_SLOT_COUNT; slot++) {
+      expect(isNetworkMessage({ type: 'kothScoreTick', senderSlot: slot, score: 1 })).toBe(true);
+      expect(isNetworkMessage({ type: 'pickupTaken', id: 1, slot, respawnIn: 1 })).toBe(true);
+    }
+    for (const slot of [-1, PLAYER_SLOT_COUNT, 1.5, '1', NaN]) {
+      expect(isNetworkMessage({ type: 'kothScoreTick', senderSlot: slot, score: 1 })).toBe(false);
+      expect(isNetworkMessage({ type: 'pickupTaken', id: 1, slot, respawnIn: 1 })).toBe(false);
+      expect(isNetworkMessage({ type: 'scoreboardSync', scores: [{ slot, score: 0, deaths: 0 }] })).toBe(false);
+    }
+    const scores = Array.from({ length: PLAYER_SLOT_COUNT }, (_, slot) => ({ slot, score: 0, deaths: 0 }));
+    expect(isNetworkMessage({ type: 'scoreboardSync', scores })).toBe(true);
+    expect(isNetworkMessage({ type: 'scoreboardSync', scores: [...scores, scores[0]] })).toBe(false);
   });
 });
