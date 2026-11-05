@@ -10,7 +10,17 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.6.1 (current)
+## v4.6.2 (current)
+
+Fog fix, 2026-11-05.
+
+- **Fog matches draw the world again.** On Medium and High graphics a Fog match showed only the sky:
+  the torch starts switched off in Fog and never drew its shadow map, yet every lit surface samples
+  it, so WebGL rejected every lit draw call ("Mismatch between texture format and sampler type").
+  The torch now draws its shadow map once even while off. A unit test fails on the old code.
+  The bug dates from v4.4.0, when the Fog torch was added.
+
+## v4.6.1
 
 Watch tower rails and first-person arms, 2026-11-05.
 
