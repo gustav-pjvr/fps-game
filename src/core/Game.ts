@@ -185,6 +185,7 @@ import { summarizeConnection } from '../network/connectionStats.ts';
 import { createSendClock } from '../network/stateOrder.ts';
 import type { ActiveMultiplayer, RemoteOpponent } from '../network/multiplayerMatchTypes.ts';
 import { routeMatchMessage, type MatchMessageContext } from '../network/MatchMessageRouter.ts';
+import { MatchTelemetryAccumulator, buildMultiplayerTelemetryExtras, type MatchTelemetryExtras } from '../network/matchTelemetry.ts';
 import { isHordeAllEliminated, MultiplayerMatchState } from '../network/MultiplayerMatchState.ts';
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
@@ -350,6 +351,9 @@ export class Game {
    * there's nothing to pass in - "now, at construction time" is the only meaningful value this
    * could ever have. */
   private readonly matchStartedAt = performance.now();
+  /** Multiplayer only in practice: the HUD ping samples and snapshot gaps of this match, summarised
+   * into the match-end beacon (see sendMatchTelemetry and network/matchTelemetry.ts). Bounded memory. */
+  private readonly matchTelemetry = new MatchTelemetryAccumulator();
   /** Bumped by resetPlay/dispose to cancel any in-flight spawnEncountersAsync loop - its batches
    * yield to requestAnimationFrame, so without this a second rapid reset kept both loops spawning
    * (entity count overshooting the configured match size), and returning to the lobby mid-spawn
@@ -1810,6 +1814,7 @@ export class Game {
         destroyLamp: (lamp) => void (game.facility ? game.destroyFacilityLamp(lamp, false) : game.destroyHouseLamp(lamp, false)),
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
+        noteSnapshotApplied: (slot, receivedAt) => game.matchTelemetry.recordSnapshot(slot, receivedAt),
         // Getter: assigned right after construction, before any message can arrive.
         get pickups() {
           return game.pickups;
@@ -2225,12 +2230,14 @@ export class Game {
    * scope: which mode, wave reached (Goose Horde) or kill count (every other mode), how long the
    * match ran, and this build's version - no username, no room code, nothing that identifies the
    * player. `keepalive: true` lets the request survive the page-unload/navigation that a match end
-   * often immediately triggers (returning to the lobby, closing the tab). Never awaited and never
-   * allowed to throw back into its caller - a telemetry failure must not affect, delay, or block
-   * the actual match-end UI in any way. */
-  private sendMatchTelemetry(mode: GameMode, waveOrKills: number, durationMs: number): void {
+   * often immediately triggers (returning to the lobby, closing the tab). A multiplayer match adds
+   * `extras` (transport, roster size, ping and snapshot-gap stats, join time: connection quality
+   * only, still nothing identifying); solo sends none. Never awaited and never allowed to throw back
+   * into its caller - a telemetry failure must not affect, delay, or block the actual match-end UI
+   * in any way. */
+  private sendMatchTelemetry(mode: GameMode, waveOrKills: number, durationMs: number, extras: MatchTelemetryExtras = {}): void {
     try {
-      const body = JSON.stringify({ mode, waveOrKills, durationMs, version: APP_VERSION });
+      const body = JSON.stringify({ mode, waveOrKills, durationMs, version: APP_VERSION, ...extras });
       void fetch('/api/telemetry', { method: 'POST', body, keepalive: true, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
     } catch {
       // Same "never affect the caller" contract as the .catch above - covers the synchronous throw
@@ -2978,6 +2985,8 @@ export class Game {
           if (!this.multiplayer) return;
           const summary = summarizeConnection(measured, this.multiplayer.opponents.keys());
           this.multiplayer.multiplayerHud.setConnection(summary.perOpponent);
+          // One sample per opponent per poll, the same round trips the HUD just showed.
+          for (const quality of summary.perOpponent.values()) this.matchTelemetry.recordPing(quality.rttMs);
           for (const [slot, opponent] of this.multiplayer.opponents) {
             opponent.remotePlayer.setLeadSeconds(summary.leadSeconds.get(slot) ?? 0);
           }
@@ -3641,7 +3650,10 @@ export class Game {
     const waveOrKills = this.multiplayer.gameMode === 'gooseHorde'
       ? this.hordeGooseManager?.currentWave ?? 0
       : this.multiplayerMatchState.scoreboard.get(ownSlot) ?? 0;
-    this.sendMatchTelemetry(this.multiplayer.gameMode, waveOrKills, performance.now() - this.matchStartedAt);
+    const durationMs = performance.now() - this.matchStartedAt;
+    // Roster size = this client plus whoever is still connected at match end.
+    const extras = buildMultiplayerTelemetryExtras(this.matchTelemetry.summary(durationMs), this.multiplayer.opponents.size + 1, this.multiplayer.session.joinMs);
+    this.sendMatchTelemetry(this.multiplayer.gameMode, waveOrKills, durationMs, extras);
     this.onMultiplayerMatchEnd?.({
       reason,
       won,

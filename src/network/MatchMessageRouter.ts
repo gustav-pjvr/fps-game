@@ -127,6 +127,9 @@ export interface MatchMessageContext {
    * them this client's dead lamps and (host) the doors the first time, on the Facility and on the
    * Valley alike (see network/lampSync.ts). */
   opponentInMatch(slot: PlayerSlot): void;
+  /** A playerSnapshot from this slot was applied, received at `receivedAt` (performance.now): feeds
+   * the match-end telemetry's snapshot-gap stats (network/matchTelemetry.ts). */
+  noteSnapshotApplied(slot: PlayerSlot, receivedAt: number): void;
   /** Host only (a no-op elsewhere): guest `slot` pressed interact on a door or breaker panel
    * (docs/facility-map.md, section 12), or on the Valley a house door. The host checks and applies it. */
   worldInteract(slot: PlayerSlot, kind: 'door' | 'breaker', id: number): void;
@@ -208,6 +211,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // Snapshots ride the unreliable fast channel: a late one is older than what is shown already.
       if (!acceptsSnapshot(opponent.lastStateSentAt, message.t)) break;
       if (message.t !== undefined) opponent.lastStateSentAt = message.t;
+      ctx.noteSnapshotApplied(message.senderSlot, performance.now());
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
       opponent.remotePlayer.setLookPitch(message.pitch);
       const torchAllowed = torchAvailable(activeMultiplayer.map, activeMultiplayer.weather,

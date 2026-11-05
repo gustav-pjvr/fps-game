@@ -9,7 +9,8 @@
  * Payload is deliberately minimal, matching the roadmap item's own stated scope: game mode, wave
  * reached (Goose Horde) or kill count (every other mode) - collapsed into one `waveOrKills` number
  * since a given match is always exactly one or the other, never both - match duration, and app
- * version. No player-identifying info at all (no username, no rejoin token, no room code) - only
+ * version, plus (multiplayer only) a few optional connection-quality numbers, see TelemetryPayload.
+ * No player-identifying info at all (no username, no rejoin token, no room code) - only
  * whatever IP-level logging Cloudflare itself already does by default at the edge, same as every
  * other request this app makes.
  *
@@ -38,11 +39,27 @@ interface TelemetryPayload {
   waveOrKills: number;
   durationMs: number;
   version: string;
+  /** Optional connection-quality baseline (multiplayer matches only; see src/network/matchTelemetry.ts).
+   * Each is stored only when it arrives well-formed; a bad one is dropped on its own, never failing
+   * the four required fields above. */
+  transport?: string;
+  players?: number;
+  pingP50?: number;
+  pingP95?: number;
+  snapshotGapP95?: number;
+  stallsPerMin?: number;
+  joinMs?: number;
 }
 
-/** Narrow the parsed JSON body down to the four fields this endpoint actually stores - anything
- * else in the request body is silently ignored, and any of these fields being the wrong shape
- * fails the whole payload (better to store nothing than a half-garbage record). */
+/** The optional numeric fields, and the ceiling each is clamped to (floor is always 0). */
+const OPTIONAL_NUMBER_FIELDS = ['pingP50', 'pingP95', 'snapshotGapP95', 'stallsPerMin', 'joinMs'] as const;
+const OPTIONAL_NUMBER_MAX = 60000;
+const PLAYERS_MAX = 16;
+
+/** Narrow the parsed JSON body down to the fields this endpoint actually stores - anything else in
+ * the request body is silently ignored, and any of the four required fields being the wrong shape
+ * fails the whole payload (better to store nothing than a half-garbage record). The optional
+ * connection-quality fields are looser: a missing or malformed one is simply left out. */
 function parsePayload(value: unknown): TelemetryPayload | null {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
@@ -51,7 +68,18 @@ function parsePayload(value: unknown): TelemetryPayload | null {
   if (typeof waveOrKills !== 'number' || !Number.isFinite(waveOrKills)) return null;
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
   if (typeof version !== 'string' || version.length === 0 || version.length > 32) return null;
-  return { mode, waveOrKills, durationMs, version };
+  const payload: TelemetryPayload = { mode, waveOrKills, durationMs, version };
+
+  const { transport, players } = record;
+  if (typeof transport === 'string' && transport.length > 0 && transport.length <= 16) payload.transport = transport;
+  if (typeof players === 'number' && Number.isFinite(players)) {
+    payload.players = Math.min(PLAYERS_MAX, Math.max(1, Math.round(players)));
+  }
+  for (const field of OPTIONAL_NUMBER_FIELDS) {
+    const raw = record[field];
+    if (typeof raw === 'number' && Number.isFinite(raw)) payload[field] = Math.min(OPTIONAL_NUMBER_MAX, Math.max(0, raw));
+  }
+  return payload;
 }
 
 export const onRequestPost = async (context: { request: Request; env: Env }): Promise<Response> => {
