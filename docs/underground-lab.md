@@ -1,6 +1,6 @@
 # Underground lab under the watch towers (design, proposed for v4.7.0)
 
-Status: design for Gustav's review, 2026-11-05. Nothing is built yet.
+Status: design approved by Gustav, 2026-11-05 (decisions in section 8). Building in phases.
 
 Gustav's brief: the door on each tower's core becomes a real door into an extremely simple, old
 looking room. From it, dark stairs go down about three flights, extending the map downwards, and
@@ -196,12 +196,10 @@ Tower placement does not change, so every existing map keeps its towers where th
   groups the changed files map to.
 - **Real GPU:** screenshots of the room, stairs and lab on Medium and Low for Gustav before release.
 
-## 8. Decisions for Gustav
+## 8. Decisions (Gustav, 2026-11-05)
 
-1. Enemies stay above in this version (they wait at the door; the Director pauses while you are
-   down), with breakout creatures as a possible later feature. Or should enemies follow you down now
-   (much bigger: underground navigation)?
-2. A lab under every tower (recommended), or one real lab per map with simple dead-end rooms under
-   the other towers?
-3. Mode rules as in section 5: no King of the Hill points underground, uplinks only from the
-   surface.
+1. Enemies stay above in this version: they wait at the door and the Director pauses while every
+   player is down. Breakout creatures are a possible later feature.
+2. A full lab under every tower, the same plan with seeded variety.
+3. Mode rules as in section 5: no King of the Hill points underground; uplinks and extraction only
+   count on the surface.
