@@ -34,6 +34,7 @@ export class AmmoDropManager {
   constructor(
     private readonly scene: THREE.Scene,
     private readonly callbacks: AmmoDropManagerCallbacks,
+    private readonly floor?: (x: number, y: number, z: number) => number,
   ) {}
 
   get count(): number {
@@ -63,7 +64,7 @@ export class AmmoDropManager {
     const radius = Math.random() * HORDE_AMMO_DROP_SPAWN_RADIUS;
     const x = anchor.x + Math.cos(angle) * radius;
     const z = anchor.z + Math.sin(angle) * radius;
-    const y = sampleHeight(x, z);
+    const y = this.floor ? this.floor(x, anchor.y, z) : sampleHeight(x, z);
     const id = `ammo-${this.idCounter++}`;
 
     const mesh = buildAmmoDropMesh();

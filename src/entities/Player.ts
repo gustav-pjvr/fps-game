@@ -4,6 +4,7 @@ import { allocateEntityId, type Entity } from './Entity.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import { Settings } from '../settings/Settings.ts';
+import { inCutZone, isTerrainCollider } from '../world/underground.ts';
 import {
   CAMERA_BOB_AMPLITUDE,
   EYE_OFFSET,
@@ -262,7 +263,9 @@ export class Player implements Entity {
 
     const desiredMovement = { x: moveDir.x, y: this.verticalVelocity * dt, z: moveDir.z };
 
-    this.controller.computeColliderMovement(this.collider, desiredMovement);
+    const insideCut = inCutZone(currentBeforeMove.x, currentBeforeMove.z, PLAYER_RADIUS);
+    this.controller.computeColliderMovement(this.collider, desiredMovement, undefined, undefined,
+      insideCut ? (collider) => !isTerrainCollider(collider.handle) : undefined);
 
     const computed = this.controller.computedMovement();
     this.grounded = this.controller.computedGrounded();

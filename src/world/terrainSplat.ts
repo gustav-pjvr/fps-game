@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GROUND_TEXTURE_WORLD_SIZE } from '../core/config.ts';
+import { cutZoneUniforms } from './underground.ts';
 
 /**
  * The ground's look (docs/world-redesign.md, terrain): one Poly Haven "Aerial Grass Rock" texture
@@ -48,6 +49,8 @@ uniform vec3 uSoil;
 uniform vec3 uGravel;
 uniform vec3 uRock;
 uniform float uTile;
+uniform vec4 uCutZones[4];
+uniform int uCutZoneCount;
 varying vec3 vTerrainPos;
 varying vec3 vTerrainNormal;
 varying float vTerrainSurface;
@@ -65,6 +68,11 @@ float terrainNoise(vec2 p) {
 `;
 
 const fragmentBody = /* glsl */ `
+for (int i = 0; i < 4; i++) {
+  if (i >= uCutZoneCount) break;
+  vec4 zone = uCutZones[i];
+  if (all(lessThanEqual(abs(vTerrainPos.xz - zone.xy), zone.zw))) discard;
+}
 #ifdef USE_MAP
 {
   const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -105,6 +113,7 @@ const fragmentBody = /* glsl */ `
 /** Patches a ground MeshStandardMaterial (with `map` set) to draw the splatted terrain. */
 export function applyTerrainSplat(material: THREE.MeshStandardMaterial): void {
   material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, cutZoneUniforms);
     shader.uniforms.uGrassLush = { value: new THREE.Color(TERRAIN_PALETTE.grassLush) };
     shader.uniforms.uGrassDry = { value: new THREE.Color(TERRAIN_PALETTE.grassDry) };
     shader.uniforms.uSoil = { value: new THREE.Color(TERRAIN_PALETTE.soil) };

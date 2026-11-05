@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { castRaySkippingCuts, inCutZone, isTerrainCollider } from '../../world/underground.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Player } from '../../entities/Player.ts';
 import type { InputManager } from '../../input/InputManager.ts';
@@ -105,7 +106,7 @@ export interface GrenadeSystemOptions {
    * the thrower. Default true. */
   readonly friendlyFire?: boolean;
   /** The terrain height, where a world has one (the Valley): a last floor under streamed-out ground. */
-  readonly floor?: (x: number, z: number) => number;
+  readonly floor?: (x: number, y: number, z: number) => number;
   /** False while WeaponManager refuses a throw (a reload, a knife swing). */
   canStartThrow(): boolean;
   onHandChange(state: GrenadeHandState): void;
@@ -779,7 +780,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     let bestDistance = Infinity;
     for (const direction of SURFACE_PROBE_DIRECTIONS) {
       const reach = direction.y < 0 ? SURFACE_PROBE_DOWN : SURFACE_PROBE_SIDE;
-      const hit = this.options.physics.world.castRayAndGetNormal(
+      const hit = castRaySkippingCuts(
+        this.options.physics.world,
         new RAPIER.Ray({ x: position.x, y: position.y, z: position.z }, direction),
         reach,
         false,
@@ -798,12 +800,12 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     }
     const floor = this.options.floor;
     if (!best && floor) {
-      const height = floor(position.x, position.z);
+      const height = floor(position.x, position.y, position.z);
       if (position.y - height <= SURFACE_PROBE_DOWN) {
         // The terrain's normal from its slope either side.
         const step = 0.5;
-        const dx = floor(position.x + step, position.z) - floor(position.x - step, position.z);
-        const dz = floor(position.x, position.z + step) - floor(position.x, position.z - step);
+        const dx = floor(position.x + step, position.y, position.z) - floor(position.x - step, position.y, position.z);
+        const dz = floor(position.x, position.y, position.z + step) - floor(position.x, position.y, position.z - step);
         const normal = new THREE.Vector3(-dx, 2 * step, -dz).normalize();
         best = { point: { x: position.x, y: height, z: position.z }, normal: { x: normal.x, y: normal.y, z: normal.z } };
       }
@@ -828,7 +830,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const length = direction.length();
     if (length < 1e-4) return true;
     direction.divideScalar(length);
-    const hit = this.options.physics.world.castRayAndGetNormal(
+    const hit = castRaySkippingCuts(
+      this.options.physics.world,
       new RAPIER.Ray(start, direction),
       length,
       true,
@@ -868,18 +871,28 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
    * sensor. `ownGrenade`: also past the local player's own capsule (its own throw starts at its
    * hand); another player's grenade meets that capsule like any other body. */
   private castSweep(from: Vec3, displacement: Vec3, ownGrenade: boolean): { fraction: number; normal: Vec3 } | null {
-    const hit = this.options.physics.world.castShape(
-      from,
-      IDENTITY_ROTATION,
-      displacement,
-      this.ball,
-      0,
-      1,
-      false,
-      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
-      ownGrenade ? this.options.player.ownCollider : undefined,
-    );
+    const skipped = new Set<number>();
+    let hit: RAPIER.ColliderShapeCastHit | null = null;
+    for (let skip = 0; skip <= 3; skip++) {
+      hit = this.options.physics.world.castShape(
+        from,
+        IDENTITY_ROTATION,
+        displacement,
+        this.ball,
+        0,
+        1,
+        false,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        ownGrenade ? this.options.player.ownCollider : undefined,
+        undefined,
+        (collider) => !skipped.has(collider.handle),
+      );
+      if (!hit || !isTerrainCollider(hit.collider.handle) ||
+          !inCutZone(from.x + displacement.x * hit.time_of_impact, from.z + displacement.z * hit.time_of_impact)) break;
+      skipped.add(hit.collider.handle);
+      hit = null;
+    }
     if (!hit) return null;
     // normal1 is the ball's own outward normal at the contact (the ball is never rotated, so local
     // is world): the surface's normal is its opposite.

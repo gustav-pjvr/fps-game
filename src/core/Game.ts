@@ -19,6 +19,7 @@ import { WATCH_TOWER_ROOF_TOP } from '../world/towerDesign.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight, setHeightOverride } from '../world/TerrainGenerator.ts';
+import { clearUnderground, floorBelow, isUnderground, setCutZones } from '../world/underground.ts';
 import { FacilityWorld } from '../world/facility/FacilityBuilder.ts';
 import { LampBreakEffect } from '../world/facility/lampBreakEffect.ts';
 import {
@@ -873,6 +874,7 @@ export class Game {
     onMultiplayerRematchReceived?: (params: MultiplayerMatchStartParams) => void,
     onOpponentLeftRoom?: () => void,
   ): Promise<Game> {
+    clearUnderground();
     onProgress?.('Initializing world…', 0);
     // Goose Horde: single-player's own toggle (matchConfig.hordeMode) or multiplayer's co-op mode
     // (gameMode==='gooseHorde') - computed once, up front, since it now also gates the player's own
@@ -960,6 +962,7 @@ export class Game {
     } else {
       // A failed Facility create could have left these set; the Valley always runs without them.
       setHeightOverride(null);
+      setCutZones(getWatchTowerPositions().map(({ x, z }) => ({ cx: x, cz: z, halfX: 2.7, halfZ: 2.7 })));
       setEnemyNavigator(null);
       setEnemyDoorGate(null);
       setEnemyFloor(null);
@@ -1423,7 +1426,7 @@ export class Game {
                   activeMultiplayer?.minimap.addItemDot(id);
                 }
               : undefined,
-        })
+        }, facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z))
       : null;
 
     // Every OTHER roster slot gets a RemotePlayer, positioned at its own match-start spawn point
@@ -1653,7 +1656,7 @@ export class Game {
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
       // Goose Horde is co-op: a frag never hurts or pushes a teammate.
       friendlyFire: currentGameMode !== 'gooseHorde',
-      floor: facility ? undefined : sampleHeight,
+      floor: facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z),
       canStartThrow: () => game.weaponManager.canStartThrow,
       onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),
       shootLampsNear: (position, radius) => {
@@ -1930,6 +1933,7 @@ export class Game {
     this.facility?.lampBreak.dispose();
     this.torch?.dispose();
     this.remoteTorches?.dispose();
+    clearUnderground();
     setHeightOverride(null);
     setEnemyNavigator(null);
     setEnemyDoorGate(null);
@@ -2604,6 +2608,7 @@ export class Game {
       secondsSinceShot: this.secondsSinceShot,
       torchOn: this.torch?.isOn ?? false,
       enemyInTorchBeam: false,
+      underground: !this.facility && isUnderground(at.x, at.y, at.z),
       houseRoomLit: this.buildings?.houses.roomLampLitAt(at.x, at.y - PLAYER_HEIGHT / 2, at.z) ?? null,
       flashLit: this.grenades ? flashLightsPlayer(this.grenades.recentDetonations, this.grenades.now, at) : false,
     });
@@ -3094,7 +3099,8 @@ export class Game {
         continue;
       }
 
-      const groundY = sampleHeight(thrown.position.x, thrown.position.z);
+      const groundY = this.facility ? sampleHeight(thrown.position.x, thrown.position.z)
+        : floorBelow(this.physics.world, thrown.position.x, thrown.position.y, thrown.position.z);
       let hitPosition: THREE.Vector3 | null = null;
       if (thrown.position.y <= groundY + GOOSE_RADIUS) {
         hitPosition = new THREE.Vector3(thrown.position.x, groundY, thrown.position.z);

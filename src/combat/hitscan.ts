@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { perfCounters } from '../core/perfStats.ts';
+import { castRaySkippingCuts } from '../world/underground.ts';
 
 export interface HitscanResult {
   point: THREE.Vector3;
@@ -26,7 +27,8 @@ export function castHitscan(
     { x: origin.x, y: origin.y, z: origin.z },
     { x: direction.x, y: direction.y, z: direction.z },
   );
-  const hit = physics.world.castRayAndGetNormal(
+  const hit = castRaySkippingCuts(
+    physics.world,
     ray,
     maxDistance,
     true,
