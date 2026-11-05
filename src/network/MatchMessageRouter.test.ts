@@ -37,6 +37,7 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
     addMultiplayerOpponent: vi.fn(async () => {}),
     removeMultiplayerOpponent: vi.fn(),
     opponentInMatch: vi.fn(),
+    noteSnapshotApplied: vi.fn(),
     grenades: null,
   };
   return ctx;
@@ -127,6 +128,24 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(first).not.toBeNull();
     route(ctx, { type: 'playerSnapshot', senderSlot: 3, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 3);
     expect(opponent.firstSnapshotAt).toBe(first);
+  });
+
+  it('reports each applied playerSnapshot to the telemetry hook, and a stale one not at all', () => {
+    const ctx = makeContext({ role: 'guest', ownSlot: 1 });
+    const opponent = {
+      lastMessageAt: 0,
+      firstSnapshotAt: null as number | null,
+      isDead: false,
+      health: 100,
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+    };
+    ctx.multiplayer.opponents.set(2, opponent);
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, t: 500 }, 0);
+    expect(ctx.noteSnapshotApplied).toHaveBeenCalledTimes(1);
+    expect(ctx.noteSnapshotApplied).toHaveBeenCalledWith(2, expect.any(Number));
+    // Older than what is shown already: dropped before it is applied, so it is no telemetry sample either.
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, t: 400 }, 0);
+    expect(ctx.noteSnapshotApplied).toHaveBeenCalledTimes(1);
   });
 
   it('a King of the Hill score only rises: a lower one is neither applied nor relayed', () => {

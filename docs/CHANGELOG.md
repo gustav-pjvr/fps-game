@@ -10,7 +10,18 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.7.0 (current)
+## v4.7.1 (current)
+
+Connection telemetry, 2026-11-05. As built: `docs/architecture/core.md` section 7.
+
+- **Multiplayer matches report connection quality.** The anonymous match-end beacon now also
+  carries the connection type, the number of players, the median and 95th percentile ping, the 95th
+  percentile gap between position updates, freezes per minute, and (for a guest) how long joining
+  took. Still no username, room code or anything else that identifies a player.
+- **Stored for the first time.** The `MATCH_TELEMETRY` store is now connected on the live site, so
+  these numbers become the before-and-after baseline for the planned game server.
+
+## v4.7.0
 
 The underground lab, 2026-11-05. Design and as built: `docs/underground-lab.md`.
 
