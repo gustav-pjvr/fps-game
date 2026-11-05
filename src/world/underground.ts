@@ -60,15 +60,46 @@ export function isUnderground(x: number, y: number, z: number): boolean {
   return volumeAt(x, y, z) !== undefined || (inCutZone(x, z) && y < sampleHeight(x, z) + 3.2);
 }
 
+/** Whether (x, y, z) is inside a registered underground volume (not just a terrain cut zone): the
+ * cheap test that decides whether a floor lookup needs the underground ray at all. */
+export function inUndergroundVolume(x: number, y: number, z: number): boolean {
+  return volumeAt(x, y, z) !== undefined;
+}
+
+/** A point on the floor plan inside the volume that holds (x, y, z), kept `margin` metres from its
+ * walls, placed by two random numbers `u` and `v` in [0, 1). Null when (x, y, z) is in no volume. */
+export function pointInUndergroundVolume(
+  x: number, y: number, z: number, u: number, v: number, margin = 1,
+): { x: number; z: number } | null {
+  const volume = volumeAt(x, y, z);
+  if (!volume) return null;
+  const span = (min: number, max: number, t: number): number => {
+    const lo = min + margin, hi = max - margin;
+    return lo >= hi ? (min + max) / 2 : lo + (hi - lo) * t;
+  };
+  return { x: span(volume.minX, volume.maxX, u), z: span(volume.minZ, volume.maxZ, v) };
+}
+
+// Reused by every floorBelow call: it runs per frame for thrown objects and grenades, so the ray
+// is not allocated each time. Rapier reads the origin and direction synchronously during the cast.
+// Created on first use, after Rapier is initialised.
+let downRay: RAPIER.Ray | null = null;
+
 export function floorBelow(world: RAPIER.World, x: number, y: number, z: number): number {
   if (!isUnderground(x, y, z)) return sampleHeight(x, z);
-  const ray = new RAPIER.Ray({ x, y: y + 0.1, z }, { x: 0, y: -1, z: 0 });
-  const hit = world.castRayAndGetNormal(ray, Infinity, true,
+  const originY = y + 0.1;
+  downRay ??= new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+  downRay.origin.x = x;
+  downRay.origin.y = originY;
+  downRay.origin.z = z;
+  const hit = world.castRayAndGetNormal(downRay, Infinity, true,
     RAPIER.QueryFilterFlags.ONLY_FIXED | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-    undefined, undefined, undefined, (collider) => !isTerrainCollider(collider.handle));
+    undefined, undefined, undefined, isNotTerrain);
   // An opening without a registered floor must not snap objects back onto the terrain.
-  return hit ? ray.origin.y - hit.timeOfImpact : volumeAt(x, y, z)?.floorY ?? -Infinity;
+  return hit ? originY - hit.timeOfImpact : volumeAt(x, y, z)?.floorY ?? -Infinity;
 }
+
+const isNotTerrain = (collider: RAPIER.Collider): boolean => !isTerrainCollider(collider.handle);
 
 /** Keeps Rapier's filters and returns timeOfImpact relative to the original ray origin. */
 export function castRaySkippingCuts(

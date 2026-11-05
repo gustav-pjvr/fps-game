@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { buildAmmoDropMesh } from './AmmoDrop.ts';
 import { disposeProceduralMesh } from './Goose.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { pointInUndergroundVolume } from '../world/underground.ts';
 import {
   HORDE_AMMO_DROP_MAX_CONCURRENT,
   HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS,
@@ -60,10 +61,13 @@ export class AmmoDropManager {
     this.spawnTimer = randomSpawnDelay();
 
     const anchor = playerPositions[Math.floor(Math.random() * playerPositions.length)]!;
+    // A player underground gets a crate in the same underground volume (1 m from its walls): a random
+    // point in the 18 m disc would mostly fall outside it, on the surface or inside a wall.
+    const inside = this.floor ? pointInUndergroundVolume(anchor.x, anchor.y, anchor.z, Math.random(), Math.random()) : null;
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.random() * HORDE_AMMO_DROP_SPAWN_RADIUS;
-    const x = anchor.x + Math.cos(angle) * radius;
-    const z = anchor.z + Math.sin(angle) * radius;
+    const x = inside ? inside.x : anchor.x + Math.cos(angle) * radius;
+    const z = inside ? inside.z : anchor.z + Math.sin(angle) * radius;
     const y = this.floor ? this.floor(x, anchor.y, z) : sampleHeight(x, z);
     const id = `ammo-${this.idCounter++}`;
 

@@ -170,13 +170,15 @@ export function predictArc(origin: Vec3, velocity: Vec3, sweep: Sweep, params: F
     v.y += params.gravity * step;
     const displacement = { x: v.x * step, y: v.y * step, z: v.z * step };
     const hit = sweep(position, displacement);
-    const floorY = params.floor ? params.floor(position.x + displacement.x, position.y, position.z + displacement.z) + params.radius : -Infinity;
     if (hit) {
       const fraction = Math.min(1, Math.max(0, hit.fraction));
       const point = { x: position.x + displacement.x * fraction, y: position.y + displacement.y * fraction, z: position.z + displacement.z * fraction };
       points.push(point);
       return { points, landing: { point, normal: hit.normal } };
     }
+    // The floor lookup (a ray underground) is only the safety net for a sweep that found nothing, so
+    // a step that hit something never pays for it.
+    const floorY = params.floor ? params.floor(position.x + displacement.x, position.y, position.z + displacement.z) + params.radius : -Infinity;
     position.x += displacement.x;
     position.y += displacement.y;
     position.z += displacement.z;

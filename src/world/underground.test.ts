@@ -14,8 +14,8 @@ import { AmmoDropManager } from '../entities/AmmoDropManager.ts';
 import { visibility } from '../entities/enemies/playerVisibility.ts';
 import { sampleHeight, setHeightOverride } from './TerrainGenerator.ts';
 import {
-  castRaySkippingCuts, clearUnderground, cutZoneUniforms, floorBelow, inCutZone, isTerrainCollider,
-  isUnderground, registerTerrainCollider, registerUndergroundVolume, setCutZones, unregisterTerrainCollider,
+  castRaySkippingCuts, clearUnderground, cutZoneUniforms, floorBelow, inCutZone, inUndergroundVolume, isTerrainCollider,
+  isUnderground, pointInUndergroundVolume, registerTerrainCollider, registerUndergroundVolume, setCutZones, unregisterTerrainCollider,
 } from './underground.ts';
 
 const DT = 1 / 60;
@@ -175,11 +175,46 @@ describe('underground terrain cuts', () => {
     }
   });
 
+  it('keeps an underground player\'s ammo drops inside their volume, 1 m from its walls, on its floor', async () => {
+    const { physics } = await undergroundWorld();
+    const drops = new AmmoDropManager(new THREE.Scene(), {}, (x, y, z) => floorBelow(physics.world, x, y, z));
+    try {
+      for (const rolls of [0, 0.5, 0.999]) {
+        drops.dispose();
+        vi.spyOn(Math, 'random').mockReturnValue(rolls);
+        // Anchor near a wall: the old 18 m disc landed out in the terrain or inside the wall.
+        drops.update(1000, [new THREE.Vector3(7.5, -2, -7.5)], true);
+        const drop = drops.listForSync()[0]!;
+        expect(drop.x).toBeGreaterThanOrEqual(volume.minX + 1 - 1e-9);
+        expect(drop.x).toBeLessThanOrEqual(volume.maxX - 1 + 1e-9);
+        expect(drop.z).toBeGreaterThanOrEqual(volume.minZ + 1 - 1e-9);
+        expect(drop.z).toBeLessThanOrEqual(volume.maxZ - 1 + 1e-9);
+        expect(drop.y).toBeCloseTo(-5);
+      }
+    } finally {
+      drops.dispose();
+    }
+  });
+
+  it('samples volume points only for an anchor that is inside a volume', () => {
+    expect(pointInUndergroundVolume(0, -2, 0, 0, 0)).toEqual({ x: -7, z: -7 });
+    expect(pointInUndergroundVolume(0, -2, 0, 1, 1)).toEqual({ x: 7, z: 7 });
+    expect(pointInUndergroundVolume(20, -2, 0, 0.5, 0.5)).toBeNull();
+    expect(pointInUndergroundVolume(0, 5, 0, 0.5, 0.5)).toBeNull();
+    expect(inUndergroundVolume(0, -2, 0)).toBe(true);
+    expect(inUndergroundVolume(0, 5, 0)).toBe(false);
+  });
+
   it('treats underground visibility exactly like an unlit room, preserving light overrides and Facility', () => {
     for (const map of ['valley', 'facility'] as const) for (const weather of ['day', 'night', 'fog'] as const) {
       for (const overrides of [{}, { flashLit: true }, { secondsSinceShot: 0.1 }, { torchOn: true, enemyInTorchBeam: true }]) {
         const inputs = { map, weather, secondsSinceShot: 10, torchOn: false, enemyInTorchBeam: false, ...overrides };
-        expect(visibility({ ...inputs, underground: true })).toBe(visibility({ ...inputs, houseRoomLit: false }));
+        // Underground is an unlit room in every Valley weather, Dusk too (a house room is dark only
+        // at night and in fog); the Facility ignores it.
+        const unlitRoom = map === 'valley' && weather === 'day'
+          ? visibility({ ...inputs, weather: 'night', houseRoomLit: false })
+          : visibility({ ...inputs, houseRoomLit: false });
+        expect(visibility({ ...inputs, underground: true })).toBe(unlitRoom);
       }
     }
   });

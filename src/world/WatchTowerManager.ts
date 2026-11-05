@@ -189,6 +189,8 @@ export class WatchTowerManager {
   private readonly labs: TowerLab[];
   private readonly activeTowers = new Map<string, PlacedTower>();
   private readonly chunkOwnedTowerIds = new Map<string, string[]>();
+  private undergroundTowers: readonly UndergroundTower[] = [];
+  private undergroundLamps: readonly THREE.Vector3[] = [];
 
   private constructor(
     private readonly scene: THREE.Scene,
@@ -219,6 +221,7 @@ export class WatchTowerManager {
       if (this.activeTowers.has(id)) return;
       const placed = this.createTower(this.labs[index]!);
       this.activeTowers.set(id, placed);
+      this.rebuildUndergroundCache();
     });
 
     this.chunkOwnedTowerIds.set(chunkKey(cx, cz), ownedIds);
@@ -249,6 +252,7 @@ export class WatchTowerManager {
 
       this.activeTowers.delete(id);
     }
+    this.rebuildUndergroundCache();
 
     this.chunkOwnedTowerIds.delete(key);
   }
@@ -262,8 +266,20 @@ export class WatchTowerManager {
     });
   }
 
+  /** The streamed-in towers' underground parts. The same array until a tower streams in or out, so
+   * Game can call it every frame without allocating. */
   getUndergroundTowers(): readonly UndergroundTower[] {
-    return Array.from(this.activeTowers.values(), tower => tower.underground);
+    return this.undergroundTowers;
+  }
+
+  /** Every streamed-in tower's lab lamps, in one array that changes only with the tower list. */
+  getUndergroundLamps(): readonly THREE.Vector3[] {
+    return this.undergroundLamps;
+  }
+
+  private rebuildUndergroundCache(): void {
+    this.undergroundTowers = Array.from(this.activeTowers.values(), tower => tower.underground);
+    this.undergroundLamps = this.undergroundTowers.flatMap(tower => tower.lamps);
   }
 
   private createTower(lab: TowerLab): PlacedTower {

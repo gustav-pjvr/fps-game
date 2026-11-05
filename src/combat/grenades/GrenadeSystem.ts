@@ -241,6 +241,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private blastLightSeconds = FLASH_LIGHT_SECONDS;
   private blastLightPeak = FLASH_LIGHT_INTENSITY;
   private readonly ball = new RAPIER.Ball(GRENADE_RADIUS);
+  /** castSweep's terrain colliders to look past, and the filter reading them: both reused per call
+   * (sweeps run every simulated step for every live grenade). */
+  private readonly skippedColliders = new Set<number>();
+  private readonly notSkipped = (collider: RAPIER.Collider): boolean => !this.skippedColliders.has(collider.handle);
   private readonly params: FlightParams;
   /** The own grenades' sweep and the copies' (which also meet the local player's capsule). */
   private readonly sweep: Sweep;
@@ -871,7 +875,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
    * sensor. `ownGrenade`: also past the local player's own capsule (its own throw starts at its
    * hand); another player's grenade meets that capsule like any other body. */
   private castSweep(from: Vec3, displacement: Vec3, ownGrenade: boolean): { fraction: number; normal: Vec3 } | null {
-    const skipped = new Set<number>();
+    const skipped = this.skippedColliders;
+    skipped.clear();
     let hit: RAPIER.ColliderShapeCastHit | null = null;
     for (let skip = 0; skip <= 3; skip++) {
       hit = this.options.physics.world.castShape(
@@ -886,7 +891,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
         undefined,
         ownGrenade ? this.options.player.ownCollider : undefined,
         undefined,
-        (collider) => !skipped.has(collider.handle),
+        this.notSkipped,
       );
       if (!hit || !isTerrainCollider(hit.collider.handle) ||
           !inCutZone(from.x + displacement.x * hit.time_of_impact, from.z + displacement.z * hit.time_of_impact)) break;

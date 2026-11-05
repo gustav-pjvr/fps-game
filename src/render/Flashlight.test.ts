@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { Flashlight, TORCH_AIM_DISTANCE, TORCH_GUN_OFFSET, TORCH_SHOULDER_OFFSET, torchPose, torchAvailable, torchOnByDefault } from './Flashlight.ts';
+import { Flashlight, TORCH_AIM_DISTANCE, TORCH_GUN_OFFSET, TORCH_SHOULDER_OFFSET, torchPose, torchAvailable, torchCastsShadow, torchOnByDefault, remoteTorchesAvailable } from './Flashlight.ts';
 
 const look = (pitch: number, yaw: number): THREE.Quaternion => new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
 
@@ -64,6 +64,30 @@ describe('torch availability', () => {
       expect(torchAvailable('valley', 'day', underground)).toBe(underground);
       expect(torchOnByDefault('valley', 'day')).toBe(false);
     }
+  });
+});
+
+describe('torch cost at Dusk', () => {
+  it.each([
+    ['valley', 'day', true, false, false],
+    ['valley', 'fog', true, true, true],
+    ['valley', 'night', true, true, true],
+    ['facility', 'day', true, true, true],
+    ['facility', 'night', true, true, true],
+    ['valley', 'night', false, false, true],
+  ] as const)('%s in %s, shadows %s: casts %s, remote pool %s', (map, weather, shadows, casts, pool) => {
+    expect(torchCastsShadow(map, weather, shadows)).toBe(casts);
+    expect(remoteTorchesAvailable(map, weather)).toBe(pool);
+  });
+
+  it('a torch built without shadows still draws its shadow map request harmlessly', () => {
+    const scene = new THREE.Scene();
+    const torch = new Flashlight(scene, false);
+    let light: THREE.SpotLight | undefined;
+    scene.traverse((object) => { if (object instanceof THREE.SpotLight) light = object; });
+    expect(light?.castShadow).toBe(false);
+    torch.setOn(true);
+    expect(light?.castShadow).toBe(false);
   });
 });
 

@@ -9,6 +9,18 @@ export function torchOnByDefault(map: MatchMap, weather: MatchWeather): boolean 
   return map === 'facility' || weather === 'night';
 }
 
+/** Whether the player's torch casts a shadow: only where it is a main light (Facility, Night, Fog).
+ * At Dusk it is the underground torch alone, so it skips the shadow map and its shader cost. */
+export function torchCastsShadow(map: MatchMap, weather: MatchWeather, shadowsEnabled: boolean): boolean {
+  return shadowsEnabled && (map === 'facility' || weather !== 'day');
+}
+
+/** Whether the match builds the pooled remote torch lights: only where a torch works outdoors
+ * (Facility, Night, Fog). A Dusk match has none, so a remote player underground shows no beam. */
+export function remoteTorchesAvailable(map: MatchMap, weather: MatchWeather): boolean {
+  return map === 'facility' || weather !== 'day';
+}
+
 /** Camera-local spot of the torch at the front of a ranged gun, near its muzzle at the hip pose. */
 export const TORCH_GUN_OFFSET = new THREE.Vector3(0.18, -0.16, -0.35);
 /** Camera-local spot of the torch on the shoulder, for the knife and empty hands (no gun to carry it). */

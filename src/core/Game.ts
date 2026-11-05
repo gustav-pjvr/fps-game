@@ -189,13 +189,16 @@ import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
-import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
+import { Flashlight, RemoteTorches, remoteTorchesAvailable, torchAvailable, torchCastsShadow, torchOnByDefault } from '../render/Flashlight.ts';
 import { flashLightsPlayer, visibility } from '../entities/enemies/playerVisibility.ts';
 import { createMatchPickups } from '../pickups/createMatchPickups.ts';
 import { grenadeSupplyFrom } from '../pickups/pickupEffects.ts';
 import type { PickupSystem } from '../pickups/PickupSystem.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
+/** What updateUndergroundLight reads on a Facility match, which builds no watch towers. */
+const NO_TOWERS: readonly never[] = [];
+const NO_LAMPS: readonly never[] = [];
 
 /** The pacing director's own seeded stream (enemy AI v2 step 6), at the offset the design reserved
  * for it: clear of every other world-seed offset (see EntityManager's COORDINATOR_SEED_OFFSET). It
@@ -612,9 +615,9 @@ export class Game {
       scene.fog.near = look.fogNear;
       scene.fog.far = look.fogFar;
     }
-    const towers = this.watchTowers?.getUndergroundTowers() ?? [];
+    const towers = this.watchTowers?.getUndergroundTowers() ?? NO_TOWERS;
     for (const tower of towers) tower.group.visible = undergroundVisible(at, tower, this.undergroundAmount);
-    this.undergroundLights?.update(at, this.undergroundAmount, towers.flatMap(tower => tower.lamps));
+    this.undergroundLights?.update(at, this.undergroundAmount, this.watchTowers?.getUndergroundLamps() ?? NO_LAMPS);
   }
 
   private torchAvailableAt(at: THREE.Vector3Like): boolean {
@@ -942,9 +945,10 @@ export class Game {
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
     const map = isFacility ? 'facility' : 'valley';
-    const torch = new Flashlight(renderer.scene, quality.shadowsEnabled);
+    const torch = new Flashlight(renderer.scene, torchCastsShadow(map, matchWeather, quality.shadowsEnabled));
     torch?.setOn(torchOnByDefault(map, matchWeather));
-    const remoteTorches = torch && multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
+    const remoteTorches = torch && multiplayer && remoteTorchesAvailable(map, matchWeather)
+      ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
 
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
     // here as their chunks load (the Facility's crates and pillars once, when it is built), and
@@ -2150,7 +2154,7 @@ export class Game {
     // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
     if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled && !this.facility;
-    this.torch?.setCastShadow(quality.shadowsEnabled);
+    this.torch?.setCastShadow(torchCastsShadow(this.facility ? 'facility' : 'valley', this.matchWeather, quality.shadowsEnabled));
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
       this.sun.shadow.map?.dispose();

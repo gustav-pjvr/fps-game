@@ -59,6 +59,15 @@ describe('player visibility in Valley houses and under a flash', () => {
     expect(visibility({ ...base, houseRoomLit: false, secondsSinceShot: 0.1 })).toBe(1);
   });
 
+  it.each(['day', 'fog', 'night'] as const)('counts underground as an unlit room in %s', (weather) => {
+    expect(visibility({ ...base, weather, underground: true })).toBe(0.3);
+    expect(visibility({ ...base, weather, underground: false })).toBe(visibility({ ...base, weather }));
+    // Shots, flashes and the torch beam still raise it.
+    expect(visibility({ ...base, weather, underground: true, secondsSinceShot: 0.1 })).toBe(1);
+    expect(visibility({ ...base, weather, underground: true, flashLit: true })).toBe(1);
+    expect(visibility({ ...base, weather, underground: true, torchOn: true, enemyInTorchBeam: true })).toBe(1);
+  });
+
   it('is 1 while the light of a flash grenade is on the player', () => {
     expect(visibility({ ...base, flashLit: true })).toBe(1);
     expect(visibility({ ...base, map: 'facility', probeLuma: 0, flashLit: true })).toBe(1);
