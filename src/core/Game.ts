@@ -1866,7 +1866,7 @@ export class Game {
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
         // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
         // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
-        onHostHello: async (username, rejoinToken, features, peerId) => {
+        onHostHello: async ({ username, rejoinToken, features, peerId }) => {
           const hostRoster = activeMultiplayer.hostRoster;
           if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
           // An older build would load the Valley inside a Facility match: turned away before it takes a slot.

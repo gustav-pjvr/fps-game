@@ -1,5 +1,5 @@
 import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
-import { NETWORK_BLOCKED_MESSAGE, PeerConnection } from '../../network/PeerConnection.ts';
+import { NETWORK_BLOCKED_MESSAGE, joinRoom, type Transport } from '../../network/transport.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
@@ -31,7 +31,7 @@ export class JoinRoomScreen {
   private readonly lobbyView: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly readyButton: HTMLButtonElement;
-  private connection: PeerConnection | null = null;
+  private connection: Transport | null = null;
   private ownSlot: PlayerSlot | null = null;
   /** This guest's own current readiness, toggled by the lobby's Ready button (see
    * PlayerReadyMessage) - reset false on every fresh attemptJoin(), same as ownSlot. */
@@ -66,7 +66,7 @@ export class JoinRoomScreen {
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
-    private readonly onStartMatch: (connection: PeerConnection, params: MultiplayerMatchStartParams) => void,
+    private readonly onStartMatch: (connection: Transport, params: MultiplayerMatchStartParams) => void,
   ) {
     this.overlay = createOverlay();
     closeOnBackdropClick(this.overlay, () => {
@@ -245,7 +245,7 @@ export class JoinRoomScreen {
 
     // Every callback is generation-guarded: a superseded attempt's connection still fires close/error
     // events after being disposed, which used to overwrite the current attempt's status text.
-    void PeerConnection.joinRoom(code, username, rejoinToken, {
+    void joinRoom(code, { username, rejoinToken }, {
       onConnected: () => {}, // the welcome message itself (below) carries everything worth reacting to
       onPeerDisconnected: () => {
         if (generation !== this.joinGeneration) return;

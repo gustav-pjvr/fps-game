@@ -13,7 +13,7 @@ import { Game } from './Game.ts';
 import { DEFAULT_ENEMY_COUNT, DEFAULT_GOOSE_EXPLOSION_DIFFICULTY, DEFAULT_MATCH_MAP, DEFAULT_MATCH_WEATHER, DEFAULT_TARGET_COUNT, MAX_MATCH_ENTITY_COUNT } from './config.ts';
 import { generateMultiplayerSeed } from './worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from './multiplayerSpawn.ts';
-import type { PeerConnection } from '../network/PeerConnection.ts';
+import type { Transport } from '../network/transport.ts';
 import type { MultiplayerMatchStartParams, MultiplayerRole, MultiplayerSession } from '../network/MultiplayerSession.ts';
 
 /** Top-level state machine: lobby (with menu overlays) -> match setup -> loading -> gameplay,
@@ -146,7 +146,7 @@ export class App {
   /** Wired from CreateRoomScreen/JoinRoomScreen once a match is actually starting (see
    * MULTIPLAYER_PLAN.md §7 phase 2). Also the entry point restartMultiplayerMatch reuses for a
    * rematch, so it must not assume this is the *first* match on this connection. */
-  private async startMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
+  private async startMultiplayerMatch(connection: Transport, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     this.multiplayerMenu.hide();
     await this.createMultiplayerGame(connection, role, params);
   }
@@ -156,7 +156,7 @@ export class App {
    * multiplayer session instead of a MatchSetupConfig. `enemyCount`/`targetCount` are passed as 0
    * and are otherwise unused: Game.create() skips AI spawning entirely once a multiplayer session
    * is present, since multiplayer matches are pure PvP. */
-  private async createMultiplayerGame(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
+  private async createMultiplayerGame(connection: Transport, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     this.mainMenu.hide();
     this.matchEndScreen.hide();
     this.lobbyMusic.stop();
@@ -195,7 +195,7 @@ export class App {
    * still-open connection (MULTIPLAYER_PLAN.md §7 phase 4) - triggered by the host's Rematch click
    * (handleRematchClick) or, on the guest's side, by receiving the fresh matchStart that click
    * sends (Game.ts's onMultiplayerRematchReceived). */
-  private async restartMultiplayerMatch(connection: PeerConnection, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
+  private async restartMultiplayerMatch(connection: Transport, role: MultiplayerRole, params: MultiplayerMatchStartParams): Promise<void> {
     // Silences the old Game's message handling before tearing it down - Game.create() re-attaches
     // its own callbacks once the new match is ready, but there's a gap in between where a stray
     // message must not reach a Game instance that's about to be disposed.

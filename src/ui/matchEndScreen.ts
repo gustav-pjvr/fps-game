@@ -14,7 +14,7 @@ import {
   type MatchMap,
   type MatchWeather,
 } from '../core/config.ts';
-import type { PeerConnection } from '../network/PeerConnection.ts';
+import type { Transport } from '../network/transport.ts';
 import type { MultiplayerRole } from '../network/MultiplayerSession.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
 import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '../core/gameModes.ts';
@@ -46,7 +46,7 @@ export interface MultiplayerMatchEndResult {
   weather: MatchWeather;
   map: MatchMap;
   role: MultiplayerRole;
-  connection: PeerConnection;
+  connection: Transport;
 }
 
 /** What the host actually chose before clicking Rematch - App.handleRematchClick uses this instead

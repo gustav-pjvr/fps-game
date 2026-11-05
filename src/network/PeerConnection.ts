@@ -1,11 +1,12 @@
 import Peer, { type DataConnection, type PeerError } from 'peerjs';
-import { CLIENT_FEATURES, HOST_SLOT, isNetworkMessage, type NetworkMessage, type PlayerSlot, type RosterEntry, type WelcomeMessage } from './protocol.ts';
+import { CLIENT_FEATURES, HOST_SLOT, isNetworkMessage, type NetworkMessage, type PlayerSlot, type RosterEntry } from './protocol.ts';
 import { FAST_MESSAGE_TYPES, FastChannel } from './fastChannel.ts';
 import { combineRelayedQuality, readConnectionQuality, UNKNOWN_QUALITY, type ConnectionQuality } from './connectionStats.ts';
 import { GuestMesh, type MeshConnection } from './GuestMesh.ts';
 import { DIRECT_EVENT_TYPES, DuplicateEventFilter, MeshRelayPolicy } from './directLinks.ts';
 import { createSendClock } from './stateOrder.ts';
 import { acceptsFromSender } from './senderAuthority.ts';
+import { NETWORK_BLOCKED_MESSAGE, type MultiplayerRole, type Transport, type TransportCallbacks, type TransportErrorKind } from './transport.ts';
 
 /** Namespaces this game's rooms on PeerJS's shared public signaling broker - the broker is a free
  * service shared by every app using PeerJS's default config, so a short, human-typeable room code
@@ -75,40 +76,6 @@ export function generateRoomCode(): string {
   return code;
 }
 
-export type MultiplayerRole = 'host' | 'guest';
-
-/** A host's answer to a hello: the welcome to send, or why it is turned away (see onHostHello). */
-export type HostHelloResult = WelcomeMessage | 'full' | 'outdated';
-
-export interface PeerConnectionCallbacks {
-  /** Guest: fires once, but only after a WelcomeMessage actually arrives (not the raw WebRTC
-   * 'open') - a guest isn't meaningfully "connected" for the app's purposes until it knows its own
-   * slot. Host: fires once per new guest, with that guest's freshly assigned slot. */
-  onConnected: (slot: PlayerSlot) => void;
-  /** Host: fires per-guest when that guest's connection closes - does NOT imply the room/match
-   * should end. Guest: only ever fires for HOST_SLOT (its one connection) and always does mean
-   * the match ends - star topology gives a guest no path to any other guest without the host
-   * relaying, so losing the host is unrecoverable for it. */
-  onPeerDisconnected: (slot: PlayerSlot) => void;
-  /** `kind` lets callers tell a lost broker websocket (harmless to an already-open data channel)
-   * apart from a failure that really ends a join attempt or a match (see classifyPeerError). */
-  onError: (message: string, kind: PeerErrorKind) => void;
-  /** Host-only, optional. Fires when the room code has been re-registered with the broker after a
-   * dropped websocket (see PeerConnection.scheduleBrokerReconnect), i.e. new players can find the
-   * room again. */
-  onBrokerReconnected?: () => void;
-  onMessage: (message: NetworkMessage, senderSlot: PlayerSlot) => void;
-  /** Host-only. Called when a new connection's `hello` arrives, before it's added to the
-   * connection map - the caller owns roster/rejoin policy (see HostRoster.ts) and whatever
-   * currently-running match state exists, both of which this class has no visibility into. Return
-   * the exact WelcomeMessage to send back (with the slot to assign baked into `yourSlot`), or
-   * 'full' to reject the connection ('outdated' when the guest's `features` cannot play the room's
-   * map, see helloSupportsMap). May return a Promise - resolving this mid-match involves
-   * constructing a real RemotePlayer (an async GLTF-backed load), not just a synchronous roster
-   * lookup. Never invoked for a guest (a guest sends hello, it never receives one). */
-  onHostHello?: (username: string, rejoinToken: string | null, features: unknown, peerId: string) => HostHelloResult | Promise<HostHelloResult>;
-}
-
 /** What a PeerJS/WebRTC error means for the game, rather than PeerJS's own type strings:
  * - `brokerLost`: the signalling websocket dropped. Already-open data channels keep working; the host
  *   re-registers automatically, and a guest that already has its welcome can ignore it.
@@ -117,11 +84,7 @@ export interface PeerConnectionCallbacks {
  * - `networkBlocked`: ICE negotiation failed, so no direct or relayed path exists between the two
  *   browsers (strict firewall or NAT with no working TURN relay).
  * - `other`: anything else. */
-export type PeerErrorKind = 'brokerLost' | 'roomNotFound' | 'roomCodeTaken' | 'networkBlocked' | 'other';
-
-export const NETWORK_BLOCKED_MESSAGE =
-  "Couldn't connect through this network. Work, school and some mobile networks block direct " +
-  'peer-to-peer play, so try again on a different network (a phone hotspot usually works).';
+export type PeerErrorKind = TransportErrorKind;
 
 const BROKER_ERROR_TYPES: ReadonlySet<string> = new Set(['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected']);
 
@@ -166,7 +129,8 @@ function meshConnectionOf(connection: DataConnection): MeshConnection {
  * the host stops relaying those between two guests while both report their link live
  * (directLinks.ts). The broker (PeerJS's public server) is only involved in each connection's
  * handshake - once open, traffic flows directly over the resulting WebRTC DataChannel. */
-export class PeerConnection {
+export class PeerConnection implements Transport {
+  readonly kind = 'p2p';
   private readonly connections = new Map<PlayerSlot, DataConnection>();
   /** The unreliable channel beside each connection, for position snapshots (see fastChannel.ts).
    * Missing or not yet confirmed means those go on the reliable connection, as they always did. */
@@ -175,8 +139,7 @@ export class PeerConnection {
   private disposed = false;
   private brokerReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private brokerReconnectAttempts = 0;
-  /** Guest only: the room code it joined (meshHello carries it) and whether its welcome arrived. */
-  private roomCode = '';
+  /** Guest only: whether its welcome arrived. */
   private welcomed = false;
   /** Guest only, from its welcome on: the direct links to the other guests. */
   private mesh: GuestMesh | null = null;
@@ -192,7 +155,8 @@ export class PeerConnection {
   private constructor(
     private readonly peer: Peer,
     private readonly role: MultiplayerRole,
-    private callbacks: PeerConnectionCallbacks,
+    readonly roomCode: string,
+    private callbacks: TransportCallbacks,
   ) {
     peer.on('error', (error) => this.reportError(error, 'peer'));
     // A host whose broker websocket drops (network blip, sleeping laptop, a long-backgrounded tab)
@@ -244,10 +208,10 @@ export class PeerConnection {
   /** Registers this browser under the room code and waits for guests to connect. Async only
    * because of the TURN credential fetch (see buildIceServers) - bounded by
    * TURN_FETCH_TIMEOUT_MS, so this never hangs room creation waiting on it. */
-  static async hostRoom(code: string, callbacks: PeerConnectionCallbacks): Promise<PeerConnection> {
+  static async hostRoom(code: string, callbacks: TransportCallbacks): Promise<PeerConnection> {
     const iceServers = await buildIceServers();
     const peer = new Peer(ROOM_ID_PREFIX + code, { config: { iceServers } });
-    const instance = new PeerConnection(peer, 'host', callbacks);
+    const instance = new PeerConnection(peer, 'host', code, callbacks);
     peer.on('connection', (connection) => instance.attachIncomingGuestConnection(connection));
     return instance;
   }
@@ -255,11 +219,10 @@ export class PeerConnection {
   /** Connects to an existing room by code. `rejoinToken`, if this guest has one from an earlier
    * connection to this same room code (see core/multiplayerRejoin.ts), lets the host recognize a
    * reconnect and hand back the same slot/score instead of treating this as a brand new player. */
-  static async joinRoom(code: string, username: string, rejoinToken: string | null, callbacks: PeerConnectionCallbacks): Promise<PeerConnection> {
+  static async joinRoom(code: string, username: string, rejoinToken: string | null, callbacks: TransportCallbacks): Promise<PeerConnection> {
     const iceServers = await buildIceServers();
     const peer = new Peer({ config: { iceServers } });
-    const instance = new PeerConnection(peer, 'guest', callbacks);
-    instance.roomCode = code;
+    const instance = new PeerConnection(peer, 'guest', code, callbacks);
     // Other guests dial in for direct links (GuestMesh.ts); nobody else ever connects to a guest.
     peer.on('connection', (connection) => instance.acceptMeshConnection(connection));
     // Must wait for our own peer to finish registering with the broker before connecting outward -
@@ -289,7 +252,13 @@ export class PeerConnection {
     connection.on('data', (data) => {
       if (helloSeen || !isNetworkMessage(data) || data.type !== 'hello') return; // ignore anything before hello resolves
       helloSeen = true;
-      void Promise.resolve(this.callbacks.onHostHello?.(data.username, data.rejoinToken, data.features, connection.peer)).then((result) => {
+      void Promise.resolve(this.callbacks.onHostHello?.({
+        username: data.username,
+        rejoinToken: data.rejoinToken,
+        features: data.features,
+        peerId: connection.peer,
+        assigned: null,
+      })).then((result) => {
         if (closedInLimbo) {
           // Gone before its welcome: never registered. The roster already counts the slot it was
           // given, so report it disconnected (a rejoin's grace period, a playerLeft mid-match),
@@ -459,15 +428,6 @@ export class PeerConnection {
     if (connection) this.deliver(slot, connection, message);
   }
 
-  /** Host-only: relays `message` to every guest except the one it originated from - see Game.ts's
-   * transparent relay logic. On a guest (which only ever has one connection anyway) this is
-   * equivalent to a no-op, since there is no "everyone except the host" to send to. */
-  sendExcept(message: NetworkMessage, excludeSlot: PlayerSlot): void {
-    for (const [slot, connection] of this.connections) {
-      if (slot !== excludeSlot) this.deliver(slot, connection, message);
-    }
-  }
-
   /** Host-only: passes a guest's message on to every other guest, skipping a guest that already
    * gets it over a direct link from `fromSlot` (both of them report the link, see directLinks.ts). */
   relay(message: NetworkMessage, fromSlot: PlayerSlot): void {
@@ -583,7 +543,7 @@ export class PeerConnection {
    * connection from here on (used when a room screen hands its now-established connection off to
    * Game.create(): the room screen's own UI is about to be hidden/torn down, so its old callbacks
    * updating that UI must stop firing entirely, not run alongside the new ones). */
-  setCallbacks(callbacks: PeerConnectionCallbacks): void {
+  setCallbacks(callbacks: TransportCallbacks): void {
     this.callbacks = callbacks;
   }
 

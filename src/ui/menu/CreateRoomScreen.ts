@@ -1,5 +1,5 @@
 import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
-import { PeerConnection, generateRoomCode } from '../../network/PeerConnection.ts';
+import { generateRoomCode, hostRoom, type Transport } from '../../network/transport.ts';
 import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
@@ -59,7 +59,7 @@ export class CreateRoomScreen {
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
-  private connection: PeerConnection | null = null;
+  private connection: Transport | null = null;
   private hostRoster: HostRoster | null = null;
   private roomCode = '';
   /** Every slot the pre-match lobby currently considers ready (see PlayerReadyMessage/
@@ -87,7 +87,7 @@ export class CreateRoomScreen {
   constructor(
     root: HTMLElement,
     private readonly onClose: () => void,
-    private readonly onStartMatch: (connection: PeerConnection, params: MultiplayerMatchStartParams) => void,
+    private readonly onStartMatch: (connection: Transport, params: MultiplayerMatchStartParams) => void,
   ) {
     this.overlay = createOverlay();
 
@@ -366,7 +366,7 @@ export class CreateRoomScreen {
     this.setStatus('Waiting for players…');
 
     const generation = ++this.showGeneration;
-    void PeerConnection.hostRoom(this.roomCode, {
+    void hostRoom('p2p', { code: this.roomCode }, {
       onConnected: () => {
         this.setStatus('Everyone is connected. Start when ready.');
         this.startButton.style.display = 'block';
@@ -428,7 +428,7 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onHostHello: (username, rejoinToken, features, peerId) => {
+      onHostHello: ({ username, rejoinToken, features, peerId }) => {
         if (!this.hostRoster) return 'full';
         // An older build would load the Valley inside a Facility room: turned away before it takes a slot.
         if (!helloSupportsMap(features, this.mapSelect.value as MatchMap)) return 'outdated';

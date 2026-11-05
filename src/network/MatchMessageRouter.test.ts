@@ -5,6 +5,7 @@ import { HostRoster } from './HostRoster.ts';
 import { buildMatchSync } from './matchSync.ts';
 import { KOTH_SCORE_STEP_MAX, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import { isNetworkMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
+import type { Transport } from './transport.ts';
 import { clearUnderground, registerUndergroundVolume } from '../world/underground.ts';
 
 /** A context with only what the cases under test touch; everything else is left out on purpose. */
@@ -14,7 +15,7 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
   const opponents = new Map<PlayerSlot, unknown>();
   const ctx = {
     multiplayer: {
-      session: { role: overrides.role ?? 'guest', ownSlot: overrides.ownSlot ?? 1, connection: { relay: vi.fn(), sendTo: vi.fn() } },
+      session: { role: overrides.role ?? 'guest', ownSlot: overrides.ownSlot ?? 1, connection: { relay: vi.fn(), sendTo: vi.fn() } satisfies Pick<Transport, 'relay' | 'sendTo'> },
       opponents,
       usernames: new Map<PlayerSlot, string>(),
       gameMode: overrides.gameMode ?? 'default',

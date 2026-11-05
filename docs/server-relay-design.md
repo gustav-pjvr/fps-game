@@ -24,10 +24,11 @@ with few dependencies so it can move.
 | Question (section 12.3) | Answer | Effect on this design |
 |---|---|---|
 | Oracle account and home region | None yet | WP 0 starts from sign-up. Pick **Johannesburg** as the home region at sign-up; it cannot be changed later. |
-| Domain on Cloudflare | Yes, one exists; another session already knows which | Use it instead of DuckDNS (section 8.1). The exact domain and the relay subdomain name are confirmed in that session, not here. DuckDNS and `sslip.io` stay as fallbacks only. |
-| Host drop ends the match in release 1, resume (F1) after | Deferred: Gustav will settle it in the other session | Default stays as written (the room closes, as today) until he decides. Does not block WP 0 to 6. |
+| Domain on Cloudflare | **Changed (2026-11-05, builder session):** neither session recorded the domain; Gustav prefers a generic free name | **DuckDNS + Caddy with Let's Encrypt** (section 8.1) is the plan again; a Cloudflare subdomain stays possible later. |
+| Host drop ends the match in release 1, resume (F1) after | **Resume (2026-11-05, builder session):** play resumes if the host returns within **30 s** | F1 moves into release 1, built right after Milestone 1, with a 30 s window (not 10 s) for the host and for guests. Sizes in 5.6 scale to 30 s. |
 | Card at Oracle sign-up | Yes | Stay on the Always Free account. No Pay As You Go unless Gustav decides after a first reclaim (section 8.4). |
 | Who gets the access code, rotation | Anyone Gustav chooses; no rotation planned | One shared code in `HNG_ACCESS_CODES`. Rotation stays possible (add a code, then remove the old one) but is not part of the plan. If the code leaks, change it by editing the env file and restarting. |
+| Comparison telemetry (10.3) | Gustav: yes, bind it (2026-11-05) | The `MATCH_TELEMETRY` KV namespace is bound to the Pages project (production and preview); the multiplayer beacon gains the ping fields ahead of the relay, so P2P matches record the baseline (WP 12 moved first). |
 
 ## 2. Current behaviour and the transport seam
 
