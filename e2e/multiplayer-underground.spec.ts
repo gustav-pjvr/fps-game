@@ -69,6 +69,17 @@ test('the host opening tower door 0 syncs to a guest and a late joiner', async (
     expect(await host.evaluate(() => window.__gameDebug!.setTowerDoor(0, true))).toBe(true);
     await expectOpen(guest);
 
+    // Prove the late joiner's 3 m threshold separates the two states: from the same side spot, the
+    // guest's ray hits a closed door short of it.
+    expect(await host.evaluate(() => window.__gameDebug!.setTowerDoor(0, false))).toBe(true);
+    await waitForGameTime(guest, 2);
+    await faceDoor(guest, 1.5);
+    const closedAside = await guest.evaluate(() => window.__gameDebug!.raycastForward());
+    expect(closedAside.hit).toBe(true);
+    expect(closedAside.distance).toBeLessThan(3);
+    expect(await host.evaluate(() => window.__gameDebug!.setTowerDoor(0, true))).toBe(true);
+    await expectOpen(guest, 3);
+
     // multiplayer-four.spec.ts joins a running match directly, without a Ready step.
     const late = await lateContext.newPage();
     await joinRoom(late, code);

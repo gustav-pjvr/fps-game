@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { buildAmmoDropMesh } from './AmmoDrop.ts';
 import { disposeProceduralMesh } from './Goose.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
-import { isBelowGround, pointInUndergroundVolume } from '../world/underground.ts';
+import { inCutZone, isBelowGround, pointInUndergroundVolume } from '../world/underground.ts';
 import {
   HORDE_AMMO_DROP_MAX_CONCURRENT,
   HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS,
@@ -69,7 +69,9 @@ export class AmmoDropManager {
     const radius = Math.random() * HORDE_AMMO_DROP_SPAWN_RADIUS;
     const x = inside ? inside.x : anchor.x + Math.cos(angle) * radius;
     const z = inside ? inside.z : anchor.z + Math.sin(angle) * radius;
-    const y = this.floor && belowGround ? this.floor(x, anchor.y, z) : sampleHeight(x, z);
+    // A surface point inside a tower core's cut zone has no terrain floor (the stair hole is
+    // there), so it asks the floor lookup too instead of floating at terrain height.
+    const y = this.floor && (belowGround || inCutZone(x, z)) ? this.floor(x, anchor.y, z) : sampleHeight(x, z);
     const id = `ammo-${this.idCounter++}`;
 
     const mesh = buildAmmoDropMesh();
