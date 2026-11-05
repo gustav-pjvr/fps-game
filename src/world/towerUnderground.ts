@@ -33,6 +33,8 @@ export interface TowerLab {
   readonly route: THREE.Vector3[];
   readonly volumes: LabVolume[];
   readonly footprints: LabVolume[];
+  /** Placeholder corridor and lab lamps in world space. */
+  readonly lamps: THREE.Vector3[];
 }
 
 const WIDTH = 1.8;
@@ -54,6 +56,7 @@ export function buildTowerLab(index: number, position: { x: number; z: number },
   const rotation = towerRotation(orientation), mirror = orientation === 'north' ? -1 : 1, lane = -1.65;
   const parts: TowerPart[] = [], route: THREE.Vector3[] = [], volumes: LabVolume[] = [], footprints: LabVolume[] = [];
   const ceilingParts: number[] = [], flightSurfaces: { start: THREE.Vector3; end: THREE.Vector3 }[] = [];
+  const lamps: THREE.Vector3[] = [];
   const floorY = FIRST_FLOOR - (flights - 1) * 3;
   const point = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz);
   const add = (b: BoxTransform, material: TowerPart['material'] = 'concrete', rail = false) => {
@@ -184,11 +187,15 @@ export function buildTowerLab(index: number, position: { x: number; z: number },
     wall(exitX + 1.2, labX + width / 2, floorY, floorY + 6.3, CORRIDOR_END - 0.3, CORRIDOR_END);
     wall(exitX - 1.2, exitX + 1.2, floorY + 3, floorY + 6.3, CORRIDOR_END - 0.3, CORRIDOR_END);
     volume(labX - width / 2, labX + width / 2, floorY - 0.3, floorY + 6.3, end, CORRIDOR_END);
+    lamps.push(point(exitX, floorY + 2.7, (CORRIDOR_END + WELL_END) / 2),
+      point(labX - width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2),
+      point(labX + width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2));
   }
   const transform = (p: THREE.Vector3) => { p.x *= mirror; return p.applyQuaternion(rotation); };
   return { index, x, z, groundY, orientation, flights, kind, floorY: groundY + floorY, parts, ceilingParts,
     flightSurfaces: flightSurfaces.map(({ start, end }) => ({ start: transform(start), end: transform(end) })),
-    route: route.map(transform), volumes, footprints };
+    route: route.map(transform), volumes, footprints,
+    lamps: lamps.map(p => transform(p).add(new THREE.Vector3(x, groundY, z))) };
 }
 
 export function towerDoorPlane(id: number): DoorPlane | null {

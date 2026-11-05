@@ -5,6 +5,7 @@ import { HostRoster } from './HostRoster.ts';
 import { buildMatchSync } from './matchSync.ts';
 import { KOTH_SCORE_STEP_MAX, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import { isNetworkMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
+import { clearUnderground, registerUndergroundVolume } from '../world/underground.ts';
 
 /** A context with only what the cases under test touch; everything else is left out on purpose. */
 function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; carrier?: PlayerSlot | null; map?: string } = {}) {
@@ -48,6 +49,22 @@ function route(ctx: object, message: NetworkMessage, senderSlot: PlayerSlot = 0)
 }
 
 describe('routeMatchMessage, 3 to 4 players', () => {
+  it('turns a remote Dusk torch off when its next snapshot leaves underground', () => {
+    const ctx = makeContext({ map: 'valley' });
+    const setTorch = vi.fn();
+    ctx.multiplayer.opponents.set(2, {
+      lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch },
+    });
+    registerUndergroundVolume({ minX: 10, maxX: 20, minZ: 10, maxZ: 20, floorY: -9, ceilY: -3 });
+    try {
+      for (const [y, allowed] of [[-7, true], [20, false]] as const) {
+        route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 15, y, z: 15, yaw: 0, pitch: 0, health: 100, torch: true }, 2);
+        expect(setTorch).toHaveBeenLastCalledWith(allowed);
+      }
+    } finally { clearUnderground(); }
+  });
+
   it('the host relays through relay(), which skips directly linked guest pairs', () => {
     const ctx = makeContext({ role: 'host', ownSlot: 0, carrier: 2 });
     route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);

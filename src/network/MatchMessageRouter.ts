@@ -1,4 +1,5 @@
 import { torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
+import { isUnderground } from '../world/underground.ts';
 import * as THREE from 'three';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
@@ -209,9 +210,9 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (message.t !== undefined) opponent.lastStateSentAt = message.t;
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
       opponent.remotePlayer.setLookPitch(message.pitch);
-      if (torchAvailable(activeMultiplayer.map, activeMultiplayer.weather)) {
-        opponent.remotePlayer.setTorch(message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather));
-      }
+      const torchAllowed = torchAvailable(activeMultiplayer.map, activeMultiplayer.weather,
+        activeMultiplayer.map === 'valley' && isUnderground(message.x, message.y, message.z));
+      opponent.remotePlayer.setTorch(torchAllowed && (message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather)));
       // Every map: the Valley's house lamps and doors need the same catch-up as the Facility's.
       ctx.opponentInMatch(message.senderSlot);
       ctx.grenades?.opponentInMatch(message.senderSlot);

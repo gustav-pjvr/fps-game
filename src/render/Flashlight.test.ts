@@ -56,5 +56,13 @@ describe('torch availability', () => {
   ] as const)('%s in %s', (map, weather, available, on) => {
     expect(torchAvailable(map, weather)).toBe(available);
     expect(torchOnByDefault(map, weather)).toBe(on);
+    expect(torchAvailable(map, weather, true)).toBe(true);
+  });
+
+  it('allows Dusk underground and in core rooms, then disables it outdoors again', () => {
+    for (const underground of [false, true, true, false]) {
+      expect(torchAvailable('valley', 'day', underground)).toBe(underground);
+      expect(torchOnByDefault('valley', 'day')).toBe(false);
+    }
   });
 });

@@ -8,6 +8,7 @@ import { addRailing, createBoxCollider, PieceCollector } from './structureKit.ts
 import { createTowerVisual, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
 import { computeTowerLabs, towerDoorPlane, type TowerLab } from './towerUnderground.ts';
 import { registerUndergroundVolume, setCutZones } from './underground.ts';
+import type { UndergroundTower } from './undergroundLights.ts';
 import { towerDoorId } from './houses/valleyHouseIds.ts';
 import { ValleyDoors } from './houses/ValleyDoors.ts';
 import { sampleFlatZone, sampleForestZone } from './ZoneMap.ts';
@@ -32,6 +33,7 @@ export { WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
  */
 
 interface PlacedTower {
+  underground: UndergroundTower;
   doorId: number;
   group: THREE.Object3D;
   rigidBodyHandle: number;
@@ -260,6 +262,10 @@ export class WatchTowerManager {
     });
   }
 
+  getUndergroundTowers(): readonly UndergroundTower[] {
+    return Array.from(this.activeTowers.values(), tower => tower.underground);
+  }
+
   private createTower(lab: TowerLab): PlacedTower {
     const { x: worldX, z: worldZ, groundY, orientation } = lab;
     const rigidBody = this.physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(worldX, groundY, worldZ));
@@ -272,13 +278,18 @@ export class WatchTowerManager {
       if (part.rail) addRailing(pieces, part.box);
       else pieces.addBox(part.material, part.box);
     }
-    group.add(pieces.build());
+    const undergroundGroup = pieces.build();
+    undergroundGroup.name = 'tower-underground';
+    undergroundGroup.visible = false;
+    group.add(undergroundGroup);
     group.position.set(worldX, groundY, worldZ);
     this.scene.add(group);
 
     const doorId = towerDoorId(lab.index);
     ValleyDoors.addTowerDoor(this.physics.world, doorId, towerDoorPlane(doorId)!);
-    return { group, rigidBodyHandle: rigidBody.handle, colliderHandles, doorId };
+    const underground: UndergroundTower = { group: undergroundGroup, position: group.position,
+      door: new THREE.Vector3(worldX + 3, groundY + 1.1, worldZ), lamps: lab.lamps };
+    return { group, underground, rigidBodyHandle: rigidBody.handle, colliderHandles, doorId };
   }
 }
 

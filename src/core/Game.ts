@@ -20,6 +20,7 @@ import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight, setHeightOverride } from '../world/TerrainGenerator.ts';
 import { clearUnderground, floorBelow, isUnderground, setCutZones } from '../world/underground.ts';
+import { UndergroundLights, easeUndergroundAmount, undergroundLook, undergroundVisible } from '../world/undergroundLights.ts';
 import { FacilityWorld } from '../world/facility/FacilityBuilder.ts';
 import { LampBreakEffect } from '../world/facility/lampBreakEffect.ts';
 import {
@@ -406,6 +407,8 @@ export class Game {
   private readonly facilityProbe = new THREE.Color(0, 0, 0);
   private facilityProbePrimed = false;
   private readonly facilityTint = new THREE.Color();
+  private undergroundAmount = 0;
+  private readonly undergroundLights: UndergroundLights | null;
   /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
    * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
   private soloMinimap: Minimap | null = null;
@@ -562,6 +565,7 @@ export class Game {
     private readonly onOpponentLeftRoom?: () => void,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
+    this.undergroundLights = facility ? null : new UndergroundLights(renderer.scene);
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
     this.isSpawnBlocked = isSpawnBlocked;
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
@@ -592,6 +596,28 @@ export class Game {
       snappedZ + toSun.z * SUN_SHADOW_LIGHT_DISTANCE,
     );
     this.sun.target.updateMatrixWorld();
+  }
+
+  private updateUndergroundLight(dt: number): void {
+    const { scene, camera, currentLook } = this.renderer;
+    const at = camera.position;
+    this.undergroundAmount = easeUndergroundAmount(this.undergroundAmount, isUnderground(at.x, at.y, at.z), dt);
+    const look = undergroundLook(currentLook, scene.environment !== null, this.undergroundAmount);
+    this.sun.intensity = look.sunIntensity;
+    this.fillLight.intensity = look.hemiIntensity;
+    scene.environmentIntensity = look.environmentIntensity;
+    if (scene.fog instanceof THREE.Fog) {
+      scene.fog.near = look.fogNear;
+      scene.fog.far = look.fogFar;
+    }
+    const towers = this.watchTowers?.getUndergroundTowers() ?? [];
+    for (const tower of towers) tower.group.visible = undergroundVisible(at, tower, this.undergroundAmount);
+    this.undergroundLights?.update(at, this.undergroundAmount, towers.flatMap(tower => tower.lamps));
+  }
+
+  private torchAvailableAt(at: THREE.Vector3Like): boolean {
+    return torchAvailable(this.facility ? 'facility' : 'valley', this.matchWeather,
+      !this.facility && isUnderground(at.x, at.y, at.z));
   }
 
   /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
@@ -702,6 +728,7 @@ export class Game {
   private updateTorches(): void {
     const { torch, remoteTorches } = this;
     if (!torch) return;
+    if (torch.isOn && !this.torchAvailableAt(this.player.position)) torch.setOn(false);
     const mount = this.weaponManager.torchMount;
     torch.mountBody(mount);
     torch.update(this.renderer.camera, mount !== null);
@@ -711,7 +738,7 @@ export class Game {
           position: opponent.remotePlayer.position,
           yaw: opponent.remotePlayer.lookYaw,
           pitch: opponent.remotePlayer.lookPitch,
-          on: opponent.remotePlayer.torchOn && !opponent.isDead,
+          on: opponent.remotePlayer.torchOn && !opponent.isDead && this.torchAvailableAt(opponent.remotePlayer.position),
         }))
       : [];
     remoteTorches.update(sources);
@@ -913,7 +940,7 @@ export class Game {
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
     const map = isFacility ? 'facility' : 'valley';
-    const torch = torchAvailable(map, matchWeather) ? new Flashlight(renderer.scene, quality.shadowsEnabled) : null;
+    const torch = new Flashlight(renderer.scene, quality.shadowsEnabled);
     torch?.setOn(torchOnByDefault(map, matchWeather));
     const remoteTorches = torch && multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
 
@@ -1933,6 +1960,7 @@ export class Game {
     this.facility?.lampBreak.dispose();
     this.torch?.dispose();
     this.remoteTorches?.dispose();
+    this.undergroundLights?.dispose();
     clearUnderground();
     setHeightOverride(null);
     setEnemyNavigator(null);
@@ -2543,8 +2571,8 @@ export class Game {
       void this.resetPlay();
     }
 
-    // Consume the toggle even in Valley day, where no torch is available.
-    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.torch) {
+    // Consume the toggle even where the Dusk torch cannot switch on.
+    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.torch && this.torchAvailableAt(this.player.position)) {
       const torch = this.torch;
       torch.setOn(!torch.isOn);
       this.sound.playTorchClick(torch.isOn);
@@ -2601,6 +2629,8 @@ export class Game {
 
     const probe = this.facility?.world.probeAt(this.player.position.x, this.player.position.z);
     const at = this.player.position;
+    const torchAvailableHere = this.torchAvailableAt(at);
+    if (this.torch?.isOn && !torchAvailableHere) this.torch.setOn(false);
     this.playerVisibility.value = visibility({
       map: this.facility ? 'facility' : 'valley',
       weather: this.matchWeather,
@@ -2615,7 +2645,7 @@ export class Game {
     this.playerVisibility.torchOn = this.torch?.isOn ?? false;
     this.playerVisibility.eye.copy(this.renderer.camera.position);
     this.renderer.camera.getWorldDirection(this.playerVisibility.aim);
-    this.hud.setVisibility(this.torch ? this.playerVisibility.value : null);
+    this.hud.setVisibility(torchAvailableHere ? this.playerVisibility.value : null);
 
     // The shared world - physics (including every RemotePlayer/goose collider), and the
     // host-authoritative goose simulation - must keep advancing regardless of THIS client's own
@@ -3555,6 +3585,7 @@ export class Game {
       this.updateFacilityLight(hudDt);
     } else {
       this.updateSunFollow();
+      this.updateUndergroundLight(hudDt);
     }
     this.updateTorches();
     const renderStart = this.perfLogger.mark();

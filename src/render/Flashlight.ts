@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { EYE_OFFSET, type MatchMap, type MatchWeather } from '../core/config.ts';
 
-export function torchAvailable(map: MatchMap, weather: MatchWeather): boolean {
-  return map === 'facility' || weather !== 'day';
+export function torchAvailable(map: MatchMap, weather: MatchWeather, underground = false): boolean {
+  return map === 'facility' || weather !== 'day' || underground;
 }
 
 export function torchOnByDefault(map: MatchMap, weather: MatchWeather): boolean {
@@ -60,7 +60,7 @@ export interface TorchMount {
   readonly muzzle: THREE.Vector3;
 }
 
-/** The player's torch on the Facility and in Valley night or fog. The SpotLight is a
+/** The player's torch on the Facility and in every Valley weather. The SpotLight is a
  * top-level scene object placed from the camera every frame, never a camera child: Renderer moves
  * everything under the camera onto the view-model layer, where a light no longer reaches the world.
  * Toggling only changes the intensity (and whether the shadow map updates): adding, removing or
