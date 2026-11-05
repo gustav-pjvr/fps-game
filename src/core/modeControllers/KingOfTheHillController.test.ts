@@ -78,6 +78,14 @@ describe('KingOfTheHillController', () => {
     expect(send).toHaveBeenCalledWith({ type: 'kothScoreTick', senderSlot: 1, score: 1 });
   });
 
+  it('keeps scoring inside the ground room', () => {
+    registerUndergroundVolume({ minX: -3, maxX: 3, minZ: -3, maxZ: 3, floorY: -10, ceilY: 3 }, 0);
+    const { goose, matchState, controller, input } = setup(1);
+    goose.claim(1);
+    controller.update(KOTH_POINT_INTERVAL_SECONDS, new THREE.Vector3(0, 1, 0), input);
+    expect(matchState.scoreboard.get(1)).toBe(1);
+  });
+
   it('counts only surface carry time using the carrier position, not the goose position', () => {
     registerUndergroundVolume({ minX: -5, maxX: 5, minZ: -5, maxZ: 5, floorY: -10, ceilY: -4 });
     const { goose, send, matchState, controller, input } = setup(1);

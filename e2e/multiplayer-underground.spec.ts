@@ -13,13 +13,13 @@ async function waitForMatch(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 90000 });
 }
 
-async function faceDoor(page: Page): Promise<void> {
+async function faceDoor(page: Page, sideOffset = 0): Promise<void> {
   await lockPointer(page);
-  await page.evaluate(() => {
+  await page.evaluate(offset => {
     const lab = window.__gameDebug!.getUndergroundDebug().labs.find(l => l.index === 0)!;
-    window.__gameDebug!.teleport(lab.x + 4.8, lab.groundY + 1, lab.z);
-    window.__gameDebug!.lookAt(lab.x, lab.groundY + 1.7, lab.z);
-  });
+    window.__gameDebug!.teleport(lab.x + 4.8, lab.groundY + 1, lab.z + offset);
+    window.__gameDebug!.lookAt(lab.x + 3, lab.groundY + 1.7, lab.z);
+  }, sideOffset);
   await waitForGameTime(page, 1);
   expect(await page.evaluate(() => {
     const lab = window.__gameDebug!.getUndergroundDebug().labs.find(l => l.index === 0)!;
@@ -29,12 +29,12 @@ async function faceDoor(page: Page): Promise<void> {
 
 /** A collision ray through the entrance proves the received door state removed its collider.
  * Give network delivery and the slide up to five seconds on the receiving game's clock. */
-async function expectOpen(page: Page): Promise<void> {
+async function expectOpen(page: Page, blockedDistance = 2): Promise<void> {
   let open = false;
   for (let elapsed = 0; elapsed < 5; elapsed += 0.5) {
     await waitForGameTime(page, 0.5);
     const ray = await page.evaluate(() => window.__gameDebug!.raycastForward());
-    if ((ray.distance ?? Infinity) > 2) { open = true; break; }
+    if ((ray.distance ?? Infinity) > blockedDistance) { open = true; break; }
   }
   expect(open, 'tower door 0 opens within five game seconds').toBe(true);
 }
@@ -73,8 +73,14 @@ test('the host opening tower door 0 syncs to a guest and a late joiner', async (
     const late = await lateContext.newPage();
     await joinRoom(late, code);
     await waitForMatch(late);
-    await faceDoor(late);
-    await expectOpen(late);
+    await guest.evaluate(() => {
+      const lab = window.__gameDebug!.getUndergroundDebug().labs.find(l => l.index === 0)!;
+      window.__gameDebug!.teleport(lab.x + 8, lab.groundY + 1, lab.z - 4);
+    });
+    await waitForGameTime(guest, 1);
+    await faceDoor(late, 1.5);
+    // The side offset puts a closed door about 2.3 m away, beyond the straight-on threshold.
+    await expectOpen(late, 3);
   } finally {
     await lateContext.close();
     await guestContext.close();

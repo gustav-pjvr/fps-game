@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import type { NetworkMessage, PlayerSlot } from '../network/protocol.ts';
-import { PICKUP_CLAIM_RESEND_SECONDS, PICKUP_RESPAWN_SECONDS } from './pickupConfig.ts';
+import { PICKUP_CLAIM_RESEND_SECONDS, PICKUP_HOVER_HEIGHT, PICKUP_RESPAWN_SECONDS } from './pickupConfig.ts';
 import { NO_GRENADES, type PickupRecipient } from './pickupEffects.ts';
 import type { PickupSite } from './pickupPlacement.ts';
 import { PickupSystem, type PickupNetwork } from './PickupSystem.ts';
@@ -188,6 +188,26 @@ function makeMatch(guestSlots: PlayerSlot[] = [1], sites: PickupSite[] = SITES) 
 }
 
 describe('PickupSystem in multiplayer', () => {
+  it('keeps the full horizontal claim tolerance independently of height', () => {
+    const { peers, deliver } = makeMatch();
+    const host = peers.get(0)!, guest = peers.get(1)!;
+    guest.position.set(3.9, PICKUP_HOVER_HEIGHT + 1.6, 0);
+    host.system.handleMessage({ type: 'pickupClaim', id: 0 }, 1);
+    deliver();
+    expect(host.system.views()[0]!.available).toBe(false);
+    expect(guest.log.healed).toEqual([40]);
+  });
+
+  it('rejects claims outside either the horizontal or vertical allowance', () => {
+    const { peers } = makeMatch();
+    const host = peers.get(0)!, guest = peers.get(1)!;
+    for (const [x, y] of [[4.01, PICKUP_HOVER_HEIGHT], [0, PICKUP_HOVER_HEIGHT + 3.01]]) {
+      guest.position.set(x!, y!, 0);
+      host.system.handleMessage({ type: 'pickupClaim', id: 0 }, 1);
+      expect(host.system.views()[0]!.available).toBe(true);
+    }
+  });
+
   it('grants a lab pickup from the lab floor but rejects a claim from the surface above', () => {
     const lab = buildTowerLab(0, { x: 100, z: -100 }, 'north', 3);
     const sites = gatherLabPickupSites([lab]).map((site, id) => ({ ...site, id }));

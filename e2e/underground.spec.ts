@@ -11,7 +11,7 @@ async function standAt(page: Page, point: { x: number; y: number; z: number }): 
   expect(Math.abs(player.y - point.y), `height at ${JSON.stringify(point)}: ${player.y}`).toBeLessThan(1.5);
 }
 
-test('a tower door blocks until opened, and its full lab supports descent and return at Dusk', async ({ page }) => {
+test('a tower door blocks until opened, and its full lab supports descent and return at Dusk (day weather)', async ({ page }) => {
   test.setTimeout(600000);
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(String(error)));
@@ -54,6 +54,7 @@ test('a tower door blocks until opened, and its full lab supports descent and re
   await page.keyboard.up('KeyW');
   expect((await page.evaluate(() => window.__gameDebug!.getPlayerPosition())).x).toBeLessThan(lab.x + 3);
 
+  // These route points use teleports; walkability is proven by the unit walk tests.
   for (const point of lab.route) await standAt(page, point);
   const bottom = await page.evaluate(() => window.__gameDebug!.getUndergroundDebug());
   expect(bottom.underground).toBe(true);
@@ -67,5 +68,6 @@ test('a tower door blocks until opened, and its full lab supports descent and re
   const surface = await page.evaluate(() => window.__gameDebug!.getUndergroundDebug());
   expect(surface.underground).toBe(false);
   expect(surface.amount).toBe(0);
+  expect(surface.torchAvailable).toBe(false);
   expect(errors).toEqual([]);
 });

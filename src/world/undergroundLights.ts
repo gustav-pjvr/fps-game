@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 import type { LookPreset } from '../render/look.ts';
+import { isBelowGround, isUnderground } from './underground.ts';
 
 export const UNDERGROUND_LIGHT_POOL = 3;
 
+/** The daylit ground room keeps some outdoor fill; stairs and labs get the full buried look. */
+export function undergroundLightTarget(x: number, y: number, z: number): number {
+  return isBelowGround(x, y, z) ? 1 : isUnderground(x, y, z) ? 0.6 : 0;
+}
+
 /** Exponential fade, settled exactly at either end after about half a second. */
-export function easeUndergroundAmount(amount: number, underground: boolean, dt: number): number {
-  const target = underground ? 1 : 0;
+export function easeUndergroundAmount(amount: number, target: number, dt: number): number {
   const next = target + (amount - target) * Math.exp(-14 * Math.max(0, dt));
   return Math.abs(next - target) < 0.001 ? target : next;
 }

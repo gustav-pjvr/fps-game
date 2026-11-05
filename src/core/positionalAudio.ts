@@ -14,8 +14,8 @@ import {
 } from './config.ts';
 
 /** A surface boundary buries a sound only when its endpoints are on different sides. */
-export function undergroundMuffleFactor(listenerUnderground: boolean, sourceUnderground: boolean): number {
-  return listenerUnderground === sourceUnderground ? 1 : 0.35;
+export function undergroundMuffleFactor(listenerBelowGround: boolean, sourceBelowGround: boolean): number {
+  return listenerBelowGround === sourceBelowGround ? 1 : 0.35;
 }
 
 /** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`

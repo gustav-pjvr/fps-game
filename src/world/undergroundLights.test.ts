@@ -4,11 +4,23 @@ import { lookFor } from '../render/look.ts';
 import { setHeightOverride } from './TerrainGenerator.ts';
 import { buildTowerLab } from './towerUnderground.ts';
 import { clearUnderground, isUnderground, registerUndergroundVolume, setCutZones } from './underground.ts';
-import { UndergroundLights, UNDERGROUND_FOG_COLOR, UNDERGROUND_LIGHT_POOL, easeUndergroundAmount, undergroundLook, undergroundVisible, type UndergroundTower } from './undergroundLights.ts';
+import { UndergroundLights, UNDERGROUND_FOG_COLOR, UNDERGROUND_LIGHT_POOL, easeUndergroundAmount, undergroundLightTarget, undergroundLook, undergroundVisible, type UndergroundTower } from './undergroundLights.ts';
 
 afterEach(() => { clearUnderground(); setHeightOverride(null); });
 
 describe('underground look', () => {
+  it('targets 0.6 in the daylit room, 1 below ground and 0 outside', () => {
+    setHeightOverride(() => 10);
+    const lab = buildTowerLab(0, { x: 0, z: 0 }, 'south', 3);
+    for (const volume of lab.volumes) registerUndergroundVolume(volume, lab.groundY);
+    expect(undergroundLightTarget(0, 11, 0)).toBe(0.6);
+    expect(undergroundLightTarget(0, 9, 0)).toBe(1);
+    expect(undergroundLightTarget(50, 11, 0)).toBe(0);
+    let amount = 1;
+    for (let i = 0; i < 60; i++) amount = easeUndergroundAmount(amount, 0.6, 1 / 60);
+    expect(amount).toBe(0.6);
+  });
+
   it('detects the core room and underground volumes, but not above the room', () => {
     setHeightOverride(() => 10);
     setCutZones([{ cx: 0, cz: 0, halfX: 2.7, halfZ: 2.7 }]);
@@ -20,16 +32,16 @@ describe('underground look', () => {
   });
 
   it('eases in both directions, independently of frame rate, and settles exactly', () => {
-    const first = easeUndergroundAmount(0, true, 0.1);
+    const first = easeUndergroundAmount(0, 1, 0.1);
     expect(first).toBeGreaterThan(0);
     expect(first).toBeLessThan(1);
-    expect(easeUndergroundAmount(first, true, 0.1)).toBeCloseTo(easeUndergroundAmount(0, true, 0.2), 12);
+    expect(easeUndergroundAmount(first, 1, 0.1)).toBeCloseTo(easeUndergroundAmount(0, 1, 0.2), 12);
     let amount = 0;
-    for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, true, 1 / 60);
+    for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, 1, 1 / 60);
     expect(amount).toBe(1);
-    expect(easeUndergroundAmount(amount, false, 0.1)).toBeGreaterThan(0);
-    expect(easeUndergroundAmount(amount, false, 0.1)).toBeLessThan(1);
-    for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, false, 1 / 60);
+    expect(easeUndergroundAmount(amount, 0, 0.1)).toBeGreaterThan(0);
+    expect(easeUndergroundAmount(amount, 0, 0.1)).toBeLessThan(1);
+    for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, 0, 1 / 60);
     expect(amount).toBe(0);
   });
 
@@ -38,7 +50,7 @@ describe('underground look', () => {
     for (const environment of [false, true]) {
       let amount = 0;
       const outdoor = undergroundLook(look, environment, amount);
-      for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, true, 1 / 60);
+      for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, 1, 1 / 60);
       const dark = undergroundLook(look, environment, amount);
       expect(dark.sunIntensity).toBeCloseTo(look.sunIntensity * 0.05);
       expect(dark.hemiIntensity).toBeCloseTo(environment ? 0 : look.hemiIntensity * 0.05);
@@ -46,7 +58,7 @@ describe('underground look', () => {
       expect([dark.fogNear, dark.fogFar]).toEqual([4, 40]);
       expect(dark.fogColor).toBe(UNDERGROUND_FOG_COLOR);
       for (let i = 0; i < 120; i++) expect(undergroundLook(look, environment, amount)).toEqual(dark);
-      for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, false, 1 / 60);
+      for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, 0, 1 / 60);
       expect(undergroundLook(look, environment, amount)).toEqual(outdoor);
       expect(outdoor).toEqual({ sunIntensity: look.sunIntensity, hemiIntensity: environment ? 0 : look.hemiIntensity,
         environmentIntensity: look.environmentIntensity, fogNear: look.fog.near, fogFar: look.fog.far, fogColor: look.sky.haze });

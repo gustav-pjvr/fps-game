@@ -1,5 +1,5 @@
 import { torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
-import { isUnderground } from '../world/underground.ts';
+import { isBelowGround, isUnderground } from '../world/underground.ts';
 import * as THREE from 'three';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
@@ -238,7 +238,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       ctx.tracers.spawn(origin, end);
       ctx.muzzleFlash.spawn(origin, false);
       ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance) * undergroundMuffleFactor(
-        isUnderground(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isUnderground(origin.x, origin.y, origin.z)), pan);
+        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(origin.x, origin.y, origin.z)), pan);
       break;
     }
     case 'lampDestroyed':
@@ -368,7 +368,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const distance = origin.distanceTo(ctx.player.position);
       const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
       ctx.sound.playFootstep(multiplayerGunshotVolume(distance) * undergroundMuffleFactor(
-        isUnderground(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isUnderground(origin.x, origin.y, origin.z)), pan);
+        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(origin.x, origin.y, origin.z)), pan);
       break;
     }
     case 'goosePickedUp':
@@ -400,7 +400,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const explosionRadius = message.source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_RADIUS : GOOSE_TOSS_EXPLOSION_RADIUS;
       ctx.explosionEffect.spawn(position, explosionRadius);
       ctx.sound.playExplosion(enemyGunshotVolume(position.distanceTo(ctx.player.position)) * undergroundMuffleFactor(
-        isUnderground(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isUnderground(position.x, position.y, position.z)), computeStereoPan(ctx.player.position, ctx.player.facingYaw, position));
+        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(position.x, position.y, position.z)), computeStereoPan(ctx.player.position, ctx.player.facingYaw, position));
       const thrown = ctx.thrownGeese.get(message.id);
       if (thrown) {
         thrown.dispose(ctx.scene);

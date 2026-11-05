@@ -6,7 +6,7 @@ import type { MultiplayerMatchState } from '../../network/MultiplayerMatchState.
 import type { PlayerSlot } from '../../network/protocol.ts';
 import { GOOSE_PICKUP_RADIUS, KOTH_POINT_INTERVAL_SECONDS } from '../config.ts';
 import type { MinimapMarker } from '../../ui/minimap.ts';
-import { isUnderground } from '../../world/underground.ts';
+import { isBelowGround } from '../../world/underground.ts';
 
 /** Whether another player's relayed claim takes the golden goose from `carrier` (this client's
  * view). Claims are not arbitrated, so two players pressing E within one round trip each see the
@@ -61,7 +61,7 @@ export class KingOfTheHillController {
         this.drop(playerPosition.clone());
         return;
       }
-      if (isUnderground(playerPosition.x, playerPosition.y, playerPosition.z)) return;
+      if (isBelowGround(playerPosition.x, playerPosition.y, playerPosition.z)) return;
       this.holdSeconds += dt;
       if (this.holdSeconds >= KOTH_POINT_INTERVAL_SECONDS) {
         this.holdSeconds -= KOTH_POINT_INTERVAL_SECONDS;

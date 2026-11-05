@@ -103,7 +103,8 @@ export function minimapTransform(
 export class Minimap {
   private readonly root: HTMLDivElement;
   private readonly localDot: HTMLDivElement;
-  private readonly dots = new Map<PlayerSlot, HTMLDivElement>();
+  private readonly dots = new Map<PlayerSlot, { dot: HTMLDivElement; style: CSSStyleDeclaration; underground: boolean }>();
+  private localUnderground = false;
   /** Goose Horde ammo crates (per explicit user request: "shown on the maps of both players with
    * green dot indicators") - string-keyed (crate ids, not player slots) since there can be more
    * than MULTIPLAYER_MAX_PLAYERS of them and they're a different kind of thing entirely. Static
@@ -164,7 +165,7 @@ export class Minimap {
       'position:absolute; width:10px; height:10px; border-radius:50%; box-sizing:border-box;' +
       ' background:' + ring.background + '; border:' + ring.border + '; display:none;' +
       ' left:' + MAP_RADIUS_PX + 'px; top:' + MAP_RADIUS_PX + 'px; transform:translate(-50%, -50%);';
-    this.root.appendChild(this.localDot);
+    this.root.insertBefore(this.localDot, this.forwardWedge);
 
     hudRoot.appendChild(this.root);
   }
@@ -174,13 +175,13 @@ export class Minimap {
     const dot = document.createElement('div');
     dot.style.cssText =
       `position:absolute; width:${DOT_SIZE_PX}px; height:${DOT_SIZE_PX}px; border-radius:50%;` +
-      ` box-sizing:border-box; background:${THREAT}; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
+      ` box-sizing:border-box; background:${THREAT}; border:2px solid transparent; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
     this.root.appendChild(dot);
-    this.dots.set(slot, dot);
+    this.dots.set(slot, { dot, style: dot.style, underground: false });
   }
 
   removeDot(slot: PlayerSlot): void {
-    this.dots.get(slot)?.remove();
+    this.dots.get(slot)?.dot.remove();
     this.dots.delete(slot);
   }
 
@@ -242,8 +243,10 @@ export class Minimap {
     enemies?: readonly MinimapBlip[],
     localUnderground = false,
   ): void {
-    this.forwardWedge.style.display = localUnderground ? 'none' : '';
-    this.localDot.style.display = localUnderground ? '' : 'none';
+    if (this.localUnderground !== localUnderground) {
+      this.localUnderground = localUnderground;
+      this.localDot.style.display = localUnderground ? '' : 'none';
+    }
     // Same rotation Player.ts uses to turn its own yaw into a forward vector, applied here to each
     // opponent's relative offset instead - rotating by -yaw undoes the player's own turn, so
     // "forward" always lands at world -Z (which the unrotated map already treated as "up").
@@ -263,11 +266,15 @@ export class Minimap {
 
     if (enemies) this.updateEnemyDots(localPosition, enemies, yawQuat);
 
-    for (const [slot, dot] of this.dots) {
+    for (const [slot, entry] of this.dots) {
       const opponentPosition = opponents.get(slot);
       if (!opponentPosition) continue;
-      Object.assign(dot.style, minimapDotStyle(opponentPosition.underground, THREAT));
-      placeDot(dot, localPosition, opponentPosition, yawQuat, this.radius);
+      if (entry.underground !== opponentPosition.underground) {
+        entry.underground = opponentPosition.underground;
+        entry.style.background = entry.underground ? 'transparent' : THREAT;
+        entry.style.border = entry.underground ? '2px solid ' + THREAT : '2px solid transparent';
+      }
+      placeDot(entry.dot, localPosition, opponentPosition, yawQuat, this.radius);
     }
 
     for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.radius);

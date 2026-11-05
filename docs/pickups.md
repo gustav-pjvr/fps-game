@@ -45,12 +45,17 @@ match builds the same list and the wire only carries indices. The seed is offset
 - **Facility:** about one pickup per room on average (halls 1.3, storage 1, plant 1, office 0.7),
   on a floor cell against a wall or pillar when the room has one, clear of doorways, at least 3 m
   apart and 0.6 m clear of walls. In single-player the start room gets none.
-- **Valley:** up to 16 per map. One at the foot of each watch tower (2.2 m outside its footprint),
-  the rest beside houses (2 m outside a footprint side), chosen by farthest-point picking so no
+- **Valley:** 10 to 16 surface pickups per map, plus lab pickups. One at the foot of each watch
+  tower (2.2 m outside its footprint), the rest beside houses (2 m outside a footprint side), chosen by farthest-point picking so no
   town takes them all. Never on a road, in a tower's footprint, on ground that rises more than
   1.2 m over 3 m, or beyond the world's pickup radius.
 - **Kinds:** a mix of about 45 percent health, 40 ammo, 15 grenade by largest remainder, so a small
   map still gets each kind; a kind the mode does not allow gives its share to the others.
+
+## Lab pickups
+
+Full labs add three pickups, compact labs add one, and dead ends add none. Their ids follow the
+surface sites; each mode still filters out pickup kinds it does not allow.
 
 ## Sync
 
@@ -58,8 +63,8 @@ Host-authoritative; single-player is its own authority with no messages.
 
 - A guest walking onto a pickup sends `pickupClaim { id }` (not again for the same pickup within
   0.6 s). The host grants the first claim for a pickup that is on the map and whose claimant it
-  sees within 4 m of the pickup (the claimant is the connection the message came in on, never a
-  payload field), and broadcasts `pickupTaken { id, slot, respawnIn }`. Only `slot` applies the
+  sees within 4 m horizontally and 3 m vertically of the pickup centre (the claimant is the
+  connection the message came in on, never a payload field), and broadcasts `pickupTaken { id, slot, respawnIn }`. Only `slot` applies the
   effect; the host applies its own claims at once.
 - The host runs the timers and broadcasts `pickupRespawned { id }`.
 - A guest sends `pickupSyncRequest { senderSlot }` when its match starts, repeating every 2 s until

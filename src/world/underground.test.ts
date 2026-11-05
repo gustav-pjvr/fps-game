@@ -15,7 +15,7 @@ import { visibility } from '../entities/enemies/playerVisibility.ts';
 import { sampleHeight, setHeightOverride } from './TerrainGenerator.ts';
 import {
   castRaySkippingCuts, clearUnderground, cutZoneUniforms, floorBelow, inCutZone, inUndergroundVolume, isTerrainCollider,
-  isUnderground, pointInUndergroundVolume, registerTerrainCollider, registerUndergroundVolume, setCutZones, unregisterTerrainCollider,
+  isBelowGround, isUnderground, pointInUndergroundVolume, registerTerrainCollider, registerUndergroundVolume, setCutZones, unregisterTerrainCollider,
 } from './underground.ts';
 
 const DT = 1 / 60;
@@ -175,6 +175,21 @@ describe('underground terrain cuts', () => {
     }
   });
 
+  it('uses surface ammo drop placement for an anchor inside the ground room', () => {
+    registerUndergroundVolume({ minX: -3, maxX: 3, minZ: -3, maxZ: 3, floorY: -10, ceilY: 3 }, 0);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const floor = vi.fn(() => -5);
+    const drops = new AmmoDropManager(new THREE.Scene(), {}, floor);
+    try {
+      drops.update(1000, [new THREE.Vector3(0, 1, 0)], true);
+      expect(floor).not.toHaveBeenCalled();
+      expect(drops.listForSync()[0]?.y).toBe(0);
+      expect(Math.abs(drops.listForSync()[0]!.x)).toBeGreaterThan(3);
+    } finally {
+      drops.dispose();
+    }
+  });
+
   it('keeps an underground player\'s ammo drops inside their volume, 1 m from its walls, on its floor', async () => {
     const { physics } = await undergroundWorld();
     const drops = new AmmoDropManager(new THREE.Scene(), {}, (x, y, z) => floorBelow(physics.world, x, y, z));
@@ -217,6 +232,23 @@ describe('underground terrain cuts', () => {
         expect(visibility({ ...inputs, underground: true })).toBe(unlitRoom);
       }
     }
+  });
+
+  it('requires a registered volume and one metre below that tower ground for game rules', () => {
+    clearUnderground();
+    setCutZones([zone]);
+    expect(isUnderground(0, -2, 0)).toBe(true);
+    expect(isBelowGround(0, -2, 0)).toBe(false);
+    // The registered height belongs to the tower, even where the surrounding terrain dips.
+    setHeightOverride(() => -20);
+    registerUndergroundVolume({ minX: -3, maxX: 3, minZ: -3, maxZ: 3, floorY: -10, ceilY: 13 }, 10);
+    expect(isUnderground(0, 11, 0)).toBe(true);
+    expect(isBelowGround(0, 11, 0)).toBe(false);
+    expect(isBelowGround(0, 9.01, 0)).toBe(false);
+    expect(isBelowGround(0, 9, 0)).toBe(true);
+    expect(isBelowGround(4, -2, 0)).toBe(false);
+    clearUnderground();
+    expect(isBelowGround(0, 9, 0)).toBe(false);
   });
 
   it('updates shared uniforms and clears all match state', () => {

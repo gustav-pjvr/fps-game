@@ -149,7 +149,8 @@ export class PickupSystem {
         // The host only grants a claim it can believe: the claimant's avatar is near the pickup.
         const site = this.sites[message.id]!;
         const where = network.opponentPosition(transportSlot);
-        if (!where || Math.hypot(where.x - site.x, where.y - (site.y + PICKUP_HOVER_HEIGHT), where.z - site.z) > PICKUP_CLAIM_TOLERANCE) return;
+        if (!where || Math.hypot(where.x - site.x, where.z - site.z) > PICKUP_CLAIM_TOLERANCE ||
+            Math.abs(where.y - (site.y + PICKUP_HOVER_HEIGHT)) > 3) return;
         this.grant(message.id, transportSlot);
         return;
       }

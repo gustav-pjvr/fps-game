@@ -69,13 +69,13 @@ describe('Minimap zoom', () => {
     map.update(player, new Map([[1, opponent]]), 0, undefined, undefined, true);
     expect(internals.dots.get(1)!.style.background).toBe('transparent');
     expect(internals.dots.get(1)!.style.border).toContain('2px solid');
-    expect(internals.forwardWedge.style.display).toBe('none');
+    expect(internals.forwardWedge.style.display).not.toBe('none');
     expect(internals.localDot.style.display).toBe('');
     opponent.underground = false;
     map.update(player, new Map([[1, opponent]]), 0);
     expect(internals.dots.get(1)!.style.background).not.toBe('transparent');
     expect(internals.dots.get(1)!.style.border).toBe('2px solid transparent');
-    expect(internals.forwardWedge.style.display).toBe('');
+    expect(internals.forwardWedge.style.display).not.toBe('none');
     expect(internals.localDot.style.display).toBe('none');
   });
 

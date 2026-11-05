@@ -47,13 +47,20 @@ test('a health pack heals the player, reports taken, and returns after its timer
     .toBe(true);
 });
 
-test('the Valley places about 16 pickups, all inside the world', async ({ page }) => {
+test('the Valley places 10 to 16 surface pickups plus lab pickups, all inside the world', async ({ page }) => {
   test.setTimeout(120000);
   await page.goto('/');
   await waitForGameReady(page);
   const pickups = await page.evaluate(() => window.__gameDebug!.getPickups());
-  expect(pickups.length).toBeGreaterThanOrEqual(10);
-  expect(pickups.length).toBeLessThanOrEqual(16);
+  const labs = await page.evaluate(() => window.__gameDebug!.getUndergroundDebug().labs);
+  const expectedLabCount = labs.reduce((count, lab) => count + (lab.kind === 'full' ? 3 : lab.kind === 'compact' ? 1 : 0), 0);
+  const firstLabSite = pickups.find(pickup => labs.some(lab => Math.abs(pickup.y - lab.floorY) < 0.01));
+  expect(firstLabSite, 'the first lab pickup exists').toBeDefined();
+  const surface = pickups.filter(pickup => pickup.id < firstLabSite!.id);
+  const underground = pickups.filter(pickup => pickup.id >= firstLabSite!.id);
+  expect(surface.length).toBeGreaterThanOrEqual(10);
+  expect(surface.length).toBeLessThanOrEqual(16);
+  expect(underground).toHaveLength(expectedLabCount);
   for (const pickup of pickups) {
     expect(Math.hypot(pickup.x, pickup.z)).toBeLessThan(WORLD_BOUNDARY_RADIUS);
     expect(pickup.available).toBe(true);

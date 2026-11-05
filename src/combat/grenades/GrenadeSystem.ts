@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { castRaySkippingCuts, inCutZone, isTerrainCollider, isUnderground } from '../../world/underground.ts';
+import { castRaySkippingCuts, inCutZone, isTerrainCollider, isBelowGround } from '../../world/underground.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Player } from '../../entities/Player.ts';
 import type { InputManager } from '../../input/InputManager.ts';
@@ -707,7 +707,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const eye = this.options.camera.getWorldPosition(new THREE.Vector3());
     const heard = this.hearing(position);
     sound.playFragExplosion(enemyGunshotVolume(heard.distance) * undergroundMuffleFactor(
-      isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(position.x, position.y, position.z)), heard.pan);
+      isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(position.x, position.y, position.z)), heard.pan);
     this.shake.add(fragShakeAmplitude(eye.distanceTo(blast)));
 
     // The local player: damage only from its own frag (others' arrives as damageEvent); knockback
@@ -746,7 +746,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     this.lightBlast(blast, FLASH_LIGHT_COLOR, FLASH_LIGHT_INTENSITY, FLASH_LIGHT_RANGE, FLASH_LIGHT_SECONDS);
     const heard = this.hearing(blast);
     sound.playFlashBang(enemyGunshotVolume(heard.distance) * undergroundMuffleFactor(
-      isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(blast.x, blast.y, blast.z)), heard.pan);
+      isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(blast.x, blast.y, blast.z)), heard.pan);
 
     if (!player.isDead) {
       const eye = camera.getWorldPosition(new THREE.Vector3());

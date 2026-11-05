@@ -6,7 +6,7 @@ interface UndergroundVolume { minX: number; maxX: number; minZ: number; maxZ: nu
 
 let cutZones: CutZone[] = [];
 const terrainColliders = new Set<number>();
-const volumes: UndergroundVolume[] = [];
+const volumes: (UndergroundVolume & { groundY: number })[] = [];
 
 // Stable uniform objects shared by every compiled variant of the terrain material.
 export const cutZoneUniforms = {
@@ -32,7 +32,10 @@ export function clearUnderground(): void {
 
 /** A positive margin keeps the whole capsule inside the opening before terrain is ignored. */
 export function inCutZone(x: number, z: number, margin = 0): boolean {
-  return cutZones.some((zone) => Math.abs(x - zone.cx) <= zone.halfX - margin && Math.abs(z - zone.cz) <= zone.halfZ - margin);
+  for (const zone of cutZones) {
+    if (Math.abs(x - zone.cx) <= zone.halfX - margin && Math.abs(z - zone.cz) <= zone.halfZ - margin) return true;
+  }
+  return false;
 }
 
 export function registerTerrainCollider(handle: number): void {
@@ -47,17 +50,31 @@ export function isTerrainCollider(handle: number): boolean {
   return terrainColliders.has(handle);
 }
 
-export function registerUndergroundVolume(volume: UndergroundVolume): void {
-  volumes.push({ ...volume });
+export function registerUndergroundVolume(volume: UndergroundVolume, groundY = sampleHeight((volume.minX + volume.maxX) / 2, (volume.minZ + volume.maxZ) / 2)): void {
+  volumes.push({ ...volume, groundY });
 }
 
 function volumeAt(x: number, y: number, z: number): UndergroundVolume | undefined {
-  return volumes.find((volume) => x >= volume.minX && x <= volume.maxX && z >= volume.minZ && z <= volume.maxZ &&
-    y >= volume.floorY - 0.5 && y <= volume.ceilY);
+  for (const volume of volumes) {
+    if (x >= volume.minX && x <= volume.maxX && z >= volume.minZ && z <= volume.maxZ &&
+        y >= volume.floorY - 0.5 && y <= volume.ceilY) return volume;
+  }
+  return undefined;
 }
 
 export function isUnderground(x: number, y: number, z: number): boolean {
   return volumeAt(x, y, z) !== undefined || (inCutZone(x, z) && y < sampleHeight(x, z) + 3.2);
+}
+
+/** Game rules and sound require a volume at least one metre below its tower's ground level.
+ * The ground room and an empty cut zone never count. */
+export function isBelowGround(x: number, y: number, z: number): boolean {
+  for (const volume of volumes) {
+    if (y <= volume.groundY - 1 &&
+        x >= volume.minX && x <= volume.maxX && z >= volume.minZ && z <= volume.maxZ &&
+        y >= volume.floorY - 0.5 && y <= volume.ceilY) return true;
+  }
+  return false;
 }
 
 /** Whether (x, y, z) is inside a registered underground volume (not just a terrain cut zone): the

@@ -34,6 +34,22 @@ function runUntil(director: PacingDirector, signals: () => DirectorSignals, stop
 }
 
 describe('PacingDirector', () => {
+  it('forces relax only after three continuous seconds below ground and resets the delay', () => {
+    const director = new PacingDirector({ ...OPTIONS, peakMin: 30, peakMax: 30 }, () => 0);
+    director.update({ ...quiet(), damageTaken: 50 });
+    director.update({ ...quiet(), dt: 2.9, allPlayersUnderground: true });
+    expect(director.phase).toBe('peak');
+    director.update({ ...quiet(), dt: 0.1 });
+    director.update({ ...quiet(), dt: 2.5, allPlayersUnderground: true });
+    expect(director.phase).toBe('peak');
+    director.update({ ...quiet(), dt: 0.5, allPlayersUnderground: true });
+    expect(director.phase).toBe('relax');
+    expect(director.phaseElapsed).toBe(0);
+    director.reset();
+    director.update({ ...quiet(), damageTaken: 50, allPlayersUnderground: true });
+    expect(director.phase).toBe('peak');
+  });
+
   it('holds relax without waves while all living players are underground, then resumes', () => {
     const director = new PacingDirector(OPTIONS, () => 0);
     for (let i = 0; i < 100; i++) {
@@ -52,7 +68,7 @@ describe('PacingDirector', () => {
     const director = new PacingDirector(OPTIONS, () => 0);
     director.update({ ...quiet(), damageTaken: 50 });
     expect(director.phase).toBe('peak');
-    director.update({ ...quiet(), allPlayersUnderground: true });
+    director.update({ ...quiet(), dt: 3, allPlayersUnderground: true });
     expect(director.phase).toBe('relax');
     director.update({ ...quiet(), dt: 12 });
     director.update({ ...quiet(), dt: 100, allPlayersUnderground: true });

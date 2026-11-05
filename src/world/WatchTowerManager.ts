@@ -202,7 +202,7 @@ export class WatchTowerManager {
     this.labs = computeTowerLabs();
     setCutZones(this.positions.map(({ x, z }) => ({ cx: x, cz: z, halfX: 2.7, halfZ: 2.7 })));
     // Seeded volumes outlive chunk streaming, just like the cut zones. Register only once.
-    for (const lab of this.labs) for (const volume of lab.volumes) registerUndergroundVolume(volume);
+    for (const lab of this.labs) for (const volume of lab.volumes) registerUndergroundVolume(volume, lab.groundY);
   }
 
   static create(scene: THREE.Scene, physics: PhysicsWorld): WatchTowerManager {
