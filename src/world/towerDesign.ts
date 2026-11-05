@@ -116,6 +116,13 @@ function flightRail(start: THREE.Vector3, end: THREE.Vector3): BoxTransform {
   return boxAlong(railStart, railEnd, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2);
 }
 
+/** An axis-aligned rail with local X along its run, as addRailing expects. */
+function railBox(cx: number, cy: number, cz: number, length: number, height: number, thickness: number, axis: 'x' | 'z'): BoxTransform {
+  return axis === 'z'
+    ? boxAlong(new THREE.Vector3(cx, cy, cz - length / 2), new THREE.Vector3(cx, cy, cz + length / 2), height, thickness)
+    : box(cx, cy, cz, length, height, thickness);
+}
+
 /** A corner landing's two outer sides, meeting square at its outer corner. */
 function landingRails(corner: THREE.Vector3): BoxTransform[] {
   const sx = Math.sign(corner.x);
@@ -124,8 +131,8 @@ function landingRails(corner: THREE.Vector3): BoxTransform[] {
   const offset = W / 2 + RAIL_HALF_THICKNESS;
   const y = corner.y + RAIL_HEIGHT / 2;
   return [
-    box(corner.x + sx * offset, y, corner.z + sz * RAIL_HALF_THICKNESS, RAIL_HALF_THICKNESS * 2, RAIL_HEIGHT, length),
-    box(corner.x + sx * RAIL_HALF_THICKNESS, y, corner.z + sz * offset, length, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2),
+    railBox(corner.x + sx * offset, y, corner.z + sz * RAIL_HALF_THICKNESS, length, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'z'),
+    railBox(corner.x + sx * RAIL_HALF_THICKNESS, y, corner.z + sz * offset, length, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'x'),
   ];
 }
 
@@ -161,12 +168,12 @@ export function towerParts(): TowerPart[] {
   const railY = H + RAIL_HEIGHT / 2;
   const edge = D + RAIL_HALF_THICKNESS;
   const span = (D + RAIL_HALF_THICKNESS * 2) * 2;
-  add(box(0, railY, -edge, span, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2), 'perforated', true);
-  add(box(0, railY, edge, span, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2), 'perforated', true);
-  add(box(-edge, railY, 0, RAIL_HALF_THICKNESS * 2, RAIL_HEIGHT, span), 'perforated', true);
-  add(box(edge, railY, 0, RAIL_HALF_THICKNESS * 2, RAIL_HEIGHT, span), 'perforated', true);
-  add(box((STAIRWELL_WEST_X + HW) / 2, railY, -HW + RAIL_HALF_THICKNESS, HW - STAIRWELL_WEST_X, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2), 'perforated', true);
-  add(box(STAIRWELL_WEST_X - RAIL_HALF_THICKNESS, railY, (-D - HW) / 2, RAIL_HALF_THICKNESS * 2, RAIL_HEIGHT, D - HW), 'perforated', true);
+  add(railBox(0, railY, -edge, span, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'x'), 'perforated', true);
+  add(railBox(0, railY, edge, span, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'x'), 'perforated', true);
+  add(railBox(-edge, railY, 0, span, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'z'), 'perforated', true);
+  add(railBox(edge, railY, 0, span, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'z'), 'perforated', true);
+  add(railBox((STAIRWELL_WEST_X + HW) / 2, railY, -HW + RAIL_HALF_THICKNESS, HW - STAIRWELL_WEST_X, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'x'), 'perforated', true);
+  add(railBox(STAIRWELL_WEST_X - RAIL_HALF_THICKNESS, railY, (-D - HW) / 2, D - HW, RAIL_HEIGHT, RAIL_HALF_THICKNESS * 2, 'z'), 'perforated', true);
 
   // The lookout roof on four corner posts: cover from above for whoever holds the tower.
   const postHeight = WATCH_TOWER_ROOF_CLEARANCE - LANDING_HALF_THICKNESS;

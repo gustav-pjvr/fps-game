@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { ADS_SIGHT_DISTANCE } from '../../core/config.ts';
+import { ACCENT_CYAN } from '../../render/look.ts';
 import { WEAPON_DEFINITIONS } from '../definitions.ts';
 import { WEAPON_ADS_POSITION, WEAPON_HIP_POSITION } from '../viewModel.ts';
 import { buildWeaponViewModel, WEAPON_MODEL_TUNING } from './arsenal.ts';
@@ -172,11 +173,14 @@ describe('Opus procedural materials in Node', () => {
     expect(materials.gunmetal.metalness).toBe(0.35);
     expect(materials.pipe.metalness).toBe(0.55);
     expect(materials.trim.metalness).toBe(0.3);
-    expect(materials.sleeve.color.getHex()).toBe(0x3b4a42);
-    expect(materials.sleeve.roughness).toBe(0.9);
+    // The arms wear the player's spacesuit (characterModels.ts PLAYER_CHARACTER): suit panels with
+    // cyan trim that glows only where its emissive map is lit, and cyan-lit gloves.
+    expect(materials.sleeve.map).toBeInstanceOf(THREE.DataTexture);
+    expect(materials.sleeve.emissiveMap).toBeInstanceOf(THREE.DataTexture);
+    expect(materials.sleeve.emissive.getHex()).toBe(ACCENT_CYAN);
     expect(materials.sleeve.metalness).toBe(0);
-    expect(materials.glove.color.getHex()).toBe(0x2a2a28);
-    expect(materials.glove.roughness).toBe(0.35);
+    expect(materials.glove.emissive.getHex()).toBe(ACCENT_CYAN);
+    expect(materials.glove.emissiveIntensity).toBeGreaterThan(0);
   });
 
   it('encodes varying height normals and converts gloss to roughness in the green channel', () => {

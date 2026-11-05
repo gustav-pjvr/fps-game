@@ -127,6 +127,12 @@ describe('watch tower stairs', () => {
     }
   });
 
+  it('every guard rail runs along local X so it is drawn at full length', () => {
+    for (const part of towerParts()) {
+      if (part.rail === true) expect(part.box.halfExtents.x).toBeGreaterThan(part.box.halfExtents.z);
+    }
+  });
+
   it('the guard rails keep a player on the deck in every direction', async () => {
     const physics = await towerWorld();
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [-0.7, -0.7], [0.7, -0.7]]) {
