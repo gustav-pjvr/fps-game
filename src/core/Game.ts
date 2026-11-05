@@ -614,6 +614,7 @@ export class Game {
     if (scene.fog instanceof THREE.Fog) {
       scene.fog.near = look.fogNear;
       scene.fog.far = look.fogFar;
+      scene.fog.color.setHex(look.fogColor);
     }
     const towers = this.watchTowers?.getUndergroundTowers() ?? NO_TOWERS;
     for (const tower of towers) tower.group.visible = undergroundVisible(at, tower, this.undergroundAmount);

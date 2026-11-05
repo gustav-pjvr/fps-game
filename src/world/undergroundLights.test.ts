@@ -4,7 +4,7 @@ import { lookFor } from '../render/look.ts';
 import { setHeightOverride } from './TerrainGenerator.ts';
 import { buildTowerLab } from './towerUnderground.ts';
 import { clearUnderground, isUnderground, registerUndergroundVolume, setCutZones } from './underground.ts';
-import { UndergroundLights, UNDERGROUND_LIGHT_POOL, easeUndergroundAmount, undergroundLook, undergroundVisible, type UndergroundTower } from './undergroundLights.ts';
+import { UndergroundLights, UNDERGROUND_FOG_COLOR, UNDERGROUND_LIGHT_POOL, easeUndergroundAmount, undergroundLook, undergroundVisible, type UndergroundTower } from './undergroundLights.ts';
 
 afterEach(() => { clearUnderground(); setHeightOverride(null); });
 
@@ -44,11 +44,12 @@ describe('underground look', () => {
       expect(dark.hemiIntensity).toBeCloseTo(environment ? 0 : look.hemiIntensity * 0.05);
       expect(dark.environmentIntensity).toBeCloseTo(look.environmentIntensity * 0.05);
       expect([dark.fogNear, dark.fogFar]).toEqual([4, 40]);
+      expect(dark.fogColor).toBe(UNDERGROUND_FOG_COLOR);
       for (let i = 0; i < 120; i++) expect(undergroundLook(look, environment, amount)).toEqual(dark);
       for (let i = 0; i < 30; i++) amount = easeUndergroundAmount(amount, false, 1 / 60);
       expect(undergroundLook(look, environment, amount)).toEqual(outdoor);
       expect(outdoor).toEqual({ sunIntensity: look.sunIntensity, hemiIntensity: environment ? 0 : look.hemiIntensity,
-        environmentIntensity: look.environmentIntensity, fogNear: look.fog.near, fogFar: look.fog.far });
+        environmentIntensity: look.environmentIntensity, fogNear: look.fog.near, fogFar: look.fog.far, fogColor: look.sky.haze });
       const halfway = undergroundLook(look, environment, 0.5);
       expect(halfway.fogNear).toBe((look.fog.near + 4) / 2);
       expect(halfway.fogFar).toBe((look.fog.far + 40) / 2);
@@ -85,7 +86,7 @@ describe('underground light pool', () => {
     setHeightOverride(() => 7);
     for (const kind of ['full', 'compact'] as const) {
       const lab = buildTowerLab(0, { x: 100, z: 50 }, orientation, 3, kind);
-      expect(lab.lamps).toHaveLength(3);
+      expect(lab.lamps).toHaveLength(kind === 'full' ? 7 : 4);
       lab.lamps.forEach((lamp, i) => {
         const volume = lab.volumes[lab.volumes.length - (i === 0 ? 2 : 1)]!;
         expect(lamp.x).toBeGreaterThan(volume.minX);

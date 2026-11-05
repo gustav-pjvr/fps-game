@@ -10,10 +10,19 @@ export function easeUndergroundAmount(amount: number, underground: boolean, dt: 
   return Math.abs(next - target) < 0.001 ? target : next;
 }
 
+/** The haze below ground: a cold near-black, so the lab reads as a buried facility rather than the
+ * outdoor dusk haze pulled in close. */
+export const UNDERGROUND_FOG_COLOR = 0x0a1312;
+const fogFrom = new THREE.Color();
+const fogTo = new THREE.Color();
+
 /** Always derive from the current outdoor look, never from last frame's faded values. */
 export function undergroundLook(look: LookPreset, environmentLighting: boolean, amount: number) {
   const scale = 1 - 0.95 * amount;
+  const fogColor = amount === 0 ? look.sky.haze : amount === 1 ? UNDERGROUND_FOG_COLOR
+    : fogFrom.setHex(look.sky.haze).lerp(fogTo.setHex(UNDERGROUND_FOG_COLOR), amount).getHex();
   return {
+    fogColor,
     sunIntensity: look.sunIntensity * scale,
     hemiIntensity: (environmentLighting ? 0 : look.hemiIntensity) * scale,
     environmentIntensity: look.environmentIntensity * scale,

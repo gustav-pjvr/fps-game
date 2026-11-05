@@ -11,6 +11,7 @@ import { registerUndergroundVolume, setCutZones } from './underground.ts';
 import type { UndergroundTower } from './undergroundLights.ts';
 import { towerDoorId } from './houses/valleyHouseIds.ts';
 import { ValleyDoors } from './houses/ValleyDoors.ts';
+import { createLabInteriorVisual } from './labInterior.ts';
 import { sampleFlatZone, sampleForestZone } from './ZoneMap.ts';
 import {
   ENEMY_RING_BASE_RADIUS,
@@ -38,6 +39,7 @@ interface PlacedTower {
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandles: number[];
+  disposeInterior: () => void;
 }
 
 /** Metres of open ground kept between a tower's footprint and the edge of any town pad. */
@@ -239,6 +241,7 @@ export class WatchTowerManager {
       ValleyDoors.removeTowerDoor(this.physics.world, tower.doorId);
 
       this.scene.remove(tower.group);
+      tower.disposeInterior();
       tower.group.traverse((child) => {
         if (child instanceof THREE.Mesh) child.geometry.dispose();
       });
@@ -290,11 +293,13 @@ export class WatchTowerManager {
 
     const group = createTowerVisual(orientation);
     const pieces = new PieceCollector();
-    for (const part of lab.parts) {
+    for (const part of lab.parts.slice(0, lab.shellPartCount)) {
       if (part.rail) addRailing(pieces, part.box);
       else pieces.addBox(part.material, part.box);
     }
     const undergroundGroup = pieces.build();
+    const interior = createLabInteriorVisual(lab.interiors);
+    undergroundGroup.add(interior.group);
     undergroundGroup.name = 'tower-underground';
     undergroundGroup.visible = false;
     group.add(undergroundGroup);
@@ -305,7 +310,8 @@ export class WatchTowerManager {
     ValleyDoors.addTowerDoor(this.physics.world, doorId, towerDoorPlane(doorId)!);
     const underground: UndergroundTower = { group: undergroundGroup, position: group.position,
       door: new THREE.Vector3(worldX + 3, groundY + 1.1, worldZ), lamps: lab.lamps };
-    return { group, underground, rigidBodyHandle: rigidBody.handle, colliderHandles, doorId };
+    return { group, underground, rigidBodyHandle: rigidBody.handle, colliderHandles, doorId,
+      disposeInterior: () => { interior.group.removeFromParent(); interior.dispose(); } };
   }
 }
 

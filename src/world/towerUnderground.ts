@@ -7,6 +7,7 @@ import { box, boxAlong, type BoxTransform } from './structureKit.ts';
 import { sampleHeight } from './TerrainGenerator.ts';
 import { towerRotation, type TowerOrientation, type TowerPart } from './towerDesign.ts';
 import { getWatchTowerPositions } from './WatchTowerManager.ts';
+import { buildLabInterior, type PlacedLabInterior } from './labInterior.ts';
 
 export interface LabVolume {
   readonly minX: number;
@@ -28,12 +29,14 @@ export interface TowerLab {
   readonly floorY: number;
   /** Parts and walk route are in the tower's frame; volumes are in world space. */
   readonly parts: TowerPart[];
+  readonly shellPartCount: number;
+  readonly interiors: PlacedLabInterior[];
   readonly ceilingParts: number[];
   readonly flightSurfaces: { start: THREE.Vector3; end: THREE.Vector3 }[];
   readonly route: THREE.Vector3[];
   readonly volumes: LabVolume[];
   readonly footprints: LabVolume[];
-  /** Placeholder corridor and lab lamps in world space. */
+  /** Corridor, shell and interior lamps in world space. */
   readonly lamps: THREE.Vector3[];
 }
 
@@ -91,6 +94,7 @@ function createLabBuilder(index: number, position: { x: number; z: number }, ori
   const parts: TowerPart[] = [], route: THREE.Vector3[] = [], volumes: LabVolume[] = [], footprints: LabVolume[] = [];
   const ceilingParts: number[] = [], flightSurfaces: { start: THREE.Vector3; end: THREE.Vector3 }[] = [];
   const lamps: THREE.Vector3[] = [];
+  const interiors: { design: ReturnType<typeof buildLabInterior>; origin: THREE.Vector3 }[] = [];
   const floorY = FIRST_FLOOR - (flights - 1) * FLIGHT_DROP;
   const point = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz);
   const add = (b: BoxTransform, material: TowerPart['material'] = 'concrete', rail = false) => {
@@ -168,7 +172,7 @@ function createLabBuilder(index: number, position: { x: number; z: number }, ori
   };
 
   return { index, x, z, groundY, orientation, flights, kind, rotation, mirror, floorY, parts, route, volumes, footprints,
-    ceilingParts, flightSurfaces, lamps, wellEnd, east, roofAt, point, add, slab, wall, volume, ceiling, flight, sealRoofJoints };
+    ceilingParts, flightSurfaces, lamps, interiors, wellEnd, east, roofAt, point, add, slab, wall, volume, ceiling, flight, sealRoofJoints };
 }
 
 type LabBuilder = ReturnType<typeof createLabBuilder>;
@@ -288,6 +292,8 @@ function buildLab(builder: LabBuilder, exitX: number): void {
   lamps.push(point(exitX, floorY + 2.7, (CORRIDOR_END + WELL_END) / 2),
     point(labX - width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2),
     point(labX + width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2));
+  if (kind !== 'dead-end') builder.interiors.push({ design: buildLabInterior(kind, getWorldSeed() + builder.index * 1009),
+    origin: point(labX, floorY, CORRIDOR_END) });
 }
 
 /** All three orientations share this plan. Only the room shaft is mirrored to avoid the east door. */
@@ -298,8 +304,17 @@ export function buildTowerLab(index: number, position: { x: number; z: number },
   const exitX = buildStairwell(builder);
   if (kind !== 'dead-end') buildLab(builder, exitX);
   builder.sealRoofJoints();
+  const shellPartCount = parts.length;
+  builder.interiors.push({ design: buildLabInterior('ground', getWorldSeed() + index * 1009), origin: new THREE.Vector3(0, ROOM_FLOOR, 0) });
+  const interiors = builder.interiors.map(({ design, origin }) => {
+    for (const part of design.parts) builder.add({ ...part.box, center: part.box.center.clone().add(origin) }, part.material, part.rail);
+    for (const lamp of design.lamps) lamps.push(lamp.clone().add(origin));
+    const matrix = new THREE.Matrix4().compose(new THREE.Vector3(), rotation, new THREE.Vector3(mirror, 1, 1))
+      .multiply(new THREE.Matrix4().makeTranslation(origin.x, origin.y, origin.z));
+    return { design, matrix };
+  });
   const transform = (p: THREE.Vector3) => { p.x *= mirror; return p.applyQuaternion(rotation); };
-  return { index, x, z, groundY, orientation, flights, kind, floorY: groundY + floorY, parts, ceilingParts,
+  return { index, x, z, groundY, orientation, flights, kind, floorY: groundY + floorY, parts, shellPartCount, interiors, ceilingParts,
     flightSurfaces: flightSurfaces.map(({ start, end }) => ({ start: transform(start), end: transform(end) })),
     route: route.map(transform), volumes, footprints,
     lamps: lamps.map(p => transform(p).add(new THREE.Vector3(x, groundY, z))) };
