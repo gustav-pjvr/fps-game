@@ -37,13 +37,17 @@ export class MultiplayerMenu {
       accessLabel.textContent = 'Access code';
       accessLabel.htmlFor = 'multiplayer-access-code';
       accessLabel.style.cssText = 'display:block; font-size:0.9rem; margin-bottom:8px;';
-      const accessInput = createTextInput('Access code', ACCESS_CODE_MAX_LENGTH);
+      const accessInput = createTextInput('From the person who invited you…', ACCESS_CODE_MAX_LENGTH);
       accessInput.id = 'multiplayer-access-code';
+      accessInput.name = 'accessCode';
       accessInput.type = 'password';
       accessInput.autocomplete = 'off';
+      accessInput.spellcheck = false;
+      accessInput.setAttribute('aria-describedby', 'multiplayer-access-code-hint');
       accessInput.value = loadAccessCode();
       accessInput.addEventListener('change', () => saveAccessCode(accessInput.value));
       const accessHint = document.createElement('div');
+      accessHint.id = 'multiplayer-access-code-hint';
       accessHint.textContent = 'Only needed for the game server.';
       accessHint.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px; margin-bottom:22px;';
       panel.append(accessLabel, accessInput, accessHint);

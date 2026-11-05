@@ -29,6 +29,9 @@ import { DEFAULT_GAME_MODE, GAME_MODES, GAME_MODE_LABELS, type GameMode } from '
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, MOTION_EASE, attachScanSweep, createButton, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 
+const SERVER_HINT = 'Lower lag for invited players.';
+const SERVER_HINT_LOCKED = 'Locked once a player has joined.';
+
 /** One row of the host's live player list - `dimmed` marks an empty/placeholder slot not yet
  * taken by a real player. Exported for JoinRoomScreen's own lobby-wait roster, which renders the
  * exact same shape. */
@@ -59,6 +62,7 @@ export class CreateRoomScreen {
   private readonly weatherSelect: HTMLSelectElement;
   private readonly serverControl: HTMLDivElement;
   private readonly serverCheckbox: HTMLInputElement;
+  private serverHint: HTMLDivElement | null = null;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
@@ -277,9 +281,13 @@ export class CreateRoomScreen {
     this.serverCheckbox = document.createElement('input');
     this.serverCheckbox.id = 'create-room-server';
     this.serverCheckbox.type = 'checkbox';
+    this.serverCheckbox.name = 'gameServer';
+    this.serverCheckbox.setAttribute('aria-describedby', 'create-room-server-hint');
     serverLabel.append(this.serverCheckbox, 'Game server');
     const serverHint = document.createElement('div');
-    serverHint.textContent = 'Lower lag for invited players.';
+    serverHint.id = 'create-room-server-hint';
+    this.serverHint = serverHint;
+    serverHint.textContent = SERVER_HINT;
     serverHint.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px;';
     this.serverControl.append(serverLabel, serverHint);
     leftColumn.appendChild(this.serverControl);
@@ -455,7 +463,7 @@ export class CreateRoomScreen {
           return;
         }
         this.setStatus(kind === 'serverLost' ? 'Lost the game server. Create or join the room again.'
-          : kind === 'accessDenied' ? "That access code isn't valid."
+          : kind === 'accessDenied' ? 'That access code isn’t valid. Check it under Multiplayer.'
           : kind === 'versionMismatch' ? 'This page is out of date. Refresh to update.'
           : message);
       },
@@ -522,6 +530,7 @@ export class CreateRoomScreen {
 
   private renderPlayerRows(roster: RosterEntry[]): void {
     this.serverCheckbox.disabled = roster.some((entry) => entry.slot !== HOST_SLOT);
+    if (this.serverHint) this.serverHint.textContent = this.serverCheckbox.disabled ? SERVER_HINT_LOCKED : SERVER_HINT;
     this.playerList.replaceChildren(
       ...roster.map((entry) => {
         const name = entry.slot === HOST_SLOT ? `${entry.username} (you, host)` : entry.username;

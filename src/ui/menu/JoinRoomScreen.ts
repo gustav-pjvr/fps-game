@@ -291,7 +291,7 @@ export class JoinRoomScreen {
         if (kind === 'brokerLost' && this.ownSlot !== null) return;
         this.clearJoinTimeout();
         this.joinFailureShown = true;
-        this.setStatus(kind === 'accessDenied' ? "That access code isn't valid."
+        this.setStatus(kind === 'accessDenied' ? 'That access code isn’t valid. Check it under Multiplayer.'
           : kind === 'versionMismatch' ? 'This page is out of date. Refresh to update.'
           : kind === 'serverLost' ? 'Lost the game server. Create or join the room again.'
           : kind === 'roomNotFound' && !loadAccessCode()
