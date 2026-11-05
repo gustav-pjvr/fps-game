@@ -1050,6 +1050,20 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
   }
 }
 
+/** Most entries a door or breaker string, a valleyDoors list or a deadLamps list may carry. */
+export const WORLD_WIRE_MAX_ENTRIES = 4096;
+
+const isWireIdList = (value: unknown): boolean =>
+  Array.isArray(value) && value.length <= WORLD_WIRE_MAX_ENTRIES && value.every(id => Number.isSafeInteger(id) && (id as number) >= 0);
+
+/** A worldObjectState's (or a welcome's worldObjects') doors, breakers and valleyDoors. */
+function isWorldObjectWire(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const { doors, breakers, valleyDoors } = value as { doors?: unknown; breakers?: unknown; valleyDoors?: unknown };
+  const validDoors = valleyDoors === undefined || isWireIdList(valleyDoors);
+  return validDoors && [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= WORLD_WIRE_MAX_ENTRIES && /^[01]*$/.test(bits));
+}
+
 /** `DataConnection.on('data', ...)` hands back `unknown` (see peerjs's own types) - this is the one
  * place that boundary gets narrowed, so nothing downstream has to re-check message shape. */
 export function isNetworkMessage(value: unknown): value is NetworkMessage {
@@ -1064,11 +1078,16 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
     const { kind, id } = value as { kind?: unknown; id?: unknown };
     return (kind === 'door' || kind === 'breaker') && Number.isInteger(id) && (id as number) >= 0;
   }
-  if (type === 'worldObjectState') {
-    const { doors, breakers, valleyDoors } = value as { doors?: unknown; breakers?: unknown; valleyDoors?: unknown };
-    const validDoors = valleyDoors === undefined ||
-      (Array.isArray(valleyDoors) && valleyDoors.length <= 4096 && valleyDoors.every(id => Number.isSafeInteger(id) && (id as number) >= 0));
-    return validDoors && [doors, breakers].every(bits => typeof bits === 'string' && bits.length <= 4096 && /^[01]*$/.test(bits));
+  if (type === 'worldObjectState') return isWorldObjectWire(value);
+  // A mid-match welcome carries the same lists, bounded the same way, so the largest legal one has
+  // a known size (the relay's host frame cap, docs/server-relay-design.md section 7.4).
+  if (type === 'welcome') {
+    const match = (value as { activeMatch?: unknown }).activeMatch;
+    if (typeof match === 'object' && match !== null) {
+      const { deadLamps, worldObjects } = match as { deadLamps?: unknown; worldObjects?: unknown };
+      if (deadLamps !== undefined && !isWireIdList(deadLamps)) return false;
+      if (worldObjects !== undefined && !isWorldObjectWire(worldObjects)) return false;
+    }
   }
   if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
   if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);

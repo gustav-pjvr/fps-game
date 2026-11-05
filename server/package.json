@@ -1,0 +1,20 @@
+{
+  "name": "hng-relay",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Hunter 'n Goose multiplayer relay (docs/server-relay-design.md). Runs server/main.ts under Node's type stripping.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "start": "node main.ts"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2"
+  }
+}

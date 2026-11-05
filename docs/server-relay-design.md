@@ -186,9 +186,9 @@ uses `window`, `document` or `import.meta`.
 Rules that keep it that way: (1) the server never imports `MatchMessageRouter.ts`, `PeerConnection.ts`,
 `fastChannel.ts` or anything in `src/core/` besides `config.ts` and `version.ts` (hence the move of
 `RELAYABLE_MESSAGE_TYPES`); (2) `server/tsconfig.json` uses `lib: ["ES2022"]` without DOM and
-`types: ["node"]`, so a DOM type in a shared file fails `tsc -p server`; (3) a unit test walks the static
-import graph from `server/main.ts` and fails on any file outside that allowlist or any bare import other
-than `ws` and `node:*`. The repo already imports with `.ts` extensions (`allowImportingTsExtensions`), which
+`types: ["node"]`, so a DOM type in a shared file fails `tsc -p server`; (3) a unit test (`server/importGraph.test.ts`)
+walks the static import graph from `server/main.ts` and fails on any file outside that allowlist, on any
+bare import other than `ws` and `node:*`, and on a server source file the walk does not reach. The repo already imports with `.ts` extensions (`allowImportingTsExtensions`), which
 is what Node's type stripping needs, so the server runs the TypeScript directly with no bundler (7.2).
 
 Small shared edits: export `ALL_MESSAGE_TYPES` (today `MESSAGE_TYPES` is module private) and
@@ -213,7 +213,8 @@ export function serverAccepts(message: NetworkMessage, fromSlot: PlayerSlot): bo
 That gives the server today's host rules for free: host-authored types refused from guests, `senderSlot`
 equal to the member's slot, `SELF_SLOT_MESSAGE_TYPES` naming the sender, `playerDied.victimSlot` equal to
 `senderSlot`. Handshake fields reuse the `hello` limits (`HELLO_USERNAME_MAX_LENGTH` and friends in
-`protocol.ts`); a `joinAnswer` welcome must pass `isNetworkMessage` with `yourSlot` equal to the assigned slot.
+`protocol.ts`); a `joinAnswer` welcome must pass `isWelcomeFor` (`serverEnvelope.ts`): `isNetworkMessage`,
+`yourSlot` equal to the assigned slot, a boolean `isRejoin`, a string `hostUsername` and an array `roster`.
 
 Deliberately trusted (private game, as today): damage and hits within `hasValidGameplayFields` bounds, deaths
 and kill credit, positions, King of the Hill ticks, every host decision (welcome, seed, scoreboard, match
@@ -237,10 +238,13 @@ answers `rejected { reason: 'busy' }`. 31^6 is about 887 million codes, so clash
 ### 4.2 Join, slot assignment and rejoin tokens
 
 1. Guest sends `join { code, username, rejoinToken, features }` (the token is today's per-code UUID from
-   `getOrCreateRejoinToken`, unchanged). Unknown or tombstoned code: `rejected { reason: 'notFound' }`,
+   `getOrCreateRejoinToken`, unchanged; the client uppercases the code, the server matches it exactly).
+   Unknown or tombstoned code: `rejected { reason: 'notFound' }`,
    shown as today's "No room found with that code." (asserted by `e2e/multiplayer.spec.ts`).
 2. The server runs `HostRoster.handleHello(...)`; `full` gives `rejected { reason: 'full' }`. Otherwise the
-   slot is held and the member is **pending**: it receives nothing and its game frames are dropped.
+   slot is held and the member is **pending**: it gets no game frames and no `quality`, and its own game
+   frames are dropped; it does get `pong` (so a long wait for the host's answer does not read as a lost
+   server), `rejected` and `roomClosed`.
 3. The server sends the host `joinRequest { slot, outcome, username, rejoinToken, features, peerId }`
    (`peerId` is a synthetic `srv-<slot>-<n>`, kept because `RosterEntry.peerId` exists; nothing dials it).
 4. The host transport calls `onHostHello({ ..., assigned })`. The host adopts the outcome into its own
@@ -251,8 +255,17 @@ answers `rejected { reason: 'busy' }`. 31^6 is about 887 million codes, so clash
    validates it, sends the welcome to the guest as a game frame from slot 0, marks the member live, then
    sends the host `admitted { slot }` (its transport calls `onConnected(slot)`). Same order as today:
    `CreateRoomScreen`'s `onConnected` sends `lobbyReadyUpdate`, which must reach the new guest.
-6. A rejection releases the slot (new `HostRoster.release`) and sends `rejected`. No answer within 30 s
-   (`JoinRoomScreen` gives up at 25 s, `JOIN_TIMEOUT_MS`) also releases it, with `busy`.
+6. A rejection sends `rejected` (then close 1000). No answer within 30 s (`JoinRoomScreen` gives up at
+   25 s, `JOIN_TIMEOUT_MS`) does the same with `busy`, and so does a pending member whose socket closes
+   (without the `rejected`). The slot then goes back to what it was, and the host is told which:
+   - a new player (`joined`): the slot is released (`HostRoster.release`) and the host gets `expired { slot }`;
+   - a rejoin (`rejoined`): the slot returns to a reservation with a **fresh** 90 s from that moment
+     (`handleDisconnect`), and the host gets `memberLeft { slot }`;
+   - a takeover that never finished (the old member is still live in the slot): nothing changed, so the
+     slot is left alone and the host is told nothing.
+
+**Two joins waiting on one slot** (the same rejoin token from a reload or a second tab): the newer one
+replaces the older, which is closed with 4011, and the host's answer for that slot applies to the newer one.
 
 **Token takeover.** `HostRoster.handleHello` lets a token take over a slot that still reads connected; the
 server closes the old socket (4011) once the new member is admitted and ignores its later close, as
@@ -292,8 +305,9 @@ the server has it.) Each manager would need a "promote followers to authority" p
 
 - A closed room's code is tombstoned for 10 minutes, so a late rejoin attempt reads "room closed" instead
   of joining a stranger's new room.
-- Empty room (no live or pending members): closed at once. Lobby rooms with only the host and no match
-  for 2 hours: closed. Any room older than 12 hours: closed. All three send `roomClosed` first.
+- Empty room (no live or pending members): closed at once. Idle rooms: closed once the host has been
+  alone (no live or pending guest) and no `matchStart` was relayed for 2 hours (measured from the later
+  of the two). Any room older than 12 hours: closed. All three send `roomClosed` first.
 - `HNG_MAX_ROOMS` (default 50): above it `create` gets `rejected { reason: 'busy' }`.
 
 ## 5. Wire protocol
@@ -324,7 +338,7 @@ changes (unused: the silence sweep is host only). Update the "two sender slots" 
 | `joinRequest` | S to host | `slot`, `outcome`, `username`, `rejoinToken`, `features`, `peerId` | Host transport calls `onHostHello`. |
 | `joinAnswer` | host to S | `slot`, `welcome` or `reject` | |
 | `admitted` | S to host | `slot` | Host transport calls `onConnected(slot)`. |
-| `rejected` | S to C | `reason`: `notFound`, `full`, `outdated`, `busy` | Guest transport turns `full` and `outdated` into today's `roomFull` message plus close, `notFound` into `onError(..., 'roomNotFound')`. |
+| `rejected` | S to C | `reason`: `notFound`, `full`, `outdated`, `busy` | Then close 1000. Guest transport turns `full` and `outdated` into today's `roomFull` message plus close, `notFound` into `onError(..., 'roomNotFound')`. |
 | `kick` | host to S | `slot` | Close that member (4010), mark reserved. |
 | `memberLeft` | S to host | `slot` | `onPeerDisconnected(slot)`. |
 | `expired` | S to host | `slot` | `onReservationExpired(slot)`. |
@@ -335,17 +349,23 @@ changes (unused: the silence sweep is host only). Update the "two sender slots" 
 | `leave` | C to S | | Graceful leave (the socket close does the same). |
 
 Close codes: 4001 access denied, 4002 version mismatch, 4003 handshake timeout, 4004 room closed,
-4008 rate limited, 4009 slow consumer, 4010 kicked, 4011 replaced by a rejoin.
+4008 rate limited, 4009 slow consumer, 4010 kicked, 4011 replaced by a rejoin; 1000 after `rejected` or a
+`leave`. The shell (`Member.ts`) also uses the standard ones: 1001 server shutting down (sockets not in a
+room), 1003 a binary frame, 1008 a first frame that is not a hello, or a malformed hello, 1009 a frame
+over the sender's size cap (7.4). A hello is checked in this order: protocol version (4002), the IP's
+access block (4001; the code is not compared while blocked), the code (4001, counted as a failure).
 
 ### 5.3 Access control for an invite-only game
 
 **Recommended: a shared access code**, typed once per player in the Multiplayer menu, kept in
-`localStorage`, sent as `hello.access`. The server compares SHA-256 hashes with `crypto.timingSafeEqual`
+`localStorage`, sent as `hello.access` (the client trims it; the server trims each configured code too). The server compares SHA-256 hashes with `crypto.timingSafeEqual`
 against `HNG_ACCESS_CODES`, a comma-separated list in `/etc/hng-relay.env` (root, mode 600), so Gustav
 rotates by adding a code, telling friends, then removing the old one. No database; never in the repo or
 bundle (both public). Around it: the room code is a second secret; the `Origin` header must match
 `HNG_ALLOWED_ORIGINS` (the Pages site, its previews, `http://localhost:5173` in dev), which stops other
-websites but is no security boundary; failed attempts are limited per IP (5 a minute, then 10 minutes
+websites but is no security boundary (comma separated exact origins; `https://*.hunter-n-goose.pages.dev`
+matches one subdomain label, so previews pass; unset means the Pages site and its previews; a missing
+`Origin` is refused); failed attempts are limited per IP (5 a minute, then 10 minutes
 blocked). The runner-up, per-player tokens, wins only if a code keeps leaking or one person must be revoked.
 
 ### 5.4 Versioning
@@ -455,8 +475,10 @@ Why defer it:
   for up to `STALE_MS` (250 ms), so a rare stall is a small correction, not a freeze. Stage 1 measures how rare.
 - **Mitigation in WebSocket mode:** latest-wins skipping: above 64 KiB buffered for a recipient (the
   `FastChannel` threshold) the server skips `playerSnapshot` frames to it and keeps reliable ones.
-  `TCP_NODELAY` must be on: `ws` sets it (UNVERIFIED: confirm in its source, else call
-  `socket.setNoDelay(true)` on upgrade); Caddy is Go, whose TCP sockets default to no delay.
+  `TCP_NODELAY` must be on. Checked in `ws` 8.22.0 (the pinned version): `lib/websocket.js`, `setSocket`,
+  calls `socket.setNoDelay()` on every socket it takes over. `server/main.ts` also calls
+  `socket.setNoDelay(true)` on upgrade, so a future `ws` cannot silently drop it. Caddy is Go, whose TCP
+  sockets default to no delay.
 
 **When the runner-up wins:** stage 1 telemetry shows over 1 percent of snapshot gaps above 150 ms on real
 connections, or mobile and Wi-Fi players report stutter the TCP path explains. Then F2 adds a
@@ -471,7 +493,9 @@ connections, or mobile and Wi-Fi players report stutter the TCP path explains. T
   else `--experimental-strip-types`). This laptop runs Node 24.13.0. The shared files use only erasable
   syntax (no enums or namespaces found); `server/` keeps that rule (no enums, no parameter properties).
 - Dependencies: `ws` only (pure JavaScript, fine on ARM64; skip optional native `bufferutil`); dev
-  `@types/node`, `@types/ws`. None is in the repo today; pin exact versions when built.
+  `@types/node`, `@types/ws`. Pinned in `server/package.json`: `ws` 8.22.0, `@types/node` 24.19.2,
+  `@types/ws` 8.18.2 (8.22.1 was five days old when built; the rule is versions at least two weeks old).
+  `server/tsconfig.json` checks the server and the shared files without DOM (`npm run typecheck` runs it).
 - Layout, with a socket-free core so it is unit testable and portable:
 
 | File | Role |
@@ -480,7 +504,8 @@ connections, or mobile and Wi-Fi players report stutter the TCP path explains. T
 | `server/config.ts` | Parses env vars, fails fast on a missing `HNG_ACCESS_CODES`. |
 | `server/RoomRegistry.ts` | Codes, create, lookup, tombstones, cleanup timer. |
 | `server/Room.ts` | Members, `HostRoster`, admission flow, routing (`routing.ts`), `serverAccepts`, quality broadcast. Talks to members through a `MemberSocket` interface `{ send(text), close(code, reason), bufferedAmount }`. |
-| `server/Member.ts` | Wraps a `ws` socket: handshake state, rate limiter, RTT, ping. |
+| `server/Member.ts` | Wraps a `ws` socket: handshake (hello deadline, version, access block and code), one room per socket, the guest frame cap, lobby rate limit, protocol ping and pong. |
+| `server/clientIp.ts` | The client address: the socket's, or the last `X-Forwarded-For` entry only when the peer is 127.0.0.1 (Caddy); IPv6 grouped by /64 for the per-IP limits. |
 | `server/limits.ts` | Token buckets, per-IP counters. |
 | `server/log.ts` | JSON lines to stdout. |
 | `server/*.test.ts` | Vitest, Node environment. |
@@ -489,17 +514,19 @@ connections, or mobile and Wi-Fi players report stutter the TCP path explains. T
 
 JSON lines on stdout into journald (`SystemMaxUse=200M`): connect (IP), handshake result, room open and
 close (code, reason, lifetime), join, admit, reject, leave, kick, rate-limit drops (per minute), slow-consumer
-closes, errors. Never payloads or the access code. `/healthz` returns `{ ok, version, uptimeS, rooms, members }`.
+closes, errors. Never payloads or the access code: `log.ts` takes only flat fields, redacts keys that
+would carry a payload or a secret (`access`, `token`, `m`, `payload`, `welcome` and the like) and cuts every
+string at 120 characters; `server/log.test.ts` and `server/main.test.ts` check it. `/healthz` returns `{ ok, version, uptimeS, rooms, members }`.
 
 ### 7.4 Limits per connection
 
 | Limit | Value | Why |
 |---|---|---|
-| Frame size (`ws` `maxPayload`) | 64 KiB | The largest legitimate frame is a mid-match welcome (roster, scoreboard, up to 4096-character door and breaker strings, `valleyDoors`). A unit test builds the largest legal welcome and checks it fits. |
+| Frame size | guest 64 KiB, host 128 KiB (`ws` `maxPayload` is 128 KiB; `Member.ts` refuses a frame above 64 KiB from anyone but a room's host, close 1009) | The largest legitimate frame is the host's `joinAnswer` with a mid-match welcome: roster, scoreboard, 4096-character door and breaker strings, and up to 4096 `valleyDoors` and 4096 `deadLamps` ids (`isNetworkMessage` bounds both lists at `WORLD_WIRE_MAX_ENTRIES`, 4096, in a `welcome` as in a `worldObjectState`). With ten-digit ids that is about 100 KiB, above 64 KiB, hence the host's cap. `serverEnvelope.test.ts` builds the largest legal welcome and checks it fits 128 KiB (and not 64 KiB). |
 | Handshake deadline | 5 s | Close 4003. |
 | Guest rate | 150 frames/s sustained, burst 300; 64 KB/s | 30 snapshots, about 10 shots, footsteps, events. |
 | Host rate | 800 frames/s sustained, burst 1600; 512 KB/s | Goose and horde snapshots per live goose, sync bursts (`sendFullSync`). |
-| Over the rate | drop and count; over for 10 s in a row: close 4008 | Release 1 enforces generous caps and logs any member above 50 percent, to tighten after real matches. |
+| Over the rate | drop and count; over for 10 s in a row: close 4008 | "10 s in a row" means 10 consecutive whole seconds (counted from the member's start), each with at least one dropped frame. Byte buckets hold 2 s of the byte rate as their burst. "KB" in this table is read as KiB. Release 1 enforces generous caps and logs any member above 50 percent, to tighten after real matches. |
 | Slow consumer | skip snapshots above 64 KiB buffered; close 4009 above 4 MiB | |
 | Connections per IP | 8 | A household behind one address. |
 | Access failures per IP | 5 a minute, then 10 minute block | |
@@ -550,7 +577,8 @@ or TLS-ALPN on 443; WebSocket upgrades pass through). The relay URL is a committ
    `src/network/`, `src/core/config.ts`, `src/core/version.ts`, `src/combat/grenades/grenadeTuning.ts`);
    `npm ci --omit=dev` in `server/`.
 6. `/etc/hng-relay.env` (root, mode 600): `HNG_ACCESS_CODES`, `HNG_ALLOWED_ORIGINS`, `HNG_PORT=8080`,
-   `HNG_MAX_ROOMS`, `HNG_MAX_PLAYERS_PER_ROOM=4`, `HNG_LOG_LEVEL`.
+   `HNG_HOST=127.0.0.1` (the default; Caddy is in front), `HNG_MAX_ROOMS`, `HNG_MAX_PLAYERS_PER_ROOM=4`,
+   `HNG_LOG_LEVEL`. `server/config.ts` fails fast with a message naming any malformed variable.
 7. systemd `hng-relay.service`: `User=hng`, `EnvironmentFile=/etc/hng-relay.env`, `ExecStart=/usr/bin/node
    /opt/hng-relay/server/main.ts`, `Restart=always`, `RestartSec=1`, `MemoryMax=512M`, plus `NoNewPrivileges`,
    `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`.

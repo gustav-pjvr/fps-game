@@ -6,9 +6,11 @@ import {
   clampReportedRtt,
   encodeGameFrame,
   encodeServerFrame,
+  HOST_FRAME_MAX_BYTES,
   isClientGameFrame,
   parseClientFrame,
   SERVER_CLOSE,
+  SERVER_FRAME_MAX_BYTES,
   type ClientGameFrame,
   type ClientOp,
   type JoinAnswerOp,
@@ -269,7 +271,7 @@ export class Room {
         }
         return;
       }
-      const frame = parseClientFrame(text);
+      const frame = parseClientFrame(text, member.slot === HOST_SLOT ? HOST_FRAME_MAX_BYTES : SERVER_FRAME_MAX_BYTES);
       if (frame === null) {
         this.count('malformed');
         return;

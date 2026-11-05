@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import peerConnectionSource from './PeerConnection.ts?raw';
 import { towerDoorId } from '../world/houses/valleyHouseIds.ts';
-import { HELLO_TOKEN_MAX_LENGTH, HELLO_USERNAME_MAX_LENGTH, type NetworkMessage, type WelcomeMessage } from './protocol.ts';
+import { HELLO_TOKEN_MAX_LENGTH, HELLO_USERNAME_MAX_LENGTH, isNetworkMessage, WORLD_WIRE_MAX_ENTRIES, type NetworkMessage, type WelcomeMessage } from './protocol.ts';
 import {
   ACCESS_CODE_MAX_LENGTH,
   clampReportedRtt,
   encodeClientFrame,
   encodeGameFrame,
   encodeServerFrame,
+  HOST_FRAME_MAX_BYTES,
   parseClientFrame,
   QUALITY_RTT_MAX_MS,
   ROOM_CODE_ALPHABET,
@@ -23,9 +24,10 @@ const snapshot: NetworkMessage = { type: 'playerSnapshot', senderSlot: 1, x: 1, 
 const bytes = (text: string): number => new TextEncoder().encode(text).length;
 
 describe('serverEnvelope: constants', () => {
-  it('is protocol version 1 with a 64 KiB frame cap', () => {
+  it('is protocol version 1 with a 64 KiB guest frame cap and a 128 KiB host frame cap', () => {
     expect(SERVER_PROTOCOL_VERSION).toBe(1);
     expect(SERVER_FRAME_MAX_BYTES).toBe(65_536);
+    expect(HOST_FRAME_MAX_BYTES).toBe(131_072);
   });
 
   it('uses the same room code alphabet and length as generateRoomCode', () => {
@@ -66,6 +68,9 @@ describe('parseClientFrame: refusals', () => {
     expect(parseClientFrame(42)).toBeNull();
     const oversize = JSON.stringify({ m: { ...snapshot, pad: 'x'.repeat(SERVER_FRAME_MAX_BYTES) } });
     expect(parseClientFrame(oversize)).toBeNull();
+    // The host's own limit is passed in; past it the host is refused too.
+    expect(parseClientFrame(oversize, HOST_FRAME_MAX_BYTES)).not.toBeNull();
+    expect(parseClientFrame(JSON.stringify({ m: { ...snapshot, pad: 'x'.repeat(HOST_FRAME_MAX_BYTES) } }), HOST_FRAME_MAX_BYTES)).toBeNull();
   });
 
   it('refuses an unknown op, a frame with both op and m, and extra fields', () => {
@@ -163,7 +168,7 @@ describe('serverEnvelope: helpers and encoders', () => {
   });
 });
 
-describe('serverEnvelope: the largest legal mid-match welcome fits in one frame', () => {
+describe('serverEnvelope: the largest legal mid-match welcome fits in one host frame', () => {
   const name = 'W'.repeat(HELLO_USERNAME_MAX_LENGTH);
   const peerId = '01234567-89ab-cdef-0123-456789abcdef';
   // The largest id the Valley door wire carries: the last watch tower door, ten digits.
@@ -188,21 +193,32 @@ describe('serverEnvelope: the largest legal mid-match welcome fits in one frame'
     },
   });
   const frameBytes = (message: WelcomeMessage) => Math.max(bytes(encodeGameFrame(3, message)), bytes(encodeClientFrame({ op: 'joinAnswer', slot: 3, welcome: message })));
+  const full = Array(WORLD_WIRE_MAX_ENTRIES).fill(largestDoorId) as number[];
 
-  it('4096-character door and breaker strings plus 4096 ten-digit valleyDoors fit, both as joinAnswer and as delivered', () => {
+  it('every list at its bound (4096-character door and breaker strings, 4096 ten-digit valleyDoors and deadLamps) fits the host frame', () => {
     expect(largestDoorId).toBeGreaterThanOrEqual(1e9);
-    const message = bigWelcome({ doors: '1'.repeat(4096), breakers: '0'.repeat(4096), valleyDoors: Array(4096).fill(largestDoorId) }, []);
-    expect(frameBytes(message)).toBeLessThanOrEqual(SERVER_FRAME_MAX_BYTES);
-    expect(parseClientFrame(encodeClientFrame({ op: 'joinAnswer', slot: 3, welcome: message }))).not.toBeNull();
+    expect(Number.isSafeInteger(largestDoorId)).toBe(true);
+    const message = bigWelcome({ doors: '1'.repeat(WORLD_WIRE_MAX_ENTRIES), breakers: '0'.repeat(WORLD_WIRE_MAX_ENTRIES), valleyDoors: full }, full);
+    expect(isNetworkMessage(message)).toBe(true);
+    // Above the guest cap, which is why the host gets its own.
+    expect(frameBytes(message)).toBeGreaterThan(SERVER_FRAME_MAX_BYTES);
+    expect(frameBytes(message)).toBeLessThanOrEqual(HOST_FRAME_MAX_BYTES);
+    const answer = encodeClientFrame({ op: 'joinAnswer', slot: 3, welcome: message });
+    expect(parseClientFrame(answer, HOST_FRAME_MAX_BYTES)).not.toBeNull();
+    expect(parseClientFrame(answer)).toBeNull();
   });
 
-  it('on the Facility, full door and breaker strings plus 4096 dead lamp indices fit', () => {
-    const message = bigWelcome({ doors: '1'.repeat(4096), breakers: '1'.repeat(4096) }, Array.from({ length: 4096 }, (_, i) => i));
-    expect(frameBytes(message)).toBeLessThanOrEqual(SERVER_FRAME_MAX_BYTES);
-  });
-
-  it('on the Valley, 4096 ten-digit valleyDoors leave room for at least 512 ten-digit dead lamp ids', () => {
-    const message = bigWelcome({ doors: '', breakers: '', valleyDoors: Array(4096).fill(largestDoorId) }, Array(512).fill(largestDoorId));
-    expect(frameBytes(message)).toBeLessThanOrEqual(SERVER_FRAME_MAX_BYTES);
+  it('a welcome over a bound is not legal: 4097 deadLamps, 4097 valleyDoors, a 4097-character door string, a bad lamp id', () => {
+    const doors = { doors: '', breakers: '' };
+    expect(isNetworkMessage(bigWelcome(doors, [...full, 1]))).toBe(false);
+    expect(isNetworkMessage(bigWelcome({ ...doors, valleyDoors: [...full, 1] }, []))).toBe(false);
+    expect(isNetworkMessage(bigWelcome({ doors: '1'.repeat(WORLD_WIRE_MAX_ENTRIES + 1), breakers: '' }, []))).toBe(false);
+    expect(isNetworkMessage(bigWelcome(doors, [-1]))).toBe(false);
+    expect(isNetworkMessage(bigWelcome(doors, [1.5]))).toBe(false);
+    expect(isNetworkMessage(bigWelcome({ doors: 'x', breakers: '' }, []))).toBe(false);
+    // Missing lists are still fine (older builds, a lobby welcome).
+    const { deadLamps: _lamps, worldObjects: _objects, ...bare } = bigWelcome(doors, []).activeMatch ?? {};
+    expect(isNetworkMessage({ ...bigWelcome(doors, []), activeMatch: bare })).toBe(true);
+    expect(isNetworkMessage(welcome(1))).toBe(true);
   });
 });

@@ -22,9 +22,13 @@ import {
 /** Bumped only when the envelope or a server rule breaks compatibility (section 5.4). */
 export const SERVER_PROTOCOL_VERSION = 1;
 
-/** Largest frame either side may send (section 7.4); the socket layer enforces it in bytes, and
- * parseClientFrame checks the text length again so the core never relies on the shell alone. */
+/** Largest frame a guest (or a socket not yet in a room) may send (section 7.4); the socket layer
+ * enforces it in bytes, and parseClientFrame checks the text length again so the core never relies
+ * on the shell alone. */
 export const SERVER_FRAME_MAX_BYTES = 64 * 1024;
+/** Largest frame a host may send: its joinAnswer carries the mid-match welcome, whose largest legal
+ * form (4096-entry door, breaker, valleyDoors and deadLamps lists) is above 64 KiB. */
+export const HOST_FRAME_MAX_BYTES = 128 * 1024;
 
 /** Room codes keep today's format (section 4.1): PeerConnection's generateRoomCode alphabet. */
 export const ROOM_CODE_LENGTH = 6;
@@ -171,9 +175,10 @@ function parseOp(value: Fields): ClientOp | null {
 }
 
 /** Parse one text frame from a client. Returns null for anything that is not exactly a known op
- * or a game frame `{ m, to? }` whose `m` passes isNetworkMessage and whose `to` is a slot. */
-export function parseClientFrame(text: unknown): ClientFrame | null {
-  if (typeof text !== 'string' || text.length === 0 || text.length > SERVER_FRAME_MAX_BYTES) return null;
+ * or a game frame `{ m, to? }` whose `m` passes isNetworkMessage and whose `to` is a slot, or that
+ * is longer than `maxLength` (HOST_FRAME_MAX_BYTES for the host, else the guest limit). */
+export function parseClientFrame(text: unknown, maxLength: number = SERVER_FRAME_MAX_BYTES): ClientFrame | null {
+  if (typeof text !== 'string' || text.length === 0 || text.length > maxLength) return null;
   let value: unknown;
   try {
     value = JSON.parse(text);

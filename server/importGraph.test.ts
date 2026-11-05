@@ -1,12 +1,13 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
  * The relay must never pull in Three.js, Rapier, PeerJS or the DOM (docs/server-relay-design.md,
- * section 3.3). This walks the static runtime imports from the server core and fails on any file
- * outside the allowlist, on any bare import other than node:*, and on any dynamic import.
+ * section 3.3). This walks the static runtime imports from server/main.ts, the process entry, and
+ * fails on any file outside the allowlist, on any bare import other than `ws` and node:*, and on any
+ * dynamic import.
  */
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,6 +23,9 @@ const SHARED_ALLOWLIST = new Set([
   'src/core/version.ts',
   'src/combat/grenades/grenadeTuning.ts',
 ]);
+
+/** The one package the relay may import (section 7.2). */
+const ALLOWED_PACKAGES = new Set(['ws']);
 
 const isAllowed = (file: string): boolean => SHARED_ALLOWLIST.has(file) || (/^server\/[A-Za-z0-9]+\.ts$/.test(file) && !file.endsWith('.test.ts') && file !== 'server/testSupport.ts');
 
@@ -58,7 +62,7 @@ function walk(entries: string[]): { files: Set<string>; problems: string[] } {
     for (const specifier of specifiers) {
       if (specifier.startsWith('.')) {
         queue.push(relative(repoRoot, resolve(repoRoot, dirname(file), specifier)).replaceAll('\\', '/'));
-      } else if (!specifier.startsWith('node:')) {
+      } else if (!specifier.startsWith('node:') && !ALLOWED_PACKAGES.has(specifier)) {
         problems.push(`bare import '${specifier}' in ${file}`);
       }
     }
@@ -67,18 +71,37 @@ function walk(entries: string[]): { files: Set<string>; problems: string[] } {
 }
 
 describe('server import graph', () => {
-  it('reaches only the section 3.3 allowlist from Room.ts and RoomRegistry.ts', () => {
-    const { files, problems } = walk(['server/Room.ts', 'server/RoomRegistry.ts']);
+  it('reaches only the section 3.3 allowlist from server/main.ts', () => {
+    const { files, problems } = walk(['server/main.ts']);
     expect(problems).toEqual([]);
-    // The walk really followed the graph down to the shared leaves.
-    for (const file of ['src/network/protocol.ts', 'src/network/HostRoster.ts', 'src/core/config.ts', 'src/core/version.ts', 'src/combat/grenades/grenadeTuning.ts', 'src/network/serverEnvelope.ts', 'server/limits.ts']) {
+    // The walk really followed the graph through the shell and down to the shared leaves.
+    for (const file of [
+      'server/Member.ts',
+      'server/config.ts',
+      'server/log.ts',
+      'server/clientIp.ts',
+      'server/access.ts',
+      'server/Room.ts',
+      'server/RoomRegistry.ts',
+      'server/limits.ts',
+      'src/network/protocol.ts',
+      'src/network/HostRoster.ts',
+      'src/network/routing.ts',
+      'src/network/senderAuthority.ts',
+      'src/network/serverEnvelope.ts',
+      'src/core/config.ts',
+      'src/core/version.ts',
+      'src/combat/grenades/grenadeTuning.ts',
+    ]) {
       expect(files).toContain(file);
     }
     expect(files).not.toContain('src/core/gameModes.ts');
   });
 
-  it('the server files outside the graph (access.ts) obey the same rules', () => {
-    expect(walk(['server/access.ts']).problems).toEqual([]);
+  it('every server source file is reached from main.ts (none can dodge the walk)', () => {
+    const { files } = walk(['server/main.ts']);
+    const sources = readdirSync(resolve(repoRoot, 'server')).filter((name) => /^[A-Za-z0-9]+\.ts$/.test(name) && !name.endsWith('.test.ts') && name !== 'testSupport.ts');
+    for (const name of sources) expect(files).toContain(`server/${name}`);
   });
 
   it('reads import statements the way the type stripper runs them', () => {
@@ -103,5 +126,11 @@ describe('server import graph', () => {
     expect(isAllowed('server/Room.test.ts')).toBe(false);
     expect(isAllowed('server/deploy/thing.ts')).toBe(false);
     expect(isAllowed('server/Room.ts')).toBe(true);
+    expect(walk(['server/testSupport.ts']).problems).toContain('not allowed: server/testSupport.ts');
+  });
+
+  it('allows the ws package and node built-ins, and nothing else bare', () => {
+    expect(ALLOWED_PACKAGES).toEqual(new Set(['ws']));
+    expect(runtimeImports(["import { WebSocketServer } from 'ws';", "import type { RawData } from 'ws';"].join('\n')).specifiers).toEqual(['ws']);
   });
 });
