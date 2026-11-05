@@ -1,6 +1,8 @@
-# Underground lab under the watch towers (design, proposed for v4.7.0)
+# Underground lab under the watch towers (v4.7.0: design, then as built)
 
-Status: design approved by Gustav, 2026-11-05 (decisions in section 8). Building in phases.
+Status: Built, release v4.7.0. The design below was approved by Gustav on 2026-11-05 (decisions in
+section 8) and is kept as written. Section 9 records what shipped, file by file, and where it differs
+from the design. Where the two disagree, section 9 and the code are right.
 
 Gustav's brief: the door on each tower's core becomes a real door into an extremely simple, old
 looking room. From it, dark stairs go down about three flights, extending the map downwards, and
@@ -203,3 +205,171 @@ Tower placement does not change, so every existing map keeps its towers where th
 2. A full lab under every tower, the same plan with seeded variety.
 3. Mode rules as in section 5: no King of the Hill points underground; uplinks and extraction only
    count on the surface.
+
+## 9. As built (v4.7.0)
+
+The branch is `feature/underground-lab`, built in phases A1 to A3 (cut zones, tower room and door, light),
+B (lab interior), C1 to C3 (rules, sound, minimap, browser specs) and two audit fix rounds. Every row
+below names its file. Architecture notes for each area are in `docs/architecture/world-and-combat.md`
+(section 1.7), `core.md` and `multiplayer-and-modes.md`.
+
+### 9.1 What shipped, file by file
+
+| File | What it does |
+|---|---|
+| `src/world/underground.ts` | The module state and its queries. Up to four terrain cut zones (`setCutZones` throws on a fifth), the set of terrain collider handles, the registered underground volumes. `inCutZone(x, z, margin)`, `isUnderground`, `isBelowGround`, `inUndergroundVolume`, `pointInUndergroundVolume`, `floorBelow(world, x, y, z)`, `castRaySkippingCuts` (skips a terrain hit inside a cut zone, up to three times per ray), the shared `cutZoneUniforms`, and `clearUnderground()` for `Game.create` and `Game.dispose` |
+| `src/world/towerUnderground.ts` | `buildTowerLab(index, position, orientation, flights, kind)` builds one lab as boxes in the tower's frame (parts, walk route, volumes, footprints, lamps). `computeTowerLabs()` is the memoised per-seed solver. Also `towerDoorPlane(id)`, `labsClear`, `labInsideWorld`, `lowestCoverHeight` |
+| `src/world/labInterior.ts` | `buildLabInterior(kind, seed)`: a pure description of the furnished rooms for the kinds `full`, `compact` and `ground` (the old room). `LAB_INTERIOR_SEED_OFFSET` is 719. `createLabInteriorVisual` draws all of it as one mesh per material (14 materials), with the bobbing specimens and the pulsing reactor cores and bulb |
+| `src/world/undergroundLights.ts` | The look: `undergroundLightTarget`, `easeUndergroundAmount`, `undergroundLook`, `UNDERGROUND_FOG_COLOR`. Culling: `undergroundVisible`. The fixed pool of three lab lights: `UndergroundLights` |
+| `src/world/towerDesign.ts` | `towerParts(orientation)` now has the hollow ground room (solid core from 3 m up, four 0.3 m walls, a doorway in the east wall, floor slabs round the stair hole). `TowerOrientation`, `towerRotation`, `towerStairLane`. The painted steel plate on the east face is gone (the real door replaces it) and the contact shadow has a square hole over the core |
+| `src/world/WatchTowerManager.ts` | The constructor sets the cut zones and registers every lab volume once (they outlive chunk streaming). `createTower` adds the lab colliders next to the tower's, builds the hidden `tower-underground` group and registers the door. `getUndergroundTowers` and `getUndergroundLamps` feed `Game` without allocating each frame |
+| `src/world/houses/valleyHouseIds.ts`, `src/world/houses/ValleyDoors.ts` | Tower door ids and the door itself (section 9.3) |
+| `src/core/facilityInteraction.ts` | `enemyGate` holds an enemy at a tower door without ever opening it |
+| `src/world/Chunk.ts`, `src/world/terrainSplat.ts` | Each chunk's heightfield collider is registered as terrain; the terrain shader discards fragments inside the cut zones |
+| `src/entities/Player.ts` | Inside a cut zone the character controller's filter predicate ignores terrain colliders |
+| `src/combat/hitscan.ts`, `src/combat/grenades/GrenadeSystem.ts`, `grenadeFlight.ts`, `src/entities/ThrownGoose.ts` | Rays and shape casts look past a terrain hit inside a cut zone; the grenade floor callback is `(x, y, z)` |
+| `src/entities/AmmoDropManager.ts`, `src/entities/enemies/playerVisibility.ts` | Ammo crates for an underground player land inside the player's volume; underground counts as an unlit room |
+| `src/render/Flashlight.ts` | The torch rules (section 9.4) |
+| `src/core/Game.ts` | `updateUndergroundLight` each render, the torch gate, fall recovery, the Director, mission, minimap and ambience inputs, the match start precompile, `clearUnderground` in create and dispose, the debug hooks |
+| `src/core/valleyFallRecovery.ts` | The pure fall check (section 9.5) |
+| `src/core/mission/missionState.ts`, `src/core/modeControllers/KingOfTheHillController.ts`, `src/entities/enemies/director/pacingDirector.ts` | Mode rules (section 9.6) |
+| `src/pickups/valleyPickupInputs.ts`, `pickupPlacement.ts`, `pickupConfig.ts`, `PickupSystem.ts`, `createMatchPickups.ts` | Lab pickup sites and the height checked claim (section 9.7) |
+| `src/audio/ambience.ts`, `src/audio/SoundEngine.ts`, `src/core/positionalAudio.ts`, `src/network/MatchMessageRouter.ts` | Reactor hum, darker echo, and the muffle across the surface boundary (section 9.8) |
+| `src/ui/minimap.ts` | A player who is below ground is a hollow ring (section 9.8) |
+| `src/core/gameDebugApi.ts` | `getUndergroundDebug()` and `setTowerDoor(index, open)` for the specs |
+| `e2e/underground.spec.ts`, `e2e/multiplayer-underground.spec.ts`, `scripts/e2eGroups.mjs` | Browser specs, in the `world` and `mp` groups (`docs/testing.md`) |
+| `src/world/underground.test.ts`, `towerUnderground.test.ts`, `labInterior.test.ts`, `undergroundLights.test.ts`, `src/core/valleyFallRecovery.test.ts`, and additions to the tests beside the files above | The unit tests of section 7, plus the walk, enclosure and door tests |
+
+### 9.2 Where it differs from the design above
+
+- **Two predicates, not one.** `isUnderground(x, y, z)` is true inside any registered volume (the
+  ground room's column included) or inside a cut zone below 3.2 m over the terrain. It drives light,
+  the torch and `floorBelow`. `isBelowGround(x, y, z)` is stricter: a volume at least 1 m below its
+  tower's ground level (`registerUndergroundVolume` stores `groundY`). It drives every rule and sound
+  (King of the Hill, the mission, the Director, enemy perception, the minimap, the muffle, the
+  ambience, ammo crate placement). So the daylit ground room never counts as "down" for a rule.
+- **The room is half dark.** `undergroundLightTarget` is 1 below ground, 0.6 in the ground room and
+  the first part of the first flight, 0 outdoors. The room keeps some outdoor fill; stairs and labs
+  get the full buried look (sun, fill and environment scaled by `1 - 0.95 * amount`).
+- **Fog is cold and close.** At full strength fog runs from 4 m to 40 m in
+  `UNDERGROUND_FOG_COLOR` (0x0a1312, a cold near black), blended from the weather's haze colour.
+- **Depth.** The first floor is 3.85 m under the tower's ground and each extra flight adds 3 m, so a
+  three flight lab floor is 9.85 m down (not "about 9"), four flights 12.85 m, five 15.85 m. The
+  solver tries 3, 4 then 5 flights. A lab is entered by a flight from the room (D1) that leaves the
+  core's footprint along the stair lane, then switchbacks in a stairwell 9.6 m wide by 6 m deep.
+- **Lab sizes.** The full lab is 26 by 18 m and 6 m high, the compact lab 10 by 8 m. A one metre
+  entry corridor joins the stairwell to the lab.
+- **The dead end is a sealed landing.** Kind `dead-end` has one flight and a walled landing with a low
+  roof. There is no flooding.
+- **Fallback rates.** The 500 seed sweep (`towerUnderground.test.ts`, 2000 towers) measured on
+  2026-11-05: 1912 full labs (95.6 percent), 77 compact (3.85 percent, about 4), 11 dead ends
+  (0.55 percent). The test fails below 95 percent full.
+- **Director wait.** The Director holds only after every living player has been below ground for 3
+  seconds in a row (`PacingDirector.undergroundSeconds`), so a quick dip does not pause it.
+- **Pickup claims.** The host grants a claim within 4 m horizontally (`PICKUP_CLAIM_TOLERANCE`) and 3 m
+  vertically of the pickup centre (the site's floor plus `PICKUP_HOVER_HEIGHT`), not 4 m flat.
+- **Goose Horde needs no code of its own.** Geese follow the surface (`sampleHeight`) and chase the
+  player's x and z, so they gather over the tower while players are down and a wave cannot be cleared
+  from below; nothing in `HordeGooseManager` or `GooseManager` reads the underground state. Tree trunk clipping (section 3.3) was not needed: every lab keeps at least 1 m of
+  cover under the lowest terrain over its footprint, and trunks start at the surface.
+- **Outdoor ambience.** The design said "outdoor ambience fades". There is no separate outdoor bed to
+  fade, so the engine raises the reverb send by up to 60 percent and closes its low-pass filter
+  instead (section 9.8).
+
+### 9.3 Tower doors
+
+- **Ids.** `towerDoorId(index)` is `TOWER_DOOR_BASE + index`, where the base is 4096 * 4096 * 64 * 4 =
+  2^32, above every house id. `towerIndexFromDoorId` returns the index for the four valid ids and null
+  otherwise (`src/world/houses/valleyHouseIds.ts`).
+- **Validation.** The wire carries the id in the existing `worldInteract` and `worldObjectState`
+  messages. `protocol.ts` only checks a non-negative integer. The real check is
+  `ValleyDoors.state.has`, which resolves a house id through its lookup and any other id through
+  `towerDoorPlane`, and so accepts only the four tower doors. `parseWire` rejects a whole list that
+  holds an id that is not a real door.
+- **Late joiners.** The open state is in the host's `wire().valleyDoors` list, which the welcome
+  message carries, and a door's state is kept while its tower is streamed out. `ValleyDoors.addTowerDoor`
+  and `removeTowerDoor` keep a per-world registry, so the order in which the towers and the door
+  manager are built does not matter.
+- **Enemies.** `closedDoorAhead` reports a tower door even when it is open, and
+  `FacilityInteraction.enemyGate` then returns true without starting the open timer. Enemies wait at
+  the doorway and never open or pass it.
+
+### 9.4 Light, torch and precompile
+
+- **Torch.** `Flashlight.ts`: the Valley always creates a torch. `torchAvailable(map, weather,
+  underground)` is true on the Facility, at Night and Fog, and at Dusk only where `isUnderground` is
+  true. `Game` switches the torch off the moment it is not available and ignores the toggle there. It
+  starts off at Dusk (`torchOnByDefault` is unchanged).
+- **Dusk torch.** At Dusk the torch has no shadow (`torchCastsShadow` is false there) and no remote
+  torch pool exists (`remoteTorchesAvailable` is false). A remote player's torch lens still shows
+  when that player is underground (`MatchMessageRouter`), but it casts no beam on your screen.
+- **Lights.** `UndergroundLights` creates three point lights (colour 0xffd49a, range 14, intensity 6
+  when used) in the `Game` constructor on every Valley match. Each frame they move to the three lamps
+  nearest the camera within 30 m, and park at intensity 0 when none is.
+- **Culling.** A tower's `tower-underground` group is visible only within 45 m (horizontally) of the
+  tower, and only when the fade amount is above 0 or the camera is within 8 m of the door.
+- **Precompile.** At the end of `Game.create` every lab group is made visible, `renderer.webgl.compile`
+  runs once, and the visibility is put back, so the first descent does not stall on shader compiles.
+
+### 9.5 Falling out of the map
+
+`valleyFallRecovery(position, terrainHeight, towers)` returns a safe spot when the local player is more
+than 25 m below the nearest tower's lab floor, or more than 60 m below the terrain anywhere. The spot
+is 4.5 m east of that tower's centre (the doorway face, clear of the door leaves) at the terrain
+height plus 2 m. `Game.update` runs it every tick on the Valley, teleports the player, and in
+multiplayer sends a `respawnEvent` so others see the move.
+
+### 9.6 Mode rules as built
+
+- **King of the Hill.** `KingOfTheHillController.update` adds no hold time while `isBelowGround`. The
+  goose is still carried, and the timer carries on when the player comes up.
+- **Uplink mission.** `MissionInput.underground` stops starting an uplink, stops the uplink hold
+  timer, resets the extraction count (as stepping out of the ring does), hides the START or RESUME
+  prompt, and shows the active uplink as paused (`MissionState.view(player, underground)`). The death
+  screen passes `false`.
+- **Director.** `DirectorSignals.allPlayersUnderground` comes from `Game.updateDirector`: living
+  players only, and only if at least one is alive. After 3 seconds of it the Director switches to
+  `relax` (an existing relax clock is kept), sends no waves and advances no phase clock. On the
+  surface the relax clock runs again and the Director carries on from there.
+- **Enemy perception.** `visibility()` treats an underground player as in an unlit room in every
+  weather.
+
+### 9.7 Lab pickups
+
+A full lab has three pickup sites (health, ammo, grenade), a compact lab one (ammo), a dead end none
+(`PICKUP_LAB_KINDS`). The sites are `LabInterior.pickupSites`, in the lab's frame, clear of every
+interior solid. `gatherLabPickupSites` puts them in world space at the lab's floor height, and
+`placeValleyPickups` appends them after the surface sites, so no surface id changes. A mode that does
+not allow a kind drops those sites, and the lab ids stay contiguous. The host's claim check uses the
+claimant's height too (`PickupSystem.handleMessage`), so a guest on the surface above a lab pickup
+cannot take it. Solo walk-over keeps its 1.6 m vertical reach.
+
+### 9.8 Sound and the minimap
+
+- **Reverb.** `undergroundReverbScale(amount)` scales the reverb send by up to 1.6, and the reverb
+  low-pass moves from 14,000 Hz to 1,800 Hz. `Game` reports an amount only while the player is below
+  ground (the ground room stays outdoors for sound).
+- **Reactor hum.** Two sine tones at 48 and 50 Hz plus low-passed noise, built on first need
+  (`buildReactorHum`). `reactorHumGain(distance)` is full inside 4 m and fades smoothly to silence at
+  22 m from the nearest reactor core of the lab the player is in. It follows the music volume setting.
+- **Muffle.** `undergroundMuffleFactor(listenerBelowGround, sourceBelowGround)` is 0.35 when the two
+  are on different sides of the surface, else 1. It scales enemy and remote gunshots, remote
+  footsteps, goose and horde explosions, thrown goose blasts and frag and flash grenade sounds.
+- **Minimap.** `Minimap.update` takes `MinimapPlayerDot` entries (`x`, `z`, `underground`) and a
+  `localUnderground` flag. Below ground a dot is a ring with the same colour and footprint
+  (`minimapDotStyle`), and the local player gets a ring at the centre while the forward wedge stays,
+  so facing is still readable.
+
+### 9.9 Debug hooks and tests
+
+- `window.__gameDebug.getUndergroundDebug()` returns `{ amount, underground, torchAvailable, labs }`,
+  each lab with `index`, `kind`, `x`, `z`, `groundY`, `floorY`, `doorId` and `route` (floor points in
+  world coordinates). `setTowerDoor(index, open)` asks for a tower door through the same rules as a key
+  press. The specs teleport the capsule centre 1 m above a route point.
+- Unit tests: the seed sweep, headroom, enclosure and walk tests are in
+  `src/world/towerUnderground.test.ts`; rays, floors, ammo crates and visibility in
+  `underground.test.ts`; interiors and furnished routes in `labInterior.test.ts`; look, pool and
+  culling in `undergroundLights.test.ts`; claims in `PickupSystem.test.ts` and
+  `pickupPlacement.test.ts`.
+- Browser: `e2e/underground.spec.ts` (group `world`) and `e2e/multiplayer-underground.spec.ts` (group
+  `mp`), described in `docs/testing.md`.

@@ -54,8 +54,25 @@ match builds the same list and the wire only carries indices. The seed is offset
 
 ## Lab pickups
 
-Full labs add three pickups, compact labs add one, and dead ends add none. Their ids follow the
-surface sites; each mode still filters out pickup kinds it does not allow.
+Full labs add three pickups, compact labs add one, and dead ends add none (`PICKUP_LAB_KINDS` in
+`pickupConfig.ts`). Their ids follow the surface sites; each mode still filters out pickup kinds it
+does not allow.
+
+- **Where.** The sites come from `LabInterior.pickupSites` (`world/labInterior.ts`), in the lab's own
+  frame and clear of every interior solid (a unit test checks a player-sized box at each site against
+  every collider, for 32 seeds). A full lab has health in the test wing, ammo beside the control
+  consoles and a grenade crate in the reactor hall between the reactors. A compact lab has one ammo
+  box in front of its tanks. The ground room has none.
+- **How they join the list.** `gatherLabPickupSites` (`valleyPickupInputs.ts`) turns each site into a
+  world position at the lab's floor height, and `placeValleyPickups` appends the ones whose kind the
+  mode allows after the surface sites, so a surface id never changes and the lab ids stay contiguous.
+  All four towers give at most 12, so the list stays inside the wire's 0 to 255 id bound.
+- **Reach.** Solo walk-over keeps its 1.4 m horizontal and 1.6 m vertical reach, measured to the
+  centre (floor plus 0.7 m hover). A multiplayer claim is also checked by the host for height:
+  within 4 m horizontally and 3 m vertically (`PickupSystem.handleMessage`, `opponentPosition` carries
+  `y`). A guest standing on the surface above a lab pickup cannot take it.
+- **Same rules as the surface.** Respawn timers, `wouldGive` and the messages are unchanged. Only the
+  Valley has lab pickups.
 
 ## Sync
 
@@ -85,6 +102,8 @@ All in `src/pickups/pickupConfig.ts`:
 | `PICKUP_GRENADE_AMOUNT`, `PICKUP_GRENADE_CAP` | 1, 3 |
 | `PICKUP_RADIUS`, `PICKUP_VERTICAL_REACH` | 1.4 m, 1.6 m |
 | `PICKUP_CLAIM_TOLERANCE`, `PICKUP_CLAIM_RESEND_SECONDS` | 4 m, 0.6 s |
+| Host claim height allowance (literal 3 in `PickupSystem.handleMessage`) | 3 m |
+| `PICKUP_LAB_KINDS` | full: health, ammo, grenade; compact: ammo; dead end: none |
 | `PICKUP_RESPAWN_SECONDS` | health 30, ammo 25, grenade 45 |
 | `PICKUP_MIX` | 0.45 / 0.4 / 0.15 |
 | `PICKUP_FACILITY_PER_ROOM`, `_MIN_SPACING`, `_CLEARANCE` | 1.3 / 1 / 1 / 0.7, 3 m, 0.6 m |
@@ -112,6 +131,9 @@ All in `src/pickups/pickupConfig.ts`:
 - Unit: `pickupPlacement`, `pickupState`, `pickupEffects`, `PickupSystem` tests beside the code,
   `Weapon.test.ts` (ammo box), `protocol.test.ts` (message validation) and `gameModes.test.ts`
   (grenades off).
+- Lab pickups: `pickupPlacement.test.ts` (lab sites are appended without moving any surface site, the count per
+  lab kind, sites clear of every interior solid) and `PickupSystem.test.ts` (the claim tolerances, and a lab pickup
+  granted from the lab floor but refused from the surface above it).
 - e2e: `e2e/pickups.spec.ts` (group `pickups`, also run with `facility`). Debug hooks in
   `gameDebugApi.ts`: `getPickups()` and `setPickupRespawnSeconds(seconds)`; the spec hurts the
   player with `damagePlayer`, teleports onto a pack and waits out a shortened timer.

@@ -98,7 +98,7 @@ All messages are one discriminated union, `NetworkMessage` in `src/network/proto
 | Goose Horde | `hordeGoose*`, `hordeWaveStarted`, `hordeCleared`, `hordeReset`, `hordeAmmoDrop*`, `hordePlayerEliminated`, `hordeSyncRequest`, `hordeSyncState` | Host simulates the flock and waves. `hordePlayerEliminated` and `hordeAmmoDropPickedUp` are self-reported and relayed. |
 | Bonus goose | `bonusGooseSpawned`, `bonusGooseSnapshot`, `bonusGooseHitEvent`, `bonusGooseKilled` | Host-authoritative. The guest reports its hit; the host credits the killer. |
 | Grenades | `grenadeThrown`, `grenadeDetonated` | Thrower-authoritative, relayed. Frag damage travels as `damageEvent` with `weaponId: 'frag'`. |
-| World objects | `worldInteract`, `worldObjectState`, `lampDestroyed`, `lampSync` | Doors and breakers are host-authoritative (guest asks, host checks reach and broadcasts the whole state). Lamps are self-reported and relayed. |
+| World objects | `worldInteract`, `worldObjectState`, `lampDestroyed`, `lampSync` | Doors and breakers are host-authoritative (guest asks, host checks reach and broadcasts the whole state). The Valley's watch tower doors ride the same two messages (see "Underground" in section 4). Lamps are self-reported and relayed. |
 | Pickups | `pickupClaim`, `pickupTaken`, `pickupRespawned`, `pickupSyncRequest`, `pickupState` | Host-authoritative, never relayed (`src/pickups/PickupSystem.ts`, `docs/pickups.md`). |
 | Direct links | `meshHello`, `meshStatus`, `linkQuality` | Connection layer only. `meshStatus` is consumed in `PeerConnection` and never routed. |
 | Briefing | `modeExplanationReady` | Self-reported, relayed; every client dismisses the briefing when all slots are ready. |
@@ -240,6 +240,37 @@ Details that are easy to miss:
   does not apply on the Facility; the Facility's horde geese enter through rooms (`src/world/facility/facilityModes.ts`).
 - **Grenades.** `grenadesEnabled(mode)`: on in Default, King of the Hill, Goose Horde and the solo modes; off in
   Knife Only, Gun Game, Sniper Duel, 1 Shot 1 Kill and Goose Toss.
+- **Underground (Valley).** Each watch tower has a door to a ground room and a lab (`docs/underground-lab.md`,
+  section 9). It is open in every mode and needs no new message type. The rules below use
+  `isBelowGround(x, y, z)` (`src/world/underground.ts`): a volume at least 1 m under its tower's ground, so the
+  ground room does not count.
+  - *Door ids.* `towerDoorId(index)` is `2^32 + index` for the four towers (`src/world/houses/valleyHouseIds.ts`,
+    `TOWER_DOOR_BASE`), above every house id, and `towerIndexFromDoorId` is null for any other id. Ids travel in
+    `worldInteract` and `worldObjectState` unchanged. `protocol.ts` only bounds them as non-negative integers (and the
+    open list to 4096 entries); `ValleyDoors.state.has` is the real range check, resolving a house id through the
+    house lookup and any other id through `towerDoorPlane`, so only the four tower ids pass, and `parseWire` drops a
+    list that holds anything else. The host applies a guest's request after its reach check
+    (`FacilityInteraction.receiveInteract`) and broadcasts the whole open set.
+  - *Late joiners.* The open set is `ValleyDoors.wire().valleyDoors`, sent in `welcome.activeMatch.worldObjects`, so a
+    joiner sees open tower doors even for towers that are not streamed in. Open state survives a tower streaming out
+    (`ValleyDoors.addTowerDoor` and `removeTowerDoor` only add and remove the collider and view).
+  - *Enemies never open them.* `ValleyDoors.closedDoorAhead` reports a tower door even when open, and
+    `FacilityInteraction.enemyGate` returns true for it without starting the 0.8 s open timer, so enemies stop at the
+    doorway whatever the door's state.
+  - *Pickup claims.* The host grants a `pickupClaim` only if the claimant's avatar is within 4 m horizontally and 3 m
+    vertically of the pickup centre (`PickupSystem.handleMessage`; `opponentPosition` now carries `y`). A guest on the
+    surface cannot claim a lab pickup, and the lab's ids sit after the surface ids so none of them move.
+  - *King of the Hill.* The carrier keeps the goose underground but `KingOfTheHillController.update` adds no hold time
+    while `isBelowGround`, so no point ticks (`kothScoreTick`) are sent from below.
+  - *Missions and the Director (solo).* The Uplink mission cannot start or hold an uplink and the extraction count
+    resets while the player is below ground (`MissionInput.underground`). The Director holds `relax` and sends no waves
+    once every living player has been below ground for 3 s (`DirectorSignals.allPlayersUnderground`, computed in
+    `Game.updateDirector`; the Director runs only in solo, so in practice that is the one local player).
+  - *Falling out.* The local player's `valleyFallRecovery` (`src/core/valleyFallRecovery.ts`) puts them back 4.5 m east
+    of the nearest tower and sends a `respawnEvent` with the new position, so peers do not see them stuck far below.
+  - *Remote torches.* The router turns a remote player's torch lens on only where `torchAvailable(map, weather,
+    isUnderground(position))` allows it, so at Dusk a remote player's torch is visible only underground. There is no
+    remote beam light at Dusk (`remoteTorchesAvailable`).
 - **Single-player modes** (`SinglePlayerMode`, chosen in `PlaySetupModal`, mutually exclusive): elimination (default
   enemies and targets), Director (`PacingDirector` in `src/entities/enemies/director/pacingDirector.ts` runs the
   enemy pacing), Mission (`src/core/mission/missionState.ts`: three uplinks then an extraction, on the Director),
@@ -259,8 +290,16 @@ Details that are easy to miss:
   `grenadeBounceVolume`) driven by constants in `config.ts` (`MULTIPLAYER_GUNSHOT_*`, `KNIFE_SWING_*`,
   `FACILITY_OBJECT_*`). Remote gunshots never go fully silent. The router's `fireEvent` and `footstepEvent` cases
   call them with the listener's `facingYaw`.
+- **Muffled sound across the surface.** `undergroundMuffleFactor(listenerBelowGround, sourceBelowGround)` in
+  `positionalAudio.ts` is 0.35 when one side is below ground and the other is not, else 1. The router multiplies it
+  into remote `fireEvent` shots, `footstepEvent` and `gooseThrowExploded` blasts, and `Game` and `GrenadeSystem` do the
+  same for enemy shots, goose and horde blasts and frag and flash grenades. Two players in the same lab hear each other
+  at full volume; one in the lab and one outside hear 35 percent of it.
 - **HUD and minimap.** `src/ui/multiplayerHud.ts` (rows from the roster, scoreboard, ping) and `src/ui/minimap.ts`
-  (one dot per opponent, pickups, King of the Hill marker).
+  (one dot per opponent, pickups, King of the Hill marker). `Minimap.update` takes `MinimapPlayerDot`s
+  (`{ x, z, underground }`, kept in a reused map by `Game.updateMultiplayer`): a player below ground is a hollow ring
+  of the same colour and size (`minimapDotStyle`), and the local player gets a ring at the centre while the facing
+  wedge stays. Only x and z are drawn, so the dot shows where the player is above, not how deep.
 
 ## 6. Where do I change X
 
@@ -281,7 +320,9 @@ Details that are easy to miss:
 | Give a late joiner more state | Add a part to `MatchSyncSource` and `buildMatchSync` (`matchSync.ts`), fill it in `sendFullSync` (router), and keep every message an ordinary idempotent type the joiner already handles. |
 | Change a mode's weapons or grenades | `FIXED_LOADOUTS`, `GUN_GAME_POOL`, `UNRESTRICTED_GAME_MODES`, `GRENADES_ENABLED` in `gameModes.ts`; custom loadout storage in `src/core/loadout.ts`. |
 | Change TURN or ICE setup | `DEFAULT_ICE_SERVERS`, `buildIceServers` in `PeerConnection.ts`; `functions/api/turn-credentials.ts`; the env vars live in the Cloudflare Pages project. |
-| Change audio falloff | `positionalAudio.ts` and the matching constants in `config.ts`. |
+| Change audio falloff | `positionalAudio.ts` and the matching constants in `config.ts`. For the surface boundary, `undergroundMuffleFactor` there; every new world sound that should be muffled multiplies it into its volume, as the `fireEvent` case does. |
+| Add a rule that changes below ground (a mode or a pickup) | Use `isBelowGround` (`world/underground.ts`), keep the rule in the pure controller or state class and pass the flag in (`KingOfTheHillController`, `MissionInput.underground`, `DirectorSignals.allPlayersUnderground`). A host check on a guest's claim must compare height as well as x and z, as `PickupSystem.handleMessage` does. |
+| Add another world object that shares the Valley door messages | Give it an id range above `TOWER_DOOR_BASE + WATCH_TOWER_COUNT` in `valleyHouseIds.ts` with its own `fooIndexFromId`, resolve it in `ValleyDoors.plane`, and make `state.has` reject every other id. The wire bounds in `protocol.ts` do not know about ranges. |
 | Change the Goose Horde waves | `HORDE_WAVE_TABLE_MULTIPLAYER`, `HORDE_MAX_RESPAWNS` in `config.ts`; `HordeGooseManager`. |
 
 ### Checklist: every place a new message must be added
@@ -328,6 +369,12 @@ Details that are easy to miss:
 - **King of the Hill kills also score.** `applyMatchDeath` only skips Goose Horde, so in King of the Hill a kill adds a
   point to the killer's scoreboard entry besides the carry points, and the briefing does not say so. Read from the
   code, not run; check with Gustav before relying on it.
+- **Tower door ids are huge.** `2^32 + index` is still a safe integer and passes `worldInteract` and
+  `valleyDoors` bounds, but it is not a house id: `parseHouseObjectId` rejects it, which is why `ValleyDoors.plane`
+  falls through to `towerDoorPlane`. A spec or tool that builds ids by hand must use `towerDoorId`.
+- **The light fade is not a rule input.** `undergroundAmount` (the eased lighting blend) only drives light and the
+  reverb. Rules read `isBelowGround` at the player's position that tick, so a player on the first steps can read as
+  above ground while the screen is already dim.
 - **Catch-up has one entry point.** `gooseSyncRequest` and `hordeSyncRequest` both end in `sendFullSync`, which also
   replays the host's `matchEnded`. A guest in a mode must send the request that matches it.
 - **Reservations count.** A reserved slot (grace period) blocks capacity but is excluded from `connectedRoster()`, so it
@@ -352,6 +399,9 @@ Details that are easy to miss:
   (six `multiplayer*.spec.ts`) and `mp4` (`multiplayer-four.spec.ts`, four contexts). See `docs/testing.md` and
   `scripts/e2eGroups.mjs` for which group a file triggers.
 - `getNetworkDebug()` (`src/core/gameDebugApi.ts`) reports `fastChannelsReady`, `pingLabel` and `directLinksReady`.
+- `getUndergroundDebug()` and `setTowerDoor(index, open)` (same file) drive the tower door spec. `e2e/multiplayer-underground.spec.ts`
+  (group `mp`) has a host open tower door 0 and checks a guest, then a late joiner, see it open with a collision ray
+  through the doorway. It needs three browser contexts and a 10 minute budget (`docs/testing.md`).
 
 ## 9. Status of older docs
 

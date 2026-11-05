@@ -46,9 +46,12 @@ update, mode controllers, `player.update`, `weaponManager.update` (hitscan happe
   `LookPreset` from `LOOK_PRESETS` (sky, fog, sun, hemisphere fill, grade, bloom, window glow) once,
   before anything compiles. Dusk: sun 2.6, fog near 30 / far 640. Night: sun (moon) 0.55, fog 25 / 420.
   Fog: fog 2 / 95. The sky is `src/render/StylizedSky.ts`.
-- The torch (`src/render/Flashlight.ts`): `torchAvailable` is true on the Facility and at Night or Fog
-  on the Valley, `torchOnByDefault` on the Facility and at Night. Other players' torches are a fixed
-  pool of `MULTIPLAYER_MAX_PLAYERS - 1` spotlights (`RemoteTorches`).
+- The torch (`src/render/Flashlight.ts`): `torchAvailable(map, weather, underground)` is true on the
+  Facility and at Night or Fog on the Valley, and at Dusk only where `isUnderground` is true (section
+  1.7). `torchOnByDefault` is true on the Facility and at Night. Every Valley match builds the torch.
+  At Dusk it casts no shadow (`torchCastsShadow`) and the match has no remote torch pool
+  (`remoteTorchesAvailable`). Elsewhere other players' torches are a fixed pool of
+  `MULTIPLAYER_MAX_PLAYERS - 1` spotlights (`RemoteTorches`).
 
 ### 1.2 World seed and determinism
 
@@ -67,7 +70,10 @@ update, mode controllers, `player.update`, `weaponManager.update` (hitscan happe
   (`config.ts`), guaranteed zone sites +40 and +41 (`ZoneMap`), archetypes +101
   (`archetypes.ts`), enemy patrol +211, coordinator +401, tactics +431 (`EntityManager.ts`), goose patrol
   +311 (`GooseManager.ts`), Facility +307 (`FACILITY_SEED_OFFSET`), director +419 (`Game.ts`), Facility
-  doors +613, Facility power +617, pickups +617 (`pickupConfig.ts`). Spawn points picked by the host
+  doors +613, Facility power +617, pickups +617 (`pickupConfig.ts`), lab interiors +719
+  (`LAB_INTERIOR_SEED_OFFSET` in `labInterior.ts`, added to `seed + towerIndex * 1009`; the ground
+  room uses the same stream). The tower lab solver draws no random numbers. 719 was the only offset
+  added by the underground work. Spawn points picked by the host
   (`src/core/multiplayerSpawn.ts`) are not part of the seed.
 - Not seeded: single-player spawn picks and the Facility start and encounter points (`Math.random`).
 
@@ -83,7 +89,7 @@ update, mode controllers, `player.update`, `weaponManager.update` (hitscan happe
 | Towns and houses | `BuildingManager.ts` | A town is a pure function of its flat-zone cell (`getTownLayout`, memoised): 8 to 20 buildings by rejection sampling. A chunk places the buildings whose position falls inside it |
 | Roads | `RoadManager.ts` | `computeMinimumSpanningTree` over a town's houses, drawn as flat strips, each owned by the chunk holding its midpoint |
 | Vegetation | `VegetationManager.ts` | Instanced trees, bushes and rocks (`VEGETATION_TYPES`), seeded per chunk. Trees have a trunk collider plus a canopy sensor (stops shots, not walking). Trunks register as cover |
-| Watch towers | `WatchTowerManager.ts`, `towerDesign.ts` | Exactly `WATCH_TOWER_COUNT` (4) per map, placed independent of towns (`computeWatchTowerPositions`, cached by `getWatchTowerPositions`). Stairs are ramp colliders. Terrain flattens round each |
+| Watch towers | `WatchTowerManager.ts`, `towerDesign.ts` | Exactly `WATCH_TOWER_COUNT` (4) per map, placed independent of towns (`computeWatchTowerPositions`, cached by `getWatchTowerPositions`). Stairs are ramp colliders. Terrain flattens round each. The core is hollow at the bottom: a ground room with a door on its east face and stairs down to a lab (section 1.7) |
 | Mission beacons | `UplinkBeacons.ts` | Beam shader over each Uplink point (tower roof on the Valley, console cap on the Facility) |
 
 World bounds: the mountain ring ramps up, `Player` adds a soft inward push from
@@ -161,6 +167,33 @@ fill). Single-player starts in a non-atrium room (`playerStart`).
 - Cover and spawn blocking use registries, not Rapier: `ObstacleRegistry`
   (`src/entities/enemies/tactics/obstacleRegistry.ts`) and the spawn check `makeSpawnBlockedCheck`
   (`Game.ts`, houses and towers) or `isSpawnBlocked` (Facility layout).
+
+### 1.7 The underground (`src/world/underground.ts` and friends)
+
+Every watch tower has a hollow ground room, a stair down and a lab. The terrain stays one height
+surface per chunk, with three narrow exceptions (cut zones, `floorBelow` and the ray helper). Design
+and decisions: `docs/underground-lab.md`; its section 9 is the as-built record of this section.
+
+| Piece | File | What it does |
+|---|---|---|
+| Module state | `world/underground.ts` | The cut zones (at most four, one per tower), the registered terrain collider handles and the underground volumes. `Game.create` and `Game.dispose` call `clearUnderground()`; `WatchTowerManager` sets the zones and volumes |
+| Cut zone | `underground.ts`, `Chunk.ts`, `Player.ts`, `terrainSplat.ts` | A tower core's interior square, local x and z within 2.7 m. `Chunk` registers its heightfield collider as terrain. The player's character controller ignores terrain colliders while the capsule is wholly inside a zone (`inCutZone(x, z, PLAYER_RADIUS)`). The terrain shader discards fragments inside the zones through the shared `cutZoneUniforms` |
+| Rays | `underground.ts` (`castRaySkippingCuts`) | A drop-in for `castRayAndGetNormal` that skips a terrain hit whose point is inside a cut zone and carries on, up to three skips, with `timeOfImpact` kept relative to the original origin. Callers: `combat/hitscan.ts`, the surface probe and line-of-sight casts in `GrenadeSystem.ts`, and `throwSegmentBlocked` in `ThrownGoose.ts`. `GrenadeSystem.castSweep` does the same for its shape cast with a skipped-collider set |
+| Floor | `underground.ts` (`floorBelow`) | Outside any volume it is `sampleHeight(x, z)`. Inside one it casts a ray down from 0.1 m over `y` at fixed bodies only, skipping terrain, and falls back to the volume's floor, never to the terrain. Used by the grenade floor callback (`(x, y, z)` in `grenadeFlight.ts` and `GrenadeSystem`), `Game.updateThrownGeese`, and `AmmoDropManager` |
+| Two predicates | `underground.ts` | `isUnderground`: inside a registered volume (the ground room's column too) or in a cut zone less than 3.2 m over the terrain. For light, torch and `floorBelow`. `isBelowGround`: inside a volume and at least 1 m under that tower's ground (`groundY`). For rules, sound, the minimap and enemy perception |
+| Lab solver | `world/towerUnderground.ts` | `computeTowerLabs()`, memoised per seed. For each tower in index order it tries the orientations south, west and north (the one farthest from the other towers first), and 3, 4 then 5 flights, for kind `full`, then `compact`, then `dead-end`. A candidate must sit inside `WORLD_EDGE_RAMP_START` (`labInsideWorld`), keep at least 1 m of terrain over its ceilings (`lowestCoverHeight`, the lowest height over its footprint inflated by 1 m), and be 4 m from every earlier lab or 8 m apart vertically (`labsClear`). It also reserves a dead end, and a full lab where one is still possible, for every later tower, and throws if a tower has no landing at all. Tower positions never change |
+| Lab shell | `towerUnderground.ts` (`buildTowerLab`) | Boxes in the tower's frame: the shaft from the room (D1), a stairwell 9.6 by 6 m with switchbacks of 3 m drop, a one metre corridor and the lab hall (26 by 18 m full, 10 by 8 m compact). Orientation turns it by a quarter turn; north is mirrored in x so D1 always follows a wall without the east door. It returns `volumes` (world space, drive the predicates), `footprints` (the solver's rectangles, the ground room's column left out), a walk `route`, `lamps` and the `interiors` |
+| Interior | `world/labInterior.ts` | `buildLabInterior(kind, seed)` is pure: solid parts (each one a collider and a drawn box), detail meshes without colliders, lamps, reactor core points and the free floor sites for pickups. Kinds: `full` (five tanks with one cracked, an operating table with a specimen, a glass partition with two console banks, two reactors, a catwalk with a ramp), `compact` (four tanks and a table), `ground` (the old room: shelf, crate, B3 sign, a bulb that flickers). `createLabInteriorVisual` batches everything into one mesh per material and bobs the specimens in the vertex shader |
+| Door | `houses/valleyHouseIds.ts`, `houses/ValleyDoors.ts`, `towerUnderground.ts` (`towerDoorPlane`) | The east face doorway is a normal Valley door with id `2^32 + tower index`. `ValleyDoors.addTowerDoor` and `removeTowerDoor` keep a per-physics-world registry that the door manager reads whenever it exists |
+| Light | `world/undergroundLights.ts`, `Game.updateUndergroundLight` | `undergroundAmount` eases (about half a second) toward 1 below ground, 0.6 in the ground room, 0 outdoors, and scales the sun, hemisphere fill and environment light by `1 - 0.95 * amount`, with fog pulled to 4 to 40 m in a cold near black. `UndergroundLights` is a fixed pool of three point lights that follow the nearest lab lamps. Lab meshes draw only near the tower |
+
+- **Colliders and meshes.** The lab's colliders are added with the tower and live as long as its chunk
+  does; the `tower-underground` mesh group is hidden unless `undergroundVisible` says the camera is
+  near. Volumes stay registered when a chunk unloads, so the predicates answer for towers that are
+  not streamed in.
+- **Fixed light count.** The three lab lights are created in the `Game` constructor on every Valley
+  match, whether or not the player goes down. The first descent does not recompile shaders: the end
+  of `Game.create` shows every lab group and calls `renderer.webgl.compile` once.
 
 ## 2. Entities (`src/entities`)
 
@@ -305,11 +338,14 @@ not the host's goose difficulty.
   30, 25, 45 s. Mix 45, 40, 15 percent.
 - Sites are a pure function of seed, map and mode (`pickupPlacement.ts`: `placeFacilityPickups`,
   `placeValleyPickups`, `pickupKindsForMode`; Valley inputs from `valleyPickupInputs.ts`), so only ids go
-  on the wire. Single-player on the Facility keeps clear of its start room, multiplayer cannot.
+  on the wire. The Valley list ends with the lab sites (`gatherLabPickupSites`: three in a full lab,
+  one ammo in a compact lab, none at a dead end), appended after the surface sites so their ids never
+  move. Single-player on the Facility keeps clear of its start room, multiplayer cannot.
 - `PickupBoard` (`pickupState.ts`) is the pure availability and respawn bookkeeping. `PickupSystem`
   runs the walk-over check (`PICKUP_RADIUS`, vertical reach) and the claim protocol: the authority
   (single-player or host) takes a claim at once; a guest sends `pickupClaim`, the host grants it only if
-  it sees that avatar within `PICKUP_CLAIM_TOLERANCE`, and broadcasts `pickupTaken` and
+  it sees that avatar within `PICKUP_CLAIM_TOLERANCE` horizontally and 3 m vertically of the pickup
+  centre (so a guest on the surface cannot take a lab pickup), and broadcasts `pickupTaken` and
   `pickupRespawned`. A guest asks for the full state with `pickupSyncRequest` and gets `pickupState`.
   A pickup that would give nothing is walked past. `pickupEffects.ts` applies it, `PickupVisuals.ts` draws it.
 - Hooks into Game: `createMatchPickups` (`createMatchPickups.ts`) builds the system in `Game.create`;
@@ -333,23 +369,30 @@ not the host's goose difficulty.
 | Change tree, bush, rock density or add a type | `world/VegetationManager.ts` (`VEGETATION_TYPES`), `config.ts` (`VEGETATION_*`) | Copy `rock` (collider shape) and add an asset under `public/assets/models/vegetation` |
 | Add a Valley house design | `world/houses/houseLayout.ts` (layout, add to `HOUSE_LAYOUTS`), `world/houseDesigns.ts` (builder, add to `HOUSE_DESIGNS`), `houseWalkGrid.ts` and `houseCover.ts` follow automatically, `valleyHouseIds.ts` limits (`SLOT_SPAN` 4 doors or rooms, `INDEX_SPAN` 64 houses) | Copy `workshop`. A town draws its preset as `floor(rng() * HOUSE_DESIGNS.length)` (`BuildingManager.getTownLayout`), so a new design changes the towns of every seed, and every client must run the same build |
 | Change town size or density | `config.ts` (`TOWN_MIN_BUILDINGS`, `TOWN_MAX_BUILDINGS`, `TOWN_BUILDING_SPACING_MARGIN`), `FLAT_ZONE_*` | The zone radius is the real ceiling (comment in `config.ts`) |
-| Move or add watch towers | `config.ts` (`WATCH_TOWER_*`), `world/WatchTowerManager.ts` (placement), `towerDesign.ts` (parts) | The Uplink mission needs at least 4 points (`MissionState`) |
+| Move or add watch towers | `config.ts` (`WATCH_TOWER_*`), `world/WatchTowerManager.ts` (placement), `towerDesign.ts` (parts) | The Uplink mission needs at least 4 points (`MissionState`). Cut zones are capped at four (`setCutZones`, `uCutZones[4]` in `terrainSplat.ts`) and tower door ids at `WATCH_TOWER_COUNT` (`valleyHouseIds.ts`), so raise both |
+| Change a lab's size, depth or stair plan | `world/towerUnderground.ts` (constants at the top, `buildTowerLab`, the solver in `computeTowerLabs`) | Any change moves every seed's labs: rerun `towerUnderground.test.ts` (500 seed sweep, at least 95 percent full labs, walk and enclosure tests) and read the fallback rates it prints |
+| Change a lab's furniture, specimens or pickup sites | `world/labInterior.ts` (`buildLabInterior`, `materials`) | Copy an existing prop. Keep a 2.4 m route and the pickup sites clear of solids (`labInterior.test.ts`). One mesh per `PieceMaterial`; the transparent ones (glass, liquid) set `renderOrder` in `createLabInteriorVisual` |
+| Add a rule that depends on being underground | Call `isBelowGround(x, y, z)` from `world/underground.ts` and pass a flag in, as `MissionInput.underground` and `DirectorSignals.allPlayersUnderground` do | Use `isUnderground` only for light, the torch and floors. Keep the rule in the pure module and test it there |
+| Make something rest or land on the ground | The `floorBelow(world, x, y, z)` form of the floor, not `sampleHeight` | Copy `AmmoDropManager` or the grenade `floor` option |
+| Add a ray or shape cast that should pass a tower's cut zone | `castRaySkippingCuts` in `underground.ts` instead of `world.castRayAndGetNormal` | Copy `combat/hitscan.ts`; for a shape cast copy `GrenadeSystem.castSweep` |
+| Change the underground look, torch or lights | `world/undergroundLights.ts` (`undergroundLook`, targets, pool size), `render/Flashlight.ts`, `Game.updateUndergroundLight` | The pool size is part of every lit shader, so `UNDERGROUND_LIGHT_POOL` is a match-start constant: never add or remove one of the pool's lights mid-match |
 | Add a Facility room kind | `facilityLayout.ts` (`FacilityRoom.kind`, `placeRooms`, ceiling constant in `config.ts`), `facilityGeometry.ts` (materials), `pickupConfig.ts` (`PICKUP_FACILITY_PER_ROOM` is keyed by kind) | Copy `office` |
 | Add or change Facility doors | `facilityDoors.ts` (`facilityOpenings`, `facilityDoors`), `FacilityObjects.ts`, `core/facilityInteraction.ts`, `config.ts` (`FACILITY_DOOR_*`) | Door ids are numbered in a fixed order; keep one rng draw per opening |
 | Add a Facility breaker, lamp or power zone rule | `facilityPower.ts`, `facilityLayout.ts` (`placeLamps`), `FacilityBuilder.ts` (lamp state), `config.ts` (`FACILITY_LAMP_*`) | Copy the lamp-kill flow: `killLamp` then rebake queue |
 | Add a Facility object that players use | `world/doors/interactiveObjects.ts` (`InteractiveWorldObjects`), `facilityObjectState.ts` (`WorldObjectKind`), `FacilityInteraction`, `protocol.ts` | Copy `ValleyDoors`, which reuses the same messages |
 | Add a map | `config.ts` (`MatchMap`, labels), `Game.create` branch, set and clear the module switches (section 0), `render/look.ts` preset, `network/protocol.ts` and `helloSupportsMap` | Copy the Facility branch |
-| Add a weather or look | `config.ts` (`MatchWeather`, labels), `render/look.ts` (`LOOK_PRESETS`), `playerVisibility.ts`, `Flashlight.ts` (`torchAvailable`), `HouseLights` (`lampsOn`) | Copy `fog` |
+| Add a weather or look | `config.ts` (`MatchWeather`, labels), `render/look.ts` (`LOOK_PRESETS`), `playerVisibility.ts`, `Flashlight.ts` (`torchAvailable`, `torchCastsShadow`, `remoteTorchesAvailable`), `HouseLights` (`lampsOn`), `undergroundLook` (it scales the new look's sun, fill and fog) | Copy `fog` |
 | Change the pacing director or the mission | `enemies/director/*`, `config.ts` (`ENEMY_DIRECTOR_*`), `core/mission/missionState.ts` | Both are pure and unit tested; change them there, not in `Game.ts` |
 | Add a game mode | `core/gameModes.ts`, `core/modeControllers/`, `Game.create` (controller wiring), `core/modeExplanations.ts`, `network/protocol.ts` | Copy `GunGameController` |
 
 ## 5. Gotchas
 
 - Light counts are fixed per match. Three.js recompiles every lit material when the number of lights
-  changes, so the code creates its lights once: the torch (one, plus `MULTIPLAYER_MAX_PLAYERS - 1`
-  remote spotlights, only where `torchAvailable`), the muzzle flash light, the grenade blast light
-  (only if the mode has grenades, `GrenadeSystem`), and the house pool of 4 (only at Night and Fog,
-  `HouseLights`). The Facility's lamps are baked per-vertex light plus emissive instances, not real
+  changes, so the code creates its lights once: the torch (one on every map, plus
+  `MULTIPLAYER_MAX_PLAYERS - 1` remote spotlights, only where `remoteTorchesAvailable`), the muzzle
+  flash light, the grenade blast light (only if the mode has grenades, `GrenadeSystem`), the house
+  pool of 4 (only at Night and Fog, `HouseLights`), and the underground pool of 3 (every Valley
+  match, `UndergroundLights`). The Facility's lamps are baked per-vertex light plus emissive instances, not real
   lights, and consoles and shafts are emissive only for the same reason (`facilityConsoles.ts`). Do not
   add a light mid-match. One exception exists in the code: `ExplosionEffect.spawn` adds and removes a
   `PointLight` per goose explosion. By three.js's rules that changes the light count; I did not
@@ -366,7 +409,8 @@ not the host's goose difficulty.
   on the Facility (`doorCrossings`) rather than blocking the route.
 - Anything new that walks through houses or the Facility must call `heldAtDoor`, or it will push
   against closed doors (`Enemy.ts` and `HordeGoose.ts` are the two callers today).
-- Module-level state (height override, navigator, door gate, floor, entrance, noise caches) survives
+- Module-level state (height override, navigator, door gate, floor, entrance, underground zones and
+  volumes, noise caches) survives
   between matches. `TerrainGenerator` rebuilds its noise lazily when the seed changes
   (`ensureNoiseForCurrentSeed`) and caches flat heights per seed, so changing the seed outside
   `Game.create` leaves stale caches only until the next `sampleHeight` call.
@@ -390,6 +434,29 @@ not the host's goose difficulty.
   for unrelated things), and `pickupConfig.ts` now says so. Terrain's warp noise and
   the vegetation density noise are also both `seed + 2`.
 - Tree canopies are sensors: they stop hitscan but not walking, and `throwSegmentBlocked` ignores them.
+- **The controller predicate inside cut zones.** `Player` passes a filter that ignores terrain colliders
+  to `computeColliderMovement` only when the capsule is wholly inside a cut zone, judged on the position
+  before the move (`inCutZone(x, z, PLAYER_RADIUS)`). Without it the heightfield would be a lid over the
+  stair hole; with it applied everywhere a player could walk through the ground. Any new walking body
+  that must enter a tower needs the same rule, and nothing may rely on terrain being solid inside a zone
+  (rays use `castRaySkippingCuts` for the same reason).
+- **`isUnderground` for light and torch, `isBelowGround` for rules and sound.** The ground room counts
+  for the first (it is dim and the Dusk torch works there) and not for the second (the mission, King of
+  the Hill, the Director, the minimap and the muffle ignore it). Using the wrong one makes the room feel
+  like the lab, or the lab like the surface, for exactly one system.
+- **Rails must run along local X.** `addRailing` (`structureKit.ts`) draws a rail's length along its
+  box's local X, so a rail made any other way draws as a short stub with a full length collider. Build
+  them with `boxAlong`; `towerUnderground.test.ts` and `towerDesign.test.ts` check every rail part.
+- **The torch shadow map must be drawn once even when the torch is off.** `Flashlight.setOn` always sets
+  `shadow.needsUpdate`. Every lit material samples the torch's shadow map; a torch that starts off and
+  never drew it left WebGL rejecting every lit draw call and the whole Fog world missing (v4.6.2). At
+  Dusk the torch has no shadow at all (`torchCastsShadow`), so the rule applies where it does.
+- **Underground state is module level.** The cut zones, terrain collider handles and volumes in
+  `underground.ts` survive a `Game`. `Game.create` and `Game.dispose` both call `clearUnderground()`;
+  a stale volume would make `isBelowGround` true in the next match. A chunk must unregister its collider
+  handle in `Chunk.dispose`, or a recycled handle would be treated as terrain.
+- **Underground colliders exist when the mesh does not.** The lab is solid and the door works while its
+  `tower-underground` group is hidden, so a ray or a player always meets the real shape.
 
 ## 6. Known stale spots
 

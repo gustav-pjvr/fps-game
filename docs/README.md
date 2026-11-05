@@ -1,6 +1,6 @@
 # Documentation index
 
-Current version 4.6.2. Where a document and the code disagree, the code is right; fix the document.
+Current version 4.7.0. Where a document and the code disagree, the code is right; fix the document.
 
 ## Start here
 
@@ -8,7 +8,7 @@ Current version 4.6.2. Where a document and the code disagree, the code is right
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the game is built: boot flow, the match loop, a source map and the cross-cutting rules |
 | [architecture/core.md](architecture/core.md) | App and Game, rendering, input, UI, audio, config, build, test and deploy, and a "where do I change X" table |
-| [architecture/world-and-combat.md](architecture/world-and-combat.md) | The Valley and Facility maps, houses and doors, entities and enemy AI, weapons, grenades, pickups |
+| [architecture/world-and-combat.md](architecture/world-and-combat.md) | The Valley and Facility maps, houses and doors, the underground under the towers, entities and enemy AI, weapons, grenades, pickups |
 | [architecture/multiplayer-and-modes.md](architecture/multiplayer-and-modes.md) | Topology, protocol, authority, join and rejoin, every game mode |
 | [workflow.md](workflow.md) | Branches and worktrees, testing, releases, documentation, working with agents |
 | [testing.md](testing.md) | Unit and Playwright tests, the e2e groups and which specs a change runs |
@@ -20,6 +20,7 @@ Current version 4.6.2. Where a document and the code disagree, the code is right
 |---|---|
 | [facility-map.md](facility-map.md) | The indoor Facility map: layout, lighting, torch, lamps, doors and breakers (sections 12 and 13), modes |
 | [enterable-buildings.md](enterable-buildings.md) | Enterable Valley houses |
+| [underground-lab.md](underground-lab.md) | The underground lab under each watch tower (v4.7.0): the door, the old room, the stairs, the lab, cut zones, light, rules per mode; design in sections 1 to 8, as built in section 9 |
 | [grenades.md](grenades.md) | Frag and flash grenades |
 | [pickups.md](pickups.md) | Health, ammo and grenade pickups |
 | [controller.md](controller.md) | Gamepad support |

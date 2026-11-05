@@ -35,7 +35,7 @@ the HUD reads the result.
 ## Principles that shape the code
 
 1. **The world is a function of a seed.** Terrain, vegetation, buildings, houses, the Facility layout, its doors
-   and power zones, and pickup placement all derive from one world seed (`src/core/worldSeed.ts`) through seeded
+   and power zones, pickup placement and the lab under each watch tower all derive from one world seed (`src/core/worldSeed.ts`) through seeded
    random streams with fixed seed offsets. In multiplayer the host sends the seed and every client builds the
    identical world; no world data crosses the network. Anything that shapes the world must therefore use the
    seeded RNG (`src/utils/rng.ts`), never `Math.random()`, and a new random stream needs an unused seed offset.
@@ -57,7 +57,7 @@ the HUD reads the result.
 |---|---|---|
 | `src/main.ts`, `index.html` | The four mount points (lobby canvas, game canvas, HUD, overlay) and boot | core.md section 1 |
 | `src/core/` | `App`, `Game`, `Loop`, `Renderer`, `config.ts` (constants), game modes and their controllers, loadout, mission, world seed, version | core.md, multiplayer-and-modes.md |
-| `src/world/` | Valley terrain, chunk streaming, zones and towns, buildings, vegetation, watch towers; `facility/` (the indoor map), `houses/` and `doors/` (enterable Valley houses) | world-and-combat.md |
+| `src/world/` | Valley terrain, chunk streaming, zones and towns, buildings, vegetation, watch towers; `underground.ts`, `towerUnderground.ts`, `labInterior.ts` and `undergroundLights.ts` (the ground room, stairs and lab under each tower); `facility/` (the indoor map), `houses/` and `doors/` (enterable Valley houses) | world-and-combat.md section 1.7, [underground-lab.md](underground-lab.md) |
 | `src/entities/` | Player, remote players, enemies and their AI, the Goose | world-and-combat.md |
 | `src/weapons/`, `src/combat/` | Weapon definitions and view models; hitscan, damage, explosions, tracers, `grenades/` | world-and-combat.md |
 | `src/pickups/` | Health, ammo and grenade pickups | world-and-combat.md |
@@ -96,7 +96,12 @@ the HUD reads the result.
   router case. The checklist is in multiplayer-and-modes.md.
 - **Read the live manager.** A loadout change rebuilds `game.weaponManager` at the next respawn; never keep a
   captured reference.
-- **Module-level state outlives a `Game`.** Anything set globally for a match must be cleared in `Game.dispose`.
+- **Module-level state outlives a `Game`.** Anything set globally for a match must be cleared in `Game.dispose`
+  (the underground zones, volumes and terrain handles are cleared by `clearUnderground()`).
+- **The ground is not always the floor.** Inside a watch tower's cut zone the terrain is not solid, so a new ray
+  caller uses `castRaySkippingCuts`, anything that rests on the ground asks `floorBelow(world, x, y, z)` instead of
+  `sampleHeight`, and a rule that depends on being down uses `isBelowGround`. `isUnderground` is only for light, the
+  torch and floors (world-and-combat.md section 1.7).
 - **Files are CRLF on this Windows setup.** Edit with a tool that keeps line endings.
 - **The repo is public:** never commit secrets, and the music files are gitignored (music.md).
 

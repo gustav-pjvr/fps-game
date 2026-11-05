@@ -27,12 +27,12 @@ Add `--dry` to see the plan without running it, and `--base <ref>` to compare wi
 | ai | `enemy-ai.spec.ts`, `director.spec.ts` | enemies, `EntityManager.ts`, targets, hitboxes, character models, `config.ts` |
 | mission | `mission.spec.ts` | `core/mission/`, uplink beacons, world markers, the death screen, `Game.ts` |
 | ui | `ui-qa.spec.ts` | `src/ui/`, `index.html`, `App.ts` |
-| world | `world-bounds.spec.ts` | `src/world/` |
+| world | `world-bounds.spec.ts`, `underground.spec.ts` | `src/world/`; `underground.ts`, `towerUnderground.ts`, `labInterior.ts` and `undergroundLights.ts` pick only this group (not `quick`) |
 | facility | `facility.spec.ts`, `facility-doors.spec.ts`, `facility-modes.spec.ts`, `multiplayer-facility.spec.ts`, `pickups.spec.ts`, `solo-weather.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
 | pickups | `pickups.spec.ts` | `src/pickups/` |
 | houses | `houses.spec.ts` | `src/world/houses/`, `src/world/doors/`, the house plan on the minimap |
 | grenades | `grenades.spec.ts` | `src/combat/grenades/`, the grenade arm, the danger marker, the flash white-out and deafness, `Game.ts` |
-| mp | the six `multiplayer*.spec.ts` | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
+| mp | seven specs: `multiplayer`, `multiplayer-underground`, `-match`, `-combat`, `-moving-target`, `-matchend`, `-pause-damage` (`multiplayer-facility` is in facility, `multiplayer-four` in mp4) | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
 | mp4 | `multiplayer-four.spec.ts` | the 3 to 4 player network files (`GuestMesh`, `directLinks`, `matchSync`, `HostRoster`, `PeerConnection`, `MatchMessageRouter`); not part of mp, and in the full suite |
 | perf | `perf-log.spec.ts`, `performance-check.spec.ts` | never by a change: measurements, run by name before a release or after render work |
 
@@ -41,6 +41,28 @@ shared helpers (`e2e/helpers.ts`, `e2e/global.d.ts`), `playwright.config.ts`, `v
 `tsconfig.json` and `package.json` run the full suite. The rules live in `scripts/e2eGroups.mjs`
 with their own unit tests, including a check that every spec in `e2e/` belongs to a group: a new
 spec has to be added there.
+
+## The underground specs
+
+Both run on the Valley and read the seeded labs from `window.__gameDebug.getUndergroundDebug()`, so they do not
+depend on a fixed seed (`docs/architecture/core.md` gotcha 6 lists the hooks). Unit tests carry the walking and
+geometry proofs (`towerUnderground.test.ts`, with a real Rapier world), so the specs only prove the wiring.
+
+- **`e2e/underground.spec.ts`** (group `world`): solo Valley at Dusk with no enemies, viewport 640 by 360, timeout
+  600,000 ms. On a full lab it checks that a collision ray hits the closed tower door and a walk into it is stopped, that
+  E on the door opens it (`facilityLookTarget` reports the door id) and a walk through works, then teleports along the
+  lab's `route` to the floor and back. At the bottom the underground flag is true, the light amount is 1 and the torch is
+  available; back on the surface the amount is 0, the flag is false and the Dusk torch is not available. It also fails on
+  any page error. The route points are teleports: walkability is proven by the unit tests, not here.
+- **`e2e/multiplayer-underground.spec.ts`** (group `mp`): a host creates a Valley room, a guest joins, the host opens tower
+  door 0 with `setTowerDoor(0, true)`, and the guest's collision ray through the doorway must clear within five game
+  seconds. Then a third context joins the running match late and must see the same open door. The test sets a 10 minute
+  timeout (600,000 ms) because three browser contexts on software rendering run at about 2 frames a second each and the
+  whole host, guest and late-join sequence measured just over five minutes in this sandbox. Treat a timeout with steps
+  still advancing as a budget problem, not a hang. Run it alone (`npx playwright test e2e/multiplayer-underground.spec.ts`)
+  when changing tower doors, `ValleyDoors` or the welcome message's door list.
+- `e2e/pickups.spec.ts` (group `pickups`) now counts lab pickups too: 10 to 16 surface pickups, then exactly the lab
+  sites the labs' kinds give (3 per full lab, 1 per compact lab).
 
 ## Graphics quality in tests
 

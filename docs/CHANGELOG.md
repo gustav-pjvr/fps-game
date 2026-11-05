@@ -10,7 +10,31 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.6.2 (current)
+## v4.7.0 (current)
+
+The underground lab, 2026-11-05. Design and as built: `docs/underground-lab.md`.
+
+- **A door into every watch tower.** The steel door on each tower's core opens (E, synced in
+  multiplayer, never opened by enemies) into an old concrete room: a flickering caged bulb, a fallen
+  shelf, a crate, a rusted "B3" sign, and a hole in the floor.
+- **Dark stairs down.** Three flights (up to five where the ground dips) lead about 10 m below the
+  valley through an unlit stairwell. The torch works underground in every weather, Dusk included.
+- **The lab.** A reactor hall with two pulsing reactors and a catwalk, a test wing with creatures in
+  glass tanks (one tank cracked and empty) and one strapped to an operating table, and a control room
+  with glowing consoles. Every tower has its own lab, varied by the map seed. Three pickups wait in a
+  full lab.
+- **Built to fit every map.** Each lab's direction and depth come from the seed so no two labs
+  overlap and every lab stays under at least a metre of earth (full labs on 95.6 percent of towers
+  over 500 seeds, smaller fallbacks for the rest). Tower positions are unchanged.
+- **Below ground feels buried.** The outdoor light fades, a cold dark haze closes in, the echo
+  tightens, a low reactor hum rises near the reactors, and shots across the surface sound muffled.
+  The minimap shows players below ground as hollow rings.
+- **Rules.** Enemies stay on the surface and wait at the door, and the Director pauses after you have
+  been below ground for three seconds. No King of the Hill points underground; uplinks and the
+  extraction count only on the surface.
+- **Safety.** A player who ever falls below the world is put back outside the nearest tower door.
+
+## v4.6.2
 
 Fog fix, 2026-11-05.
 
