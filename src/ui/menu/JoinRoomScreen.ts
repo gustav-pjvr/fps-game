@@ -1,5 +1,6 @@
 import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
-import { NETWORK_BLOCKED_MESSAGE, joinRoom, type Transport } from '../../network/transport.ts';
+import { NETWORK_BLOCKED_MESSAGE, joinRoom, type Transport, type TransportKind } from '../../network/transport.ts';
+import { loadAccessCode, relayUrl, serverAvailable } from '../../network/relaySettings.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
@@ -209,8 +210,7 @@ export class JoinRoomScreen {
     this.readyButton.textContent = this.ownReady ? 'Not Ready' : 'Ready';
   }
 
-  private attemptJoin(): void {
-    const code = this.codeInput.value.trim();
+  private attemptJoin(transport: TransportKind = serverAvailable() ? 'server' : 'p2p', code = this.codeInput.value.trim()): void {
     if (code.length === 0) {
       this.setStatus('Enter a room code first.');
       return;
@@ -218,6 +218,7 @@ export class JoinRoomScreen {
 
     // A stale in-flight attempt (e.g. the player edited the code and hit Join again before the
     // first attempt resolved) shouldn't leave two connections racing to attach.
+    const generation = ++this.joinGeneration;
     this.connection?.dispose();
     this.connection = null;
     this.clearJoinTimeout();
@@ -237,7 +238,6 @@ export class JoinRoomScreen {
     saveUsername(username);
     const rejoinToken = getOrCreateRejoinToken(code);
 
-    const generation = ++this.joinGeneration;
     this.joinTimeout = setTimeout(() => {
       this.joinTimeout = null;
       if (generation !== this.joinGeneration || this.ownSlot !== null || this.rejectedAsFull) return;
@@ -252,7 +252,12 @@ export class JoinRoomScreen {
 
     // Every callback is generation-guarded: a superseded attempt's connection still fires close/error
     // events after being disposed, which used to overwrite the current attempt's status text.
-    void joinRoom(code, { username, rejoinToken }, {
+    void joinRoom(code, {
+      username,
+      rejoinToken,
+      kind: transport,
+      ...(transport === 'server' ? { server: { url: relayUrl(), accessCode: loadAccessCode() } } : {}),
+    }, {
       onConnected: () => {}, // the welcome message itself (below) carries everything worth reacting to
       onPeerDisconnected: () => {
         if (generation !== this.joinGeneration) return;
@@ -265,7 +270,7 @@ export class JoinRoomScreen {
           this.joinButton.disabled = false;
           return;
         }
-        this.setStatus('The host disconnected.');
+        if (transport !== 'server' || !this.joinFailureShown) this.setStatus('The host disconnected.');
         this.joinButton.disabled = false;
         this.codeInput.style.display = 'block';
         this.joinButton.style.display = 'block';
@@ -273,12 +278,25 @@ export class JoinRoomScreen {
       },
       onError: (message, kind) => {
         if (generation !== this.joinGeneration) return;
+        // Server first, then today's P2P join with the same code (design section 10.2): the room may
+        // be a P2P one, or the server unreachable. The server answers an unknown code at once, and an
+        // unreachable server ends its retries (about 20 s) inside JOIN_TIMEOUT_MS.
+        if (transport === 'server' && this.ownSlot === null && !this.rejectedAsFull
+          && (kind === 'roomNotFound' || kind === 'serverLost')) {
+          this.attemptJoin('p2p', code);
+          return;
+        }
         // Already in the lobby: a dropped broker websocket doesn't affect the open data channel to
         // the host, so there's nothing to tell the player.
         if (kind === 'brokerLost' && this.ownSlot !== null) return;
         this.clearJoinTimeout();
         this.joinFailureShown = true;
-        this.setStatus(message);
+        this.setStatus(kind === 'accessDenied' ? "That access code isn't valid."
+          : kind === 'versionMismatch' ? 'This page is out of date. Refresh to update.'
+          : kind === 'serverLost' ? 'Lost the game server. Create or join the room again.'
+          : kind === 'roomNotFound' && !loadAccessCode()
+            ? message + ' If the host used the game server, enter the access code in Multiplayer.'
+            : message);
         this.joinButton.disabled = false;
       },
       onMessage: (message) => {

@@ -1,5 +1,6 @@
 import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
-import { generateRoomCode, hostRoom, type Transport } from '../../network/transport.ts';
+import { generateRoomCode, hostRoom, type Transport, type TransportKind } from '../../network/transport.ts';
+import { loadAccessCode, loadPreferredTransport, relayUrl, savePreferredTransport, serverAvailable } from '../../network/relaySettings.ts';
 import { HostRoster } from '../../network/HostRoster.ts';
 import { generateMultiplayerSeed } from '../../core/worldSeed.ts';
 import { pickMultiplayerSpawnPoints } from '../../core/multiplayerSpawn.ts';
@@ -56,6 +57,8 @@ export class CreateRoomScreen {
   private readonly gameModeSelect: HTMLSelectElement;
   private readonly mapSelect: HTMLSelectElement;
   private readonly weatherSelect: HTMLSelectElement;
+  private readonly serverControl: HTMLDivElement;
+  private readonly serverCheckbox: HTMLInputElement;
   private readonly statusText: HTMLDivElement;
   private readonly playerList: HTMLDivElement;
   private readonly startButton: HTMLButtonElement;
@@ -266,6 +269,27 @@ export class CreateRoomScreen {
     }
     leftColumn.appendChild(this.weatherSelect);
 
+    this.serverControl = document.createElement('div');
+    this.serverControl.style.cssText = 'display:none; margin-top:16px;';
+    const serverLabel = document.createElement('label');
+    serverLabel.htmlFor = 'create-room-server';
+    serverLabel.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.9rem;';
+    this.serverCheckbox = document.createElement('input');
+    this.serverCheckbox.id = 'create-room-server';
+    this.serverCheckbox.type = 'checkbox';
+    serverLabel.append(this.serverCheckbox, 'Game server');
+    const serverHint = document.createElement('div');
+    serverHint.textContent = 'Lower lag for invited players.';
+    serverHint.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px;';
+    this.serverControl.append(serverLabel, serverHint);
+    leftColumn.appendChild(this.serverControl);
+    this.serverCheckbox.addEventListener('change', () => {
+      if (!this.hostRoster || this.hostRoster.currentRoster().length > 1) return;
+      const kind = this.serverCheckbox.checked ? 'server' : 'p2p';
+      savePreferredTransport(kind);
+      this.show(kind);
+    });
+
     const updateMapOptions = () => {
       const map = this.mapSelect.value as MatchMap;
       mapDescription.textContent = MATCH_MAP_DESCRIPTIONS[map];
@@ -332,7 +356,14 @@ export class CreateRoomScreen {
   /** Starts a fresh room each time this screen is opened, rather than reusing whatever room a
    * previous visit created - an abandoned "Create Room" attempt shouldn't leave a stale room
    * live on the broker that a stale code might still (confusingly) connect to. */
-  show(): void {
+  show(preferredTransport: TransportKind = loadPreferredTransport()): void {
+    const generation = ++this.showGeneration;
+    this.connection?.dispose();
+    this.connection = null;
+    const available = serverAvailable();
+    const kind = available ? preferredTransport : 'p2p';
+    this.serverControl.style.display = available ? 'block' : 'none';
+    this.serverCheckbox.checked = kind === 'server';
     this.overlay.style.display = 'flex';
     attachScanSweep(this.panel);
     this.startButton.style.display = 'none';
@@ -347,7 +378,8 @@ export class CreateRoomScreen {
     this.updateStartButtonState();
 
     if (this.reservationSweepInterval !== null) clearInterval(this.reservationSweepInterval);
-    this.reservationSweepInterval = setInterval(() => {
+    this.reservationSweepInterval = null;
+    if (kind === 'p2p') this.reservationSweepInterval = setInterval(() => {
       if (!this.hostRoster || !this.connection) return;
       const expired = this.hostRoster.sweepExpiredReservations(performance.now());
       if (expired.length === 0) return;
@@ -361,13 +393,17 @@ export class CreateRoomScreen {
       this.broadcastReadyState();
     }, 2000);
 
-    this.roomCode = generateRoomCode();
-    this.codeDisplay.textContent = this.roomCode;
+    this.roomCode = kind === 'server' ? '' : generateRoomCode();
+    this.codeDisplay.textContent = kind === 'server' ? 'Creating…' : this.roomCode;
     this.setStatus('Waiting for players…');
 
-    const generation = ++this.showGeneration;
-    void hostRoom('p2p', { code: this.roomCode }, {
+    void hostRoom(kind, kind === 'server' ? {
+      username: hostUsername,
+      maxPlayers: MULTIPLAYER_MAX_PLAYERS,
+      server: { url: relayUrl(), accessCode: loadAccessCode() },
+    } : { code: this.roomCode }, {
       onConnected: () => {
+        if (generation !== this.showGeneration) return;
         this.setStatus('Everyone is connected. Start when ready.');
         this.startButton.style.display = 'block';
         this.updateStartButtonState();
@@ -378,7 +414,7 @@ export class CreateRoomScreen {
         this.broadcastReadyState();
       },
       onPeerDisconnected: (slot) => {
-        if (!this.hostRoster) return;
+        if (generation !== this.showGeneration || !this.hostRoster) return;
         // Without this, a guest who leaves the pre-match lobby was never actually marked
         // disconnected - `currentRoster()` kept listing them as `connected: true` forever, their
         // slot counted against MULTIPLAYER_MAX_PLAYERS permanently (never entering the grace-period
@@ -389,6 +425,15 @@ export class CreateRoomScreen {
         // guest who readied up and then disconnected would still count as ready while merely
         // reserved (grace period), and a rejoin must re-ready rather than silently inherit the old
         // state.
+        this.readySlots.delete(slot);
+        this.renderPlayerRows(this.hostRoster.currentRoster());
+        this.connection?.send({ type: 'rosterUpdate', roster: this.hostRoster.currentRoster() });
+        this.updateStartButtonState();
+        this.broadcastReadyState();
+      },
+      onReservationExpired: (slot) => {
+        if (generation !== this.showGeneration || !this.hostRoster) return;
+        this.hostRoster.release(slot);
         this.readySlots.delete(slot);
         this.renderPlayerRows(this.hostRoster.currentRoster());
         this.connection?.send({ type: 'rosterUpdate', roster: this.hostRoster.currentRoster() });
@@ -409,14 +454,17 @@ export class CreateRoomScreen {
           );
           return;
         }
-        this.setStatus(message);
+        this.setStatus(kind === 'serverLost' ? 'Lost the game server. Create or join the room again.'
+          : kind === 'accessDenied' ? "That access code isn't valid."
+          : kind === 'versionMismatch' ? 'This page is out of date. Refresh to update.'
+          : message);
       },
       onBrokerReconnected: () => {
         if (generation !== this.showGeneration || !this.hostRoster) return;
         this.setStatus(this.hostRoster.currentRoster().length > 1 ? 'Everyone is connected. Start when ready.' : 'Waiting for players…');
       },
       onMessage: (message) => {
-        if (message.type !== 'playerReady' || !this.hostRoster) return;
+        if (generation !== this.showGeneration || message.type !== 'playerReady' || !this.hostRoster) return;
         // Self-reported - the sender's own message.slot, not a transport-level identity (the lobby
         // has no senderSlot concept like MatchMessageRouter's mid-match one, since every guest
         // connection is already keyed by slot at the PeerConnection layer - see onHostHello). No
@@ -428,11 +476,12 @@ export class CreateRoomScreen {
         this.updateStartButtonState();
         this.broadcastReadyState();
       },
-      onHostHello: ({ username, rejoinToken, features, peerId }) => {
-        if (!this.hostRoster) return 'full';
+      onHostHello: ({ username, rejoinToken, features, peerId, assigned }) => {
+        if (generation !== this.showGeneration || !this.hostRoster) return 'full';
         // An older build would load the Valley inside a Facility room: turned away before it takes a slot.
         if (!helloSupportsMap(features, this.mapSelect.value as MatchMap)) return 'outdated';
-        const outcome = this.hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
+        const outcome = assigned ?? this.hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
+        if (assigned) this.hostRoster.adopt(assigned, username, rejoinToken, peerId);
         if (outcome.outcome === 'full') return 'full';
         // A rejoin may take over a slot whose stale connection was still marked ready. The player on
         // the new connection hasn't readied, so they must click Ready again.
@@ -456,6 +505,10 @@ export class CreateRoomScreen {
         return;
       }
       this.connection = connection;
+      if (kind === 'server') {
+        this.roomCode = connection.roomCode;
+        this.codeDisplay.textContent = this.roomCode;
+      }
     }).catch((error: unknown) => {
       // Without this, any failure in the TURN-credential fetch or Peer construction above left
       // this screen stuck on "Waiting for other players to join…" forever with no error and no
@@ -468,6 +521,7 @@ export class CreateRoomScreen {
   }
 
   private renderPlayerRows(roster: RosterEntry[]): void {
+    this.serverCheckbox.disabled = roster.some((entry) => entry.slot !== HOST_SLOT);
     this.playerList.replaceChildren(
       ...roster.map((entry) => {
         const name = entry.slot === HOST_SLOT ? `${entry.username} (you, host)` : entry.username;

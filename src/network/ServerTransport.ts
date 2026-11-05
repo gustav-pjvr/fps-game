@@ -48,7 +48,7 @@ import type { HostHelloResult, MultiplayerRole, Transport, TransportCallbacks, T
  * (a session token) and the close handling below; nothing here assumes it cannot come.
  */
 
-/** Used when the caller names no URL. Production will pass RELAY_URL from config.ts (WP 7). */
+/** Used when the caller names no URL. The menus pass relayUrl() from relaySettings.ts. */
 export const DEV_RELAY_URL = 'ws://127.0.0.1:8080/ws';
 
 /** Waits before the 2nd, 3rd and 4th connect attempt (section 5.6), each plus up to RETRY_JITTER. */

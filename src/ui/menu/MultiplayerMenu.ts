@@ -1,4 +1,6 @@
-import { attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle } from './menuStyles.ts';
+import { loadAccessCode, relayUrl, saveAccessCode } from '../../network/relaySettings.ts';
+import { ACCESS_CODE_MAX_LENGTH } from '../../network/serverEnvelope.ts';
+import { attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 import { ModalScope } from './modalScope.ts';
 
 export interface MultiplayerMenuCallbacks {
@@ -29,6 +31,23 @@ export class MultiplayerMenu {
     description.textContent = 'Online matches for up to 4 players.';
     description.style.cssText = 'font-size:0.9rem; opacity:0.75; margin-bottom:22px; line-height:1.5;';
     panel.appendChild(description);
+
+    if (relayUrl()) {
+      const accessLabel = document.createElement('label');
+      accessLabel.textContent = 'Access code';
+      accessLabel.htmlFor = 'multiplayer-access-code';
+      accessLabel.style.cssText = 'display:block; font-size:0.9rem; margin-bottom:8px;';
+      const accessInput = createTextInput('Access code', ACCESS_CODE_MAX_LENGTH);
+      accessInput.id = 'multiplayer-access-code';
+      accessInput.type = 'password';
+      accessInput.autocomplete = 'off';
+      accessInput.value = loadAccessCode();
+      accessInput.addEventListener('change', () => saveAccessCode(accessInput.value));
+      const accessHint = document.createElement('div');
+      accessHint.textContent = 'Only needed for the game server.';
+      accessHint.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px; margin-bottom:22px;';
+      panel.append(accessLabel, accessInput, accessHint);
+    }
 
     const buttonColumn = document.createElement('div');
     buttonColumn.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
