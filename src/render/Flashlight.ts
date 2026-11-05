@@ -107,9 +107,12 @@ export class Flashlight {
   setOn(on: boolean): void {
     this.on = on;
     this.light.intensity = on ? TORCH_INTENSITY : 0;
-    // Same shader either way; an unlit torch just stops redrawing its shadow map.
+    // Same shader either way; an unlit torch just stops redrawing its shadow map. It still draws it
+    // once: every lit material samples this light's shadow map, and a torch that starts off (Fog)
+    // would otherwise never create one, so WebGL rejects every lit draw call ("Mismatch between
+    // texture format and sampler type") and the whole world goes missing.
     this.light.shadow.autoUpdate = on;
-    if (on) this.light.shadow.needsUpdate = true;
+    this.light.shadow.needsUpdate = true;
     this.lensMaterial.emissiveIntensity = on ? LENS_GLOW : 0;
   }
 

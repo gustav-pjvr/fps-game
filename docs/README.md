@@ -1,6 +1,6 @@
 # Documentation index
 
-Current version 4.6.1. Where a document and the code disagree, the code is right; fix the document.
+Current version 4.6.2. Where a document and the code disagree, the code is right; fix the document.
 
 ## Start here
 
