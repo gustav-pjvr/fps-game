@@ -12,6 +12,8 @@ import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, close
 /** How long a join attempt may go without the host's `welcome` before giving up. A healthy join
  * (including one relayed through TURN) completes in a few seconds. */
 const JOIN_TIMEOUT_MS = 25_000;
+const ACCESS_DENIED_MESSAGE = 'That access code isn’t valid. Check it under Multiplayer.';
+const OUTDATED_PAGE_MESSAGE = 'This page is out of date. Refresh to update.';
 const JOIN_TIMEOUT_MESSAGE =
   "Couldn’t reach the host. Check their room is still open. If it is, a network is blocking online play: try another one (a phone hotspot usually works).";
 
@@ -210,7 +212,9 @@ export class JoinRoomScreen {
     this.readyButton.textContent = this.ownReady ? 'Not Ready' : 'Ready';
   }
 
-  private attemptJoin(transport: TransportKind = serverAvailable() ? 'server' : 'p2p', code = this.codeInput.value.trim()): void {
+  /** `serverRefusal`: on the P2P fallback after the game server refused this player (a wrong or old
+   * access code, an outdated page), the server's reason, shown if P2P has no such room either. */
+  private attemptJoin(transport: TransportKind = serverAvailable() ? 'server' : 'p2p', code = this.codeInput.value.trim(), serverRefusal: string | null = null): void {
     if (code.length === 0) {
       this.setStatus('Enter a room code first.');
       return;
@@ -280,20 +284,28 @@ export class JoinRoomScreen {
         if (generation !== this.joinGeneration) return;
         // Server first, then today's P2P join with the same code (design section 10.2): the room may
         // be a P2P one, or the server unreachable. The server answers an unknown code at once, and an
-        // unreachable server ends its retries (about 20 s) inside JOIN_TIMEOUT_MS.
-        if (transport === 'server' && this.ownSlot === null && !this.rejectedAsFull
-          && (kind === 'roomNotFound' || kind === 'serverLost')) {
-          this.attemptJoin('p2p', code);
-          return;
+        // unreachable server ends its retries (about 20 s) inside JOIN_TIMEOUT_MS. A refused access
+        // code or an outdated page falls back too, so an old stored code never blocks P2P rooms;
+        // its reason is kept for the case where P2P finds no room either.
+        if (transport === 'server' && this.ownSlot === null && !this.rejectedAsFull) {
+          if (kind === 'roomNotFound' || kind === 'serverLost') {
+            this.attemptJoin('p2p', code);
+            return;
+          }
+          if (kind === 'accessDenied' || kind === 'versionMismatch') {
+            this.attemptJoin('p2p', code, kind === 'accessDenied' ? ACCESS_DENIED_MESSAGE : OUTDATED_PAGE_MESSAGE);
+            return;
+          }
         }
         // Already in the lobby: a dropped broker websocket doesn't affect the open data channel to
         // the host, so there's nothing to tell the player.
         if (kind === 'brokerLost' && this.ownSlot !== null) return;
         this.clearJoinTimeout();
         this.joinFailureShown = true;
-        this.setStatus(kind === 'accessDenied' ? 'That access code isn’t valid. Check it under Multiplayer.'
-          : kind === 'versionMismatch' ? 'This page is out of date. Refresh to update.'
+        this.setStatus(kind === 'accessDenied' ? ACCESS_DENIED_MESSAGE
+          : kind === 'versionMismatch' ? OUTDATED_PAGE_MESSAGE
           : kind === 'serverLost' ? 'Lost the game server. Create or join the room again.'
+          : kind === 'roomNotFound' && serverRefusal !== null ? serverRefusal
           : kind === 'roomNotFound' && !loadAccessCode()
             ? message + ' If the host used the game server, enter the access code in Multiplayer.'
             : message);
