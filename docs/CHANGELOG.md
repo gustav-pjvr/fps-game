@@ -12,7 +12,7 @@ granular history if you need it.
 
 ## v4.6.1 (current)
 
-Watch tower rails, 2026-11-05.
+Watch tower rails and first-person arms, 2026-11-05.
 
 - **No more invisible walls on the watch towers.** Every guard rail running north to south (the
   deck's east and west edges, the west side of the stairwell, and one outer side of each corner
@@ -20,6 +20,10 @@ Watch tower rails, 2026-11-05.
   rail runs east to west. Those rails are now laid out along their run, so they are drawn full
   length exactly where the player is stopped. Nothing moved: every rail keeps its position and size.
   A unit test fails if a tower rail would be drawn short again.
+- **First-person arms wear your suit.** The arms holding every gun, the knife and a grenade were a
+  flat olive sleeve and a near-black glove. They now match the player character (the spacesuit):
+  a dark suit with warm grey armour plates and cyan-lit trim on the sleeves, and cyan-lit gloves,
+  in the suit's own colours read from its model.
 
 ## v4.6.0
 

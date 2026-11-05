@@ -106,8 +106,8 @@ export class GrenadeViewModel {
 
   private buildHand(): void {
     const { glove, pipe } = getWeaponMaterials();
-    const pad = this.material('grenade-glove-pad', 0x45433d, 0.85, 0);
-    const guard = this.material('grenade-glove-guard', 0x34383a, 0.45, 0.2);
+    const pad = this.material('grenade-glove-pad', 0xb3a8a3, 0.85, 0);
+    const guard = this.material('grenade-glove-guard', 0x303c3f, 0.45, 0.2);
     const hand = this.hand;
 
     // Palm, heel and the thumb's mound under the grenade; a padded patch where it rests.
@@ -179,7 +179,7 @@ export class GrenadeViewModel {
   private buildForearm(): void {
     const { glove, sleeve, trim } = getWeaponMaterials();
     const strap = this.material('grenade-cuff-strap', 0x1d1e1c, 0.7, 0);
-    const hem = this.material('grenade-sleeve-hem', 0x2c3832, 0.95, 0);
+    const hem = this.material('grenade-sleeve-hem', 0x303c3f, 0.95, 0);
     const forearm = new THREE.Group();
     forearm.name = 'forearm';
     forearm.position.set(...WRIST);

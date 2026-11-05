@@ -272,3 +272,18 @@ shotgun, Goose Launcher), so the block covered the crosshair.
   `ADS_SIGHT_DISTANCE` and the post tip lands on the centre line; a new test fails if any part of a
   non-scoped gun except the post tip rises above the crosshair at full aim. The part budget per model
   rose from 25 to 26 meshes for the ears and the post.
+
+## First-person arms match the player's suit (v4.6.1, 2026-11-05)
+
+Gustav: the hand holding the gun, knife or grenade did not look like the player's skin. The view
+model's `sleeve` and `glove` (`weapons/models/weaponMaterials.ts`) were a flat olive and a
+near-black; the character is the spacesuit (`PLAYER_CHARACTER` in `entities/characterModels.ts`).
+
+- `sleeve` is now a procedural canvas in the suit's linear colours from `spacesuit.glb` (base
+  `SciFi_Main`, armour plates `SciFi_Light`, seams `SciFi_MainDark`) with a thin cyan line round each
+  plate; an emissive map lights only those lines (`ACCENT_CYAN`, intensity 0.6).
+- `glove` is the suit's lit cyan (`ACCENT_CYAN` at 0.35 with emissive, intensity 0.45).
+- The grenade arm (`GrenadeViewModel.ts`) shares those materials; its pad, guard and hem now use the
+  suit's grey and dark colours.
+- Shapes and poses are unchanged, so the Loadout thumbnails, which strip the arm parts by name, are
+  unaffected.

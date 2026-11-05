@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
-import { bevelRect, each, encode, fbm, grime, makeCanvas, mulCol, setCol, type MaterialCanvas } from '../../render/proceduralTexture.ts';
+import { ACCENT_CYAN } from '../../render/look.ts';
+import { bevelRect, each, encode, fbm, grime, makeCanvas, mulCol, setCol, SIZE, texture, type MaterialCanvas } from '../../render/proceduralTexture.ts';
 
 function gunCanvas(): MaterialCanvas {
   const c = makeCanvas();
@@ -17,6 +18,36 @@ function gunCanvas(): MaterialCanvas {
     c.gl[i] = 0.75;
   });
   return c;
+}
+
+function sleeveCanvas() {
+  const c = makeCanvas();
+  const mask = new Uint8Array(SIZE * SIZE * 4);
+  const cyan = new THREE.Color(ACCENT_CYAN);
+  each((x, y, i, fx, fy) => {
+    const variation = 0.94 + fbm(fx, fy, 16, 4, 151) * 0.12;
+    setCol(c, i, 0.054 * variation, 0.089 * variation, 0.084 * variation);
+    c.h[i] = 0.1;
+    const px = x % 128, py = y % 128;
+    if (px >= 14 && px <= 113 && py >= 16 && py <= 111) {
+      setCol(c, i, 0.030, 0.045, 0.050);
+      c.h[i] = 0.08;
+    }
+    let lit = false;
+    if (px >= 18 && px <= 109 && py >= 20 && py <= 107) {
+      const bevel = bevelRect(px, py, 18, 20, 109, 107, 6);
+      const shade = (0.72 + bevel * 0.28) * variation;
+      setCol(c, i, 0.448 * shade, 0.390 * shade, 0.365 * shade);
+      c.h[i] = 0.1 + bevel * 0.06;
+      const edge = Math.min(px - 18, 109 - px, py - 20, 107 - py);
+      lit = edge >= 2 && edge < 5;
+      if (lit) setCol(c, i, cyan.r * 0.35, cyan.g * 0.35, cyan.b * 0.35);
+    }
+    const o = i * 4;
+    mask[o] = mask[o + 1] = mask[o + 2] = lit ? 255 : 0;
+    mask[o + 3] = 255;
+  });
+  return { ...encode(c), emissiveMap: texture(mask) };
 }
 
 function pipeCanvas(): MaterialCanvas {
@@ -69,8 +100,13 @@ function buildMaterials() {
     gunmetal: metal('opus-gunmetal', gunCanvas(), 0.35),
     pipe: metal('opus-pipe', pipeCanvas(), 0.55),
     trim: metal('opus-trim', trimCanvas(), 0.3),
-    sleeve: new THREE.MeshStandardMaterial({ name: 'opus-sleeve', color: 0x3b4a42, roughness: 0.9, metalness: 0 }),
-    glove: new THREE.MeshStandardMaterial({ name: 'opus-glove', color: 0x2a2a28, roughness: 0.35, metalness: 0 }),
+    sleeve: new THREE.MeshStandardMaterial({
+      name: 'opus-sleeve', ...sleeveCanvas(), emissive: ACCENT_CYAN, emissiveIntensity: 0.6, roughness: 0.6, metalness: 0,
+    }),
+    glove: new THREE.MeshStandardMaterial({
+      name: 'opus-glove', color: new THREE.Color(ACCENT_CYAN).multiplyScalar(0.35),
+      emissive: ACCENT_CYAN, emissiveIntensity: 0.45, roughness: 0.5, metalness: 0,
+    }),
     gold: new THREE.MeshStandardMaterial({ name: 'opus-gold', color: 0xd4af37, roughness: 0.3, metalness: 0.8, envMapIntensity: 0.7 }),
     glowMaps: encode(glowCanvas()),
   };
