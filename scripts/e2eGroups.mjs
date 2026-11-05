@@ -9,7 +9,7 @@ export const GROUPS = {
   ai: { files: ['e2e/enemy-ai.spec.ts', 'e2e/director.spec.ts'] },
   mission: { files: ['e2e/mission.spec.ts'] },
   ui: { files: ['e2e/ui-qa.spec.ts'] },
-  world: { files: ['e2e/world-bounds.spec.ts'] },
+  world: { files: ['e2e/world-bounds.spec.ts', 'e2e/underground.spec.ts'] },
   // The indoor map (docs/facility-map.md), solo and two-player, and the modes on it; the torch and solo weather.
   facility: { files: ['e2e/facility.spec.ts', 'e2e/facility-doors.spec.ts', 'e2e/facility-modes.spec.ts', 'e2e/multiplayer-facility.spec.ts', 'e2e/pickups.spec.ts', 'e2e/solo-weather.spec.ts'] },
   // Health, ammo and grenade pickups (docs/pickups.md).
@@ -21,6 +21,7 @@ export const GROUPS = {
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
+      'e2e/multiplayer-underground.spec.ts',
       'e2e/multiplayer-match.spec.ts',
       'e2e/multiplayer-combat.spec.ts',
       'e2e/multiplayer-moving-target.spec.ts',
@@ -57,6 +58,7 @@ export const RULES = [
   { match: /^e2e\/.+\.spec\.ts$/, groups: [], stop: true },
 
   // Game areas.
+  { match: /^src\/world\/(underground|towerUnderground|labInterior|undergroundLights)\.ts$/, groups: ['world'] },
   { match: /^src\/pickups\//, groups: ['pickups'] },
   { match: /^src\/world\/(houses|doors)\/|^src\/ui\/valleyHouseMapLayer\.ts$/, groups: ['houses'] },
   { match: /^src\/combat\/grenades\/|^src\/weapons\/(GrenadeViewModel|grenadeThrowPose)\.ts$|^src\/ui\/(grenadeDangerMarkers|flashOverlay)\.ts$|^src\/audio\/flashDeafness\.ts$/, groups: ['grenades'] },

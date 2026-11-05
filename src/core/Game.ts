@@ -17,6 +17,7 @@ import { RoadManager } from '../world/RoadManager.ts';
 import { getWatchTowerPositions, isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
 import { WATCH_TOWER_ROOF_TOP } from '../world/towerDesign.ts';
 import { computeTowerLabs } from '../world/towerUnderground.ts';
+import { towerDoorId } from '../world/houses/valleyHouseIds.ts';
 import { valleyFallRecovery } from './valleyFallRecovery.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
@@ -874,6 +875,20 @@ export class Game {
       facilityLookTarget: () => this.facilityInteraction?.lookTarget() ?? null,
       getValleyHouses: () => this.buildings?.houses.debugHouses() ?? [],
       setValleyDoor: (id, open) => (this.buildings ? this.facilityInteraction?.requestState('door', id, open) ?? false : false),
+      getUndergroundDebug: () => {
+        const at = this.player.position;
+        return {
+          amount: this.undergroundAmount,
+          underground: !this.facility && isUnderground(at.x, at.y, at.z),
+          torchAvailable: this.torchAvailableAt(at),
+          labs: this.reactorLabs.map(({ lab }) => ({
+            index: lab.index, kind: lab.kind, x: lab.x, z: lab.z, groundY: lab.groundY, floorY: lab.floorY,
+            route: lab.route.map(p => ({ x: lab.x + p.x, y: lab.groundY + p.y, z: lab.z + p.z })),
+            doorId: towerDoorId(lab.index),
+          })),
+        };
+      },
+      setTowerDoor: (index, open) => (this.buildings ? this.facilityInteraction?.requestState('door', towerDoorId(index), open) ?? false : false),
       getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
       shootLamp: (index) => (this.facility ? this.destroyFacilityLamp(index, true) : this.destroyHouseLamp(index, true)),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
