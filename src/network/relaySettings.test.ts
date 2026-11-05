@@ -96,10 +96,19 @@ describe('relaySettings', () => {
     expect(settings.relayUrl()).toBe('ws://127.0.0.1:8080/ws');
   });
 
-  it('keeps production unavailable even with a query override and stored code', async () => {
+  it('allows a stored relay override only in development, below the query override', async () => {
+    const settings = await import('./relaySettings.ts');
+    localStorage.setItem(settings.DEV_RELAY_URL_KEY, 'ws://127.0.0.1:9173/ws');
+    expect(settings.relayUrl()).toBe('ws://127.0.0.1:9173/ws');
+    vi.stubGlobal('location', { search: '?relay=wss%3A%2F%2Frelay.example%2Fws' });
+    expect(settings.relayUrl()).toBe('wss://relay.example/ws');
+  });
+
+  it('keeps production unavailable even with a query override, a stored override and a stored code', async () => {
     vi.stubEnv('DEV', false);
     vi.stubGlobal('location', { search: '?relay=wss%3A%2F%2Frelay.example%2Fws' });
     const settings = await import('./relaySettings.ts');
+    localStorage.setItem(settings.DEV_RELAY_URL_KEY, 'ws://127.0.0.1:9173/ws');
     settings.saveAccessCode('test-only-value');
     settings.savePreferredTransport('server');
     expect(settings.relayUrl()).toBe('');

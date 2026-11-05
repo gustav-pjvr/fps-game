@@ -45,10 +45,14 @@ export function savePreferredTransport(transport: TransportKind): void {
   }
 }
 
+/** Dev builds only: a relay URL the e2e config puts in localStorage, so each checkout's specs reach
+ * their own relay port. Production ignores it, so no stored value or link can redirect players. */
+export const DEV_RELAY_URL_KEY = 'fps-game-dev-relay-url';
+
 export function relayUrl(): string {
   if (import.meta.env.DEV) {
     try {
-      const override = new URLSearchParams(location.search).get('relay')?.trim();
+      const override = new URLSearchParams(location.search).get('relay')?.trim() || localStorage.getItem(DEV_RELAY_URL_KEY)?.trim();
       if (override) return override;
     } catch {
       // No browser location in Node, or access to it is restricted.
