@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
+import * as THREE from 'three';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { createBoxCollider } from './structureKit.ts';
-import { TOWER_DECK_HALF, TOWER_LANDINGS, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
+import { createTowerVisual, TOWER_DECK_HALF, TOWER_LANDINGS, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
+import { createDecorativeTowerVisual } from './WatchTowerManager.ts';
 import { GRAVITY, PLAYER_HEIGHT, PLAYER_MOVE_SPEED, PLAYER_RADIUS, SPRINT_MULTIPLIER, WATCH_TOWER_HEIGHT } from '../core/config.ts';
 
 // Climbs a tower the way Player.ts moves: the same capsule, the same character controller settings
@@ -90,6 +92,36 @@ const UP_ROUTE: [number, number][] = [[-9, landing(0)[1]], landing(0), landing(1
 describe('watch tower stairs', () => {
   beforeAll(async () => {
     await RAPIER.init();
+  });
+
+  it('covers the lobby doorway with a steel plate only on the decorative tower', () => {
+    const decorative = createDecorativeTowerVisual(), playable = createTowerVisual();
+    const ray = new THREE.Raycaster(new THREE.Vector3(4, 1.1, 0), new THREE.Vector3(-1, 0, 0), 0, 1.3);
+    try {
+      decorative.updateMatrixWorld(true);
+      playable.updateMatrixWorld(true);
+      expect(ray.intersectObject(decorative, true).length).toBeGreaterThan(0);
+      expect(ray.intersectObject(playable, true)).toHaveLength(0);
+    } finally {
+      for (const group of [decorative, playable]) group.traverse(child => { if (child instanceof THREE.Mesh) child.geometry.dispose(); });
+    }
+  });
+
+  it.each(['south', 'west', 'north'] as const)('has a hollow room, east opening, ceiling and D1 floor hole facing %s', async (orientation) => {
+    const physics = await PhysicsWorld.create();
+    try {
+      const tower = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      for (const part of towerParts(orientation)) createBoxCollider(physics.world, tower, part.box);
+      physics.step(DT);
+      const ray = (x: number, y: number, z: number, dx: number, dy: number, dz: number, length: number) =>
+        physics.world.castRay(new RAPIER.Ray({ x, y, z }, { x: dx, y: dy, z: dz }), length, true);
+      expect(ray(0, 1, 0, 1, 0, 0, 3.5)).toBeNull();
+      expect(ray(0, 1, 0, -1, 0, 0, 3)?.timeOfImpact).toBeCloseTo(2.7);
+      expect(ray(0, 1, 0, 0, 1, 0, 3)?.timeOfImpact).toBeCloseTo(2);
+      expect(ray(0, 0.8, 0, 0, -1, 0, 1)?.timeOfImpact).toBeCloseTo(0.75);
+      const hole = orientation === 'west' ? { x: 0, z: 1.65 } : { x: -1.65, z: 0 };
+      expect(ray(hole.x, 0.8, hole.z, 0, -1, 0, 3)).toBeNull();
+    } finally { physics.dispose(); }
   });
 
   it('a sprinting player climbs all five flights onto the deck without falling', async () => {

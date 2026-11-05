@@ -61,6 +61,13 @@ export const PICKUP_VALLEY_MIN_SPACING = 12;
 /** Valley: the steepest ground (metres of rise over 3 m) a pickup may stand on. */
 export const PICKUP_VALLEY_MAX_RISE = 1.2;
 
+/** Lab kinds in the interior's free floor site order; appended after the surface pickups. */
+export const PICKUP_LAB_KINDS: Readonly<Record<'full' | 'compact' | 'dead-end', readonly PickupKind[]>> = {
+  full: ['health', 'ammo', 'grenade'],
+  compact: ['ammo'],
+  'dead-end': [],
+};
+
 /** Visuals: how high the model floats above the ring on the ground, spin and bob, and how far from
  * the player pickups are drawn at all. */
 export const PICKUP_HOVER_HEIGHT = 0.7;

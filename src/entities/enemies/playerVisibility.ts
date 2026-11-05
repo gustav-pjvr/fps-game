@@ -20,6 +20,7 @@ export interface VisibilityInputs {
   /** Valley: whether the house room the player stands in has its lamp lit (ValleyHouses.roomLampLitAt);
    * null or left out outside every house. */
   readonly houseRoomLit?: boolean | null;
+  readonly underground?: boolean;
   /** A flash grenade's light is on the player this instant (flashLightsPlayer). */
   readonly flashLit?: boolean;
 }
@@ -36,7 +37,8 @@ export function visibility(inputs: VisibilityInputs): number {
   if ((inputs.secondsSinceShot >= 0 && inputs.secondsSinceShot < 0.6) ||
       (inputs.torchOn && inputs.enemyInTorchBeam) || inputs.flashLit === true) return 1;
   if (inputs.map === 'valley') {
-    if (inputs.weather !== 'day' && inputs.houseRoomLit === false) return DARK_HOUSE_ROOM;
+    // Underground is an unlit room in every weather, Dusk included.
+    if (inputs.underground === true || (inputs.weather !== 'day' && inputs.houseRoomLit === false)) return DARK_HOUSE_ROOM;
     return inputs.weather === 'night' ? 0.4 : inputs.weather === 'fog' ? 0.75 : 1;
   }
   const luma = inputs.probeLuma ?? 0;

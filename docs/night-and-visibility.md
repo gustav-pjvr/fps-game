@@ -78,7 +78,9 @@ accessible label reads "Visibility to enemies: N%". `Hud.setVisibility` only wri
 percent changes.
 
 It shows whenever the match has a torch: the Facility, Valley Night and Valley Fog
-(`Game.ts`: `hud.setVisibility(this.torch ? value : null)`). At Dusk it is hidden.
+(`Game.ts`: shown where the torch is available here). At Dusk it shows only below ground or in a
+tower's ground room (v4.7.0, `docs/underground-lab.md`), where underground counts as an unlit room in
+every weather.
 
 ## 4. The torch
 
@@ -93,11 +95,13 @@ model layer would hide from the world), moved every frame to the front of the gu
 | Intensity | 14 candela (`TORCH_INTENSITY`), colour `0xfff1dc` |
 | Shadow | 512 map, only when the graphics preset has shadows (`setCastShadow`) |
 
-- **Availability** (`torchAvailable`): the Facility always, the Valley in Night and Fog, never at
-  Dusk. **On by default** (`torchOnByDefault`): the Facility and Night; Fog starts off.
+- **Availability** (`torchAvailable`): the Facility always, the Valley in Night and Fog, and at Dusk
+  only underground or in a tower's ground room (v4.7.0; it switches off on returning to the surface).
+  At Dusk the torch casts no shadow and multiplayer has no remote torch pool (`torchCastsShadow`,
+  `remoteTorchesAvailable`). **On by default** (`torchOnByDefault`): the Facility and Night; Fog starts off.
 - **Toggle:** the `flashlight` action, default key F, rebindable, D-pad up on a pad. It only
   changes intensity, because adding or hiding a light would recompile every shader.
-  `Game.update` consumes the press even at Dusk, where there is no torch. There is no on-screen
+  `Game.update` consumes the press even where the torch cannot switch on. There is no on-screen
   prompt for it.
 - **Other players:** `RemoteTorches` is a pool of `MULTIPLAYER_MAX_PLAYERS - 1` shadowless spot
   lights made at match start, each following one opponent's head. Their on state comes from the

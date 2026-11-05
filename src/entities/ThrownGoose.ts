@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { buildGooseMesh, disposeProceduralMesh } from './Goose.ts';
 import { GRAVITY } from '../core/config.ts';
 import type { PlayerSlot } from '../network/protocol.ts';
+import { castRaySkippingCuts } from '../world/underground.ts';
 
 /** A goose in ballistic flight after being thrown (Goose Toss mode's pickup-and-throw, or the
  * Goose Launcher weapon's shots - see Game.ts's updateGooseToss/updateThrownGeese and
@@ -66,5 +67,5 @@ export function throwSegmentBlocked(world: RAPIER.World, from: THREE.Vector3Like
   const length = Math.hypot(dx, dy, dz);
   if (length < 1e-6) return false;
   const ray = new RAPIER.Ray({ x: from.x, y: from.y, z: from.z }, { x: dx / length, y: dy / length, z: dz / length });
-  return world.castRay(ray, length, true, RAPIER.QueryFilterFlags.ONLY_FIXED | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS) !== null;
+  return castRaySkippingCuts(world, ray, length, true, RAPIER.QueryFilterFlags.ONLY_FIXED | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS) !== null;
 }

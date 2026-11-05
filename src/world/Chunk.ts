@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { generateHeightfield, groundWear, sampleHeight } from './TerrainGenerator.ts';
 import { shadeTerrain } from './terrainShading.ts';
+import { registerTerrainCollider, unregisterTerrainCollider } from './underground.ts';
 
 export interface ChunkOptions {
   originX: number;
@@ -36,10 +37,12 @@ export class Chunk {
       { x: size, y: 1, z: size },
     );
     this.collider = physics.world.createCollider(colliderDesc, this.rigidBody);
+    registerTerrainCollider(this.collider.handle);
   }
 
   dispose(physics: PhysicsWorld): void {
     this.mesh.geometry.dispose();
+    unregisterTerrainCollider(this.collider.handle);
     physics.unregisterCollider(this.collider);
     physics.world.removeCollider(this.collider, true);
     physics.world.removeRigidBody(this.rigidBody);

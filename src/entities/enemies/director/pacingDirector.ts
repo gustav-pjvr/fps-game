@@ -26,6 +26,7 @@ export interface DirectorSignals {
   /** Enemies chasing the player right now. */
   readonly engagedEnemies: number;
   readonly aliveEnemies: number;
+  readonly allPlayersUnderground: boolean;
 }
 
 export type DirectorCommand = { readonly kind: 'spawnWave'; readonly count: number; readonly bias: WaveBias } | { readonly kind: 'none' };
@@ -67,6 +68,7 @@ export class PacingDirector {
   private phaseLength = 0;
   private waveTimer: number;
   private spawned = 0;
+  private undergroundSeconds = 0;
 
   constructor(
     private readonly options: DirectorOptions,
@@ -102,6 +104,11 @@ export class PacingDirector {
       1,
       this.intensityValue + signals.damageTaken * options.intensityPerDamage + signals.nearbyKills * options.intensityPerKill,
     );
+    this.undergroundSeconds = signals.allPlayersUnderground ? this.undergroundSeconds + signals.dt : 0;
+    if (this.undergroundSeconds >= 3) {
+      if (this.phaseValue !== 'relax') this.enter('relax', this.roll(options.relaxMin, options.relaxMax));
+      return NONE;
+    }
     this.phaseElapsedValue += signals.dt;
 
     switch (this.phaseValue) {
@@ -140,6 +147,7 @@ export class PacingDirector {
     this.enter('buildUp', 0);
     this.waveTimer = this.options.waveInterval;
     this.spawned = 0;
+    this.undergroundSeconds = 0;
   }
 
   private nextWave(signals: DirectorSignals): DirectorCommand {

@@ -23,15 +23,42 @@ const TOWERS: MissionPoint[] = [
 function run(mission: MissionState, player: MissionPoint, seconds: number, step = 0.5, interactFirst = false): MissionEvent[] {
   const events: MissionEvent[] = [];
   for (let t = 0; t < seconds - 1e-9; t += step) {
-    events.push(...mission.update({ dt: step, player, interactPressed: interactFirst && t === 0, playerDead: false }));
+    events.push(...mission.update({ dt: step, player, interactPressed: interactFirst && t === 0, playerDead: false, underground: false }));
   }
   return events;
 }
 
 const press = (mission: MissionState, player: MissionPoint): MissionEvent[] =>
-  mission.update({ dt: 0, player, interactPressed: true, playerDead: false });
+  mission.update({ dt: 0, player, interactPressed: true, playerDead: false, underground: false });
 
 describe('MissionState', () => {
+  it('rejects underground uplink interaction and pauses an upload until the player surfaces', () => {
+    const mission = new MissionState(TOWERS, SPAWN);
+    const player = { x: -100, z: 0 };
+    const underground = { dt: UPLINK_DURATION, player, interactPressed: true, playerDead: false, underground: true };
+    expect(mission.update(underground)).toEqual([]);
+    expect(mission.view(player, true).prompt).toBeNull();
+    expect(mission.view(player, true).active).toBeNull();
+    press(mission, player);
+    run(mission, player, 5);
+    expect(mission.update(underground)).toEqual([]);
+    expect(mission.view(player, true).active).toEqual({ label: 'A', progress: 5 / UPLINK_DURATION, paused: true });
+    expect(mission.view(player).active!.paused).toBe(false);
+    expect(run(mission, player, UPLINK_DURATION - 5).at(-1)).toMatchObject({ kind: 'uplinkOnline', label: 'A' });
+  });
+
+  it('rejects extraction underground and requires a fresh surface hold after coming up', () => {
+    const mission = new MissionState(TOWERS, SPAWN);
+    for (const uplink of mission.view(SPAWN).uplinks) run(mission, uplink, UPLINK_DURATION, 0.5, true);
+    const player = mission.extraction;
+    run(mission, player, EXTRACTION_HOLD - 1);
+    expect(mission.update({ dt: EXTRACTION_HOLD * 2, player, interactPressed: false, playerDead: false, underground: true })).toEqual([]);
+    expect(mission.view(player, true).phase).toBe('extract');
+    expect(mission.view(player, true).extractionProgress).toBe(0);
+    expect(run(mission, player, EXTRACTION_HOLD - 1)).toEqual([]);
+    expect(run(mission, player, 1)).toEqual([{ kind: 'won' }]);
+  });
+
   it('makes the three towers nearest the spawn the uplinks, A nearest, and the fourth the extraction', () => {
     const mission = new MissionState(TOWERS, SPAWN);
     const view = mission.view(SPAWN);
@@ -138,9 +165,9 @@ describe('MissionState', () => {
   it('is lost when the player dies, and stays lost', () => {
     const mission = new MissionState(TOWERS, SPAWN);
     press(mission, { x: -100, z: 0 });
-    expect(mission.update({ dt: 0.1, player: SPAWN, interactPressed: false, playerDead: true })).toEqual([{ kind: 'lost' }]);
+    expect(mission.update({ dt: 0.1, player: SPAWN, interactPressed: false, playerDead: true, underground: false })).toEqual([{ kind: 'lost' }]);
     expect(mission.view(SPAWN).phase).toBe('lost');
-    expect(mission.update({ dt: 0.1, player: SPAWN, interactPressed: true, playerDead: true })).toEqual([]);
+    expect(mission.update({ dt: 0.1, player: SPAWN, interactPressed: true, playerDead: true, underground: false })).toEqual([]);
   });
 });
 

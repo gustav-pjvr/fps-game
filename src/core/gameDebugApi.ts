@@ -167,6 +167,16 @@ export interface GameDebugApi {
   }[];
   /** Asks for a Valley house door to be open or shut through the same rules as a key press. */
   setValleyDoor(id: number, open: boolean): boolean;
+  /** Underground state and seeded lab routes in world coordinates at floor level. */
+  getUndergroundDebug(): {
+    amount: number; underground: boolean; torchAvailable: boolean;
+    labs: {
+      index: number; kind: 'full' | 'compact' | 'dead-end'; x: number; z: number; groundY: number; floorY: number;
+      route: { x: number; y: number; z: number }[]; doorId: number;
+    }[];
+  };
+  /** Like setValleyDoor, for the tower at `index`. */
+  setTowerDoor(index: number, open: boolean): boolean;
   /** The houses' lamps: how many are streamed in, lit and shot out, and the light pool. */
   getHouseLights(): { lamps: number; lit: number; dead: number; lights: { x: number; y: number; z: number; on: boolean }[] } | null;
   /** Test-only: shoots out lamp `index` exactly like a hit (light, effect, sound and, in multiplayer,

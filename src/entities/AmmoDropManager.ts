@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { buildAmmoDropMesh } from './AmmoDrop.ts';
 import { disposeProceduralMesh } from './Goose.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
+import { inCutZone, isBelowGround, pointInUndergroundVolume } from '../world/underground.ts';
 import {
   HORDE_AMMO_DROP_MAX_CONCURRENT,
   HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS,
@@ -34,6 +35,7 @@ export class AmmoDropManager {
   constructor(
     private readonly scene: THREE.Scene,
     private readonly callbacks: AmmoDropManagerCallbacks,
+    private readonly floor?: (x: number, y: number, z: number) => number,
   ) {}
 
   get count(): number {
@@ -59,11 +61,17 @@ export class AmmoDropManager {
     this.spawnTimer = randomSpawnDelay();
 
     const anchor = playerPositions[Math.floor(Math.random() * playerPositions.length)]!;
+    // A player underground gets a crate in the same underground volume (1 m from its walls): a random
+    // point in the 18 m disc would mostly fall outside it, on the surface or inside a wall.
+    const belowGround = isBelowGround(anchor.x, anchor.y, anchor.z);
+    const inside = this.floor && belowGround ? pointInUndergroundVolume(anchor.x, anchor.y, anchor.z, Math.random(), Math.random()) : null;
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.random() * HORDE_AMMO_DROP_SPAWN_RADIUS;
-    const x = anchor.x + Math.cos(angle) * radius;
-    const z = anchor.z + Math.sin(angle) * radius;
-    const y = sampleHeight(x, z);
+    const x = inside ? inside.x : anchor.x + Math.cos(angle) * radius;
+    const z = inside ? inside.z : anchor.z + Math.sin(angle) * radius;
+    // A surface point inside a tower core's cut zone has no terrain floor (the stair hole is
+    // there), so it asks the floor lookup too instead of floating at terrain height.
+    const y = this.floor && (belowGround || inCutZone(x, z)) ? this.floor(x, anchor.y, z) : sampleHeight(x, z);
     const id = `ammo-${this.idCounter++}`;
 
     const mesh = buildAmmoDropMesh();

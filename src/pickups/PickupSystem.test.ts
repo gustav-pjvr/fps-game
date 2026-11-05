@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import type { NetworkMessage, PlayerSlot } from '../network/protocol.ts';
-import { PICKUP_CLAIM_RESEND_SECONDS, PICKUP_RESPAWN_SECONDS } from './pickupConfig.ts';
+import { PICKUP_CLAIM_RESEND_SECONDS, PICKUP_HOVER_HEIGHT, PICKUP_RESPAWN_SECONDS } from './pickupConfig.ts';
 import { NO_GRENADES, type PickupRecipient } from './pickupEffects.ts';
 import type { PickupSite } from './pickupPlacement.ts';
 import { PickupSystem, type PickupNetwork } from './PickupSystem.ts';
+import { buildTowerLab } from '../world/towerUnderground.ts';
+import { gatherLabPickupSites } from './valleyPickupInputs.ts';
 
 // The visuals need a browser (canvas, matchMedia); the claim protocol does not.
 const shown = vi.hoisted(() => new Map<unknown, Map<number, boolean>>());
@@ -141,7 +143,7 @@ describe('PickupSystem in single-player', () => {
 });
 
 /** A host and guests joined by in-memory queues, delivered by hand so a test controls the order. */
-function makeMatch(guestSlots: PlayerSlot[] = [1]) {
+function makeMatch(guestSlots: PlayerSlot[] = [1], sites: PickupSite[] = SITES) {
   type Peer = { system: PickupSystem; log: ReturnType<typeof makeRecipient>['log']; visuals: Map<number, boolean>; position: THREE.Vector3; picked: string[] };
   const peers = new Map<PlayerSlot, Peer>();
   const queue: { to: PlayerSlot; from: PlayerSlot; message: NetworkMessage }[] = [];
@@ -164,10 +166,10 @@ function makeMatch(guestSlots: PlayerSlot[] = [1]) {
       // The host sees every guest where that guest stands.
       opponentPosition: (other) => {
         const peer = peers.get(other);
-        return peer ? { x: peer.position.x, z: peer.position.z } : null;
+        return peer ? { x: peer.position.x, y: peer.position.y, z: peer.position.z } : null;
       },
     };
-    const system = new PickupSystem(new THREE.Scene(), SITES, recipient, network, { onPickedUp: (kind, line) => picked.push(`${kind}:${line}`) });
+    const system = new PickupSystem(new THREE.Scene(), sites, recipient, network, { onPickedUp: (kind, line) => picked.push(`${kind}:${line}`) });
     peers.set(slot, { system, log, visuals: visualsOf(system), position: at(500), picked });
   };
   build(0, 'host');
@@ -186,6 +188,44 @@ function makeMatch(guestSlots: PlayerSlot[] = [1]) {
 }
 
 describe('PickupSystem in multiplayer', () => {
+  it('keeps the full horizontal claim tolerance independently of height', () => {
+    const { peers, deliver } = makeMatch();
+    const host = peers.get(0)!, guest = peers.get(1)!;
+    guest.position.set(3.9, PICKUP_HOVER_HEIGHT + 1.6, 0);
+    host.system.handleMessage({ type: 'pickupClaim', id: 0 }, 1);
+    deliver();
+    expect(host.system.views()[0]!.available).toBe(false);
+    expect(guest.log.healed).toEqual([40]);
+  });
+
+  it('rejects claims outside either the horizontal or vertical allowance', () => {
+    const { peers } = makeMatch();
+    const host = peers.get(0)!, guest = peers.get(1)!;
+    for (const [x, y] of [[4.01, PICKUP_HOVER_HEIGHT], [0, PICKUP_HOVER_HEIGHT + 3.01]]) {
+      guest.position.set(x!, y!, 0);
+      host.system.handleMessage({ type: 'pickupClaim', id: 0 }, 1);
+      expect(host.system.views()[0]!.available).toBe(true);
+    }
+  });
+
+  it('grants a lab pickup from the lab floor but rejects a claim from the surface above', () => {
+    const lab = buildTowerLab(0, { x: 100, z: -100 }, 'north', 3);
+    const sites = gatherLabPickupSites([lab]).map((site, id) => ({ ...site, id }));
+    const site = sites[0]!;
+    const { peers, sent, deliver, tick } = makeMatch([1], sites);
+    const host = peers.get(0)!, guest = peers.get(1)!;
+    guest.position.set(site.x, lab.groundY + STAND, site.z);
+    host.system.handleMessage({ type: 'pickupClaim', id: site.id }, 1);
+    deliver();
+    expect(host.system.views()[site.id]!.available).toBe(true);
+    expect(guest.log.healed).toEqual([]);
+    guest.position.set(site.x, site.y + STAND, site.z);
+    tick();
+    expect(guest.log.healed).toEqual([40]);
+    expect(host.system.views()[site.id]!.available).toBe(false);
+    expect(sent.some(entry => entry.from === 0 && entry.message.type === 'pickupTaken' && entry.message.id === site.id)).toBe(true);
+  });
+
   it('applies a host claim at once and tells the guests, who hide the pickup without gaining', () => {
     const { peers, sent, tick } = makeMatch();
     peers.get(0)!.position = at(0);

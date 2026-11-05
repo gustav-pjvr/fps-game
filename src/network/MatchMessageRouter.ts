@@ -1,4 +1,5 @@
 import { torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
+import { isBelowGround, isUnderground } from '../world/underground.ts';
 import * as THREE from 'three';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
@@ -16,7 +17,7 @@ import type { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import type { KillFeed } from '../ui/killFeed.ts';
 import type { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import type { SoundEngine } from '../audio/SoundEngine.ts';
-import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume } from '../core/positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume, undergroundMuffleFactor } from '../core/positionalAudio.ts';
 import { applyMatchDeath } from '../core/multiplayerScoring.ts';
 import { acceptsGoldenGooseClaim, acceptsGoldenGooseDrop } from '../core/modeControllers/KingOfTheHillController.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
@@ -209,9 +210,9 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (message.t !== undefined) opponent.lastStateSentAt = message.t;
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
       opponent.remotePlayer.setLookPitch(message.pitch);
-      if (torchAvailable(activeMultiplayer.map, activeMultiplayer.weather)) {
-        opponent.remotePlayer.setTorch(message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather));
-      }
+      const torchAllowed = torchAvailable(activeMultiplayer.map, activeMultiplayer.weather,
+        activeMultiplayer.map === 'valley' && isUnderground(message.x, message.y, message.z));
+      opponent.remotePlayer.setTorch(torchAllowed && (message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather)));
       // Every map: the Valley's house lamps and doors need the same catch-up as the Facility's.
       ctx.opponentInMatch(message.senderSlot);
       ctx.grenades?.opponentInMatch(message.senderSlot);
@@ -236,7 +237,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       }
       ctx.tracers.spawn(origin, end);
       ctx.muzzleFlash.spawn(origin, false);
-      ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance), pan);
+      ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance) * undergroundMuffleFactor(
+        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(origin.x, origin.y, origin.z)), pan);
       break;
     }
     case 'lampDestroyed':
@@ -365,7 +367,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const origin = new THREE.Vector3(message.x, message.y, message.z);
       const distance = origin.distanceTo(ctx.player.position);
       const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
-      ctx.sound.playFootstep(multiplayerGunshotVolume(distance), pan);
+      ctx.sound.playFootstep(multiplayerGunshotVolume(distance) * undergroundMuffleFactor(
+        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(origin.x, origin.y, origin.z)), pan);
       break;
     }
     case 'goosePickedUp':
@@ -396,7 +399,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const position = new THREE.Vector3(message.x, message.y, message.z);
       const explosionRadius = message.source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_RADIUS : GOOSE_TOSS_EXPLOSION_RADIUS;
       ctx.explosionEffect.spawn(position, explosionRadius);
-      ctx.sound.playExplosion(enemyGunshotVolume(position.distanceTo(ctx.player.position)), computeStereoPan(ctx.player.position, ctx.player.facingYaw, position));
+      ctx.sound.playExplosion(enemyGunshotVolume(position.distanceTo(ctx.player.position)) * undergroundMuffleFactor(
+        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(position.x, position.y, position.z)), computeStereoPan(ctx.player.position, ctx.player.facingYaw, position));
       const thrown = ctx.thrownGeese.get(message.id);
       if (thrown) {
         thrown.dispose(ctx.scene);

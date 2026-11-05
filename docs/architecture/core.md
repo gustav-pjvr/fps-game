@@ -54,8 +54,9 @@ make a `Game` (the constructor is private).
    `gooseHorde`), then `setWorldSeed(multiplayer.seed)` or `randomizeWorldSeed()` (`src/core/worldSeed.ts`). The seed
    is what makes every client build the same world.
 2. **Core objects.** `Renderer` (preset from `Settings.getGraphicsQuality()`), `InputManager`, `PhysicsWorld.create()`, then
-   `setMatchLook(FACILITY_LOOK)` or `setMatchWeather`, `Game.addLighting`, and a `Flashlight` (plus `RemoteTorches` in
-   multiplayer) if `torchAvailable(map, weather)`.
+   `setMatchLook(FACILITY_LOOK)` or `setMatchWeather`, `Game.addLighting`, and a `Flashlight` on every map (its shadow
+   only where `torchCastsShadow`), plus `RemoteTorches` in multiplayer where `remoteTorchesAvailable(map, weather)`
+   (Facility, Night, Fog: a Dusk match has no remote pool). `clearUnderground()` runs first, before the world is built.
 3. **World.** Facility: `generateFacilityLayout(seed)`, `setHeightOverride(() => 0)`, `FacilityNav`,
    `FacilityWorld.build` (bakes light), `FacilityObjects.build`. Valley: `VegetationManager`, `BuildingManager`,
    `RoadManager`, `WatchTowerManager` and a `ChunkManager` whose chunk load and unload hooks fan out to those four;
@@ -82,6 +83,9 @@ make a `Game` (the constructor is private).
     `connection.setCallbacks` with a `MatchMessageContext` passed to `routeMatchMessage`.
 13. **Briefing gate.** `beginModeExplanation` for every mode but `default`, unless it is a late join. The world stays
     frozen until every player has pressed Skip.
+14. **Precompile.** On the Valley, the last step shows every streamed-in tower's hidden `tower-underground` group,
+    calls `renderer.webgl.compile(scene, camera)` once and restores the groups' visibility, so the lab materials
+    compile with the match's full light set before the first descent instead of stalling it.
 
 Pieces that need `game` before it exists use forward references (the `gameRef` holder, the `game` variable captured by closures).
 
@@ -117,12 +121,16 @@ a tick. `Game.start()` starts the loop and, unless a briefing is showing, calls 
    screen on the first unpaused tick (`pendingDeathScreenReveal`).
 5. Single-player and paused: `weaponManager.cancelAim()` and return. Multiplayer keeps simulating while paused, so
    pausing never dodges damage.
-6. Key actions (`resetPlay`, `flashlight`), then queued `pendingNetworkDamage` and `pendingDebugDamage` into `player.takeDamage`.
+6. Key actions (`resetPlay`, `flashlight`; the toggle is ignored where `torchAvailableAt(player)` is false, which is
+   the Dusk surface), then queued `pendingNetworkDamage` and `pendingDebugDamage` into `player.takeDamage`.
 7. Every `RemotePlayer.update(dt)` (before this tick's shots, so hitscan sees fresh colliders), `facilityInteraction.update`,
    `buildings.houses.update`.
 8. If the local player is not frozen: `gooseTossController` and `kingOfTheHillController` (they consume the fire press
-   first), `player.update`, `weaponManager.update`. Then player visibility (`src/entities/enemies/playerVisibility.ts`)
-   for the HUD light meter and enemy perception.
+   first), `player.update`, then on the Valley `valleyFallRecovery` (a player far below a lab floor or the terrain is
+   teleported 4.5 m east of the nearest tower and, in multiplayer, a `respawnEvent` is sent), `weaponManager.update`.
+   Then player visibility (`src/entities/enemies/playerVisibility.ts`) for the HUD light meter and enemy perception: an
+   underground player (`isBelowGround`) counts as in an unlit room, the torch is switched off if it is not available
+   here, and the HUD meter is shown only where the torch is available.
 9. Shared world (always in multiplayer, only while unfrozen in single-player): `physics.step`, `chunkManager.update`,
    `entityManager.update`, `updateDirector`, `updateMission`, `gooseManager.update`, `updateThrownGeese`, `grenades.update`,
    `hordeGooseManager.update`, `bonusGooseManager.update`, ammo drops, `pickups.update`, the host's Goose Toss supply.
@@ -136,15 +144,15 @@ a tick. `Game.start()` starts the loop and, unless a briefing is showing, calls 
 
 **One frame, `Game.render(alpha)`:** records frame time (`fpsMeter`, `perfLogger`, `perfOverlay`), `player.interpolateCamera(alpha)`, `grenades.applyCameraShake`,
 `hud.update`, `damageArcs.update`, `worldMarkers.update`, `grenadeEffects.update`, then `updateFacilityLight` (Facility) or
-`updateSunFollow` (Valley), `updateTorches`, `renderer.render()`, `grenadeEffects.afterRender`. Only the camera and what is
+`updateSunFollow` and `updateUndergroundLight` (Valley), `updateTorches`, `renderer.render()`, `grenadeEffects.afterRender`. Only the camera and what is
 parented to it (the weapons) is interpolated; other meshes show the last tick's pose.
 
 ### 2.5 Dispose, reset, respawn
 
 `Game.dispose({ keepConnectionAlive? })` stops the loop and tears down in an order that matters: Facility world, objects,
 interaction, house lights, lamp effects and torches first (they free GPU resources and a physics body); then the
-module-level overrides (`setHeightOverride(null)`, `setEnemyNavigator(null)`, `setEnemyDoorGate`, `setEnemyFloor`,
-`setEnemyEntrance`); then `input`, `renderer` (which forces WebGL context loss), HUD widgets, managers, `sound`, opponents,
+module-level overrides (`setHeightOverride(null)`, `clearUnderground()`, `setEnemyNavigator(null)`, `setEnemyDoorGate`,
+`setEnemyFloor`, `setEnemyEntrance`); then `input`, `renderer` (which forces WebGL context loss), HUD widgets, managers, `sound`, opponents,
 minimaps, and the connection unless `keepConnectionAlive`. It bumps `spawnGeneration` (cancels an in-flight
 `spawnEncountersAsync`) before `physics.dispose()`, and ends with `window.__gameDebug = undefined`.
 
@@ -179,6 +187,15 @@ default because the e2e sandbox is verified on it.
 
 - `Game.addLighting` creates a `HemisphereLight` fill and a `DirectionalLight` sun with an orthographic shadow box
   (`SUN_SHADOW_*` in `config.ts`). On the Valley `updateSunFollow` re-centres that box on the player in shadow-texel steps.
+- **Underground light fade (Valley).** `Game.updateUndergroundLight` runs in the render path after `updateSunFollow`.
+  It eases `undergroundAmount` (`easeUndergroundAmount`, about half a second) toward `undergroundLightTarget` at the
+  camera: 1 below ground, 0.6 in the ground room, 0 outdoors. `undergroundLook(currentLook, environmentLighting, amount)`
+  then derives the sun, hemisphere fill, environment intensity and fog from the weather's own look every frame, never
+  from last frame's faded values: the three lights scale by `1 - 0.95 * amount` and the fog pulls from the weather's
+  near and far to 4 m and 40 m, its colour moving from the haze to `UNDERGROUND_FOG_COLOR`. Only intensities and fog
+  values change, so no shader recompiles. The same pass shows each tower's `tower-underground` group when
+  `undergroundVisible` allows and moves the three `UndergroundLights` onto the nearest lab lamps
+  (`src/world/undergroundLights.ts`, `docs/architecture/world-and-combat.md` section 1.7).
 - `src/render/look.ts` holds the art direction in numbers: `LOOK_PRESETS` (`day`, shown as "Dusk", `night`, `fog`) and
   `FACILITY_LOOK`. Sky, fog, lights, grade and bloom all read from it.
 - `src/render/PostStack.ts`: world `RenderPass`, optional `N8AOPostPass`, the view-model pass (`HookedRenderPass`), one `EffectPass`
@@ -192,9 +209,9 @@ default because the e2e sandbox is verified on it.
 |---|---|---|
 | Choice | `MatchMap` `'valley'` in `src/core/config.ts` (default) | `'facility'` |
 | Look | `lookFor(weather)`: day, night, fog | `FACILITY_LOOK` (`indoor: true`): sky hidden, sun intensity 0, no IBL on the world, no sun shadows |
-| World | Chunked terrain, vegetation, houses, roads, four towers | `FacilityWorld` from `generateFacilityLayout(seed)` (`src/world/facility/`); flat floor via `setHeightOverride(() => 0)` |
+| World | Chunked terrain, vegetation, houses, roads, four towers with a ground room and a lab under each | `FacilityWorld` from `generateFacilityLayout(seed)` (`src/world/facility/`); flat floor via `setHeightOverride(() => 0)` |
 | Light | Sun plus hemisphere fill (IBL on High) | Baked per-cell probes; `Game.updateFacilityLight` damps the fill toward the probe under the camera; light shafts and dust follow `quality.postProcessing` |
-| Torch | `torchAvailable`: only when weather is not `day`; on by default at night | Always available and on by default (`src/render/Flashlight.ts`) |
+| Torch | `torchAvailable(map, weather, underground)`: at Night and Fog anywhere, at Dusk (`day`) only underground (`isUnderground`), switched off again on the surface; on by default at Night. A Dusk torch has no shadow and no remote torch pool | Always available and on by default (`src/render/Flashlight.ts`) |
 | Weather | Chosen at setup | Not applicable; the select is disabled (`PlaySetupModal`) |
 | Navigation | House walk grids (`src/world/houses/HouseNavigator.ts`) | `FacilityNav` |
 | Geese | Ambient flock and bonus goose (default mode) | None, except Goose Toss pickups |
@@ -249,6 +266,14 @@ Its Loadout button exists only for `modeUsesCustomLoadout` modes; a change appli
 synthesis when a buffer is missing (the MP5 gets the generic burst). A reverb send, a master gain and a flash-grenade low-pass
 sit on the master bus. `updateAmbience` runs every tick: combat music follows the director phase, a heartbeat starts at low
 health, and the Facility's looping track (`startBedMusic`, `BED_LEVEL`) replaces the synthesised music.
+
+Underground (`AmbienceInputs` in `SoundEngine.ts`, helpers in `ambience.ts`): `Game` passes `undergroundAmount` only
+while the player is below ground (`isBelowGround`), plus `reactorDistance`. `updateAmbience` raises the reverb send by
+`undergroundReverbScale` (up to 1.6) and closes the reverb's low-pass from 14,000 Hz toward 1,800 Hz, a darker echo. A
+reactor hum (48 and 50 Hz sines plus low-passed noise, built on first need) follows `reactorHumGain(distance)`: full
+within 4 m of the lab's nearest reactor core, silent from 22 m, scaled by the music volume. Sounds that cross the
+surface are muffled by `undergroundMuffleFactor` in `src/core/positionalAudio.ts` (0.35 when the listener and the source
+are on different sides, else 1), applied to enemy and remote gunshots, remote footsteps, goose and grenade blasts.
 
 Music files are `public/assets/music/<slug>.mp3`. They are gitignored (the licence forbids redistributing them and the repo is
 public; `.gitignore` keeps only the folder's `README.md`), so they exist only in a working folder and on the deployed site.
@@ -364,13 +389,19 @@ Each item was confirmed in the code.
 4. **One `SoundEngine` per match, none in the lobby** (the lobby uses `LobbyMusic`). Browsers cap `AudioContext`s, so
    `Game.dispose` must close it. Sound needs a gesture: `Game.create` adds a one-time document click calling `sound.resume()`.
 5. **Module-level state outlives a `Game`.** `setHeightOverride`, `setEnemyNavigator`, `setEnemyDoorGate`, `setEnemyFloor`,
-   `setEnemyEntrance`, the world seed (`src/core/worldSeed.ts`), `Settings` and the `gamepadInput` singleton are globals.
+   `setEnemyEntrance`, the underground cut zones, terrain collider handles and volumes (`clearUnderground()` in
+   `Game.create` and `Game.dispose`), the world seed (`src/core/worldSeed.ts`), `Settings` and the `gamepadInput` singleton are globals.
    `Game.create` resets the Valley ones and `Game.dispose` clears them; a new match-set global must be cleared the same way.
 6. **The debug API is the e2e contract.** `Game.installDebugApi` assigns `window.__gameDebug` in the constructor (so it appears
    only once loading finishes) and `Game.dispose` sets it to `undefined`. `waitForGameReady` waits for it and specs read state
    through it (`getPlayerPosition`, `getLiveEntityStates`, `getFacilityDebug`, `teleport`, `lookAt`, ...). The type is
    `GameDebugApi` in `src/core/gameDebugApi.ts`, which also declares the global `Window` field. It has mutating hooks (`teleport`, `setPlayerInvulnerable`, `placeEnemy`,
-   `commandEnemy`, `setFacilityDoor`, `throwGrenade`) beside the read and aim ones.
+   `commandEnemy`, `setFacilityDoor`, `throwGrenade`, `setTowerDoor`) beside the read and aim ones. The underground adds
+   `getUndergroundDebug()` (the eased `amount`, whether the player is `underground` by `isUnderground`, `torchAvailable`
+   here, and every lab's `index`, `kind`, `x`, `z`, `groundY`, `floorY`, `doorId` and a walk `route` of floor points in
+   world coordinates) and `setTowerDoor(index, open)` (a tower door through the same rules as a key press, like
+   `setValleyDoor`). Teleport takes the capsule centre, so a spec stands 1 m above a route point. A spec that needs a
+   lab reads `getUndergroundDebug().labs` rather than guessing, since the kind and position depend on the seed.
 7. **`e2e` is outside `tsconfig.json`** (it includes only `src`), and Playwright does not type-check, so a type error in a spec
    is not caught by `npm run typecheck`. `e2e/global.d.ts` declares `Window.__gameDebug`; two specs also redeclare it
    (`e2e/multiplayer-combat.spec.ts`, `e2e/multiplayer-match.spec.ts`).

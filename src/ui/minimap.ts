@@ -32,6 +32,17 @@ export interface MinimapMarker {
   readonly z: number;
 }
 
+export interface MinimapPlayerDot {
+  readonly x: number;
+  readonly z: number;
+  readonly underground: boolean;
+}
+
+/** Keep the dot's colour and footprint while changing a buried player into a ring. */
+export function minimapDotStyle(underground: boolean, colour: string): { background: string; border: string } {
+  return { background: underground ? 'transparent' : colour, border: underground ? '2px solid ' + colour : '2px solid transparent' };
+}
+
 export interface MinimapOptions {
   /** World metres from the centre to the rim; MINIMAP_WORLD_RADIUS by default. */
   readonly worldRadius?: number;
@@ -91,7 +102,9 @@ export function minimapTransform(
  * players join/leave a match. */
 export class Minimap {
   private readonly root: HTMLDivElement;
-  private readonly dots = new Map<PlayerSlot, HTMLDivElement>();
+  private readonly localDot: HTMLDivElement;
+  private readonly dots = new Map<PlayerSlot, { dot: HTMLDivElement; style: CSSStyleDeclaration; underground: boolean }>();
+  private localUnderground = false;
   /** Goose Horde ammo crates (per explicit user request: "shown on the maps of both players with
    * green dot indicators") - string-keyed (crate ids, not player slots) since there can be more
    * than MULTIPLAYER_MAX_PLAYERS of them and they're a different kind of thing entirely. Static
@@ -146,6 +159,13 @@ export class Minimap {
       ` border-right:5px solid transparent; border-bottom:9px solid ${ACCENT};` +
       ` left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -70%);`;
     this.root.appendChild(forwardWedge);
+    this.localDot = document.createElement('div');
+    const ring = minimapDotStyle(true, ACCENT);
+    this.localDot.style.cssText =
+      'position:absolute; width:10px; height:10px; border-radius:50%; box-sizing:border-box;' +
+      ' background:' + ring.background + '; border:' + ring.border + '; display:none;' +
+      ' left:' + MAP_RADIUS_PX + 'px; top:' + MAP_RADIUS_PX + 'px; transform:translate(-50%, -50%);';
+    this.root.insertBefore(this.localDot, this.forwardWedge);
 
     hudRoot.appendChild(this.root);
   }
@@ -155,13 +175,13 @@ export class Minimap {
     const dot = document.createElement('div');
     dot.style.cssText =
       `position:absolute; width:${DOT_SIZE_PX}px; height:${DOT_SIZE_PX}px; border-radius:50%;` +
-      ` background:${THREAT}; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
+      ` box-sizing:border-box; background:${THREAT}; border:2px solid transparent; left:${MAP_RADIUS_PX}px; top:${MAP_RADIUS_PX}px; transform:translate(-50%, -50%);`;
     this.root.appendChild(dot);
-    this.dots.set(slot, dot);
+    this.dots.set(slot, { dot, style: dot.style, underground: false });
   }
 
   removeDot(slot: PlayerSlot): void {
-    this.dots.get(slot)?.remove();
+    this.dots.get(slot)?.dot.remove();
     this.dots.delete(slot);
   }
 
@@ -215,13 +235,18 @@ export class Minimap {
    * currently facing. */
   update(
     localPosition: THREE.Vector3,
-    opponents: ReadonlyMap<PlayerSlot, THREE.Vector3>,
+    opponents: ReadonlyMap<PlayerSlot, MinimapPlayerDot>,
     localFacingYaw: number,
     /** Goose Horde ammo crates - see addItemDot's own comment. Absent for every other mode. */
     items?: ReadonlyMap<string, THREE.Vector3>,
     /** Single-player Facility enemies: shown inside the radius while they move. */
     enemies?: readonly MinimapBlip[],
+    localUnderground = false,
   ): void {
+    if (this.localUnderground !== localUnderground) {
+      this.localUnderground = localUnderground;
+      this.localDot.style.display = localUnderground ? '' : 'none';
+    }
     // Same rotation Player.ts uses to turn its own yaw into a forward vector, applied here to each
     // opponent's relative offset instead - rotating by -yaw undoes the player's own turn, so
     // "forward" always lands at world -Z (which the unrotated map already treated as "up").
@@ -241,10 +266,15 @@ export class Minimap {
 
     if (enemies) this.updateEnemyDots(localPosition, enemies, yawQuat);
 
-    for (const [slot, dot] of this.dots) {
+    for (const [slot, entry] of this.dots) {
       const opponentPosition = opponents.get(slot);
       if (!opponentPosition) continue;
-      placeDot(dot, localPosition, opponentPosition, yawQuat, this.radius);
+      if (entry.underground !== opponentPosition.underground) {
+        entry.underground = opponentPosition.underground;
+        entry.style.background = entry.underground ? 'transparent' : THREAT;
+        entry.style.border = entry.underground ? '2px solid ' + THREAT : '2px solid transparent';
+      }
+      placeDot(entry.dot, localPosition, opponentPosition, yawQuat, this.radius);
     }
 
     for (const marker of this.markers.values()) placeDot(marker.dot, localPosition, marker, yawQuat, this.radius);

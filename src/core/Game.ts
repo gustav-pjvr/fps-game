@@ -16,9 +16,14 @@ import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { getWatchTowerPositions, isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
 import { WATCH_TOWER_ROOF_TOP } from '../world/towerDesign.ts';
+import { computeTowerLabs } from '../world/towerUnderground.ts';
+import { towerDoorId } from '../world/houses/valleyHouseIds.ts';
+import { valleyFallRecovery } from './valleyFallRecovery.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight, setHeightOverride } from '../world/TerrainGenerator.ts';
+import { clearUnderground, floorBelow, isBelowGround, isUnderground, setCutZones } from '../world/underground.ts';
+import { UndergroundLights, easeUndergroundAmount, undergroundLightTarget, undergroundLook, undergroundVisible } from '../world/undergroundLights.ts';
 import { FacilityWorld } from '../world/facility/FacilityBuilder.ts';
 import { LampBreakEffect } from '../world/facility/lampBreakEffect.ts';
 import {
@@ -61,7 +66,7 @@ import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
-import { Minimap } from '../ui/minimap.ts';
+import { Minimap, type MinimapPlayerDot } from '../ui/minimap.ts';
 import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
 import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
 import { MultiplayerHud, scoreboardRows } from '../ui/multiplayerHud.ts';
@@ -111,7 +116,7 @@ import {
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
-import { computeStereoPan, enemyGunshotVolume, lampBreakVolume } from './positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, lampBreakVolume, undergroundMuffleFactor } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
@@ -185,13 +190,16 @@ import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
-import { Flashlight, RemoteTorches, torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
+import { Flashlight, RemoteTorches, remoteTorchesAvailable, torchAvailable, torchCastsShadow, torchOnByDefault } from '../render/Flashlight.ts';
 import { flashLightsPlayer, visibility } from '../entities/enemies/playerVisibility.ts';
 import { createMatchPickups } from '../pickups/createMatchPickups.ts';
 import { grenadeSupplyFrom } from '../pickups/pickupEffects.ts';
 import type { PickupSystem } from '../pickups/PickupSystem.ts';
 
 const SPAWN_HEIGHT_OFFSET = 2;
+/** What updateUndergroundLight reads on a Facility match, which builds no watch towers. */
+const NO_TOWERS: readonly never[] = [];
+const NO_LAMPS: readonly never[] = [];
 
 /** The pacing director's own seeded stream (enemy AI v2 step 6), at the offset the design reserved
  * for it: clear of every other world-seed offset (see EntityManager's COORDINATOR_SEED_OFFSET). It
@@ -261,7 +269,7 @@ interface FacilityMatch {
   readonly objects: FacilityObjects;
 }
 /** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
-const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
+const NO_OPPONENTS: ReadonlyMap<PlayerSlot, MinimapPlayerDot> = new Map();
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
@@ -405,6 +413,10 @@ export class Game {
   private readonly facilityProbe = new THREE.Color(0, 0, 0);
   private facilityProbePrimed = false;
   private readonly facilityTint = new THREE.Color();
+  private undergroundAmount = 0;
+  private readonly opponentPositions = new Map<PlayerSlot, { x: number; z: number; underground: boolean }>();
+  private readonly reactorLabs: { lab: ReturnType<typeof computeTowerLabs>[number]; cores: THREE.Vector3[] }[];
+  private readonly undergroundLights: UndergroundLights | null;
   /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
    * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
   private soloMinimap: Minimap | null = null;
@@ -561,6 +573,12 @@ export class Game {
     private readonly onOpponentLeftRoom?: () => void,
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
+    this.undergroundLights = facility ? null : new UndergroundLights(renderer.scene);
+    this.reactorLabs = facility ? [] : computeTowerLabs().map(lab => ({
+      lab,
+      cores: lab.interiors.flatMap(({ design, matrix }) => design.reactorCores.map(core =>
+        core.clone().applyMatrix4(matrix).add(new THREE.Vector3(lab.x, lab.groundY, lab.z)))),
+    }));
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
     this.isSpawnBlocked = isSpawnBlocked;
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
@@ -591,6 +609,44 @@ export class Game {
       snappedZ + toSun.z * SUN_SHADOW_LIGHT_DISTANCE,
     );
     this.sun.target.updateMatrixWorld();
+  }
+
+  private updateUndergroundLight(dt: number): void {
+    const { scene, camera, currentLook } = this.renderer;
+    const at = camera.position;
+    this.undergroundAmount = easeUndergroundAmount(this.undergroundAmount, undergroundLightTarget(at.x, at.y, at.z), dt);
+    const look = undergroundLook(currentLook, scene.environment !== null, this.undergroundAmount);
+    this.sun.intensity = look.sunIntensity;
+    this.fillLight.intensity = look.hemiIntensity;
+    scene.environmentIntensity = look.environmentIntensity;
+    if (scene.fog instanceof THREE.Fog) {
+      scene.fog.near = look.fogNear;
+      scene.fog.far = look.fogFar;
+      scene.fog.color.setHex(look.fogColor);
+    }
+    const towers = this.watchTowers?.getUndergroundTowers() ?? NO_TOWERS;
+    for (const tower of towers) tower.group.visible = undergroundVisible(at, tower, this.undergroundAmount);
+    this.undergroundLights?.update(at, this.undergroundAmount, this.watchTowers?.getUndergroundLamps() ?? NO_LAMPS);
+  }
+
+  private reactorDistance(): number {
+    const at = this.renderer.camera.position;
+    if (this.facility || !isBelowGround(at.x, at.y, at.z)) return Infinity;
+    for (const { lab, cores } of this.reactorLabs) {
+      for (const volume of lab.volumes) {
+        if (at.x < volume.minX || at.x > volume.maxX || at.z < volume.minZ || at.z > volume.maxZ ||
+            at.y < volume.floorY - 0.5 || at.y > volume.ceilY) continue;
+        let distance = Infinity;
+        for (const core of cores) distance = Math.min(distance, at.distanceTo(core));
+        return distance;
+      }
+    }
+    return Infinity;
+  }
+
+  private torchAvailableAt(at: THREE.Vector3Like): boolean {
+    return torchAvailable(this.facility ? 'facility' : 'valley', this.matchWeather,
+      !this.facility && isUnderground(at.x, at.y, at.z));
   }
 
   /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
@@ -701,6 +757,7 @@ export class Game {
   private updateTorches(): void {
     const { torch, remoteTorches } = this;
     if (!torch) return;
+    if (torch.isOn && !this.torchAvailableAt(this.player.position)) torch.setOn(false);
     const mount = this.weaponManager.torchMount;
     torch.mountBody(mount);
     torch.update(this.renderer.camera, mount !== null);
@@ -710,7 +767,7 @@ export class Game {
           position: opponent.remotePlayer.position,
           yaw: opponent.remotePlayer.lookYaw,
           pitch: opponent.remotePlayer.lookPitch,
-          on: opponent.remotePlayer.torchOn && !opponent.isDead,
+          on: opponent.remotePlayer.torchOn && !opponent.isDead && this.torchAvailableAt(opponent.remotePlayer.position),
         }))
       : [];
     remoteTorches.update(sources);
@@ -819,6 +876,20 @@ export class Game {
       facilityLookTarget: () => this.facilityInteraction?.lookTarget() ?? null,
       getValleyHouses: () => this.buildings?.houses.debugHouses() ?? [],
       setValleyDoor: (id, open) => (this.buildings ? this.facilityInteraction?.requestState('door', id, open) ?? false : false),
+      getUndergroundDebug: () => {
+        const at = this.player.position;
+        return {
+          amount: this.undergroundAmount,
+          underground: !this.facility && isUnderground(at.x, at.y, at.z),
+          torchAvailable: this.torchAvailableAt(at),
+          labs: this.reactorLabs.map(({ lab }) => ({
+            index: lab.index, kind: lab.kind, x: lab.x, z: lab.z, groundY: lab.groundY, floorY: lab.floorY,
+            route: lab.route.map(p => ({ x: lab.x + p.x, y: lab.groundY + p.y, z: lab.z + p.z })),
+            doorId: towerDoorId(lab.index),
+          })),
+        };
+      },
+      setTowerDoor: (index, open) => (this.buildings ? this.facilityInteraction?.requestState('door', towerDoorId(index), open) ?? false : false),
       getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
       shootLamp: (index) => (this.facility ? this.destroyFacilityLamp(index, true) : this.destroyHouseLamp(index, true)),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
@@ -873,6 +944,7 @@ export class Game {
     onMultiplayerRematchReceived?: (params: MultiplayerMatchStartParams) => void,
     onOpponentLeftRoom?: () => void,
   ): Promise<Game> {
+    clearUnderground();
     onProgress?.('Initializing world…', 0);
     // Goose Horde: single-player's own toggle (matchConfig.hordeMode) or multiplayer's co-op mode
     // (gameMode==='gooseHorde') - computed once, up front, since it now also gates the player's own
@@ -911,9 +983,10 @@ export class Game {
     else renderer.setMatchWeather(matchWeather);
     const { sun, fillLight } = Game.addLighting(renderer.scene, quality, renderer.currentLook);
     const map = isFacility ? 'facility' : 'valley';
-    const torch = torchAvailable(map, matchWeather) ? new Flashlight(renderer.scene, quality.shadowsEnabled) : null;
+    const torch = new Flashlight(renderer.scene, torchCastsShadow(map, matchWeather, quality.shadowsEnabled));
     torch?.setOn(torchOnByDefault(map, matchWeather));
-    const remoteTorches = torch && multiplayer ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
+    const remoteTorches = torch && multiplayer && remoteTorchesAvailable(map, matchWeather)
+      ? new RemoteTorches(renderer.scene, MULTIPLAYER_MAX_PLAYERS - 1) : null;
 
     // Cover for enemy position picking (enemy AI v2 step 3): trees and houses register themselves
     // here as their chunks load (the Facility's crates and pillars once, when it is built), and
@@ -960,6 +1033,7 @@ export class Game {
     } else {
       // A failed Facility create could have left these set; the Valley always runs without them.
       setHeightOverride(null);
+      setCutZones(getWatchTowerPositions().map(({ x, z }) => ({ cx: x, cz: z, halfX: 2.7, halfZ: 2.7 })));
       setEnemyNavigator(null);
       setEnemyDoorGate(null);
       setEnemyFloor(null);
@@ -1221,7 +1295,8 @@ export class Game {
           // in single-player against enemies as it does against a multiplayer opponent).
           sound.playGunshot(
             'enemy-rifle',
-            enemyGunshotVolume(origin.distanceTo(player.position)),
+            enemyGunshotVolume(origin.distanceTo(player.position)) * undergroundMuffleFactor(
+              isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(origin.x, origin.y, origin.z)),
             computeStereoPan(player.position, player.facingYaw, origin),
           );
         },
@@ -1277,7 +1352,11 @@ export class Game {
         // Same distance-attenuation/stereo-pan convention as enemy/opponent gunshots (see
         // enemyGunshotVolume/computeStereoPan below) - a goose exploding across the map shouldn't
         // sound identical to one at point-blank.
-        sound.playExplosion(enemyGunshotVolume(position.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, position));
+        sound.playExplosion(
+          enemyGunshotVolume(position.distanceTo(player.position)) * undergroundMuffleFactor(
+            isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(position.x, position.y, position.z)),
+          computeStereoPan(player.position, player.facingYaw, position),
+        );
       },
       onNetworkSpawn:
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseSpawned', id, x, y, z }) : undefined,
@@ -1325,7 +1404,11 @@ export class Game {
               if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
               explosionEffect.spawn(position, HORDE_GOOSE_EXPLOSION_RADIUS);
               const distance = position.distanceTo(player.position);
-              sound.playExplosion(enemyGunshotVolume(distance), computeStereoPan(player.position, player.facingYaw, position));
+              sound.playExplosion(
+                enemyGunshotVolume(distance) * undergroundMuffleFactor(
+                  isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(position.x, position.y, position.z)),
+                computeStereoPan(player.position, player.facingYaw, position),
+              );
               // Every client independently checks its OWN player against the blast (self-
               // authoritative over own health, same trust model as every other explosion in this
               // project) - this callback fires identically whether the local client decided the
@@ -1423,7 +1506,7 @@ export class Game {
                   activeMultiplayer?.minimap.addItemDot(id);
                 }
               : undefined,
-        })
+        }, facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z))
       : null;
 
     // Every OTHER roster slot gets a RemotePlayer, positioned at its own match-start spawn point
@@ -1653,7 +1736,7 @@ export class Game {
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
       // Goose Horde is co-op: a frag never hurts or pushes a teammate.
       friendlyFire: currentGameMode !== 'gooseHorde',
-      floor: facility ? undefined : sampleHeight,
+      floor: facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z),
       canStartThrow: () => game.weaponManager.canStartThrow,
       onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),
       shootLampsNear: (position, radius) => {
@@ -1883,6 +1966,15 @@ export class Game {
       game.beginModeExplanation(effectiveMode, totalPlayers);
     }
 
+    // Compile hidden lab materials with the match's full light pool before the first descent.
+    const undergroundGroups = watchTowers?.getUndergroundTowers() ?? NO_TOWERS;
+    const visibility = undergroundGroups.map(tower => tower.group.visible);
+    try {
+      for (const tower of undergroundGroups) tower.group.visible = true;
+      if (undergroundGroups.length > 0) renderer.webgl.compile(renderer.scene, renderer.camera);
+    } finally {
+      undergroundGroups.forEach((tower, index) => { tower.group.visible = visibility[index]!; });
+    }
     return game;
   }
 
@@ -1930,6 +2022,8 @@ export class Game {
     this.facility?.lampBreak.dispose();
     this.torch?.dispose();
     this.remoteTorches?.dispose();
+    this.undergroundLights?.dispose();
+    clearUnderground();
     setHeightOverride(null);
     setEnemyNavigator(null);
     setEnemyDoorGate(null);
@@ -2116,7 +2210,7 @@ export class Game {
     // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
     if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled && !this.facility;
-    this.torch?.setCastShadow(quality.shadowsEnabled);
+    this.torch?.setCastShadow(torchCastsShadow(this.facility ? 'facility' : 'valley', this.matchWeather, quality.shadowsEnabled));
     if (this.sun.shadow.mapSize.width !== quality.shadowMapSize) {
       this.sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
       this.sun.shadow.map?.dispose();
@@ -2181,7 +2275,13 @@ export class Game {
       (kill) => Math.hypot(kill.x - position.x, kill.z - position.z) <= ENEMY_DIRECTOR_KILL_RADIUS,
     ).length;
     const counts = this.entityManager.enemyCounts();
-    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive });
+    const livingPositions = this.player.isDead ? [] : [position];
+    for (const opponent of this.multiplayer?.opponents.values() ?? []) {
+      if (!opponent.isDead) livingPositions.push(opponent.remotePlayer.position);
+    }
+    const allPlayersUnderground = !this.facility && livingPositions.length > 0 &&
+      livingPositions.every(at => isBelowGround(at.x, at.y, at.z));
+    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive, allPlayersUnderground });
     if (command.kind === 'spawnWave') director.confirmSpawned(this.spawnDirectorWave(command.count, command.bias));
   }
 
@@ -2239,6 +2339,7 @@ export class Game {
       player: { x: position.x, z: position.z },
       interactPressed: this.input.consumeJustPressed('interact'),
       playerDead: false,
+      underground: !this.facility && isBelowGround(position.x, position.y, position.z),
     });
     for (const event of events) {
       if (event.kind === 'waveRequested') {
@@ -2280,7 +2381,7 @@ export class Game {
    * Respawn restarts it). */
   private showDeathScreen(): void {
     if (this.mission) {
-      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true });
+      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true, underground: false });
       this.deathScreen.showMission(this.missionResult(false));
     } else {
       this.deathScreen.show(this.scoreState.value);
@@ -2539,8 +2640,8 @@ export class Game {
       void this.resetPlay();
     }
 
-    // Consume the toggle even in Valley day, where no torch is available.
-    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.torch) {
+    // Consume the toggle even where the Dusk torch cannot switch on.
+    if (this.input.consumeJustPressed('flashlight') && !isPaused && this.torch && this.torchAvailableAt(this.player.position)) {
       const torch = this.torch;
       torch.setOn(!torch.isOn);
       this.sound.playTorchClick(torch.isOn);
@@ -2592,11 +2693,23 @@ export class Game {
       // Hill keeps the full arsenal, unlike Goose Toss's unarmed-only loadout.
       this.kingOfTheHillController?.update(dt, this.player.position, this.input);
       this.player.update(dt, this.input);
+      if (!this.facility) {
+        const at = this.player.position;
+        const recovery = valleyFallRecovery(at, sampleHeight(at.x, at.z), computeTowerLabs());
+        if (recovery) {
+          const y = sampleHeight(recovery.x, recovery.z) + SPAWN_HEIGHT_OFFSET;
+          this.player.debugTeleport(new THREE.Vector3(recovery.x, y, recovery.z));
+          if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'respawnEvent',
+            senderSlot: this.multiplayer.session.ownSlot, x: recovery.x, y, z: recovery.z, t: this.sendClock() });
+        }
+      }
       this.weaponManager.update(dt, this.input, this.player);
     }
 
     const probe = this.facility?.world.probeAt(this.player.position.x, this.player.position.z);
     const at = this.player.position;
+    const torchAvailableHere = this.torchAvailableAt(at);
+    if (this.torch?.isOn && !torchAvailableHere) this.torch.setOn(false);
     this.playerVisibility.value = visibility({
       map: this.facility ? 'facility' : 'valley',
       weather: this.matchWeather,
@@ -2604,13 +2717,14 @@ export class Game {
       secondsSinceShot: this.secondsSinceShot,
       torchOn: this.torch?.isOn ?? false,
       enemyInTorchBeam: false,
+      underground: !this.facility && isBelowGround(at.x, at.y, at.z),
       houseRoomLit: this.buildings?.houses.roomLampLitAt(at.x, at.y - PLAYER_HEIGHT / 2, at.z) ?? null,
       flashLit: this.grenades ? flashLightsPlayer(this.grenades.recentDetonations, this.grenades.now, at) : false,
     });
     this.playerVisibility.torchOn = this.torch?.isOn ?? false;
     this.playerVisibility.eye.copy(this.renderer.camera.position);
     this.renderer.camera.getWorldDirection(this.playerVisibility.aim);
-    this.hud.setVisibility(this.torch ? this.playerVisibility.value : null);
+    this.hud.setVisibility(torchAvailableHere ? this.playerVisibility.value : null);
 
     // The shared world - physics (including every RemotePlayer/goose collider), and the
     // host-authoritative goose simulation - must keep advancing regardless of THIS client's own
@@ -2708,7 +2822,7 @@ export class Game {
     this.explosionEffect.update(dt);
     this.facility?.lampBreak.update(dt);
     this.updateMultiplayer(dt);
-    this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
+    this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion(), !this.facility && isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z));
     if (this.soloMinimap) this.updateMinimapPickups(this.soloMinimap);
 
     if (this.player.isDead && !this.deathHandled) {
@@ -2791,7 +2905,8 @@ export class Game {
       this.gooseTossController ? (this.gooseTossController.isHolding ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
     );
     if (this.mission) {
-      this.updateMissionHud(this.mission.view(this.player.position));
+      const at = this.player.position;
+      this.updateMissionHud(this.mission.view(at, !this.facility && isBelowGround(at.x, at.y, at.z)));
     } else {
       this.hud.setScore(this.scoreState.value);
       if (this.director) {
@@ -2803,6 +2918,9 @@ export class Game {
     // Phase 6 sound: the director drives the music, low health the heartbeat. Both fade out while
     // paused, dead or behind the mission's end screen.
     this.sound.updateAmbience({
+      undergroundAmount: isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z) ? this.undergroundAmount : 0,
+      reactorDistance: this.reactorDistance(),
+      outdoor: !this.facility,
       healthRatio: this.player.currentHealth / this.player.maxHealth,
       director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
       active: this.input.isEngaged && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
@@ -2820,10 +2938,24 @@ export class Game {
     // Every RemotePlayer's own position/collider is advanced earlier in update(), before this
     // tick's hitscan can fire (see that call site's comment) - this just reads the already-updated
     // positions for the minimap.
-    const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
+    const opponentPositions = this.opponentPositions;
+    for (const slot of opponentPositions.keys()) {
+      if (!this.multiplayer.opponents.has(slot)) opponentPositions.delete(slot);
+    }
+    for (const [slot, opponent] of this.multiplayer.opponents) {
+      let position = opponentPositions.get(slot);
+      if (!position) {
+        position = { x: 0, z: 0, underground: false };
+        opponentPositions.set(slot, position);
+      }
+      const at = opponent.remotePlayer.position;
+      position.x = at.x;
+      position.z = at.z;
+      position.underground = !this.facility && isBelowGround(at.x, at.y, at.z);
+    }
     // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
     if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
-    this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions());
+    this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions(), undefined, !this.facility && isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z));
     this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
     this.multiplayer.multiplayerHud.update(
@@ -3094,7 +3226,8 @@ export class Game {
         continue;
       }
 
-      const groundY = sampleHeight(thrown.position.x, thrown.position.z);
+      const groundY = this.facility ? sampleHeight(thrown.position.x, thrown.position.z)
+        : floorBelow(this.physics.world, thrown.position.x, thrown.position.y, thrown.position.z);
       let hitPosition: THREE.Vector3 | null = null;
       if (thrown.position.y <= groundY + GOOSE_RADIUS) {
         hitPosition = new THREE.Vector3(thrown.position.x, groundY, thrown.position.z);
@@ -3154,7 +3287,8 @@ export class Game {
     this.explosionEffect.spawn(position, radius);
     if (position.distanceTo(this.player.position) <= 10) this.input.vibrate('explosion');
     this.sound.playExplosion(
-      enemyGunshotVolume(position.distanceTo(this.player.position)),
+      enemyGunshotVolume(position.distanceTo(this.player.position)) * undergroundMuffleFactor(
+        isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z), isBelowGround(position.x, position.y, position.z)),
       computeStereoPan(this.player.position, this.player.facingYaw, position),
     );
 
@@ -3549,6 +3683,7 @@ export class Game {
       this.updateFacilityLight(hudDt);
     } else {
       this.updateSunFollow();
+      this.updateUndergroundLight(hudDt);
     }
     this.updateTorches();
     const renderStart = this.perfLogger.mark();

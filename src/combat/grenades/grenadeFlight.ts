@@ -30,7 +30,7 @@ export interface FlightParams {
   readonly radius: number;
   /** Ground height under (x, z), a last line of defence where the world has no collider yet (a
    * Valley chunk not streamed in): the sphere never sinks below it. Optional. */
-  readonly floor?: (x: number, z: number) => number;
+  readonly floor?: (x: number, y: number, z: number) => number;
 }
 
 export interface GrenadeBody {
@@ -85,7 +85,7 @@ export function bounceVelocity(velocity: Vec3, normal: Vec3, restitution: number
  * within SUPPORT_PROBE below it. */
 function isSupported(body: GrenadeBody, sweep: Sweep, params: FlightParams): boolean {
   const { position } = body;
-  if (params.floor && position.y <= params.floor(position.x, position.z) + params.radius + SUPPORT_PROBE) return true;
+  if (params.floor && position.y <= params.floor(position.x, position.y, position.z) + params.radius + SUPPORT_PROBE) return true;
   const hit = sweep(position, { x: 0, y: -SUPPORT_PROBE, z: 0 });
   return hit !== null && hit.normal.y >= FLOOR_NORMAL_Y;
 }
@@ -131,7 +131,7 @@ export function stepGrenade(body: GrenadeBody, dt: number, sweep: Sweep, params:
   }
 
   if (params.floor) {
-    const floorY = params.floor(position.x, position.z) + params.radius;
+    const floorY = params.floor(position.x, position.y, position.z) + params.radius;
     if (position.y < floorY) {
       position.y = floorY;
       const floorNormal = { x: 0, y: 1, z: 0 };
@@ -170,13 +170,15 @@ export function predictArc(origin: Vec3, velocity: Vec3, sweep: Sweep, params: F
     v.y += params.gravity * step;
     const displacement = { x: v.x * step, y: v.y * step, z: v.z * step };
     const hit = sweep(position, displacement);
-    const floorY = params.floor ? params.floor(position.x + displacement.x, position.z + displacement.z) + params.radius : -Infinity;
     if (hit) {
       const fraction = Math.min(1, Math.max(0, hit.fraction));
       const point = { x: position.x + displacement.x * fraction, y: position.y + displacement.y * fraction, z: position.z + displacement.z * fraction };
       points.push(point);
       return { points, landing: { point, normal: hit.normal } };
     }
+    // The floor lookup (a ray underground) is only the safety net for a sweep that found nothing, so
+    // a step that hit something never pays for it.
+    const floorY = params.floor ? params.floor(position.x + displacement.x, position.y, position.z + displacement.z) + params.radius : -Infinity;
     position.x += displacement.x;
     position.y += displacement.y;
     position.z += displacement.z;

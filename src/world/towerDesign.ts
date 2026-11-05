@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CONTACT_SHADOW_LIFT, createContactShadowGeometry, createContactShadowMaterial } from '../render/contactShadows.ts';
+import { CONTACT_SHADOW_LIFT, createContactShadowMaterial } from '../render/contactShadows.ts';
 import { addRailing, box, boxAlong, PieceCollector, type BoxTransform, type PieceMaterial } from './structureKit.ts';
 import {
   WATCH_TOWER_HALF_WIDTH,
@@ -137,11 +137,33 @@ function landingRails(corner: THREE.Vector3): BoxTransform[] {
 }
 
 /** Every solid part of a tower, in its local frame. Each one becomes a collider and a mesh. */
-export function towerParts(): TowerPart[] {
+export type TowerOrientation = 'south' | 'west' | 'north';
+
+export function towerRotation(orientation: TowerOrientation): THREE.Quaternion {
+  return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), orientation === 'south' ? 0 : orientation === 'west' ? Math.PI / 2 : Math.PI);
+}
+
+/** North uses the opposite lane so D1 always follows a wall without the east door. */
+export const towerStairLane = (orientation: TowerOrientation): number => orientation === 'north' ? 1.65 : -1.65;
+
+export function towerParts(orientation: TowerOrientation = 'south'): TowerPart[] {
   const parts: TowerPart[] = [];
   const add = (b: BoxTransform, material: PieceMaterial, rail = false) => parts.push({ box: b, material, rail });
 
-  add(box(0, H / 2, 0, HW * 2, H, HW * 2), 'concrete');
+  // The solid core starts at the room ceiling. All exterior stair parts retain their old boxes.
+  add(box(0, (H + 3) / 2, 0, HW * 2, H - 3, HW * 2), 'concrete');
+  add(box(-2.85, 1.5, 0, 0.3, 3, 6), 'concrete');
+  for (const z of [-2.85, 2.85]) add(box(0, 1.5, z, 5.4, 3, 0.3), 'concrete');
+  for (const z of [-1.8, 1.8]) add(box(2.85, 1.1, z, 0.3, 2.2, 2.4), 'concrete');
+  add(box(2.85, 2.6, 0, 0.3, 0.8, 6), 'concrete');
+  const lane = towerStairLane(orientation), rotation = towerRotation(orientation);
+  const floor = (x0: number, x1: number, z0: number, z1: number) => {
+    const slab = box((x0 + x1) / 2, -0.025, (z0 + z1) / 2, x1 - x0, 0.15, z1 - z0);
+    add({ ...slab, center: slab.center.applyQuaternion(rotation), rotation }, 'concrete');
+  };
+  floor(-3, lane - 0.9, -3, 3);
+  floor(lane + 0.9, 3, -3, 3);
+  floor(lane - 0.9, lane + 0.9, 1.65, 3);
 
   for (let k = 0; k < FLIGHT_COUNT; k++) {
     const { start, end } = flightSurface(k);
@@ -226,7 +248,8 @@ function addCoreDetail(pieces: PieceCollector): void {
     const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(nx, nz));
     const onFace = (lateral: number, y: number, out: number) => new THREE.Vector3(nx * (HW + out) + nz * lateral, y, nz * (HW + out) - nx * lateral);
     // A hazard band at the foot of the core and lit slit windows up each face.
-    pieces.addBox('hazard', { center: onFace(0, 0.25, 0.015), rotation: yaw, halfExtents: new THREE.Vector3(HW + 0.03, 0.25, 0.015) });
+    const bands = nx === 1 ? [[-1.815, 1.215], [1.815, 1.215]] : [[0, HW + 0.03]];
+    for (const [at, half] of bands) pieces.addBox('hazard', { center: onFace(at!, 0.25, 0.015), rotation: yaw, halfExtents: new THREE.Vector3(half!, 0.25, 0.015) });
     for (const y of [3.2, 7.2, 11.2]) {
       pieces.addBox('steel', { center: onFace(0, y, 0.02), rotation: yaw, halfExtents: new THREE.Vector3(0.5, 0.8, 0.02) });
       pieces.addBox('window', { center: onFace(0, y, 0.035), rotation: yaw, halfExtents: new THREE.Vector3(0.38, 0.68, 0.01) });
@@ -241,7 +264,6 @@ function addCoreDetail(pieces: PieceCollector): void {
     }
   }
   // A steel door on the east face at ground level, under the second flight, with a lamp over it.
-  pieces.addBox('steel', box(HW + 0.04, 1.1, 0, 0.08, 2.2, 1.2));
   pieces.addBox('hazard', box(HW + 0.03, 2.32, 0, 0.06, 0.12, 1.4));
   pieces.addBox('lamp', box(HW + 0.06, 2.55, 0, 0.06, 0.12, 0.4));
   // Steel fascia round the roof's edge and two work lamps under it.
@@ -256,9 +278,9 @@ function addCoreDetail(pieces: PieceCollector): void {
 
 /** The whole tower's look: its solid parts (towerParts, the same boxes as its colliders) plus the
  * detail on top. One mesh per material. Also used without colliders for the title screen's valley. */
-export function createTowerVisual(): THREE.Group {
+export function createTowerVisual(orientation: TowerOrientation = 'south'): THREE.Group {
   const pieces = new PieceCollector();
-  for (const part of towerParts()) {
+  for (const part of towerParts(orientation)) {
     if (part.rail) addRailing(pieces, part.box);
     else pieces.addBox(part.material, part.box);
   }
@@ -271,8 +293,15 @@ export function createTowerVisual(): THREE.Group {
   const group = pieces.build();
 
   // A soft dark square under the core and stairs, added after the shadow flags so it casts none.
-  const contactShadow = new THREE.Mesh(createContactShadowGeometry(), createContactShadowMaterial('rect', 0.6));
   const contactSide = TOWER_DECK_HALF * 2 + 2.4;
+  const shadowShape = new THREE.Shape([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]].map(([x, y]) => new THREE.Vector2(x!, y!)));
+  const cut = 2.7 / contactSide;
+  shadowShape.holes.push(new THREE.Path([[-cut, -cut], [-cut, cut], [cut, cut], [cut, -cut]].map(([x, y]) => new THREE.Vector2(x!, y!))));
+  const shadowGeometry = new THREE.ShapeGeometry(shadowShape);
+  const uv = shadowGeometry.getAttribute('uv');
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) + 0.5, uv.getY(i) + 0.5);
+  shadowGeometry.rotateX(-Math.PI / 2);
+  const contactShadow = new THREE.Mesh(shadowGeometry, createContactShadowMaterial('rect', 0.6));
   contactShadow.scale.set(contactSide, 1, contactSide);
   contactShadow.position.y = CONTACT_SHADOW_LIFT;
   contactShadow.renderOrder = -1;

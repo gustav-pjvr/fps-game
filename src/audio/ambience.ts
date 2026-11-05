@@ -93,6 +93,22 @@ export function valleyImpulse(sampleRate: number, seconds: number, random: () =>
   return channels;
 }
 
+/** The outdoor layers disappear as the listener settles underground. */
+export function outdoorAmbienceGain(undergroundAmount: number): number {
+  return 1 - clamp01(undergroundAmount);
+}
+
+/** More of the existing room return underground, without rebuilding its impulse. */
+export function undergroundReverbScale(undergroundAmount: number): number {
+  return 1 + 0.6 * clamp01(undergroundAmount);
+}
+
+/** Full near a core, then a smooth fade to silence at 22 m. Infinity means no reactor here. */
+export function reactorHumGain(reactorDistance: number): number {
+  const t = clamp01((reactorDistance - 4) / 18);
+  return 1 - t * t * (3 - 2 * t);
+}
+
 /** How much of a sound goes to the reverb: distant sounds are mostly room, close ones mostly dry. */
 export function reverbSendFor(volumeScale: number, base: number): number {
   return clamp01(base + 0.55 * (1 - clamp01(volumeScale)));

@@ -1,10 +1,17 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Minimap, minimapTransform } from './minimap.ts';
+import { Minimap, minimapDotStyle, minimapTransform } from './minimap.ts';
 
 const apply = (m: readonly number[], x: number, z: number): { sx: number; sy: number } => ({
   sx: m[0]! * x + m[2]! * z + m[4]!,
   sy: m[1]! * x + m[3]! * z + m[5]!,
+});
+
+describe('minimapDotStyle', () => {
+  it('draws underground players as hollow rings and surface players as filled dots', () => {
+    expect(minimapDotStyle(true, 'red')).toEqual({ background: 'transparent', border: '2px solid red' });
+    expect(minimapDotStyle(false, 'red')).toEqual({ background: 'red', border: '2px solid transparent' });
+  });
 });
 
 describe('minimapTransform', () => {
@@ -47,6 +54,30 @@ describe('Minimap zoom', () => {
     };
     return element;
   }
+
+  it('changes opponent dots and the local marker back when players return to the surface', () => {
+    vi.stubGlobal('document', { createElement: fakeElement });
+    const map = new Minimap(fakeElement() as unknown as HTMLElement);
+    map.addDot(1);
+    const player = new THREE.Vector3();
+    const internals = map as unknown as {
+      dots: Map<number, { style: { background: string; border: string } }>;
+      forwardWedge: { style: { display: string } };
+      localDot: { style: { display: string } };
+    };
+    const opponent = { x: 4, z: 2, underground: true };
+    map.update(player, new Map([[1, opponent]]), 0, undefined, undefined, true);
+    expect(internals.dots.get(1)!.style.background).toBe('transparent');
+    expect(internals.dots.get(1)!.style.border).toContain('2px solid');
+    expect(internals.forwardWedge.style.display).not.toBe('none');
+    expect(internals.localDot.style.display).toBe('');
+    opponent.underground = false;
+    map.update(player, new Map([[1, opponent]]), 0);
+    expect(internals.dots.get(1)!.style.background).not.toBe('transparent');
+    expect(internals.dots.get(1)!.style.border).toBe('2px solid transparent');
+    expect(internals.forwardWedge.style.display).not.toBe('none');
+    expect(internals.localDot.style.display).toBe('none');
+  });
 
   it('places pickups and objective markers at the zoomed radius inside a house, like every other dot', () => {
     vi.stubGlobal('document', { createElement: fakeElement });
