@@ -62,6 +62,10 @@ export interface MultiplayerSession {
   /** Facility only, a late join/rejoin only: the doors and breakers as the host has them
    * (docs/facility-map.md, section 12), applied once the facility is built. */
   worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
+  /** Guest only, first match on a connection only: milliseconds from the Join click to the host's
+   * welcome (JoinRoomScreen), reported by the match-end telemetry beacon. Absent for the host and
+   * for a rematch. */
+  joinMs?: number;
 }
 
 /** Everything a matchStart message carries beyond the connection/role itself - used as one bundle
@@ -88,4 +92,6 @@ export interface MultiplayerMatchStartParams {
   /** Facility only, a late join/rejoin only: the doors and breakers as the host has them
    * (docs/facility-map.md, section 12), applied once the facility is built. */
   worldObjects?: { doors: string; breakers: string; valleyDoors?: number[] };
+  /** Guest only (see MultiplayerSession.joinMs). */
+  joinMs?: number;
 }

@@ -343,7 +343,11 @@ favours unheard tracks and keeps its state in `localStorage` (`hunter-n-goose.lo
   and `METERED_APP_NAME` (dashboard variables). With none set it returns an empty list and multiplayer is STUN-only. Called by
   `buildIceServers` in `src/network/PeerConnection.ts`.
 - `functions/api/telemetry.ts` (`onRequestPost`) accepts the beacon from `Game.sendMatchTelemetry` (`mode`, `waveOrKills`,
-  `durationMs`, `version`), stores it only if a KV namespace `MATCH_TELEMETRY` is bound, and always answers 204.
+  `durationMs`, `version`), stores it only if a KV namespace `MATCH_TELEMETRY` is bound, and always answers 204. Since v4.7.1 a
+  multiplayer match also sends optional connection numbers (`transport`, `players`, `pingP50`, `pingP95`, `snapshotGapP95`,
+  `stallsPerMin`, `joinMs` for a guest), summarised by `src/network/matchTelemetry.ts`; a malformed one is dropped on its own.
+  `MATCH_TELEMETRY` is bound to the Pages project (production and preview) since 2026-11-05. It is the before-and-after
+  baseline for the relay server (`docs/server-relay-design.md`).
 
 `npm run deploy` builds locally and uploads `dist/`, so what ships is the working folder, music included. Live site:
 `hunter-n-goose.pages.dev` (`README.md`).

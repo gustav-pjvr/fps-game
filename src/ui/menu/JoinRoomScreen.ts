@@ -61,6 +61,11 @@ export class JoinRoomScreen {
   /** True once this attempt has already shown a specific failure reason, so the connection's own
    * follow-up 'close' doesn't overwrite it with a generic message. Reset per attempt. */
   private joinFailureShown = false;
+  /** When this attempt's Join click happened, and (once its welcome arrived) how long that took.
+   * Handed to the match as MultiplayerSession.joinMs for the match-end telemetry. Both reset per
+   * attempt. */
+  private joinStartedAt = 0;
+  private joinMs: number | undefined;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
 
   constructor(
@@ -221,6 +226,8 @@ export class JoinRoomScreen {
     this.ownSlot = null;
     this.rejectedAsFull = false;
     this.joinFailureShown = false;
+    this.joinStartedAt = performance.now();
+    this.joinMs = undefined;
     this.ownReady = false;
     this.readySlots = new Set();
     this.refreshReadyButton();
@@ -279,6 +286,7 @@ export class JoinRoomScreen {
         if (message.type === 'welcome') {
           this.clearJoinTimeout();
           this.ownSlot = message.yourSlot;
+          this.joinMs = performance.now() - this.joinStartedAt;
           if (message.activeMatch) {
             // A rejoin, or a brand new player joining after Start Match was already clicked -
             // either way there's no lobby to wait in, the match is already running.
@@ -301,6 +309,7 @@ export class JoinRoomScreen {
               // (which would otherwise require them all to re-click Skip, re-freezing a match
               // that's already in progress for everyone else).
               showModeExplanation: false,
+              joinMs: this.joinMs,
             });
             return;
           }
@@ -336,6 +345,7 @@ export class JoinRoomScreen {
             roomCode: code,
             initialScoreboard: [],
             showModeExplanation: true,
+            joinMs: this.joinMs,
           });
         }
       },
