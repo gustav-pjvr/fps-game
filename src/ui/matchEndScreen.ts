@@ -23,7 +23,7 @@ import { attachScanSweep } from './menu/menuStyles.ts';
 /** 'hordeCleared'/'hordeWipe' are Goose Horde's own win/loss reasons - previously both reused
  * 'killLimit', which is semantically wrong for a co-op mode with no kill limit at all and would
  * mislabel any reason-specific copy. Fixed in the 2026-07-10 review. */
-export type MultiplayerMatchEndReason = 'killLimit' | 'opponentDisconnected' | 'hordeCleared' | 'hordeWipe';
+export type MultiplayerMatchEndReason = 'killLimit' | 'opponentDisconnected' | 'serverLost' | 'hordeCleared' | 'hordeWipe';
 
 export interface MultiplayerPlacement {
   slot: PlayerSlot;
@@ -237,11 +237,13 @@ export class MatchEndScreen {
     this.titleElement.textContent =
       result.reason === 'opponentDisconnected'
         ? 'OPPONENT DISCONNECTED'
-        : result.reason === 'hordeWipe'
-          ? 'THE HORDE WINS'
-          : result.won
-            ? 'VICTORY'
-            : 'DEFEAT';
+        : result.reason === 'serverLost'
+          ? 'Lost the game server.'
+          : result.reason === 'hordeWipe'
+            ? 'THE HORDE WINS'
+            : result.won
+              ? 'VICTORY'
+              : 'DEFEAT';
 
     const ranked = [...result.placements].sort((a, b) => b.score - a.score);
     ranked.forEach((entry, index) => {

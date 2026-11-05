@@ -913,6 +913,7 @@ export class Game {
         return { x: p.x, y: p.y, z: p.z };
       },
       getNetworkDebug: () => ({
+        transport: this.multiplayer?.session.connection.kind ?? 'p2p',
         fastChannelsReady: this.multiplayer?.session.connection.fastChannelReadyCount() ?? 0,
         pingLabel: this.multiplayer?.multiplayerHud.connectionText ?? '',
         directLinksReady: this.multiplayer?.session.connection.directLinksReady() ?? 0,
@@ -1859,7 +1860,16 @@ export class Game {
         // Except a lost broker websocket ('brokerLost'): the data channel to the host doesn't use the
         // broker once open, so ending the match on it threw guests out of perfectly healthy games.
         onError: (_message, kind) => {
+          if (kind === 'serverLost') {
+            game.endMultiplayerMatch(false, 'serverLost');
+            return;
+          }
           if (activeMultiplayer.session.role === 'guest' && kind !== 'brokerLost') game.endMultiplayerMatch(false, 'opponentDisconnected');
+        },
+        onReservationExpired: (slot) => {
+          if (activeMultiplayer.session.role !== 'host') return;
+          activeMultiplayer.hostRoster?.release(slot);
+          activeMultiplayer.session.connection.send({ type: 'playerLeft', slot });
         },
         onMessage: (message, senderSlot) => {
           if (message.type === 'gooseThrowExploded'
@@ -1871,12 +1881,13 @@ export class Game {
         // the actual "add this player to the running match" side effects (RemotePlayer/HUD row/
         // minimap dot + telling everyone else) before returning that reply - see HostRoster.ts and
         // protocol.ts's WelcomeMessage/PlayerJoinedMatchMessage docs for the full design.
-        onHostHello: async ({ username, rejoinToken, features, peerId }) => {
+        onHostHello: async ({ username, rejoinToken, features, peerId, assigned }) => {
           const hostRoster = activeMultiplayer.hostRoster;
           if (!hostRoster) return 'full'; // guest never receives a hello to resolve in the first place
           // An older build would load the Valley inside a Facility match: turned away before it takes a slot.
           if (!helloSupportsMap(features, activeMultiplayer.map)) return 'outdated';
-          const outcome = hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
+          if (assigned !== null) hostRoster.adopt(assigned, username, rejoinToken, peerId);
+          const outcome = assigned ?? hostRoster.handleHello(username, rejoinToken, performance.now(), peerId);
           if (outcome.outcome === 'full') return 'full';
 
           if (outcome.outcome === 'joined') {
@@ -3030,9 +3041,8 @@ export class Game {
     // Gun Game's own golden-goose variant (see modeControllers/GunGameController.ts).
     this.gunGameController?.checkFinisherGrant(this.player, this.weaponManager, this.multiplayer.killLimit);
 
-    // Host-only housekeeping: no separate server tick exists (the host IS just another player's
-    // own tab), so expired rejoin reservations are polled from this client's own update loop
-    // instead, at a coarse interval rather than every frame.
+    // Host-only housekeeping at a coarse interval rather than every frame. P2P reservations
+    // expire here; server reservations expire through onReservationExpired instead.
     if (this.multiplayer.hostRoster) {
       this.multiplayer.hostSweepAccumulator += dt;
       if (this.multiplayer.hostSweepAccumulator >= 1) {
@@ -3043,8 +3053,10 @@ export class Game {
         // the return value was previously discarded, meaning nobody ever learned this slot's
         // roster/token entry was gone for good (distinct from the RemotePlayer visual, which
         // onPeerDisconnected/the staleness sweep below already removes immediately).
-        for (const expiredSlot of this.multiplayer.hostRoster.sweepExpiredReservations(now)) {
-          this.multiplayer.session.connection.send({ type: 'playerLeft', slot: expiredSlot });
+        if (this.multiplayer.session.connection.kind !== 'server') {
+          for (const expiredSlot of this.multiplayer.hostRoster.sweepExpiredReservations(now)) {
+            this.multiplayer.session.connection.send({ type: 'playerLeft', slot: expiredSlot });
+          }
         }
 
         // Proactively treat a silent opponent as disconnected rather than waiting on PeerJS/WebRTC's
@@ -3652,7 +3664,7 @@ export class Game {
       : this.multiplayerMatchState.scoreboard.get(ownSlot) ?? 0;
     const durationMs = performance.now() - this.matchStartedAt;
     // Roster size = this client plus whoever is still connected at match end.
-    const extras = buildMultiplayerTelemetryExtras(this.matchTelemetry.summary(durationMs), this.multiplayer.opponents.size + 1, this.multiplayer.session.joinMs);
+    const extras = buildMultiplayerTelemetryExtras(this.matchTelemetry.summary(durationMs), this.multiplayer.opponents.size + 1, this.multiplayer.session.joinMs, this.multiplayer.session.connection.kind);
     this.sendMatchTelemetry(this.multiplayer.gameMode, waveOrKills, durationMs, extras);
     this.onMultiplayerMatchEnd?.({
       reason,

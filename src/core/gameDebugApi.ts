@@ -210,7 +210,7 @@ export interface GameDebugApi {
    * confirmed fast channel (network/fastChannel.ts), the HUD's ping line, and the live direct guest
    * links (PeerConnection.directLinksReady: a guest's own, the host's count of linked pairs). 0 and
    * '' outside a multiplayer match. */
-  getNetworkDebug(): { fastChannelsReady: number; pingLabel: string; directLinksReady: number };
+  getNetworkDebug(): { transport: 'p2p' | 'server'; fastChannelsReady: number; pingLabel: string; directLinksReady: number };
   /** Multiplayer only: every opponent's smoothed position, by slot (ascending), for a 3 to 4
    * player e2e test. Empty outside a multiplayer match. */
   getOpponentPositions(): { slot: number; x: number; y: number; z: number }[];

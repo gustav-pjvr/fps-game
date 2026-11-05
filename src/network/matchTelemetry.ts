@@ -131,8 +131,8 @@ export interface MatchTelemetryExtras {
   joinMs?: number;
 }
 
-export function buildMultiplayerTelemetryExtras(stats: MatchTelemetryStats, players: number, joinMs: number | null | undefined): MatchTelemetryExtras {
-  const extras: MatchTelemetryExtras = { transport: 'p2p', players, stallsPerMin: stats.stallsPerMin };
+export function buildMultiplayerTelemetryExtras(stats: MatchTelemetryStats, players: number, joinMs: number | null | undefined, transport: 'p2p' | 'server'): MatchTelemetryExtras {
+  const extras: MatchTelemetryExtras = { transport, players, stallsPerMin: stats.stallsPerMin };
   if (stats.pingP50 !== undefined) extras.pingP50 = stats.pingP50;
   if (stats.pingP95 !== undefined) extras.pingP95 = stats.pingP95;
   if (stats.snapshotGapP95 !== undefined) extras.snapshotGapP95 = stats.snapshotGapP95;
