@@ -6,6 +6,11 @@ Record of the houses, towers and terrain pass Gustav asked for on 2026-10-24, af
 
 - **Built in code, not models.** Towers and houses are procedural (`world/towerDesign.ts`, `world/houseDesigns.ts`) on a shared kit (`world/structureKit.ts`) and procedural PBR materials (`world/structureMaterials.ts`: concrete panels, steel grating, perforated steel, corrugated roofing, ribbed sage cladding, steel, hazard stripes), in the language of the Opus weapons. The Kenney building GLBs are gone.
 - **One description, two uses.** Every solid part of a structure is one box (or a convex gable) built as both its collider and its mesh, so walls, rails and roofs stop players and shots exactly where they are drawn. Detail nobody can touch (treads, stringers, braces, frames, lamps, masts) is drawn only. Each structure merges into one mesh per material: a tower is 10 draw calls.
+- **Rails run along local X (v4.6.1).** `addRailing` (`structureKit.ts`) draws a rail's panel, cap and
+  posts along the box's local X. A rail built with `box(...)` whose long side is Z drew as a stub while
+  its collider kept full length, which left seven invisible walls on every tower until v4.6.1. Tower
+  rails now come from `railBox` (`towerDesign.ts`), which builds Z-running rails with `boxAlong`; the
+  houses already did the same (`rail` in `houseDesigns.ts`). `towerDesign.test.ts` checks every rail.
 - **Footprints kept.** The houses keep the Kenney footprints (3.83 x 7.0, 3.58 x 7.22 and 6.56 x 7.22 m), so town layouts, AI cover points and spawn checks see the same rectangles. The tower keeps its 6 m core, 2.4 m stairs and footprint radius, so placement, terrain clearing and the AI's tower cover radius are unchanged.
 - **Exteriors only.** No interiors yet; that is the next phase and changes AI and gameplay.
 - **Terrain stays a heightfield with one photo texture.** The look comes from a shader that reads the texture as several surfaces, not from new texture downloads.
