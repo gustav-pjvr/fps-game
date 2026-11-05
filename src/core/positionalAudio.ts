@@ -13,6 +13,11 @@ import {
   MULTIPLAYER_GUNSHOT_MIN_VOLUME,
 } from './config.ts';
 
+/** A surface boundary buries a sound only when its endpoints are on different sides. */
+export function undergroundMuffleFactor(listenerUnderground: boolean, sourceUnderground: boolean): number {
+  return listenerUnderground === sourceUnderground ? 1 : 0.35;
+}
+
 /** Shared linear gain falloff shape: full volume inside `fullVolumeRange`, fading to `minVolume`
  * at `audibleRange` (gunshots never go silent - an inaudible shot that still damages would read as
  * unfair; the knife swing and lamp break do). */

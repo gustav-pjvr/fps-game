@@ -1,7 +1,7 @@
 import { Settings } from '../settings/Settings.ts';
 import { WEAPON_SOUND_PATHS } from './weaponSounds.ts';
 import { DEAF_CUTOFF_OPEN, flashDeafness, RING_FREQUENCY } from './flashDeafness.ts';
-import { heartbeatFor, MUSIC_SILENT, musicMix, reverbSendFor, valleyImpulse, type MusicMix, type PacingPhase } from './ambience.ts';
+import { heartbeatFor, MUSIC_SILENT, musicMix, outdoorAmbienceGain, reactorHumGain, reverbSendFor, undergroundReverbScale, valleyImpulse, type MusicMix, type PacingPhase } from './ambience.ts';
 
 async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, AudioBuffer>> {
   const buffers = new Map<string, AudioBuffer>();
@@ -74,13 +74,24 @@ const BASS_NOTES = [55, 55, 65.41, 49];
 const SCHEDULE_AHEAD = 0.2;
 
 /** What Game reports to the ambience layers each tick. */
-export interface AmbienceState {
+export interface AmbienceInputs {
+  /** The eased lighting blend, 0 outdoors and 1 underground. */
+  readonly undergroundAmount: number;
+  /** Metres to the nearest core in this lab, Infinity elsewhere. */
+  readonly reactorDistance: number;
+  /** Valley only: the Facility has its own indoor bed. */
+  readonly outdoor: boolean;
   /** 0 to 1. */
   readonly healthRatio: number;
   /** The pacing director's state in a Director or Uplink match, null otherwise (no music). */
   readonly director: { readonly phase: PacingPhase; readonly intensity: number } | null;
   /** False while paused, dead or behind an end screen: music and heartbeat fade out. */
   readonly active: boolean;
+}
+
+interface AmbientNodes {
+  readonly sources: (OscillatorNode | AudioBufferSourceNode)[];
+  readonly gain: GainNode;
 }
 
 interface MusicNodes {
@@ -106,6 +117,8 @@ export class SoundEngine {
   private keepAliveOscillator: OscillatorNode | null = null;
   /** The valley reverb (phase 6): sounds send into this, it returns into master. */
   private readonly reverbSend: GainNode;
+  private readonly reverbFilter: BiquadFilterNode;
+  private reactorHum: AmbientNodes | null = null;
   private readonly musicBus: GainNode;
   private music: MusicNodes | null = null;
   /** The looping recorded track of an indoor match (startBedMusic), null until it has loaded. */
@@ -134,7 +147,10 @@ export class SoundEngine {
     impulse.copyToChannel(left, 0);
     impulse.copyToChannel(right, 1);
     convolver.buffer = impulse;
-    this.reverbSend.connect(convolver).connect(this.master);
+    this.reverbFilter = ctx.createBiquadFilter();
+    this.reverbFilter.type = 'lowpass';
+    this.reverbFilter.frequency.value = 14000;
+    this.reverbSend.connect(this.reverbFilter).connect(convolver).connect(this.master);
 
     this.musicBus = ctx.createGain();
     this.musicBus.gain.value = 0;
@@ -175,6 +191,8 @@ export class SoundEngine {
     this.ring = null;
     for (const oscillator of this.music?.oscillators ?? []) oscillator.stop();
     this.music = null;
+    for (const source of this.reactorHum?.sources ?? []) source.stop();
+    this.reactorHum = null;
     this.bed?.source.stop();
     this.bed = null;
     void this.ctx.close();
@@ -419,8 +437,13 @@ export class SoundEngine {
    * Both fade out while the game is paused, the player is dead or an end screen is up. Ticks and
    * beats are booked slightly ahead on the audio clock, so frame hitches never make them stutter.
    */
-  updateAmbience(state: AmbienceState): void {
+  updateAmbience(state: AmbienceInputs): void {
     const now = this.ctx.currentTime;
+    this.reverbSend.gain.setTargetAtTime(undergroundReverbScale(state.undergroundAmount), now, 0.1);
+    this.reverbFilter.frequency.setTargetAtTime(1800 + 12200 * outdoorAmbienceGain(state.undergroundAmount), now, 0.1);
+    const humGain = state.active ? reactorHumGain(state.reactorDistance) * state.undergroundAmount * Settings.getMusicVolume() : 0;
+    if (!this.reactorHum && humGain > 0) this.reactorHum = this.buildReactorHum();
+    this.reactorHum?.gain.gain.setTargetAtTime(0.065 * humGain, now, 0.15);
     const target = state.active && state.director && !this.bed ? musicMix(state.director.phase, state.director.intensity) : MUSIC_SILENT;
     this.bed?.gain.gain.setTargetAtTime(state.active ? BED_LEVEL * Settings.getMusicVolume() : 0, now, BED_SMOOTHING);
     if (!this.music && target.pad > 0) this.music = this.buildMusic();
@@ -448,6 +471,42 @@ export class SoundEngine {
       this.scheduledTone(49, at + 0.17, 0.11, 0.38 * beat.gain, 'sine', this.master);
       this.nextBeatTime += 60 / beat.bpm;
     }
+  }
+
+  /** A frozen looping noise buffer, allocated once for each persistent ambience layer. */
+  private loopingNoise(): AudioBufferSourceNode {
+    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 3, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    return source;
+  }
+
+  private buildReactorHum(): AmbientNodes {
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(this.master);
+    const sources: AmbientNodes['sources'] = [];
+    for (const frequency of [48, 50]) {
+      const oscillator = this.ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gain);
+      oscillator.start();
+      sources.push(oscillator);
+    }
+    const noise = this.loopingNoise();
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 180;
+    const noiseGain = this.ctx.createGain();
+    noiseGain.gain.value = 0.12;
+    noise.connect(filter).connect(noiseGain).connect(gain);
+    noise.start();
+    sources.push(noise);
+    return { sources, gain };
   }
 
   private buildMusic(): MusicNodes {

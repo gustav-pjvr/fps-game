@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { facilityObjectVolume, GRENADE_BOUNCE_AUDIBLE_RANGE, GRENADE_BOUNCE_LOUD_SPEED, grenadeBounceVolume, knifeSwingVolume, lampBreakVolume, multiplayerGunshotVolume } from './positionalAudio.ts';
+import { facilityObjectVolume, GRENADE_BOUNCE_AUDIBLE_RANGE, GRENADE_BOUNCE_LOUD_SPEED, grenadeBounceVolume, knifeSwingVolume, lampBreakVolume, multiplayerGunshotVolume, undergroundMuffleFactor } from './positionalAudio.ts';
 
 describe('positional audio falloffs', () => {
   it('plays an opponent knife swing at full volume within 5 m and not at all beyond 15 m', () => {
@@ -37,5 +37,16 @@ describe('grenade bounce volume', () => {
     expect(grenadeBounceVolume(1, GRENADE_BOUNCE_LOUD_SPEED / 2)).toBeCloseTo(0.5);
     expect(grenadeBounceVolume(GRENADE_BOUNCE_AUDIBLE_RANGE + 1, GRENADE_BOUNCE_LOUD_SPEED)).toBe(0);
     expect(grenadeBounceVolume(10, 5)).toBeLessThan(grenadeBounceVolume(2, 5));
+  });
+});
+
+describe('undergroundMuffleFactor', () => {
+  it.each([
+    [false, false, 1],
+    [true, true, 1],
+    [false, true, 0.35],
+    [true, false, 0.35],
+  ] as const)('listener underground %s, source underground %s: gain %s', (listener, source, gain) => {
+    expect(undergroundMuffleFactor(listener, source)).toBe(gain);
   });
 });

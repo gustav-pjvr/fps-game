@@ -22,6 +22,7 @@ export interface LabInterior {
   readonly details: Detail[];
   readonly lamps: THREE.Vector3[];
   readonly rooms: THREE.Vector3[];
+  readonly reactorCores: THREE.Vector3[];
   /** Free floor sites, at least 1 m from walls and clear of the interior solids. */
   readonly pickupSites: THREE.Vector3[];
   readonly crackedTank: number;
@@ -43,6 +44,7 @@ const BULB: PieceMaterial = 'inner-roof';
 export function buildLabInterior(kind: LabInteriorKind, seed: number): LabInterior {
   const rng = mulberry32(seed + LAB_INTERIOR_SEED_OFFSET);
   const parts: TowerPart[] = [], details: Detail[] = [], lamps: THREE.Vector3[] = [], rooms: THREE.Vector3[] = [];
+  const reactorCores: THREE.Vector3[] = [];
   const point = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   const solid = (b: BoxTransform, material: PieceMaterial = STEEL, rail = false) => parts.push({ box: b, material, rail });
   const detail = (material: PieceMaterial, b: BoxTransform, shape: Detail['shape'] = 'box', bob = 0, phase = 0) => {
@@ -74,7 +76,7 @@ export function buildLabInterior(kind: LabInteriorKind, seed: number): LabInteri
       bar(point(0.6 + dx, 2.4, -0.7 + dz), point(0.6 + dx, 2.75, -0.7 + dz), 0.025);
     }
     detail(STEEL, box(0.6, 2.4, -0.7, 0.3, 0.025, 0.3));
-    return { kind, parts, details, lamps, rooms, pickupSites: [], crackedTank: -1 };
+    return { kind, parts, details, lamps, rooms, reactorCores, pickupSites: [], crackedTank: -1 };
   }
 
   const full = kind === 'full';
@@ -161,6 +163,7 @@ export function buildLabInterior(kind: LabInteriorKind, seed: number): LabInteri
     detail('lamp', box(8, 4.8, -6, 1.2, 0.06, 0.45));
     lamps.push(point(8, 4.6, -6));
     for (const x of [-5, 5]) {
+      reactorCores.push(point(x, 2.8, -13));
       // Overlapping box columns make a faceted vessel, with identical drawn and solid bounds.
       for (let side = 0; side < 4; side++) {
         const b = box(x, 2.5, -13, 2.12, 5, 2.12);
@@ -192,7 +195,7 @@ export function buildLabInterior(kind: LabInteriorKind, seed: number): LabInteri
     for (const x of [-11.64, -10.36]) rail(point(x, 0.425, -12.9), point(x, 1.925, -16.4));
   }
   const pickupSites = full ? [point(-6, 0, -7), point(8, 0, -6.5), point(0, 0, -13)] : [point(0, 0, -4)];
-  return { kind, parts, details, lamps, rooms, pickupSites, crackedTank };
+  return { kind, parts, details, lamps, rooms, reactorCores, pickupSites, crackedTank };
 }
 
 function materials(): Map<PieceMaterial, THREE.MeshStandardMaterial> {

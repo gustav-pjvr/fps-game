@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { castRaySkippingCuts, inCutZone, isTerrainCollider } from '../../world/underground.ts';
+import { castRaySkippingCuts, inCutZone, isTerrainCollider, isUnderground } from '../../world/underground.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Player } from '../../entities/Player.ts';
 import type { InputManager } from '../../input/InputManager.ts';
@@ -8,7 +8,7 @@ import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage, PlayerSlot } from '../../network/protocol.ts';
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
 import { computeKnockbackStrength } from '../explosion.ts';
-import { computeStereoPan, enemyGunshotVolume, grenadeBounceVolume } from '../../core/positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, grenadeBounceVolume, undergroundMuffleFactor } from '../../core/positionalAudio.ts';
 import { GRAVITY } from '../../core/config.ts';
 import { FlashBlindness, flashSeconds, flashStrength } from './flashStrength.ts';
 import { predictArc, stepGrenade, type ArcPrediction, type FlightParams, type GrenadeBody, type Sweep, type Vec3 } from './grenadeFlight.ts';
@@ -706,7 +706,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     this.lightBlast(lightAt, FRAG_LIGHT_COLOR, FRAG_LIGHT_INTENSITY, FRAG_LIGHT_RANGE, FRAG_LIGHT_SECONDS);
     const eye = this.options.camera.getWorldPosition(new THREE.Vector3());
     const heard = this.hearing(position);
-    sound.playFragExplosion(enemyGunshotVolume(heard.distance), heard.pan);
+    sound.playFragExplosion(enemyGunshotVolume(heard.distance) * undergroundMuffleFactor(
+      isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(position.x, position.y, position.z)), heard.pan);
     this.shake.add(fragShakeAmplitude(eye.distanceTo(blast)));
 
     // The local player: damage only from its own frag (others' arrives as damageEvent); knockback
@@ -744,7 +745,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     const { player, sound, camera, targets } = this.options;
     this.lightBlast(blast, FLASH_LIGHT_COLOR, FLASH_LIGHT_INTENSITY, FLASH_LIGHT_RANGE, FLASH_LIGHT_SECONDS);
     const heard = this.hearing(blast);
-    sound.playFlashBang(enemyGunshotVolume(heard.distance), heard.pan);
+    sound.playFlashBang(enemyGunshotVolume(heard.distance) * undergroundMuffleFactor(
+      isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(blast.x, blast.y, blast.z)), heard.pan);
 
     if (!player.isDead) {
       const eye = camera.getWorldPosition(new THREE.Vector3());

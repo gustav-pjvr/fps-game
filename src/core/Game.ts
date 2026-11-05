@@ -65,7 +65,7 @@ import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
-import { Minimap } from '../ui/minimap.ts';
+import { Minimap, type MinimapPlayerDot } from '../ui/minimap.ts';
 import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
 import { FACILITY_MAP_RADIUS, FacilityMapLayer } from '../ui/facilityMapLayer.ts';
 import { MultiplayerHud, scoreboardRows } from '../ui/multiplayerHud.ts';
@@ -115,7 +115,7 @@ import {
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
-import { computeStereoPan, enemyGunshotVolume, lampBreakVolume } from './positionalAudio.ts';
+import { computeStereoPan, enemyGunshotVolume, lampBreakVolume, undergroundMuffleFactor } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
@@ -268,7 +268,7 @@ interface FacilityMatch {
   readonly objects: FacilityObjects;
 }
 /** No opponents: the single-player Facility minimap only shows the plan and enemy blips. */
-const NO_OPPONENTS: ReadonlyMap<PlayerSlot, THREE.Vector3> = new Map();
+const NO_OPPONENTS: ReadonlyMap<PlayerSlot, MinimapPlayerDot> = new Map();
 /** Desired arc distance between neighboring spawns once a ring's base radius is too cramped for its count. */
 const RING_SPACING = 2.2;
 /** Entities spawned per batch before yielding a frame, so large match sizes don't spawn as one long stall. */
@@ -413,6 +413,7 @@ export class Game {
   private facilityProbePrimed = false;
   private readonly facilityTint = new THREE.Color();
   private undergroundAmount = 0;
+  private readonly reactorLabs: { lab: ReturnType<typeof computeTowerLabs>[number]; cores: THREE.Vector3[] }[];
   private readonly undergroundLights: UndergroundLights | null;
   /** Single-player on the Facility (docs/facility-map.md, section 8): the plan and enemy blips. A
    * multiplayer match's minimap lives on `multiplayer` instead. Assigned in create(). */
@@ -571,6 +572,11 @@ export class Game {
   ) {
     this.lastActiveWeaponIndex = weaponManager.activeWeaponIndex;
     this.undergroundLights = facility ? null : new UndergroundLights(renderer.scene);
+    this.reactorLabs = facility ? [] : computeTowerLabs().map(lab => ({
+      lab,
+      cores: lab.interiors.flatMap(({ design, matrix }) => design.reactorCores.map(core =>
+        core.clone().applyMatrix4(matrix).add(new THREE.Vector3(lab.x, lab.groundY, lab.z)))),
+    }));
     this.lastActiveWeaponId = weaponManager.activeWeaponId;
     this.isSpawnBlocked = isSpawnBlocked;
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
@@ -619,6 +625,21 @@ export class Game {
     const towers = this.watchTowers?.getUndergroundTowers() ?? NO_TOWERS;
     for (const tower of towers) tower.group.visible = undergroundVisible(at, tower, this.undergroundAmount);
     this.undergroundLights?.update(at, this.undergroundAmount, this.watchTowers?.getUndergroundLamps() ?? NO_LAMPS);
+  }
+
+  private reactorDistance(): number {
+    const at = this.renderer.camera.position;
+    if (this.facility || !isUnderground(at.x, at.y, at.z)) return Infinity;
+    for (const { lab, cores } of this.reactorLabs) {
+      for (const volume of lab.volumes) {
+        if (at.x < volume.minX || at.x > volume.maxX || at.z < volume.minZ || at.z > volume.maxZ ||
+            at.y < volume.floorY - 0.5 || at.y > volume.ceilY) continue;
+        let distance = Infinity;
+        for (const core of cores) distance = Math.min(distance, at.distanceTo(core));
+        return distance;
+      }
+    }
+    return Infinity;
   }
 
   private torchAvailableAt(at: THREE.Vector3Like): boolean {
@@ -1258,7 +1279,8 @@ export class Game {
           // in single-player against enemies as it does against a multiplayer opponent).
           sound.playGunshot(
             'enemy-rifle',
-            enemyGunshotVolume(origin.distanceTo(player.position)),
+            enemyGunshotVolume(origin.distanceTo(player.position)) * undergroundMuffleFactor(
+              isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(origin.x, origin.y, origin.z)),
             computeStereoPan(player.position, player.facingYaw, origin),
           );
         },
@@ -1314,7 +1336,11 @@ export class Game {
         // Same distance-attenuation/stereo-pan convention as enemy/opponent gunshots (see
         // enemyGunshotVolume/computeStereoPan below) - a goose exploding across the map shouldn't
         // sound identical to one at point-blank.
-        sound.playExplosion(enemyGunshotVolume(position.distanceTo(player.position)), computeStereoPan(player.position, player.facingYaw, position));
+        sound.playExplosion(
+          enemyGunshotVolume(position.distanceTo(player.position)) * undergroundMuffleFactor(
+            isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(position.x, position.y, position.z)),
+          computeStereoPan(player.position, player.facingYaw, position),
+        );
       },
       onNetworkSpawn:
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseSpawned', id, x, y, z }) : undefined,
@@ -1362,7 +1388,11 @@ export class Game {
               if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
               explosionEffect.spawn(position, HORDE_GOOSE_EXPLOSION_RADIUS);
               const distance = position.distanceTo(player.position);
-              sound.playExplosion(enemyGunshotVolume(distance), computeStereoPan(player.position, player.facingYaw, position));
+              sound.playExplosion(
+                enemyGunshotVolume(distance) * undergroundMuffleFactor(
+                  isUnderground(player.position.x, player.position.y, player.position.z), isUnderground(position.x, position.y, position.z)),
+                computeStereoPan(player.position, player.facingYaw, position),
+              );
               // Every client independently checks its OWN player against the blast (self-
               // authoritative over own health, same trust model as every other explosion in this
               // project) - this callback fires identically whether the local client decided the
@@ -2767,7 +2797,7 @@ export class Game {
     this.explosionEffect.update(dt);
     this.facility?.lampBreak.update(dt);
     this.updateMultiplayer(dt);
-    this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion());
+    this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion(), !this.facility && isUnderground(this.player.position.x, this.player.position.y, this.player.position.z));
     if (this.soloMinimap) this.updateMinimapPickups(this.soloMinimap);
 
     if (this.player.isDead && !this.deathHandled) {
@@ -2863,6 +2893,9 @@ export class Game {
     // Phase 6 sound: the director drives the music, low health the heartbeat. Both fade out while
     // paused, dead or behind the mission's end screen.
     this.sound.updateAmbience({
+      undergroundAmount: this.undergroundAmount,
+      reactorDistance: this.reactorDistance(),
+      outdoor: !this.facility,
       healthRatio: this.player.currentHealth / this.player.maxHealth,
       director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
       active: this.input.isEngaged && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
@@ -2880,10 +2913,13 @@ export class Game {
     // Every RemotePlayer's own position/collider is advanced earlier in update(), before this
     // tick's hitscan can fire (see that call site's comment) - this just reads the already-updated
     // positions for the minimap.
-    const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.remotePlayer.position] as const));
+    const opponentPositions = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => {
+      const at = o.remotePlayer.position;
+      return [slot, { x: at.x, z: at.z, underground: !this.facility && isUnderground(at.x, at.y, at.z) }] as const;
+    }));
     // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
     if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
-    this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions());
+    this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions(), undefined, !this.facility && isUnderground(this.player.position.x, this.player.position.y, this.player.position.z));
     this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
     this.multiplayer.multiplayerHud.update(
@@ -3215,7 +3251,8 @@ export class Game {
     this.explosionEffect.spawn(position, radius);
     if (position.distanceTo(this.player.position) <= 10) this.input.vibrate('explosion');
     this.sound.playExplosion(
-      enemyGunshotVolume(position.distanceTo(this.player.position)),
+      enemyGunshotVolume(position.distanceTo(this.player.position)) * undergroundMuffleFactor(
+        isUnderground(this.player.position.x, this.player.position.y, this.player.position.z), isUnderground(position.x, position.y, position.z)),
       computeStereoPan(this.player.position, this.player.facingYaw, position),
     );
 
