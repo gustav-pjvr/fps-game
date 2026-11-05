@@ -166,10 +166,10 @@ describe('transport factories', () => {
     connection.dispose();
   });
 
-  it('rejects the server kind before constructing a peer or fetching ICE servers', async () => {
+  it('never takes the server kind to PeerJS: without server settings it rejects before constructing a peer or fetching ICE servers', async () => {
     const peerCount = fakes.peers.length;
-    await expect(hostRoom('server', { code: 'ABCDEF' }, callbacks())).rejects.toThrow('not built yet');
-    await expect(joinRoom('ABCDEF', { kind: 'server', username: 'Bo', rejoinToken: null }, callbacks())).rejects.toThrow('not built yet');
+    await expect(hostRoom('server', { code: 'ABCDEF' }, callbacks())).rejects.toThrow('needs the server settings');
+    await expect(joinRoom('ABCDEF', { kind: 'server', username: 'Bo', rejoinToken: null }, callbacks())).rejects.toThrow('needs the server settings');
     expect(fakes.peers).toHaveLength(peerCount);
     expect(fetch).not.toHaveBeenCalled();
   });

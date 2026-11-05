@@ -1,4 +1,6 @@
+import { MULTIPLAYER_MAX_PLAYERS } from '../core/config.ts';
 import { PeerConnection } from './PeerConnection.ts';
+import { ServerTransport, type ServerConnectOptions } from './ServerTransport.ts';
 import type { ConnectionQuality } from './connectionStats.ts';
 import type { HelloOutcome } from './HostRoster.ts';
 import type { NetworkMessage, PlayerSlot, WelcomeMessage } from './protocol.ts';
@@ -75,21 +77,39 @@ export interface Transport {
 }
 
 export interface HostRoomOptions {
-  code: string;
+  /** P2P: the code this host generated. The server picks its own (Transport.roomCode). */
+  code?: string;
+  /** Server: the host's name and the room size asked for in `create` (the server clamps it);
+   * MULTIPLAYER_MAX_PLAYERS when left out. */
+  username?: string;
+  maxPlayers?: number;
+  /** Server: where the relay is and the access code. */
+  server?: ServerConnectOptions;
 }
 
 export interface JoinRoomOptions {
   kind?: TransportKind;
   username: string;
   rejoinToken: string | null;
+  /** Server: where the relay is and the access code. */
+  server?: ServerConnectOptions;
 }
 
+/** Server mode resolves once the server answered `created`, or the attempt ended (reported through
+ * onError, as on P2P). */
 export async function hostRoom(kind: TransportKind, opts: HostRoomOptions, cb: TransportCallbacks): Promise<Transport> {
-  if (kind === 'server') throw new Error('not built yet');
+  if (kind === 'server') {
+    if (!opts.server || opts.username === undefined) throw new Error('A game server room needs the server settings and a name.');
+    return ServerTransport.hostRoom(opts.username, opts.maxPlayers ?? MULTIPLAYER_MAX_PLAYERS, opts.server, cb);
+  }
+  if (opts.code === undefined) throw new Error('A peer-to-peer room needs its code.');
   return PeerConnection.hostRoom(opts.code, cb);
 }
 
 export async function joinRoom(code: string, opts: JoinRoomOptions, cb: TransportCallbacks): Promise<Transport> {
-  if (opts.kind === 'server') throw new Error('not built yet');
+  if (opts.kind === 'server') {
+    if (!opts.server) throw new Error('Joining through the game server needs the server settings.');
+    return ServerTransport.joinRoom(code, opts.username, opts.rejoinToken, opts.server, cb);
+  }
   return PeerConnection.joinRoom(code, opts.username, opts.rejoinToken, cb);
 }

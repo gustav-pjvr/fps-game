@@ -100,6 +100,11 @@ describe('combineRelayedQuality', () => {
   it('keeps an unmeasured route unmeasured when nothing is a relay', () => {
     expect(combineRelayedQuality({ rttMs: null, route: null }, { rttMs: null, relay: false })).toEqual({ rttMs: null, route: null });
   });
+
+  it('sums the two server legs on the server route (own link to the server plus theirs)', () => {
+    expect(combineRelayedQuality({ rttMs: 18, route: 'server' }, { rttMs: 24, relay: false })).toEqual({ rttMs: 42, route: 'server' });
+    expect(combineRelayedQuality({ rttMs: null, route: 'server' }, { rttMs: 24, relay: false })).toEqual({ rttMs: null, route: 'server' });
+  });
 });
 
 describe('formatOpponentPings', () => {
@@ -120,5 +125,17 @@ describe('formatOpponentPings', () => {
         { name: 'Cat', quality: { rttMs: null, route: null } },
       ]),
     ).toBe('Ping Ann 42 ms, Bob 61 ms relay, Cat --');
+  });
+
+  it('prints no suffix for the server route, so the HUD still reads "Ping N ms"', () => {
+    expect(formatConnection({ rttMs: 42, route: 'server' })).toBe('Ping 42 ms');
+    expect(formatConnection({ rttMs: 42, route: 'server' })).toMatch(/^Ping \d+ ms$/);
+    expect(formatOpponentPings([{ name: 'Ann', quality: { rttMs: 42, route: 'server' } }])).toBe('Ping 42 ms');
+    expect(
+      formatOpponentPings([
+        { name: 'Ann', quality: { rttMs: 42, route: 'server' } },
+        { name: 'Bob', quality: { rttMs: null, route: 'server' } },
+      ]),
+    ).toBe('Ping Ann 42 ms, Bob --');
   });
 });
