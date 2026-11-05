@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { TORCH_AIM_DISTANCE, TORCH_GUN_OFFSET, TORCH_SHOULDER_OFFSET, torchPose, torchAvailable, torchOnByDefault } from './Flashlight.ts';
+import { Flashlight, TORCH_AIM_DISTANCE, TORCH_GUN_OFFSET, TORCH_SHOULDER_OFFSET, torchPose, torchAvailable, torchOnByDefault } from './Flashlight.ts';
 
 const look = (pitch: number, yaw: number): THREE.Quaternion => new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
 
@@ -64,5 +64,22 @@ describe('torch availability', () => {
       expect(torchAvailable('valley', 'day', underground)).toBe(underground);
       expect(torchOnByDefault('valley', 'day')).toBe(false);
     }
+  });
+});
+
+// v4.6.2: a torch created off (Fog) never drew its shadow map, so every lit material sampled a
+// missing shadow map, WebGL rejected every lit draw call and the world vanished. Off or on, the
+// shadow map is drawn at least once.
+describe('torch shadow map', () => {
+  it.each([false, true])('is requested when the torch is switched %s', (on) => {
+    const scene = new THREE.Scene();
+    const torch = new Flashlight(scene, true);
+    let light: THREE.SpotLight | undefined;
+    scene.traverse((object) => { if (object instanceof THREE.SpotLight) light = object; });
+    expect(light?.castShadow).toBe(true);
+    light!.shadow.needsUpdate = false;
+    torch.setOn(on);
+    expect(light!.shadow.needsUpdate).toBe(true);
+    expect(light!.shadow.autoUpdate).toBe(on);
   });
 });
