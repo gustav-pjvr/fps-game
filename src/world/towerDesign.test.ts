@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
+import * as THREE from 'three';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { createBoxCollider } from './structureKit.ts';
-import { TOWER_DECK_HALF, TOWER_LANDINGS, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
+import { createTowerVisual, TOWER_DECK_HALF, TOWER_LANDINGS, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
+import { createDecorativeTowerVisual } from './WatchTowerManager.ts';
 import { GRAVITY, PLAYER_HEIGHT, PLAYER_MOVE_SPEED, PLAYER_RADIUS, SPRINT_MULTIPLIER, WATCH_TOWER_HEIGHT } from '../core/config.ts';
 
 // Climbs a tower the way Player.ts moves: the same capsule, the same character controller settings
@@ -90,6 +92,19 @@ const UP_ROUTE: [number, number][] = [[-9, landing(0)[1]], landing(0), landing(1
 describe('watch tower stairs', () => {
   beforeAll(async () => {
     await RAPIER.init();
+  });
+
+  it('covers the lobby doorway with a steel plate only on the decorative tower', () => {
+    const decorative = createDecorativeTowerVisual(), playable = createTowerVisual();
+    const ray = new THREE.Raycaster(new THREE.Vector3(4, 1.1, 0), new THREE.Vector3(-1, 0, 0), 0, 1.3);
+    try {
+      decorative.updateMatrixWorld(true);
+      playable.updateMatrixWorld(true);
+      expect(ray.intersectObject(decorative, true).length).toBeGreaterThan(0);
+      expect(ray.intersectObject(playable, true)).toHaveLength(0);
+    } finally {
+      for (const group of [decorative, playable]) group.traverse(child => { if (child instanceof THREE.Mesh) child.geometry.dispose(); });
+    }
   });
 
   it.each(['south', 'west', 'north'] as const)('has a hollow room, east opening, ceiling and D1 floor hole facing %s', async (orientation) => {

@@ -38,9 +38,44 @@ export interface TowerLab {
 }
 
 const WIDTH = 1.8;
+const HALF_LANE = WIDTH / 2;
+const WALL = 0.3;
+const ROOM_HALF = 2.7;
+const ROOM_FLOOR = 0.05;
+const ROOM_FLOOR_BOTTOM = -0.1;
+const ROOM_CEILING = 3;
 const FIRST_FLOOR = -3.85;
+const FLIGHT_DROP = 3;
+const FLIGHT_RUN = 5.4;
+const ENTRY_LANE = -1.65;
+const ENTRY_START_Z = 1.65;
+const ENTRY_END_Z = -4;
+const ENTRY_APPROACH_Z = 2.15;
+const ENTRY_LANDING_END_Z = -5.5;
+const ENTRY_ROOF_EDGE_Z = -4.1;
+const ENTRY_ROOF_TOP = -1;
+const ENTRY_ROOF_THICKNESS = 0.05;
+const ENTRY_RETURN_ROOF_TOP = -4.12;
+const DEAD_END_ROOF_TOP = -1.12;
+const WELL_WEST = -2.85;
+const WELL_EAST = 6.75;
+const WELL_NORTH = -3;
+const WELL_NORTH_INNER = WELL_NORTH - WALL;
+const WELL_FLOOR_NORTH = -3.5;
+const WELL_MIDDLE = -6;
 const WELL_END = -9;
+const WELL_SOUTH_INNER = WELL_END + WALL;
+const NEAR_FLIGHT_Z = -4.5;
+const FAR_FLIGHT_Z = -7.5;
+const FLIGHT_START_X = -0.75;
+const FLIGHT_END_X = 4.65;
+const FAR_LANDING_X = 5.55;
+const ROOF_RISE = 2.75;
+const ROOF_THICKNESS = 0.15;
 const CORRIDOR_END = -10;
+const CORRIDOR_HALF_WIDTH = 1.2;
+const CORRIDOR_HEIGHT = 3;
+const LAB_HEIGHT = 6;
 
 /** A slab sunk below its walking surface, extended under the flush landings. */
 function ramp(start: THREE.Vector3, end: THREE.Vector3): BoxTransform {
@@ -50,14 +85,13 @@ function ramp(start: THREE.Vector3, end: THREE.Vector3): BoxTransform {
   return { ...slab, center: slab.center.clone().addScaledVector(up, -0.15) };
 }
 
-/** All three orientations share this plan. Only the room's lane changes to avoid the east door. */
-export function buildTowerLab(index: number, position: { x: number; z: number }, orientation: TowerOrientation, flights: number, kind: TowerLab['kind'] = 'full'): TowerLab {
+function createLabBuilder(index: number, position: { x: number; z: number }, orientation: TowerOrientation, flights: number, kind: TowerLab['kind'] = 'full') {
   const { x, z } = position, groundY = sampleHeight(x, z);
-  const rotation = towerRotation(orientation), mirror = orientation === 'north' ? -1 : 1, lane = -1.65;
+  const rotation = towerRotation(orientation), mirror = orientation === 'north' ? -1 : 1;
   const parts: TowerPart[] = [], route: THREE.Vector3[] = [], volumes: LabVolume[] = [], footprints: LabVolume[] = [];
   const ceilingParts: number[] = [], flightSurfaces: { start: THREE.Vector3; end: THREE.Vector3 }[] = [];
   const lamps: THREE.Vector3[] = [];
-  const floorY = FIRST_FLOOR - (flights - 1) * 3;
+  const floorY = FIRST_FLOOR - (flights - 1) * FLIGHT_DROP;
   const point = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz);
   const add = (b: BoxTransform, material: TowerPart['material'] = 'concrete', rail = false) => {
     const turn = b.rotation.clone();
@@ -78,6 +112,32 @@ export function buildTowerLab(index: number, position: { x: number; z: number },
     const bounds = { minX: x + Math.min(a.x, b.x), maxX: x + Math.max(a.x, b.x), minZ: z + Math.min(a.z, b.z), maxZ: z + Math.max(a.z, b.z), floorY: groundY + y0, ceilY: groundY + y1 };
     volumes.push(bounds);
     if (underground) footprints.push(bounds);
+  };
+  const roofSections: { x0: number; x1: number; z0: number; z1: number; top: number; bottom: number }[] = [];
+  const ceiling = (x0: number, x1: number, top: number, z0: number, z1: number, thickness = ROOF_THICKNESS) => {
+    ceilingParts.push(parts.length);
+    add(box((x0 + x1) / 2, top - thickness / 2, (z0 + z1) / 2, x1 - x0, thickness, z1 - z0));
+    roofSections.push({ x0, x1, z0, z1, top, bottom: top - thickness });
+  };
+  const sealRoofJoints = () => {
+    const seam = 0.02;
+    for (let i = 0; i < roofSections.length; i++) for (const b of roofSections.slice(i + 1)) {
+      const a = roofSections[i]!;
+      if (Math.abs(a.top - b.top) < 1e-6) continue;
+      const bottom = Math.min(a.bottom, b.bottom), top = Math.max(a.top, b.top);
+      const z0 = Math.max(a.z0, b.z0), z1 = Math.min(a.z1, b.z1);
+      const x0 = Math.max(a.x0, b.x0), x1 = Math.min(a.x1, b.x1);
+      if (z1 > z0 && (Math.abs(a.x1 - b.x0) < 1e-6 || Math.abs(b.x1 - a.x0) < 1e-6)) {
+        const edge = Math.max(a.x0, b.x0);
+        ceilingParts.push(parts.length);
+        wall(edge - seam, edge + seam, bottom, top, z0, z1);
+      }
+      if (x1 > x0 && (Math.abs(a.z1 - b.z0) < 1e-6 || Math.abs(b.z1 - a.z0) < 1e-6)) {
+        const edge = Math.max(a.z0, b.z0);
+        ceilingParts.push(parts.length);
+        wall(x0, x1, bottom, top, edge - seam, edge + seam);
+      }
+    }
   };
   const rail = (a: THREE.Vector3, b: THREE.Vector3) => add(boxAlong(a, b, 0.8, 0.08), 'perforated', true);
   const flight = (a: THREE.Vector3, b: THREE.Vector3) => {
@@ -100,97 +160,144 @@ export function buildTowerLab(index: number, position: { x: number; z: number },
     route.push(a, b);
   };
 
-  volume(-2.7, 2.7, floorY, 3, -2.7, 2.7, false);
-  // Approach the top landing from the side, never cutting diagonally across the hole.
-  route.push(point(0, 0.05, 0), point(0, 0.05, 2.15), point(lane, 0.05, 2.15));
-  flight(point(lane, 0.05, 1.65), point(lane, FIRST_FLOOR, -4));
-  slab(lane - 0.9, lane + 0.9, FIRST_FLOOR, -5.5, -4);
-  const wellEnd = kind === 'dead-end' ? -5.5 : WELL_END;
-  const east = kind === 'dead-end' ? 3 : 6.75;
+  const wellEnd = kind === 'dead-end' ? ENTRY_LANDING_END_Z : WELL_END;
+  const east = kind === 'dead-end' ? -WELL_NORTH : WELL_EAST;
   const roofAt = (px: number, south: boolean) => {
-    const t = Math.max(0, Math.min(1, (px + 0.75) / 5.4));
-    return FIRST_FLOOR - (south ? 6 - t * 3 : t * 3) + 2.75;
+    const t = Math.max(0, Math.min(1, (px - FLIGHT_START_X) / FLIGHT_RUN));
+    return FIRST_FLOOR - (south ? 2 * FLIGHT_DROP - t * FLIGHT_DROP : t * FLIGHT_DROP) + ROOF_RISE;
   };
-  slab(-2.85, east, floorY, wellEnd, -3.5);
+
+  return { index, x, z, groundY, orientation, flights, kind, rotation, mirror, floorY, parts, route, volumes, footprints,
+    ceilingParts, flightSurfaces, lamps, wellEnd, east, roofAt, point, add, slab, wall, volume, ceiling, flight, sealRoofJoints };
+}
+
+type LabBuilder = ReturnType<typeof createLabBuilder>;
+
+function buildRoomShaft(builder: LabBuilder): void {
+  const { volume, floorY, route, point, flight, slab, wall, ceiling } = builder;
+  volume(-ROOM_HALF, ROOM_HALF, floorY, ROOM_CEILING, -ROOM_HALF, ROOM_HALF, false);
+  // Approach the top landing from the side, never cutting diagonally across the hole.
+  route.push(point(0, ROOM_FLOOR, 0), point(0, ROOM_FLOOR, ENTRY_APPROACH_Z), point(ENTRY_LANE, ROOM_FLOOR, ENTRY_APPROACH_Z));
+  flight(point(ENTRY_LANE, ROOM_FLOOR, ENTRY_START_Z), point(ENTRY_LANE, FIRST_FLOOR, ENTRY_END_Z));
+  slab(ENTRY_LANE - HALF_LANE, ENTRY_LANE + HALF_LANE, FIRST_FLOOR, ENTRY_LANDING_END_Z, ENTRY_END_Z);
+  // Below the room floor the rail can be jumped. Solid sides, a back wall and a bottom
+  // bound the entire shaft while its far end opens onto the first landing.
+  for (const side of [-1, 1]) {
+    const edge = ENTRY_LANE + side * HALF_LANE;
+    wall(Math.min(edge, edge + side * WALL), Math.max(edge, edge + side * WALL), FIRST_FLOOR - WALL, ROOM_FLOOR_BOTTOM,
+      ENTRY_ROOF_EDGE_Z, ENTRY_START_Z + WALL);
+  }
+  wall(ENTRY_LANE - HALF_LANE - WALL, ENTRY_LANE + HALF_LANE + WALL, FIRST_FLOOR - WALL, ROOM_FLOOR,
+    ENTRY_START_Z, ENTRY_START_Z + WALL);
+  slab(ENTRY_LANE - HALF_LANE - WALL, ENTRY_LANE + HALF_LANE + WALL, FIRST_FLOOR - WALL,
+    ENTRY_ROOF_EDGE_Z, ENTRY_START_Z + WALL);
+  ceiling(ENTRY_LANE - HALF_LANE, ENTRY_LANE + HALF_LANE, ROOM_FLOOR,
+    WELL_NORTH, -ROOM_HALF, WALL);
+}
+
+function buildStairwell(builder: LabBuilder): number {
+  const { slab, east, floorY, wellEnd, ceiling, wall, volume, kind, roofAt, flights, route, point, flight } = builder;
+  slab(WELL_WEST, east, floorY, wellEnd, WELL_FLOOR_NORTH);
   // Crosswise switchbacks fit the stairwell beside the core's apron. Roof strips follow the
   // highest flight in each lane, rather than exposing a tall box on a downhill site.
-  const roofTile = (left: number, right: number, near: number, far: number, roof: number, thickness = 0.15) => {
-    const roofNear = Math.min(near, left === -2.85 && near === -3 ? -4.1 : -3.5);
-    ceilingParts.push(parts.length);
-    add(box((left + right) / 2, roof - thickness / 2, (far + roofNear) / 2, right - left, thickness, roofNear - far));
-    volume(left, right, floorY - 0.3, roof, far, near);
-    if (near === -3) {
-      wall(left, Math.min(right, lane - 0.9), floorY, roof, -3.3, -3);
-      wall(Math.max(left, lane + 0.9), right, floorY, roof, -3.3, -3);
+  const roofTile = (left: number, right: number, near: number, far: number, roof: number, thickness = ROOF_THICKNESS) => {
+    const roofNear = Math.min(near, left === WELL_WEST && near === WELL_NORTH ? ENTRY_ROOF_EDGE_Z : WELL_FLOOR_NORTH);
+    ceiling(left, right, roof, far, roofNear, thickness);
+    if (near === WELL_NORTH) {
+      // The entry collar meets the room floor, closing the strips above the old roof setbacks.
+      ceiling(left, right, ROOM_FLOOR, roofNear, near, WALL);
+      wall(left, Math.min(right, ENTRY_LANE - HALF_LANE), roof, ROOM_FLOOR, WELL_NORTH_INNER, WELL_NORTH);
+      wall(Math.max(left, ENTRY_LANE + HALF_LANE), right, roof, ROOM_FLOOR, WELL_NORTH_INNER, WELL_NORTH);
+      if (left === WELL_WEST) wall(WELL_WEST, WELL_WEST + WALL, roof, ROOM_FLOOR, roofNear, near);
+      if (right === east) wall(east - WALL, east, roof, ROOM_FLOOR, roofNear, near);
     }
-    if (left === -2.85) wall(-2.85, -2.55, floorY, roof, far, near);
+    volume(left, right, floorY - 0.3, roof, far, near);
+    if (near === WELL_NORTH) {
+      wall(left, Math.min(right, ENTRY_LANE - HALF_LANE), floorY, roof, WELL_NORTH_INNER, WELL_NORTH);
+      wall(Math.max(left, ENTRY_LANE + HALF_LANE), right, floorY, roof, WELL_NORTH_INNER, WELL_NORTH);
+    }
+    if (left === WELL_WEST) wall(WELL_WEST, WELL_WEST + WALL, floorY, roof, far, near);
     if (right === east) wall(east - 0.3, east, floorY, roof, far, near);
   };
   for (const south of kind === 'dead-end' ? [false] : [false, true]) {
-    const near = south ? -6 : -3, far = south ? wellEnd : Math.max(wellEnd, -6);
-    const edges = [-2.85, -0.75];
+    const near = south ? WELL_MIDDLE : WELL_NORTH, far = south ? wellEnd : Math.max(wellEnd, WELL_MIDDLE);
+    const edges = [WELL_WEST, FLIGHT_START_X];
     for (let at = 0.25; at < east; at += 1) edges.push(at);
     edges.push(east);
     for (let i = 0; i < edges.length - 1; i++) {
       const left = edges[i]!, right = edges[i + 1]!;
-      const roof = kind === 'dead-end' ? -1.12 : Math.max(roofAt(left, south), roofAt(right, south));
-      if (!south && left === -2.85) {
+      const roof = kind === 'dead-end' ? DEAD_END_ROOF_TOP : Math.max(roofAt(left, south), roofAt(right, south));
+      if (!south && left === WELL_WEST) {
         // Thin steel over D1's arrival keeps the capsule clear of the leading ceiling edge.
         // This entire inflated strip lies inside the tower's flat terrain apron.
-        roofTile(left, right, near, -5.5, -1, 0.05);
-        if (far < -5.5) roofTile(left, right, -5.5, far, -4.12);
+        roofTile(left, right, near, ENTRY_LANDING_END_Z, ENTRY_ROOF_TOP, ENTRY_ROOF_THICKNESS);
+        if (far < ENTRY_LANDING_END_Z) roofTile(left, right, ENTRY_LANDING_END_Z, far, ENTRY_RETURN_ROOF_TOP);
       } else roofTile(left, right, near, far, roof);
     }
   }
-  wall(lane - 0.9, lane + 0.9, floorY, FIRST_FLOOR - 0.3, -3.3, -3);
-  let exitX = lane;
+  wall(ENTRY_LANE - HALF_LANE, ENTRY_LANE + HALF_LANE, floorY, FIRST_FLOOR - 0.3, WELL_NORTH_INNER, WELL_NORTH);
+  let exitX = ENTRY_LANE;
   for (let k = 1; k < flights; k++) {
-    const forward = k % 2 === 1, pz = forward ? -4.5 : -7.5;
-    const y = FIRST_FLOOR - (k - 1) * 3;
-    const from = forward ? -0.75 : 4.65, to = forward ? 4.65 : -0.75;
-    const fromLanding = forward ? lane : 5.55;
-    exitX = forward ? 5.55 : lane;
+    const forward = k % 2 === 1, pz = forward ? NEAR_FLIGHT_Z : FAR_FLIGHT_Z;
+    const y = FIRST_FLOOR - (k - 1) * FLIGHT_DROP;
+    const from = forward ? FLIGHT_START_X : FLIGHT_END_X, to = forward ? FLIGHT_END_X : FLIGHT_START_X;
+    const fromLanding = forward ? ENTRY_LANE : FAR_LANDING_X;
+    exitX = forward ? FAR_LANDING_X : ENTRY_LANE;
     route.push(point(fromLanding, y, pz));
-    flight(point(from, y, pz), point(to, y - 3, pz));
-    slab(exitX - 0.9, exitX + 0.9, y - 3, -8.7, -3.5);
-    route.push(point(exitX, y - 3, pz));
+    flight(point(from, y, pz), point(to, y - FLIGHT_DROP, pz));
+    slab(exitX - HALF_LANE, exitX + HALF_LANE, y - FLIGHT_DROP, WELL_SOUTH_INNER, WELL_FLOOR_NORTH);
+    route.push(point(exitX, y - FLIGHT_DROP, pz));
   }
   if (kind === 'dead-end') {
-    wall(-2.85, east, floorY, -1.12, wellEnd, wellEnd + 0.3);
-    route.push(point(lane, floorY, -4.5));
-  } else {
-    route.push(point(exitX, floorY, -7.5), point(exitX, floorY, CORRIDOR_END - 2));
-    // The lab's entry follows the final landing, so no return route runs into a ramp underside.
-    for (let left = -2.85; left < east; left += 1) {
-      const right = Math.min(east, left + 1), roof = Math.max(roofAt(left, true), roofAt(right, true));
-      wall(left, Math.min(right, exitX - 1.2), floorY, roof, WELL_END, WELL_END + 0.3);
-      wall(Math.max(left, exitX + 1.2), right, floorY, roof, WELL_END, WELL_END + 0.3);
-      wall(Math.max(left, exitX - 1.2), Math.min(right, exitX + 1.2), floorY + 3, roof, WELL_END, WELL_END + 0.3);
-    }
-    slab(exitX - 1.5, exitX + 1.5, floorY, CORRIDOR_END, WELL_END);
-    ceilingParts.push(parts.length);
-    slab(exitX - 1.5, exitX + 1.5, floorY + 3.3, CORRIDOR_END, WELL_END);
-    for (const side of [-1, 1]) wall(exitX + side * 1.35 - 0.15, exitX + side * 1.35 + 0.15, floorY, floorY + 3.3, CORRIDOR_END, WELL_END);
-    volume(exitX - 1.5, exitX + 1.5, floorY - 0.3, floorY + 3.3, CORRIDOR_END, WELL_END);
-    const width = kind === 'full' ? 26 : 10, depth = kind === 'full' ? 18 : 8;
-    const lateral = new THREE.Vector3(mirror, 0, 0).applyQuaternion(rotation);
-    // The wide entrance wall can slide past a straight corridor. Bias that spare width toward
-    // the map interior so the outer corner does not needlessly enter the world edge ramp.
-    const inward = THREE.MathUtils.clamp(-x * lateral.x - z * lateral.z, -11.5, 11.5);
-    const labX = kind === 'full' ? THREE.MathUtils.clamp(inward, exitX - 11.5, exitX + 11.5) : exitX, end = CORRIDOR_END - depth;
-    slab(labX - width / 2, labX + width / 2, floorY, end, CORRIDOR_END);
-    ceilingParts.push(parts.length);
-    slab(labX - width / 2, labX + width / 2, floorY + 6.3, end, CORRIDOR_END);
-    for (const side of [-1, 1]) wall(labX + side * (width / 2 - 0.15) - 0.15, labX + side * (width / 2 - 0.15) + 0.15, floorY, floorY + 6.3, end, CORRIDOR_END);
-    wall(labX - width / 2, labX + width / 2, floorY, floorY + 6.3, end, end + 0.3);
-    wall(labX - width / 2, exitX - 1.2, floorY, floorY + 6.3, CORRIDOR_END - 0.3, CORRIDOR_END);
-    wall(exitX + 1.2, labX + width / 2, floorY, floorY + 6.3, CORRIDOR_END - 0.3, CORRIDOR_END);
-    wall(exitX - 1.2, exitX + 1.2, floorY + 3, floorY + 6.3, CORRIDOR_END - 0.3, CORRIDOR_END);
-    volume(labX - width / 2, labX + width / 2, floorY - 0.3, floorY + 6.3, end, CORRIDOR_END);
-    lamps.push(point(exitX, floorY + 2.7, (CORRIDOR_END + WELL_END) / 2),
-      point(labX - width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2),
-      point(labX + width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2));
+    wall(WELL_WEST, east, floorY, DEAD_END_ROOF_TOP, wellEnd, wellEnd + 0.3);
+    route.push(point(ENTRY_LANE, floorY, NEAR_FLIGHT_Z));
   }
+  return exitX;
+}
+
+function buildLab(builder: LabBuilder, exitX: number): void {
+  const { route, point, floorY, east, roofAt, wall, slab, ceilingParts, parts, volume, kind, mirror, rotation, x, z, lamps } = builder;
+  route.push(point(exitX, floorY, FAR_FLIGHT_Z), point(exitX, floorY, CORRIDOR_END - 2));
+  // The lab's entry follows the final landing, so no return route runs into a ramp underside.
+  for (let left = WELL_WEST; left < east; left += 1) {
+    const right = Math.min(east, left + 1), roof = Math.max(roofAt(left, true), roofAt(right, true));
+    wall(left, Math.min(right, exitX - CORRIDOR_HALF_WIDTH), floorY, roof, WELL_END, WELL_END + 0.3);
+    wall(Math.max(left, exitX + CORRIDOR_HALF_WIDTH), right, floorY, roof, WELL_END, WELL_END + 0.3);
+    wall(Math.max(left, exitX - CORRIDOR_HALF_WIDTH), Math.min(right, exitX + CORRIDOR_HALF_WIDTH), floorY + CORRIDOR_HEIGHT, roof, WELL_END, WELL_END + 0.3);
+  }
+  slab(exitX - 1.5, exitX + 1.5, floorY, CORRIDOR_END, WELL_END);
+  ceilingParts.push(parts.length);
+  slab(exitX - 1.5, exitX + 1.5, floorY + CORRIDOR_HEIGHT + WALL, CORRIDOR_END, WELL_END);
+  for (const side of [-1, 1]) wall(exitX + side * 1.35 - 0.15, exitX + side * 1.35 + 0.15, floorY, floorY + CORRIDOR_HEIGHT + WALL, CORRIDOR_END, WELL_END);
+  volume(exitX - 1.5, exitX + 1.5, floorY - 0.3, floorY + CORRIDOR_HEIGHT + WALL, CORRIDOR_END, WELL_END);
+  const width = kind === 'full' ? 26 : 10, depth = kind === 'full' ? 18 : 8;
+  const lateral = new THREE.Vector3(mirror, 0, 0).applyQuaternion(rotation);
+  // The wide entrance wall can slide past a straight corridor. Bias that spare width toward
+  // the map interior so the outer corner does not needlessly enter the world edge ramp.
+  const inward = THREE.MathUtils.clamp(-x * lateral.x - z * lateral.z, -11.5, 11.5);
+  const labX = kind === 'full' ? THREE.MathUtils.clamp(inward, exitX - 11.5, exitX + 11.5) : exitX, end = CORRIDOR_END - depth;
+  slab(labX - width / 2, labX + width / 2, floorY, end, CORRIDOR_END);
+  ceilingParts.push(parts.length);
+  slab(labX - width / 2, labX + width / 2, floorY + LAB_HEIGHT + WALL, end, CORRIDOR_END);
+  for (const side of [-1, 1]) wall(labX + side * (width / 2 - 0.15) - 0.15, labX + side * (width / 2 - 0.15) + 0.15, floorY, floorY + LAB_HEIGHT + WALL, end, CORRIDOR_END);
+  wall(labX - width / 2, labX + width / 2, floorY, floorY + LAB_HEIGHT + WALL, end, end + 0.3);
+  wall(labX - width / 2, exitX - CORRIDOR_HALF_WIDTH, floorY, floorY + LAB_HEIGHT + WALL, CORRIDOR_END - 0.3, CORRIDOR_END);
+  wall(exitX + CORRIDOR_HALF_WIDTH, labX + width / 2, floorY, floorY + LAB_HEIGHT + WALL, CORRIDOR_END - 0.3, CORRIDOR_END);
+  wall(exitX - CORRIDOR_HALF_WIDTH, exitX + CORRIDOR_HALF_WIDTH, floorY + CORRIDOR_HEIGHT, floorY + LAB_HEIGHT + WALL, CORRIDOR_END - 0.3, CORRIDOR_END);
+  volume(labX - width / 2, labX + width / 2, floorY - 0.3, floorY + LAB_HEIGHT + WALL, end, CORRIDOR_END);
+  lamps.push(point(exitX, floorY + 2.7, (CORRIDOR_END + WELL_END) / 2),
+    point(labX - width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2),
+    point(labX + width / 4, floorY + 5.5, (end + CORRIDOR_END) / 2));
+}
+
+/** All three orientations share this plan. Only the room shaft is mirrored to avoid the east door. */
+export function buildTowerLab(index: number, position: { x: number; z: number }, orientation: TowerOrientation, flights: number, kind: TowerLab['kind'] = 'full'): TowerLab {
+  const builder = createLabBuilder(index, position, orientation, flights, kind);
+  const { x, z, groundY, mirror, rotation, floorY, parts, ceilingParts, flightSurfaces, route, volumes, footprints, lamps } = builder;
+  buildRoomShaft(builder);
+  const exitX = buildStairwell(builder);
+  if (kind !== 'dead-end') buildLab(builder, exitX);
+  builder.sealRoofJoints();
   const transform = (p: THREE.Vector3) => { p.x *= mirror; return p.applyQuaternion(rotation); };
   return { index, x, z, groundY, orientation, flights, kind, floorY: groundY + floorY, parts, ceilingParts,
     flightSurfaces: flightSurfaces.map(({ start, end }) => ({ start: transform(start), end: transform(end) })),

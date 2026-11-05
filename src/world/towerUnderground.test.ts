@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { GRAVITY, PLAYER_HEIGHT, PLAYER_MOVE_SPEED, PLAYER_RADIUS, SPRINT_MULTIPLIER, WATCH_TOWER_COUNT, WORLD_EDGE_RAMP_START } from '../core/config.ts';
+import { GRAVITY, JUMP_SPEED, PLAYER_HEIGHT, PLAYER_MOVE_SPEED, PLAYER_RADIUS, SPRINT_MULTIPLIER, WATCH_TOWER_COUNT, WORLD_EDGE_RAMP_START } from '../core/config.ts';
 import { setWorldSeedForTesting } from '../core/worldSeed.ts';
 import { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { isNetworkMessage } from '../network/protocol.ts';
@@ -60,7 +60,9 @@ describe('tower lab solver', () => {
     }
     console.info('Tower lab fallback rate:', { ...counts, fallbackPercent: 100 * (counts.compact + counts['dead-end']) / (500 * WATCH_TOWER_COUNT) });
     expect(counts.full / (500 * WATCH_TOWER_COUNT)).toBeGreaterThanOrEqual(0.95);
-  }, 60000);
+  // The independent terrain and clearance sweep has taken 64 s in the parallel full suite.
+  // Keep all 500 seeds and allow for contention with the procedural texture tests.
+  }, 180000);
 });
 
 describe('tower flight headroom', () => {
@@ -81,12 +83,15 @@ describe('tower flight headroom', () => {
           // Include the capsule's footprint across tile edges, not just its centre line.
           for (let edge = -1; edge < 16; edge++) {
             const origin = surface.clone();
+            let clearance = Infinity;
             if (edge >= 0) origin.add(new THREE.Vector3(Math.cos(edge * Math.PI / 8), 0, Math.sin(edge * Math.PI / 8)).multiplyScalar(PLAYER_RADIUS));
             for (const ceiling of ceilings) {
-              const ray = new THREE.Ray(origin, new THREE.Vector3(0, 1, 0)).applyMatrix4(ceiling.inverse);
+              const ray = new THREE.Ray(origin.clone(), new THREE.Vector3(0, 1, 0)).applyMatrix4(ceiling.inverse);
               const hit = ray.intersectBox(ceiling.bounds, new THREE.Vector3());
-              if (hit) minimum = Math.min(minimum, hit.distanceTo(ray.origin));
+              if (hit) clearance = Math.min(clearance, hit.distanceTo(ray.origin));
             }
+            if (!Number.isFinite(clearance)) expect.fail(`Missing ceiling over ${JSON.stringify(origin)}`);
+            minimum = Math.min(minimum, clearance);
           }
         }
       }
@@ -95,13 +100,13 @@ describe('tower flight headroom', () => {
   }
 });
 
-async function walkWorld(orientation: TowerOrientation, flights: number) {
+async function walkWorld(orientation: TowerOrientation, flights: number, kind: 'full' | 'compact' | 'dead-end' = 'full') {
   setHeightOverride(() => 0);
   const physics = await PhysicsWorld.create();
   const terrain = physics.world.createCollider(RAPIER.ColliderDesc.heightfield(2, 2, new Float32Array(9), { x: 120, y: 1, z: 120 }));
   registerTerrainCollider(terrain.handle);
   setCutZones([{ cx: 0, cz: 0, halfX: 2.7, halfZ: 2.7 }]);
-  const lab = buildTowerLab(0, { x: 0, z: 0 }, orientation, flights);
+  const lab = buildTowerLab(0, { x: 0, z: 0 }, orientation, flights, kind);
   const tower = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   const colliderParts = new Map<number, { source: string; index: number; box: (typeof lab.parts)[number]['box'] }>();
   for (const [source, parts] of [['tower', towerParts(orientation)], ['lab', lab.parts]] as const) {
@@ -151,8 +156,63 @@ async function walkWorld(orientation: TowerOrientation, flights: number) {
     }
   };
   physics.step(DT);
-  return { physics, lab, doors, body, step, walk };
+  const place = (surface: THREE.Vector3) => {
+    const at = { x: surface.x, y: surface.y + PLAYER_HEIGHT / 2 + 0.2, z: surface.z };
+    body.setTranslation(at, true);
+    body.setNextKinematicTranslation(at);
+    verticalVelocity = 0;
+    for (let frame = 0; frame < 30; frame++) step(0, 0);
+  };
+  const jump = () => { verticalVelocity = JUMP_SPEED; };
+  return { physics, lab, doors, body, step, walk, place, jump };
 }
+
+describe('tower underground enclosure', () => {
+  for (const orientation of ['south', 'west', 'north'] as const) for (const [kind, flights] of [
+    ['full', 3], ['full', 4], ['full', 5], ['compact', 3], ['dead-end', 1],
+  ] as const) {
+    it(`contains sideways and diagonal jumps from every ${kind} flight and landing, ${orientation}, ${flights} flights`, async () => {
+      const { physics, lab, doors, body, step, place, jump } = await walkWorld(orientation, flights, kind);
+      try {
+        const sites = [...lab.route, ...lab.flightSurfaces.flatMap(({ start, end }) =>
+          [0.25, 0.5, 0.75].map(t => start.clone().lerp(end, t)))];
+        for (const site of sites) for (let direction = 0; direction < 8; direction++) {
+          place(site);
+          jump();
+          let lowest = body.translation().y;
+          for (let frame = 0; frame < 180; frame++) {
+            step(Math.cos(direction * Math.PI / 4), Math.sin(direction * Math.PI / 4));
+            lowest = Math.min(lowest, body.translation().y);
+          }
+          expect(lowest, `jump at ${JSON.stringify(site)}, direction ${direction}`).toBeGreaterThanOrEqual(lab.floorY - 1);
+        }
+      } finally { doors.dispose(); physics.dispose(); }
+    }, 30000);
+
+    it(`has no upward or sideways opening along the ${kind} route, ${orientation}, ${flights} flights`, async () => {
+      const { physics, lab, doors } = await walkWorld(orientation, flights, kind);
+      try {
+        const directions = [new THREE.Vector3(0, 1, 0), ...Array.from({ length: 8 }, (_, i) =>
+          new THREE.Vector3(Math.cos(i * Math.PI / 4), 0, Math.sin(i * Math.PI / 4)))];
+        for (let segment = 1; segment < lab.route.length; segment++) {
+          const from = lab.route[segment - 1]!, to = lab.route[segment]!;
+          const samples = Math.max(1, Math.ceil(from.distanceTo(to) / 0.25));
+          for (let i = 0; i <= samples; i++) {
+            const origin = from.clone().lerp(to, i / samples).add(new THREE.Vector3(0, PLAYER_HEIGHT / 2, 0));
+            for (const direction of directions) {
+              const ceiling = inCutZone(origin.x, origin.z) ? 3 : 0;
+              const limit = direction.y > 0 ? ceiling - origin.y : 100;
+              const hit = physics.world.castRay(new RAPIER.Ray(origin, direction), limit + 1e-4, true,
+                RAPIER.QueryFilterFlags.ONLY_FIXED, undefined, undefined, undefined, c => !isTerrainCollider(c.handle));
+              expect(hit, `open shell at ${JSON.stringify(origin)} toward ${JSON.stringify(direction)}`).not.toBeNull();
+              if (direction.y > 0) expect(hit!.timeOfImpact).toBeLessThanOrEqual(limit + 1e-4);
+            }
+          }
+        }
+      } finally { doors.dispose(); physics.dispose(); }
+    });
+  }
+});
 
 describe('tower underground walking and doors', () => {
   for (const orientation of ['south', 'west', 'north'] as const) for (const flights of [3, 4, 5]) {

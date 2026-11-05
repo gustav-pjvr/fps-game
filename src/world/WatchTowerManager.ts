@@ -4,7 +4,7 @@ import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey } from './chunkSeed.ts';
-import { addRailing, createBoxCollider, PieceCollector } from './structureKit.ts';
+import { addRailing, box, createBoxCollider, PieceCollector } from './structureKit.ts';
 import { createTowerVisual, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
 import { computeTowerLabs, towerDoorPlane, type TowerLab } from './towerUnderground.ts';
 import { registerUndergroundVolume, setCutZones } from './underground.ts';
@@ -296,5 +296,11 @@ export class WatchTowerManager {
 /** The tower's look without its colliders, for scenery outside a match (the title screen's valley,
  * see lobby/LobbyScene.ts). */
 export function createDecorativeTowerVisual(): THREE.Group {
-  return createTowerVisual();
+  const group = createTowerVisual();
+  const pieces = new PieceCollector();
+  pieces.addBox('steel', box(3.04, 1.1, 0, 0.08, 2.2, 1.2));
+  const door = pieces.build();
+  door.name = 'decorative-tower-door';
+  group.add(door);
+  return group;
 }

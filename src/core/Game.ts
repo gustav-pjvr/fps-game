@@ -16,6 +16,8 @@ import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
 import { getWatchTowerPositions, isPointInsideWatchTower, WatchTowerManager } from '../world/WatchTowerManager.ts';
 import { WATCH_TOWER_ROOF_TOP } from '../world/towerDesign.ts';
+import { computeTowerLabs } from '../world/towerUnderground.ts';
+import { valleyFallRecovery } from './valleyFallRecovery.ts';
 import { ChunkManager } from '../world/ChunkManager.ts';
 import { VegetationManager } from '../world/VegetationManager.ts';
 import { sampleHeight, setHeightOverride } from '../world/TerrainGenerator.ts';
@@ -2624,6 +2626,16 @@ export class Game {
       // Hill keeps the full arsenal, unlike Goose Toss's unarmed-only loadout.
       this.kingOfTheHillController?.update(dt, this.player.position, this.input);
       this.player.update(dt, this.input);
+      if (!this.facility) {
+        const at = this.player.position;
+        const recovery = valleyFallRecovery(at, sampleHeight(at.x, at.z), computeTowerLabs());
+        if (recovery) {
+          const y = sampleHeight(recovery.x, recovery.z) + SPAWN_HEIGHT_OFFSET;
+          this.player.debugTeleport(new THREE.Vector3(recovery.x, y, recovery.z));
+          if (this.multiplayer) this.multiplayer.session.connection.send({ type: 'respawnEvent',
+            senderSlot: this.multiplayer.session.ownSlot, x: recovery.x, y, z: recovery.z, t: this.sendClock() });
+        }
+      }
       this.weaponManager.update(dt, this.input, this.player);
     }
 

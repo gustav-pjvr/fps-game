@@ -9,7 +9,7 @@ import {
 import type { InteractiveWorldObjects } from '../doors/interactiveObjects.ts';
 import { SlidingDoorView, type SlidingDoorLook } from '../doors/SlidingDoorView.ts';
 import type { WorldObjectChanges, WorldObjectKind, WorldObjectWire } from '../facility/facilityObjectState.ts';
-import { parseHouseObjectId } from './valleyHouseIds.ts';
+import { parseHouseObjectId, towerIndexFromDoorId } from './valleyHouseIds.ts';
 import { towerDoorPlane } from '../towerUnderground.ts';
 
 /** A received list longer than this is not a real match's (it is ignored whole). */
@@ -159,7 +159,8 @@ export class ValleyDoors implements InteractiveWorldObjects {
 
   closedDoorAhead(x: number, z: number, dirX: number, dirZ: number, reach?: number, feetY?: number): number {
     for (const [id, { plane }] of this.views) {
-      if (!this.open.has(id) && walkMeetsDoor(plane, x, z, dirX, dirZ, reach, feetY)) return id;
+      // Tower entrances remain enemy barriers when a player leaves their door open.
+      if ((towerIndexFromDoorId(id) !== null || !this.open.has(id)) && walkMeetsDoor(plane, x, z, dirX, dirZ, reach, feetY)) return id;
     }
     return -1;
   }
