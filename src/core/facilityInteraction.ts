@@ -9,6 +9,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { Hud } from '../ui/hud.ts';
 import type { InteractiveWorldObjects } from '../world/doors/interactiveObjects.ts';
 import { EnemyDoorWaits } from '../world/facility/facilityDoors.ts';
+import { towerIndexFromDoorId } from '../world/houses/valleyHouseIds.ts';
 import {
   interactPrompt, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
 } from '../world/facility/facilityObjectState.ts';
@@ -194,6 +195,10 @@ export class FacilityInteraction {
   readonly enemyGate = (enemyId: number, x: number, z: number, dirX: number, dirZ: number, dt: number, reach?: number, feetY?: number): boolean => {
     if (!this.authority) return false;
     const door = this.deps.objects.closedDoorAhead(x, z, dirX, dirZ, reach, feetY);
+    if (towerIndexFromDoorId(door) !== null) {
+      this.waits.forget(enemyId);
+      return true;
+    }
     const step = this.waits.step(enemyId, door, dt);
     if (step === 'open') this.apply('door', door, true);
     return step !== 'walk';

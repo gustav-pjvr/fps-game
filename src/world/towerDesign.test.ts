@@ -92,6 +92,23 @@ describe('watch tower stairs', () => {
     await RAPIER.init();
   });
 
+  it.each(['south', 'west', 'north'] as const)('has a hollow room, east opening, ceiling and D1 floor hole facing %s', async (orientation) => {
+    const physics = await PhysicsWorld.create();
+    try {
+      const tower = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      for (const part of towerParts(orientation)) createBoxCollider(physics.world, tower, part.box);
+      physics.step(DT);
+      const ray = (x: number, y: number, z: number, dx: number, dy: number, dz: number, length: number) =>
+        physics.world.castRay(new RAPIER.Ray({ x, y, z }, { x: dx, y: dy, z: dz }), length, true);
+      expect(ray(0, 1, 0, 1, 0, 0, 3.5)).toBeNull();
+      expect(ray(0, 1, 0, -1, 0, 0, 3)?.timeOfImpact).toBeCloseTo(2.7);
+      expect(ray(0, 1, 0, 0, 1, 0, 3)?.timeOfImpact).toBeCloseTo(2);
+      expect(ray(0, 0.8, 0, 0, -1, 0, 1)?.timeOfImpact).toBeCloseTo(0.75);
+      const hole = orientation === 'west' ? { x: 0, z: 1.65 } : { x: -1.65, z: 0 };
+      expect(ray(hole.x, 0.8, hole.z, 0, -1, 0, 3)).toBeNull();
+    } finally { physics.dispose(); }
+  });
+
   it('a sprinting player climbs all five flights onto the deck without falling', async () => {
     const physics = await towerWorld();
     const walker = spawnWalker(physics, -9, PLAYER_HEIGHT / 2 + 0.05, landing(0)[1]);

@@ -4,9 +4,12 @@ import { getWorldSeed } from '../core/worldSeed.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import { chunkKey } from './chunkSeed.ts';
-import { createBoxCollider } from './structureKit.ts';
-import { sampleHeight } from './TerrainGenerator.ts';
+import { addRailing, createBoxCollider, PieceCollector } from './structureKit.ts';
 import { createTowerVisual, towerParts, WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
+import { computeTowerLabs, towerDoorPlane, type TowerLab } from './towerUnderground.ts';
+import { registerUndergroundVolume, setCutZones } from './underground.ts';
+import { towerDoorId } from './houses/valleyHouseIds.ts';
+import { ValleyDoors } from './houses/ValleyDoors.ts';
 import { sampleFlatZone, sampleForestZone } from './ZoneMap.ts';
 import {
   ENEMY_RING_BASE_RADIUS,
@@ -29,6 +32,7 @@ export { WATCH_TOWER_FOOTPRINT_RADIUS } from './towerDesign.ts';
  */
 
 interface PlacedTower {
+  doorId: number;
   group: THREE.Object3D;
   rigidBodyHandle: number;
   colliderHandles: number[];
@@ -180,6 +184,7 @@ export function isPointInsideWatchTower(x: number, z: number, margin: number): b
 
 export class WatchTowerManager {
   private readonly positions: { x: number; z: number }[];
+  private readonly labs: TowerLab[];
   private readonly activeTowers = new Map<string, PlacedTower>();
   private readonly chunkOwnedTowerIds = new Map<string, string[]>();
 
@@ -188,6 +193,10 @@ export class WatchTowerManager {
     private readonly physics: PhysicsWorld,
   ) {
     this.positions = getWatchTowerPositions();
+    this.labs = computeTowerLabs();
+    setCutZones(this.positions.map(({ x, z }) => ({ cx: x, cz: z, halfX: 2.7, halfZ: 2.7 })));
+    // Seeded volumes outlive chunk streaming, just like the cut zones. Register only once.
+    for (const lab of this.labs) for (const volume of lab.volumes) registerUndergroundVolume(volume);
   }
 
   static create(scene: THREE.Scene, physics: PhysicsWorld): WatchTowerManager {
@@ -204,9 +213,10 @@ export class WatchTowerManager {
       if (!inThisChunk) return;
 
       const id = `tower:${index}`;
-      const placed = this.createTower(position.x, position.z);
-      this.activeTowers.set(id, placed);
       ownedIds.push(id);
+      if (this.activeTowers.has(id)) return;
+      const placed = this.createTower(this.labs[index]!);
+      this.activeTowers.set(id, placed);
     });
 
     this.chunkOwnedTowerIds.set(chunkKey(cx, cz), ownedIds);
@@ -221,6 +231,7 @@ export class WatchTowerManager {
     for (const id of ownedIds) {
       const tower = this.activeTowers.get(id);
       if (!tower) continue;
+      ValleyDoors.removeTowerDoor(this.physics.world, tower.doorId);
 
       this.scene.remove(tower.group);
       tower.group.traverse((child) => {
@@ -249,17 +260,25 @@ export class WatchTowerManager {
     });
   }
 
-  private createTower(worldX: number, worldZ: number): PlacedTower {
-    const groundY = sampleHeight(worldX, worldZ);
+  private createTower(lab: TowerLab): PlacedTower {
+    const { x: worldX, z: worldZ, groundY, orientation } = lab;
     const rigidBody = this.physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(worldX, groundY, worldZ));
     // One collider per solid part, the same boxes the visual draws (towerDesign.ts).
-    const colliderHandles = towerParts().map((part) => createBoxCollider(this.physics.world, rigidBody, part.box).handle);
+    const colliderHandles = [...towerParts(orientation), ...lab.parts].map((part) => createBoxCollider(this.physics.world, rigidBody, part.box).handle);
 
-    const group = createTowerVisual();
+    const group = createTowerVisual(orientation);
+    const pieces = new PieceCollector();
+    for (const part of lab.parts) {
+      if (part.rail) addRailing(pieces, part.box);
+      else pieces.addBox(part.material, part.box);
+    }
+    group.add(pieces.build());
     group.position.set(worldX, groundY, worldZ);
     this.scene.add(group);
 
-    return { group, rigidBodyHandle: rigidBody.handle, colliderHandles };
+    const doorId = towerDoorId(lab.index);
+    ValleyDoors.addTowerDoor(this.physics.world, doorId, towerDoorPlane(doorId)!);
+    return { group, rigidBodyHandle: rigidBody.handle, colliderHandles, doorId };
   }
 }
 

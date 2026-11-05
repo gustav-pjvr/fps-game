@@ -5,7 +5,7 @@
  * ids are plain non-negative integers so they ride the existing worldInteract message unchanged.
  */
 
-import { FLAT_ZONE_CELL_SIZE, FLAT_ZONE_RADIUS_MAX, WORLD_BOUNDARY_RADIUS } from '../../core/config.ts';
+import { FLAT_ZONE_CELL_SIZE, FLAT_ZONE_RADIUS_MAX, WATCH_TOWER_COUNT, WORLD_BOUNDARY_RADIUS } from '../../core/config.ts';
 
 /** Cells are offset by this so they pack as non-negative numbers (50 m cells: +-100 km). */
 const CELL_OFFSET = 2048;
@@ -14,6 +14,16 @@ const CELL_SPAN = CELL_OFFSET * 2;
 const INDEX_SPAN = 64;
 /** Doors per house and lamps (rooms) per house each get this many slots. */
 const SLOT_SPAN = 4;
+
+const TOWER_DOOR_BASE = CELL_SPAN * CELL_SPAN * INDEX_SPAN * SLOT_SPAN;
+
+export function towerDoorId(index: number): number {
+  return Number.isInteger(index) && index >= 0 && index < WATCH_TOWER_COUNT ? TOWER_DOOR_BASE + index : -1;
+}
+
+export function towerIndexFromDoorId(id: number): number | null {
+  return Number.isSafeInteger(id) && id >= TOWER_DOOR_BASE && id < TOWER_DOOR_BASE + WATCH_TOWER_COUNT ? id - TOWER_DOOR_BASE : null;
+}
 
 export interface HouseRef {
   readonly gx: number;
@@ -37,7 +47,7 @@ export function houseFromKey(key: number): HouseRef | null {
 
 /** A house's door (`door` 0 is its front door) or ceiling lamp (`slot` is the room's index). */
 export function houseObjectId(key: number, slot: number): number {
-  if (key < 0 || !Number.isInteger(slot) || slot < 0 || slot >= SLOT_SPAN) return -1;
+  if (!houseFromKey(key) || !Number.isInteger(slot) || slot < 0 || slot >= SLOT_SPAN) return -1;
   return key * SLOT_SPAN + slot;
 }
 

@@ -10,6 +10,7 @@ import type { InteractiveWorldObjects } from '../doors/interactiveObjects.ts';
 import { SlidingDoorView, type SlidingDoorLook } from '../doors/SlidingDoorView.ts';
 import type { WorldObjectChanges, WorldObjectKind, WorldObjectWire } from '../facility/facilityObjectState.ts';
 import { parseHouseObjectId } from './valleyHouseIds.ts';
+import { towerDoorPlane } from '../towerUnderground.ts';
 
 /** A received list longer than this is not a real match's (it is ignored whole). */
 const MAX_OPEN_DOORS = 4096;
@@ -28,6 +29,27 @@ export type ValleyDoorLookup = (id: number) => DoorPlane | null;
  * prompt, who decides, sync, sound) is core/facilityInteraction.ts through InteractiveWorldObjects.
  */
 export class ValleyDoors implements InteractiveWorldObjects {
+  /** Towers share the houses' authority and wire state, regardless of construction order. */
+  private static readonly worlds = new WeakMap<RAPIER.World, { owner?: ValleyDoors; towers: Map<number, DoorPlane> }>();
+
+  private static registry(world: RAPIER.World) {
+    let entry = this.worlds.get(world);
+    if (!entry) { entry = { towers: new Map() }; this.worlds.set(world, entry); }
+    return entry;
+  }
+
+  static addTowerDoor(world: RAPIER.World, id: number, plane: DoorPlane): void {
+    const entry = this.registry(world);
+    entry.towers.set(id, plane);
+    entry.owner?.addDoor(id, plane);
+  }
+
+  static removeTowerDoor(world: RAPIER.World, id: number): void {
+    const entry = this.registry(world);
+    entry.towers.delete(id);
+    entry.owner?.removeDoor(id);
+  }
+
   private readonly open = new Set<number>();
   private readonly views = new Map<number, { view: SlidingDoorView; plane: DoorPlane }>();
   /** Planes of doors looked up while not streamed in (a guest's interact far from the host). */
@@ -56,6 +78,9 @@ export class ValleyDoors implements InteractiveWorldObjects {
       red: new THREE.MeshBasicMaterial({ name: 'valley-door-red', color: LAMP_RED, toneMapped: false }),
     };
     scene.add(this.group);
+    const entry = ValleyDoors.registry(world);
+    entry.owner = this;
+    for (const [id, plane] of entry.towers) this.addDoor(id, plane);
   }
 
   private geometry(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry {
@@ -68,7 +93,7 @@ export class ValleyDoors implements InteractiveWorldObjects {
     const loaded = this.views.get(id);
     if (loaded) return loaded.plane;
     if (this.planes.has(id)) return this.planes.get(id)!;
-    const plane = parseHouseObjectId(id) ? this.lookup(id) : null;
+    const plane = parseHouseObjectId(id) ? this.lookup(id) : towerDoorPlane(id);
     // Only real doors are remembered, so a stream of made-up ids cannot grow the cache.
     if (plane) this.planes.set(id, plane);
     return plane;
@@ -175,6 +200,8 @@ export class ValleyDoors implements InteractiveWorldObjects {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    const entry = ValleyDoors.registry(this.world);
+    if (entry.owner === this) entry.owner = undefined;
     for (const id of [...this.views.keys()]) this.removeDoor(id);
     if (this.world.getRigidBody(this.body.handle)) this.world.removeRigidBody(this.body);
     this.group.removeFromParent();
