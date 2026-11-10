@@ -29,6 +29,30 @@ export interface ModeExplanation {
   solo?: { title: string; steps: readonly ModeExplanationStep[] };
 }
 
+/** Operation Uplink's briefing (docs/uplink.md). The mission is a single-player match option, not a
+ * GameMode, so it has no entry in MODE_EXPLANATIONS: Game.startMission shows this one itself. */
+export const MISSION_EXPLANATION: ModeExplanation = {
+  title: 'Operation Uplink',
+  steps: [
+    { icon: 'lock', text: 'Breach: reach the uplink terminal and stay beside it while the hack runs.' },
+    { icon: 'shield', text: 'Fetch: take the data core (E) and carry it to the relay. No sprinting with it, and it drops where you fall.' },
+    { icon: 'wave', text: 'Defend: plug the core in and hold the relay through three waves. A Warden leads the last.' },
+    { icon: 'trophy', text: 'Extract: reach the extraction point before the countdown ends. Two redeploys. Time, damage and redeploys set your grade.' },
+  ],
+};
+
+/** Showdown's briefing (docs/showdown.md). Like the mission, the solo Director mode is a match
+ * option and not a GameMode: Game shows this one itself. */
+export const SHOWDOWN_EXPLANATION: ModeExplanation = {
+  title: 'Showdown',
+  steps: [
+    { icon: 'wave', text: 'Five acts. Enemies come in waves from where you are not looking; each act brings more of them.' },
+    { icon: 'shield', text: 'Clear what is left after an act\'s peak to earn a breather and a supply crate.' },
+    { icon: 'ladder', text: 'Kills score more while you stay in the fight: the multiplier climbs to x5 and resets when you fall.' },
+    { icon: 'trophy', text: 'Act five ends with the Warden and its escorts. Kill them to win. Two redeploys.' },
+  ],
+};
+
 /** Shown once, at the start of a match (and again on rematch - see MultiplayerSession.
  * showModeExplanation), for every mode except 'default' - per explicit user request, grounded in
  * each mode's actual rules (FIXED_LOADOUTS/win-condition/config.ts values) rather than generic

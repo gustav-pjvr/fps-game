@@ -78,7 +78,7 @@ for (const vp of VIEWPORTS) {
   });
 }
 
-test('F01-H1 a keyboard alone opens match setup, picks the Uplink mission and cancels', async ({ page }) => {
+test('F01-H1 a keyboard alone opens match setup, picks Operation Uplink and cancels', async ({ page }) => {
   test.setTimeout(120000);
   const problems = watch(page);
   await page.goto('/');
@@ -92,7 +92,7 @@ test('F01-H1 a keyboard alone opens match setup, picks the Uplink mission and ca
   expect(await play.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe('none');
   await page.keyboard.press('Enter');
 
-  const mission = page.getByRole('radio', { name: /Uplink mission/ });
+  const mission = page.getByRole('radio', { name: /Operation Uplink/ });
   await expect(mission).toBeVisible();
   await mission.focus();
   await page.keyboard.press('Space');

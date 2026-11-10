@@ -30,6 +30,8 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 | [multiplayer.md](multiplayer.md) | Multiplayer in depth, with history; the last section covers 3 to 4 players (v4.4.0) |
 | [king-of-the-hill.md](king-of-the-hill.md) | King of the Hill as rebuilt in v5.0.0: the moving hill, the crown, two against two |
 | [goose-horde.md](goose-horde.md) | Goose Horde as rebuilt in v5.0.0: twelve waves, brutes, bosses, supply drops, Second Wind, the co-op run |
+| [uplink.md](uplink.md) | Operation Uplink as rebuilt in v5.0.0: breach, fetch, defend, extract; alert, redeploys, the grade, the Warden |
+| [showdown.md](showdown.md) | Showdown (the Director mode rebuilt in v5.0.0): five acts, the finale, the score multiplier |
 | [coop.md](coop.md) | The shared co-op layer: pings, down and revive |
 | [goose-buster.md](goose-buster.md) | The exploding goose, and King of the Hill and Goose Horde as first built (history) |
 | [enemy-ai-v2.md](enemy-ai-v2.md) | The enemy AI as built (step by step) |

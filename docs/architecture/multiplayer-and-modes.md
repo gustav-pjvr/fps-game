@@ -274,7 +274,7 @@ Details that are easy to miss:
     remote beam light at Dusk (`remoteTorchesAvailable`).
 - **Single-player modes** (`SinglePlayerMode`, chosen in `PlaySetupModal`, mutually exclusive): elimination (default
   enemies and targets), Director (`PacingDirector` in `src/entities/enemies/director/pacingDirector.ts` runs the
-  enemy pacing), Mission (`src/core/mission/missionState.ts`: three uplinks then an extraction, on the Director),
+  enemy pacing), Mission (`src/core/mission/missionState.ts`: Operation Uplink's four stages, on the Director; docs/uplink.md),
   and Horde (`HordeGooseManager`, 10 waves). All four work on both maps. They have no network code; `Game.create`
   only builds `ActiveMultiplayer` when a `MultiplayerSession` is passed, and multiplayer never spawns the enemy roster.
 

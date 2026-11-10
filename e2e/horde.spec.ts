@@ -28,6 +28,14 @@ async function waitForHorde(page: Page, check: (state: Horde) => boolean, what: 
 /** The authoritative side kills every live goose, as that side's own player's kills. */
 const killAll = (page: Page) => () => page.evaluate(() => window.__gameDebug!.killHordeGeese());
 
+/** With the wave held open its geese soon blow up on the (invulnerable) players and none are left:
+ * this starts the wave again whenever the field is empty, so there is always a goose to see or kill. */
+const keepGeese = (page: Page) => () => page.evaluate(() => {
+  const debug = window.__gameDebug!;
+  const state = debug.getHordeDebug();
+  if (state && state.geese.length === 0) debug.setHordeWave(state.wave);
+});
+
 /** Takes the player down for real: the debug damage goes through the same path as a goose's blast. */
 async function fell(page: Page): Promise<void> {
   await invulnerable(page, false);
@@ -119,14 +127,22 @@ test('co-op: the host\'s waves on every client, a fall, a revive, the next wave,
   await joinLobby(guest.page, code);
   await startMatch(host.page, [guest.page]);
   for (const { page } of [host, guest]) await invulnerable(page, true);
+  // The wave is held open: its geese blow up on the invulnerable players within seconds, and the
+  // next wave (which stands a fallen player up) would overtake the revive this test is about.
+  await host.page.evaluate(() => window.__gameDebug!.holdHordeWave(true));
 
   // The guest shows the host's wave, sized for two, and the host's geese.
-  const seen = await waitForHorde(guest.page, (state) => state.geese.length > 0 && state.need === 18, 'the host\'s wave on the guest');
+  const seen = await waitForHorde(guest.page, (state) => state.geese.length > 0 && state.need === 18, 'the host\'s wave on the guest', keepGeese(host.page));
   expect(seen.wave).toBe(1);
   await expect(guest.page.getByTestId('horde-hud')).toContainText('WAVE 1 / 12');
 
   // The host's kills are the scoreboard, on both clients.
-  await waitForHorde(guest.page, (state) => (state.kills.find((entry) => entry.slot === 0)?.kills ?? 0) > 0, 'the host\'s kills on the guest', killAll(host.page));
+  const keep = keepGeese(host.page);
+  const kill = killAll(host.page);
+  await waitForHorde(guest.page, (state) => (state.kills.find((entry) => entry.slot === 0)?.kills ?? 0) > 0, 'the host\'s kills on the guest', async () => {
+    await keep();
+    await kill();
+  });
   await expect.poll(() => guest.page.evaluate(() => window.__gameDebug!.getScoreboardRows().find((row) => row.slot === 0)?.score ?? 0), { timeout: 30000 }).toBeGreaterThan(0);
 
   // The guest falls: down, not dead. No death screen; everyone counts it among the fallen.
@@ -156,6 +172,7 @@ test('co-op: the host\'s waves on every client, a fall, a revive, the next wave,
   await waitForHorde(guest.page, (state) => state.own !== 'up', 'the guest down again');
   await invulnerable(guest.page, true);
   const waveAtFall = (await horde(host.page))!.wave;
+  await host.page.evaluate(() => window.__gameDebug!.holdHordeWave(false));
   await waitForHorde(guest.page, (state) => state.own === 'up' && state.wave > waveAtFall, 'the guest back with the next wave', killAll(host.page), 240000);
   expect(await health(guest.page)).toBe(100);
 

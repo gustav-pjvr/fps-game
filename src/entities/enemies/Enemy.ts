@@ -13,7 +13,7 @@ import { enemyFloorAt, forgetDoorWait, hasEnemyNavigator, heldAtDoor, resolveMov
 import type { CombatCoordinator, CombatRole, RoleCandidate } from './combatCoordinator.ts';
 import { EnemyBrain, type EnemyState } from './EnemyBrain.ts';
 import { ENEMY_HEAD_OFFSET_Y, type EnemyBody, type EnemyPosition } from './EnemyBody.ts';
-import { createHitColliders, ENEMY_HIT_SHAPE, yawRotation } from '../characterHitbox.ts';
+import { createHitColliders, ENEMY_HIT_SHAPE, scaledHitShape, yawRotation } from '../characterHitbox.ts';
 import type { EnemyCombatHooks } from './enemyCombat.ts';
 import type { SquadKnowledge } from './squadKnowledge.ts';
 import type { IntentSink } from './calloutDirector.ts';
@@ -133,7 +133,9 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     );
     this.rigidBody = physics.world.createRigidBody(bodyDesc);
 
-    const colliders = createHitColliders(physics.world, this.rigidBody, ENEMY_HIT_SHAPE);
+    // An elite's model is bigger (archetypeLook.ts): its hit shape grows with it, so a shot at the
+    // head it shows lands on its head.
+    const colliders = createHitColliders(physics.world, this.rigidBody, archetype.look ? scaledHitShape(ENEMY_HIT_SHAPE, archetype.look.scale) : ENEMY_HIT_SHAPE);
     this.bodyCollider = colliders.body;
     this.headCollider = colliders.head;
     physics.registerCollider(this.bodyCollider, this);

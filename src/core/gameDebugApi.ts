@@ -110,8 +110,18 @@ export interface GameDebugApi {
       onScreen: boolean;
     }[];
   } | null;
-  /** The Uplink mission's state (docs/visual-overhaul.md, phase 4), null outside a mission match. */
-  getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
+  /** Operation Uplink's state (docs/uplink.md), null outside a mission match: the stage, the alert
+   * level, the redeploys left, the timers and the core as the HUD shows them, plus whether the
+   * player carries the core and where it hovers when nobody does. */
+  getMissionDebug(): (MissionView & {
+    won: boolean; kills: number; damageTaken: number; carrying: boolean; corePosition: { x: number; y: number; z: number };
+  }) | null;
+  /** Operation Uplink: finishes the current stage as if its rule had been met (the hack done, the
+   * core plugged in, the upload done, the extraction reached). */
+  completeMissionStage(): void;
+  /** Operation Uplink: runs the operation's own clock `seconds` forward with the player where they
+   * stand, so its timers and waves fire without waiting for them in a slow test run. */
+  advanceMission(seconds: number): void;
   /** King of the Hill, null in every other mode and on a guest before the host's first state: the
    * hill, the crown and who holds it, as this client shows them. */
   getKothDebug(): {
@@ -119,6 +129,22 @@ export interface GameDebugApi {
     hold: 'empty' | 'held' | 'contested'; holder: number | null; crown: number | null; crownAt: { x: number; z: number } | null;
     push: boolean; teams: boolean;
   } | null;
+  /** Showdown (the solo Director mode), null in every other mode: the act, the stage, the score and
+   * its multiplier, the redeploys left, and how many enemies are alive. */
+  getShowdownDebug(): {
+    act: number; totalActs: number; stage: 'act' | 'breather' | 'finale' | 'won' | 'lost'; phase: string;
+    score: number; multiplier: number; bestMultiplier: number; kills: number; redeploysLeft: number; alive: number;
+    /** Supply crates on the field. */
+    crates: { id: string; x: number; y: number; z: number }[];
+    /** Whether a Warden is alive. */
+    warden: boolean;
+  } | null;
+  /** Showdown, test-only: jumps to the start of act `act` (1 to 5). */
+  setShowdownAct(act: number): void;
+  /** A Director or Showdown match, test-only: ends the current build-up with its peak at once. */
+  forceDirectorPeak(): void;
+  /** Test-only, like damageEnemy: kills every live enemy through takeDamage, as the player's kills. */
+  killEnemies(): void;
   /** King of the Hill, on the host: stops (or restarts) the hill's clock, so a slow test run can
    * finish its checks on one hill. */
   holdKothHill(held: boolean): void;
@@ -142,6 +168,9 @@ export interface GameDebugApi {
   setHordeWave(wave: number): void;
   /** Goose Horde, on the authoritative side: kills every live horde goose as this player's own. */
   killHordeGeese(): void;
+  /** Goose Horde, on the authoritative side: while held, a wave that has run out of geese does not
+   * end, so a slow test run can finish its checks inside one wave. */
+  holdHordeWave(held: boolean): void;
   /** The torch (render/Flashlight.ts): whether this match has one, whether it is on, the match's
    * weather and whether it is on the Facility. */
   getTorchDebug(): { available: boolean; on: boolean; weather: 'day' | 'night' | 'fog'; facility: boolean };

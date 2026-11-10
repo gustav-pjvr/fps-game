@@ -8,15 +8,23 @@ import { setDeviceHint } from '../input/GamepadInput.ts';
  * while dead. */
 const CONTENT_TOP_OFFSET = 110;
 
-/** How an Uplink mission ended (docs/visual-overhaul.md, "End screen"). */
+/** How an Operation Uplink run ended (docs/uplink.md, "End screen"). */
 export interface MissionResult {
   readonly won: boolean;
+  /** S, A, B or C for a win; a loss is not graded. */
+  readonly grade: string | null;
+  /** Why it was lost: the last redeploy spent, or the extraction countdown run out. */
+  readonly loss: 'signalLost' | 'extractionMissed' | null;
   readonly seconds: number;
   readonly kills: number;
   readonly damageTaken: number;
-  /** Uplinks online when it ended, out of `total`. */
-  readonly online: number;
-  readonly total: number;
+  /** The stage it ended in, 1 to 4. */
+  readonly stage: number;
+  readonly redeploysUsed: number;
+  /** Redeploys an operation starts with. */
+  readonly redeploys: number;
+  /** The alert level it ended at, 1 to 5. */
+  readonly alert: number;
 }
 
 function formatClock(seconds: number): string {
@@ -81,14 +89,26 @@ export class DeathScreen {
     attachScanSweep(this.element);
   }
 
-  /** The Uplink mission's end screen, for a win or a loss. Respawn restarts the mission. */
+  /** Operation Uplink's end screen: the grade for a win, the stage reached for a loss, then what
+   * the grade is made of (time, damage taken, redeploys used). Respawn starts a new operation. */
   showMission(result: MissionResult): void {
-    this.showResult(result.won ? 'Uplink complete' : 'Signal lost', null, [
+    const line = result.won
+      ? 'Uplink secured'
+      : result.loss === 'extractionMissed' ? 'The extraction window closed' : 'No redeploys left';
+    this.showResult(result.won ? 'Operation complete' : 'Signal lost', line, [
+      result.won ? ['GRADE', result.grade ?? '-'] : ['STAGE', `${result.stage} / 4`],
       ['TIME', formatClock(result.seconds)],
-      ['UPLINKS', `${result.online} / ${result.total}`],
-      ['KILLS', String(result.kills)],
       ['DAMAGE TAKEN', String(Math.round(result.damageTaken))],
+      ['REDEPLOYS', `${result.redeploysUsed} / ${result.redeploys}`],
+      ['KILLS', String(result.kills)],
+      ['ALERT', String(result.alert)],
     ]);
+    // Six numbers do not fit a narrow window in one row.
+    this.statsElement.style.flexWrap = 'wrap';
+    this.statsElement.style.justifyContent = 'center';
+    this.statsElement.style.rowGap = '18px';
+    this.statsElement.style.padding = '0 16px';
+    this.scoreElement.style.textAlign = 'center';
   }
 
   /** A run's end screen (a mission, a solo Goose Horde run): a title, an optional line under it,

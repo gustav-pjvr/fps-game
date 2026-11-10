@@ -43,7 +43,7 @@ import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
 import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
-import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityFloorPoints, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
+import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityFloorPoints, facilityGoosePlacement, facilityHordeSite } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { loadStoredSkins } from './skins.ts';
@@ -54,8 +54,12 @@ import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
 import { DamageArcs } from '../ui/damageArcs.ts';
 import { WorldMarkers } from '../ui/worldMarkers.ts';
-import { MissionState, missionMapMarkers, type MissionView } from './mission/missionState.ts';
+import { MissionState, missionMapMarkers, REDEPLOYS, type MissionEvent, type MissionPlayer, type MissionView } from './mission/missionState.ts';
+import { missionGrade } from './mission/missionGrade.ts';
+import { MISSION_HEADLINES, MISSION_MARKER_LABELS, missionObjective, redeployScreen } from './mission/missionText.ts';
 import { UplinkBeacons } from '../world/UplinkBeacons.ts';
+import { CONSOLE_STAND_RADIUS, CORE_HOVER_HEIGHT, facilityOperationSites, facilityStandBlocked, standPointNear, TOWER_STAND_RADIUS, valleyOperationSites } from '../world/missionSites.ts';
+import { applyArchetypeLook } from '../entities/enemies/archetypeLook.ts';
 import { FACILITY_CONSOLE_HEIGHT } from '../world/facility/facilityConsoles.ts';
 import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
@@ -70,6 +74,8 @@ import { KillFeed } from '../ui/killFeed.ts';
 import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
 import { HordeHud } from '../ui/hordeHud.ts';
+import { ShowdownHud } from '../ui/showdownHud.ts';
+import { ShowdownState, type ShowdownEvent } from '../entities/enemies/director/showdown.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap, type MinimapPlayerDot } from '../ui/minimap.ts';
 import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
@@ -88,7 +94,7 @@ import { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.t
 import { GlintMarkers } from '../combat/GlintMarkers.ts';
 import { PacingDirector, type DirectorOptions, type WaveBias } from '../entities/enemies/director/pacingDirector.ts';
 import { pickReinforcementSpawns, type SpawnOptions } from '../entities/enemies/director/reinforcementSpawner.ts';
-import { archetypeNamed, type EnemyArchetype } from '../entities/enemies/archetypes.ts';
+import { archetypeNamed, WARDEN, type EnemyArchetype } from '../entities/enemies/archetypes.ts';
 import { ENEMY_HEAD_OFFSET_Y } from '../entities/enemies/EnemyBody.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import {
@@ -173,7 +179,7 @@ import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
 import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
 import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
 import { withBlastTargets } from '../combat/grenades/grenadeTargets.ts';
-import { MODE_EXPLANATIONS } from './modeExplanations.ts';
+import { MISSION_EXPLANATION, MODE_EXPLANATIONS, SHOWDOWN_EXPLANATION } from './modeExplanations.ts';
 import { equippedGrenade, loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
@@ -363,6 +369,12 @@ export class Game {
   /** Enemy AI v2 step 6: the pacing director and its seeded stream, in a Director match only (see
    * updateDirector); null in every other match. */
   private readonly director: PacingDirector | null;
+  /** Showdown (docs/showdown.md): the director's acts, finale and score. Null outside the solo
+   * Director mode. Rebuilt with each new run. */
+  private showdown: ShowdownState | null = null;
+  private showdownHud: ShowdownHud | null = null;
+  /** How many of Showdown's finale squad are still to be placed (none yet: nowhere hidden to put them). */
+  private showdownFinalePending = 0;
   private readonly directorRng: () => number;
   /** Player health at the director's last look, so it can tell damage taken per tick. */
   private directorLastHealth = 0;
@@ -375,9 +387,18 @@ export class Game {
   private missionDamageTaken = 0;
   private missionLastHealth = 0;
   private missionClock = 0;
-  /** True from the mission's win until Respawn restarts it: the world freezes behind the end screen. */
+  /** True from the operation's end with the player alive (the win, or the extraction missed) until
+   * Respawn restarts it: the world freezes behind the end screen. */
   private missionWon = false;
   private readonly missionMarkerPosition = new THREE.Vector3();
+  /** Where the data core hovers while nobody carries it: at its site, or where its carrier fell. */
+  private readonly missionCorePosition = new THREE.Vector3();
+  /** The one player the solo operation feeds its state machine, updated in place each tick. */
+  private readonly missionPlayers: { x: number; z: number; alive: boolean; underground: boolean }[] = [{ x: 0, z: 0, alive: true, underground: false }];
+  /** secondsSinceShot at the mission's last look: a shot shows as that clock not having advanced. */
+  private missionLastShotAge = Infinity;
+  /** The compass markers now shown, as their ids joined, so they are only rebuilt on a change. */
+  private missionMarkerKey = '';
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   /** The last wave's reinforcements, for getDirectorDebug. */
   private directorLastSpawns: DirectorSpawnRecord[] = [];
@@ -596,7 +617,8 @@ export class Game {
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
     this.director = !multiplayer && (matchConfig.directorMode || matchConfig.missionMode) && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
     this.directorLastHealth = player.currentHealth;
-    hud.setObjective(this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', matchConfig.hordeMode ? 'Survive twelve waves' : this.director ? 'Survive the waves' : facility ? 'Clear the facility' : 'Clear the valley');
+    this.showdown = this.director && matchConfig.directorMode ? new ShowdownState(this.director, DIRECTOR_OPTIONS) : null;
+    hud.setObjective(this.showdown ? 'SHOWDOWN' : this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', matchConfig.hordeMode ? 'Survive twelve waves' : this.showdown ? 'Five acts, then the finale' : this.director ? 'Survive the waves' : facility ? 'Clear the facility' : 'Clear the valley');
     hud.compass.setSunDirection(renderer.currentLook.sunDirection);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
@@ -857,8 +879,25 @@ export class Game {
           : null,
       getMissionDebug: () => {
         if (!this.mission) return null;
-        const view = this.mission.view(this.player.position);
-        return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
+        const view = this.mission.view(this.missionPlayerList());
+        const core = this.missionCorePosition;
+        return {
+          ...view,
+          won: view.phase === 'won',
+          kills: this.missionKills,
+          damageTaken: this.missionDamageTaken,
+          carrying: view.core.carrier === 0,
+          corePosition: { x: core.x, y: core.y, z: core.z },
+        };
+      },
+      completeMissionStage: () => {
+        if (this.mission) this.handleMissionEvents(this.mission.completeStage());
+      },
+      advanceMission: (seconds) => {
+        // In one second steps with the player where they stand, so waves and timers fire as in play.
+        for (let t = 0; t < seconds && this.mission && !this.missionWon; t++) {
+          this.handleMissionEvents(this.mission.update({ dt: Math.min(1, seconds - t), players: this.missionPlayerList(), interact: null, kills: 0, shots: 0 }));
+        }
       },
       getHordeDebug: () => {
         const horde = this.hordeGooseManager;
@@ -877,6 +916,9 @@ export class Game {
       },
       setHordeWave: (wave: number) => this.hordeGooseManager?.debugSkipToWave(wave),
       killHordeGeese: () => this.hordeGooseManager?.debugKillAll(),
+      holdHordeWave: (held: boolean) => {
+        if (this.hordeGooseManager) this.hordeGooseManager.debugWaveHeld = held;
+      },
       getFacilityDebug: () => {
         if (!this.facility) return null;
         const { layout, world } = this.facility;
@@ -946,6 +988,22 @@ export class Game {
         ),
       getKothDebug: () => this.kingOfTheHillController?.snapshot ?? null,
       holdKothHill: (held: boolean) => this.kingOfTheHillController?.debugHoldHill(held),
+      setShowdownAct: (act: number) => this.showdown?.debugSkipToAct(act),
+      forceDirectorPeak: () => this.director?.forcePeak(),
+      killEnemies: () => {
+        for (let index = this.entityManager.count - 1; index >= 0; index--) this.entityManager.damageEnemy(index, 100000);
+      },
+      getShowdownDebug: () => {
+        if (!this.showdown) return null;
+        const view = this.showdown.view();
+        return {
+          act: view.act, totalActs: view.totalActs, stage: view.stage, phase: view.phase, score: view.score,
+          multiplier: view.multiplier, bestMultiplier: view.bestMultiplier, kills: view.kills, redeploysLeft: view.redeploysLeft,
+          alive: this.entityManager.enemyCounts().alive,
+          crates: this.ammoDropManager?.listForSync() ?? [],
+          warden: this.entityManager.getLiveEntityArchetypes().includes(WARDEN.name),
+        };
+      },
       getOpponentWeapons: () =>
         Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer }) => ({
           slot, weaponId: remotePlayer.heldWeaponId, skinId: remotePlayer.heldSkinId,
@@ -1551,7 +1609,7 @@ export class Game {
     // authoritative side (the host, or single-player itself). Indoors a crate lands on clear floor
     // near the player it is for.
     const supplyFloor = facility ? facilityFloorPoints(facility.layout, 1) : null;
-    const ammoDropManager = isHordeMode
+    const ammoDropManager = isHordeMode || (matchConfig.directorMode && !multiplayer)
       ? new AmmoDropManager(renderer.scene, {
           // `activeMultiplayer` isn't assigned in this outer scope until later in this same
           // function, but this callback only ever fires during later gameplay ticks (a supply
@@ -1772,6 +1830,15 @@ export class Game {
       game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
+    if (game.showdown) {
+      // The supply crates of its breathers carry a world marker.
+      game.worldMarkers ??= new WorldMarkers(hudRoot);
+      game.showdownHud = new ShowdownHud(hudRoot);
+      // A match option, not a GameMode: its briefing opens through the same gate the mission's does.
+      game.worldBriefingActive = true;
+      game.modeExplanationParticipants = new Set();
+      game.modeExplanationScreen.show(SHOWDOWN_EXPLANATION.title, SHOWDOWN_EXPLANATION.steps, 1);
+    }
     if (hordeGooseManager) {
       game.worldMarkers ??= new WorldMarkers(hudRoot);
       if (activeMultiplayer) {
@@ -2178,6 +2245,7 @@ export class Game {
     this.gooseAnnouncement.dispose();
     this.bigAnnouncement.dispose();
     this.hordeHud?.dispose();
+    this.showdownHud?.dispose();
     this.squad?.dispose();
     this.modeExplanationScreen?.dispose();
     this.loadoutScreen?.dispose();
@@ -2264,6 +2332,12 @@ export class Game {
     this.director?.reset();
     this.directorLastHealth = this.player.currentHealth;
     this.directorLastSpawns = [];
+    if (this.showdown && this.director) {
+      // A new run: act 1 again, the score and the redeploys back.
+      this.showdown = new ShowdownState(this.director, DIRECTOR_OPTIONS);
+      this.showdownFinalePending = 0;
+      this.ammoDropManager?.clearAll();
+    }
     if (this.mission) this.restartMission();
     if (this.hordeGooseManager) {
       this.hordeSecondWinds = SECOND_WIND_RULES.start;
@@ -2419,45 +2493,170 @@ export class Game {
     }
     const allPlayersUnderground = !this.facility && livingPositions.length > 0 &&
       livingPositions.every(at => isBelowGround(at.x, at.y, at.z));
-    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive, allPlayersUnderground });
+    const signals = { dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive, allPlayersUnderground };
+    // Showdown runs the director itself: its acts retune it, and its finale replaces the last breather.
+    if (this.showdown) {
+      for (const event of this.showdown.update({ ...signals, kills: this.entityManager.killsThisTick.length })) this.onShowdownEvent(event);
+      if (this.showdownFinalePending > 0) this.placeShowdownFinale();
+      this.showdownHud?.set(this.showdown.view());
+      return;
+    }
+    const command = director.update(signals);
     if (command.kind === 'spawnWave') director.confirmSpawned(this.spawnDirectorWave(command.count, command.bias));
   }
 
-  /** The Uplink mission (docs/visual-overhaul.md, phase 4): world markers live for the whole match,
-   * the mission itself restarts with each Respawn. */
+  /** Showdown (docs/showdown.md): acts on what the run's rules just decided. */
+  private onShowdownEvent(event: ShowdownEvent): void {
+    const showdown = this.showdown;
+    if (!showdown) return;
+    switch (event.kind) {
+      case 'spawnWave':
+        showdown.confirmSpawned(this.spawnDirectorWave(event.count, event.bias));
+        break;
+      case 'actStarted':
+        this.bigAnnouncement.show(`ACT ${event.act}`);
+        this.sound.playObjectiveCue('alert');
+        break;
+      case 'actCleared':
+        this.gooseAnnouncement.show(`Act ${event.act} survived  +${event.bonus}`);
+        this.sound.playObjectiveCue('gain');
+        // The breather's reward: a supply crate near the player.
+        if (!this.player.isDead) this.ammoDropManager?.dropFor([this.player.position]);
+        break;
+      case 'finaleStarted':
+        this.bigAnnouncement.show('FINALE: THE WARDEN');
+        this.sound.playObjectiveCue('alert');
+        // The Warden and its escorts, placed as one wave with the Warden first.
+        this.showdownFinalePending = event.escorts + 1;
+        break;
+      case 'multiplier':
+        this.killFeed.show(`Multiplier x${event.value}`);
+        break;
+      case 'won':
+        this.sendMatchTelemetry(DEFAULT_GAME_MODE, showdown.view().score, performance.now() - this.matchStartedAt);
+        this.showShowdownResult();
+        this.deathScreenVisible = true;
+        this.input.releasePointerLock();
+        break;
+    }
+  }
+
+  /** Places Showdown's finale squad. Nothing placed (nowhere hidden to put it) tries again next tick. */
+  private placeShowdownFinale(): void {
+    const placed = this.spawnDirectorWave(this.showdownFinalePending, 'mixed', WARDEN);
+    if (placed === 0) return;
+    this.showdownFinalePending = 0;
+    this.showdown?.confirmFinalePlaced();
+  }
+
+  /** Showdown's end screen, for a win or a loss. Respawn starts a new run from act 1. */
+  private showShowdownResult(): void {
+    const showdown = this.showdown;
+    if (!showdown) return;
+    const view = showdown.view();
+    const won = view.stage === 'won';
+    const seconds = Math.floor((performance.now() - this.matchStartedAt) / 1000);
+    this.deathScreen.showResult(
+      won ? 'Showdown won' : 'Overrun',
+      won ? `Grade ${showdown.grade()}` : `You fell in act ${view.act} of ${view.totalActs}  |  Grade ${showdown.grade()}`,
+      [
+        ['SCORE', view.score.toLocaleString('en-US')],
+        ['KILLS', String(view.kills)],
+        ['BEST MULTIPLIER', `x${view.bestMultiplier}`],
+        ['TIME', `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`],
+      ],
+    );
+  }
+
+  /** Showdown: a death with a redeploy left does not end the run. The player is put back at a
+   * clear point away from the fight with full health and a moment's shield; the enemies and the act
+   * stay as they are, and the multiplier starts again. */
+  private tryShowdownRedeploy(): void {
+    const showdown = this.showdown;
+    if (!showdown || showdown.over) return;
+    if (showdown.playerFell() === 'lost') return;
+    const spawnPoint = this.facility ? new THREE.Vector2(this.facility.start.x, this.facility.start.z) : clearFixedSpawnPoint(this.isSpawnBlocked);
+    this.player.respawn(new THREE.Vector3(spawnPoint.x, sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET, spawnPoint.y));
+    this.player.revive(this.player.maxHealth, 3);
+    this.directorLastHealth = this.player.currentHealth;
+    this.grenades?.resetForSpawn();
+    this.bigAnnouncement.show(`REDEPLOYED  |  ${showdown.view().redeploysLeft} LEFT`);
+    this.sound.playObjectiveCue('lose');
+  }
+
+  /** Operation Uplink (docs/uplink.md): the world markers live for the whole match, the operation
+   * itself restarts with each Respawn. */
   private startMission(root: HTMLElement): void {
     this.worldMarkers = new WorldMarkers(root);
     this.restartMission();
+    // The mission is a match option, not a GameMode, so it opens its own briefing through the gate
+    // beginModeExplanation uses: the world waits until it is skipped.
+    this.worldBriefingActive = true;
+    this.modeExplanationParticipants = new Set();
+    this.modeExplanationScreen?.show(MISSION_EXPLANATION.title, MISSION_EXPLANATION.steps, 1);
   }
 
+  /** Respawn after a death with a redeploy left puts the player back into the running operation;
+   * any other Respawn starts a new one. */
   private restartMission(): void {
-    this.uplinkBeacons?.dispose();
-    for (const uplink of this.mission?.view(this.player.position).uplinks ?? []) {
-      this.hud.compass.removeMarker(`uplink-${uplink.label}`);
-      this.worldMarkers?.remove(`uplink-${uplink.label}`);
+    if (this.mission?.waitingForRedeploy) {
+      this.redeployMission(this.mission);
+      return;
     }
-    this.hud.compass.removeMarker('extract');
-    this.worldMarkers?.remove('extract');
+    this.uplinkBeacons?.dispose();
+    for (const id of Object.keys(MISSION_MARKER_LABELS)) {
+      this.hud.compass.removeMarker(id);
+      this.worldMarkers?.remove(id);
+    }
+    this.missionMarkerKey = '';
 
     const position = this.player.position;
     // On the Facility four rooms' consoles stand in for the watch towers (docs/facility-map.md).
     const facility = this.facility;
-    const points = facility ? facilityMissionObjectives(facility.layout, facility.start) : getWatchTowerPositions();
-    const mission = new MissionState(points, { x: position.x, z: position.z });
-    this.mission = mission;
-    const view = mission.view(position);
-    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view, facility
+    const operation = facility ? facilityOperationSites(facility.layout, facility.start) : valleyOperationSites({ x: position.x, z: position.z });
+    this.mission = new MissionState(operation.sites);
+    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, operation.sites, operation.consoles, facility
       ? { physics: this.physics, ceilingAt: (x, z) => facilityCeilingAt(facility.layout, x, z) }
       : null);
-    for (const uplink of view.uplinks) {
-      this.hud.compass.addMarker(`uplink-${uplink.label}`, () => bearingDeg(uplink.x - this.player.position.x, uplink.z - this.player.position.z));
-    }
+    this.missionCorePosition.set(operation.sites.core.x, operation.coreY, operation.sites.core.z);
     this.missionKills = 0;
     this.missionDamageTaken = 0;
     this.missionLastHealth = this.player.currentHealth;
+    this.missionLastShotAge = this.secondsSinceShot;
     this.missionClock = 0;
     this.missionWon = false;
-    this.hud.setPrompt('interact', null);
+    this.player.setSprintAllowed(true);
+    // The panel names the operation from the start, behind the briefing too.
+    this.updateMissionHud(this.mission.view(this.missionPlayerList()));
+  }
+
+  /** Spends a redeploy: the stage starts over and the player stands beside the site of the last
+   * finished stage (at the start in Breach, where resetPlay has already put them). */
+  private redeployMission(mission: MissionState): void {
+    const site = mission.redeploy();
+    const facility = this.facility;
+    if (site) {
+      const stand = facility
+        ? standPointNear(site, CONSOLE_STAND_RADIUS, (x, z) => facilityStandBlocked(facility.layout, x, z))
+        : standPointNear(site, TOWER_STAND_RADIUS, this.isSpawnBlocked);
+      this.player.debugTeleport(new THREE.Vector3(stand.x, sampleHeight(stand.x, stand.z) + SPAWN_HEIGHT_OFFSET, stand.z));
+    }
+    this.missionLastHealth = this.player.currentHealth;
+    this.missionLastShotAge = this.secondsSinceShot;
+    this.player.setSprintAllowed(true);
+    const left = mission.view(this.missionPlayerList()).redeploys;
+    this.bigAnnouncement.show(left === 0 ? 'REDEPLOYED: LAST CHANCE' : `REDEPLOYED: ${left} LEFT`);
+  }
+
+  /** The solo operation's one player, as the state machine wants it. */
+  private missionPlayerList(): readonly MissionPlayer[] {
+    const at = this.player.position;
+    const own = this.missionPlayers[0]!;
+    own.x = at.x;
+    own.z = at.z;
+    own.alive = !this.player.isDead;
+    own.underground = !this.facility && isBelowGround(at.x, at.y, at.z);
+    return this.missionPlayers;
   }
 
   /** Feeds the mission this tick's position and interact press, and acts on what it asks for: waves
@@ -2470,30 +2669,55 @@ export class Game {
     const health = this.player.currentHealth;
     this.missionDamageTaken += Math.max(0, this.missionLastHealth - health);
     this.missionLastHealth = health;
-    this.missionKills += this.entityManager.killsThisTick.length;
-    const position = this.player.position;
-    const events = mission.update({
+    const kills = this.entityManager.killsThisTick.length;
+    this.missionKills += kills;
+    // Noise raises the alert. A shot resets secondsSinceShot, so that clock not having advanced
+    // since the last look means one was fired.
+    const shots = Number.isFinite(this.secondsSinceShot) && this.secondsSinceShot <= this.missionLastShotAge ? 1 : 0;
+    this.missionLastShotAge = this.secondsSinceShot;
+    this.handleMissionEvents(mission.update({
       dt,
-      player: { x: position.x, z: position.z },
-      interactPressed: this.input.consumeJustPressed('interact'),
-      playerDead: false,
-      underground: !this.facility && isBelowGround(position.x, position.y, position.z),
-    });
+      players: this.missionPlayerList(),
+      interact: this.input.consumeJustPressed('interact') ? 0 : null,
+      kills,
+      shots,
+    }));
+  }
+
+  /** Acts on what the operation asks for: waves through the director's own reinforcement spawner,
+   * headlines, the core changing hands, and the end screen. */
+  private handleMissionEvents(events: readonly MissionEvent[]): void {
     for (const event of events) {
       if (event.kind === 'waveRequested') {
-        this.spawnDirectorWave(event.count, event.bias);
-      } else if (event.kind === 'uplinkOnline') {
-        this.bigAnnouncement.show(`UPLINK ${event.online} / ${event.total} ONLINE`);
-        this.hud.compass.removeMarker(`uplink-${event.label}`);
-        this.worldMarkers?.remove(`uplink-${event.label}`);
-      } else if (event.kind === 'extractionOpen') {
-        this.bigAnnouncement.show('EXTRACTION OPEN');
-        const { x, z } = mission.extraction;
-        this.hud.compass.addMarker('extract', () => bearingDeg(x - this.player.position.x, z - this.player.position.z));
-      } else if (event.kind === 'won') {
+        // A Warden comes on top of the wave's count.
+        this.spawnDirectorWave(event.warden ? event.count + 1 : event.count, event.bias, event.warden ? WARDEN : undefined);
+        if (event.warden) {
+          this.bigAnnouncement.show('WARDEN INBOUND');
+          this.sound.playObjectiveCue('alert');
+        }
+      } else if (event.kind === 'stageStarted') {
+        this.player.setSprintAllowed(true);
+        this.bigAnnouncement.show(MISSION_HEADLINES[event.stage]);
+        this.sound.playObjectiveCue('gain');
+      } else if (event.kind === 'corePicked') {
+        // The core is heavy: its carrier walks.
+        this.player.setSprintAllowed(false);
+        this.gooseAnnouncement.show('Data core taken: no sprinting');
+        this.sound.playObjectiveCue('gain');
+      } else if (event.kind === 'coreDropped') {
+        const at = this.player.position;
+        this.missionCorePosition.set(at.x, at.y - PLAYER_HEIGHT / 2 + CORE_HOVER_HEIGHT, at.z);
+        this.player.setSprintAllowed(true);
+        this.gooseAnnouncement.show('Data core dropped');
+      } else if (event.kind === 'alertRaised') {
+        this.gooseAnnouncement.show(`Alert level ${event.level}`);
+        this.sound.playObjectiveCue('alert');
+      } else if (event.kind === 'won' || (event.kind === 'lost' && event.reason === 'extractionMissed')) {
+        // Both end with the player alive; a death's loss is shown by showDeathScreen.
         this.missionWon = true;
         this.hud.setPrompt('interact', null);
-        this.deathScreen.showMission(this.missionResult(true));
+        this.sound.playObjectiveCue(event.kind === 'won' ? 'gain' : 'lose');
+        this.deathScreen.showMission(this.missionResult(event.kind === 'won'));
         this.deathScreenVisible = true;
         this.input.releasePointerLock();
       }
@@ -2504,25 +2728,40 @@ export class Game {
     // The killing blow lands on a tick updateMission no longer runs on, so settle it here.
     this.missionDamageTaken += Math.max(0, this.missionLastHealth - this.player.currentHealth);
     this.missionLastHealth = this.player.currentHealth;
-    const view = this.mission?.view(this.player.position);
+    const view = this.mission?.view(this.missionPlayerList());
+    const redeploysUsed = REDEPLOYS - (view?.redeploys ?? REDEPLOYS);
     return {
       won,
+      grade: won ? missionGrade({ seconds: this.missionClock, damageTaken: this.missionDamageTaken, redeploysUsed }) : null,
+      loss: view?.loss ?? null,
       seconds: this.missionClock,
       kills: this.missionKills,
       damageTaken: this.missionDamageTaken,
-      online: view?.online ?? 0,
-      total: view?.uplinks.length ?? 0,
+      stage: view?.stageNumber ?? 1,
+      redeploysUsed,
+      redeploys: REDEPLOYS,
+      alert: view?.alert ?? 1,
     };
   }
 
-  /** The death screen, or in the Uplink mission its "Signal lost" variant (death ends the mission;
-   * Respawn restarts it). */
+  /** The death screen. In Operation Uplink a death with a redeploy left shows "Operative down"
+   * (Respawn redeploys into the same operation); with none left it shows "Signal lost" (Respawn
+   * starts a new one). */
   private showDeathScreen(): void {
     if (this.mission) {
-      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true, underground: false });
-      this.deathScreen.showMission(this.missionResult(false));
+      this.handleMissionEvents(this.mission.update({ dt: 0, players: this.missionPlayerList(), interact: null, kills: 0, shots: 0 }));
+      const view = this.mission.view(this.missionPlayerList());
+      if (view.awaitingRedeploy) {
+        const screen = redeployScreen(view);
+        this.deathScreen.showResult(screen.title, screen.line, screen.stats);
+      } else {
+        this.sound.playObjectiveCue('lose');
+        this.deathScreen.showMission(this.missionResult(false));
+      }
     } else if (this.hordeGooseManager && !this.multiplayer) {
       this.showHordeResult(false);
+    } else if (this.showdown) {
+      this.showShowdownResult();
     } else {
       this.deathScreen.show(this.scoreState.value);
     }
@@ -2632,33 +2871,35 @@ export class Game {
   /** The objective panel, the interaction prompt, the beams and the world markers for this tick. */
   private updateMissionHud(view: MissionView): void {
     const hud = this.hud;
-    if (view.phase === 'extract' || view.phase === 'won') {
-      hud.setObjective('UPLINK', 'Reach extraction');
-      if (view.extractionProgress > 0) hud.setScoreLine(`EXTRACTING  ${Math.round(view.extractionProgress * 100)}%`);
-      else hud.setObjectiveProgress(view.online, view.uplinks.length);
-    } else if (view.active) {
-      hud.setObjective('UPLINK', view.active.paused ? 'Upload paused, return to the tower' : 'Hold the tower');
-      hud.setScoreLine(`UPLINK ${view.active.label}  ${Math.floor(view.active.progress * 100)}%`);
-    } else {
-      hud.setObjective('UPLINK', 'Bring the uplinks online');
-      hud.setObjectiveProgress(view.online, view.uplinks.length);
-    }
+    const objective = missionObjective(view);
+    hud.setObjective(objective.label, objective.text);
+    hud.setScoreLine(objective.line);
     hud.setPrompt('interact', this.missionWon ? null : view.prompt);
-    this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
-    // Only the Facility has a single-player map.
-    this.soloMinimap?.setMarkers(missionMapMarkers(view));
+    this.uplinkBeacons?.update(view, this.missionCorePosition, this.missionClock, this.reducedMotion.matches);
+    // Where the stage sends the player: on the Facility's map (the only single-player one), on the
+    // compass and in the world.
+    const wanted = missionMapMarkers(view);
+    this.soloMinimap?.setMarkers(wanted);
+    const key = wanted.map((marker) => marker.id).join(',');
+    if (key !== this.missionMarkerKey) {
+      this.missionMarkerKey = key;
+      for (const id of Object.keys(MISSION_MARKER_LABELS)) {
+        this.hud.compass.removeMarker(id);
+        if (!wanted.some((marker) => marker.id === id)) this.worldMarkers?.remove(id);
+      }
+      for (const marker of wanted) {
+        // The core's marker reads the live position, so it follows a core dropped somewhere new.
+        const point = marker.id === 'core' ? this.missionCorePosition : marker;
+        this.hud.compass.addMarker(marker.id, () => bearingDeg(point.x - this.player.position.x, point.z - this.player.position.z));
+      }
+    }
 
     const markers = this.worldMarkers;
     if (!markers) return;
-    for (const uplink of view.uplinks) {
-      if (uplink.status === 'online') continue;
-      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : WATCH_TOWER_ROOF_TOP + 3), uplink.z);
-      markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
-    }
-    if (view.phase === 'extract') {
-      const { x, z } = view.extraction;
-      this.missionMarkerPosition.set(x, sampleHeight(x, z) + 2, z);
-      markers.set('extract', this.missionMarkerPosition, 'EXTRACT');
+    for (const { id, x, z } of wanted) {
+      if (id === 'core') this.missionMarkerPosition.copy(this.missionCorePosition).y += 0.7;
+      else this.missionMarkerPosition.set(x, sampleHeight(x, z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : id === 'extract' ? 2 : WATCH_TOWER_ROOF_TOP + 3), z);
+      markers.set(id, this.missionMarkerPosition, MISSION_MARKER_LABELS[id]!);
     }
   }
 
@@ -2666,7 +2907,7 @@ export class Game {
    * (see reinforcementSpawner.ts), returning how many it placed. Each is recorded for
    * getDirectorDebug with a fresh on-screen check against its real head, which guards this wiring;
    * the spawner's own rules are unit-tested. */
-  private spawnDirectorWave(count: number, bias: WaveBias): number {
+  private spawnDirectorWave(count: number, bias: WaveBias, leader?: EnemyArchetype): number {
     const player = this.player;
     const forwardX = -Math.sin(player.facingYaw);
     const forwardZ = -Math.cos(player.facingYaw);
@@ -2685,7 +2926,10 @@ export class Game {
       DIRECTOR_SPAWN_OPTIONS,
     );
     this.directorLastSpawns = points.map((point, index) => {
-      const enemy = this.entityManager.spawnEnemy(new THREE.Vector3(point.x, point.y + 1, point.z), Game.waveArchetype(bias, index));
+      // A wave with a `leader` (the Warden) puts it first; the rest are the wave's usual mix.
+      const enemy = this.entityManager.spawnEnemy(new THREE.Vector3(point.x, point.y + 1, point.z), index === 0 && leader ? leader : Game.waveArchetype(bias, index));
+      // An elite stands out: bigger and in its own colour (no-op for the rank and file).
+      applyArchetypeLook(enemy.mesh, enemy.archetype);
       // A reinforcement is sent, not scattered: it comes looking for the player, already suspicious,
       // rather than patrolling behind them unnoticed through a quiet build-up (final review).
       enemy.dispatchToward(player.position);
@@ -3077,8 +3321,9 @@ export class Game {
     this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion(), !this.facility && isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z));
     if (this.soloMinimap) this.updateMinimapPickups(this.soloMinimap);
 
-    // Solo Goose Horde: a Second Wind turns a death into a narrow escape.
+    // Solo Goose Horde: a Second Wind turns a death into a narrow escape. Showdown: a redeploy.
     if (this.player.isDead && !this.deathHandled) this.trySecondWind();
+    if (this.player.isDead && !this.deathHandled) this.tryShowdownRedeploy();
     if (this.player.isDead && !this.deathHandled) {
       this.deathHandled = true;
       // Single-player's own match-end telemetry funnel - there's no explicit "match end" concept
@@ -3160,11 +3405,13 @@ export class Game {
       this.gooseTossController ? (this.gooseTossController.isHolding ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
     );
     if (this.mission) {
-      const at = this.player.position;
-      this.updateMissionHud(this.mission.view(at, !this.facility && isBelowGround(at.x, at.y, at.z)));
+      this.updateMissionHud(this.mission.view(this.missionPlayerList()));
     } else {
       this.hud.setScore(this.scoreState.value);
-      if (this.director) {
+      if (this.showdown) {
+        const view = this.showdown.view();
+        this.hud.setScoreLine(`SCORE ${view.score.toLocaleString('en-US')}  x${view.multiplier}`);
+      } else if (this.director) {
         const phase = { buildUp: 'BUILDING', peak: 'PEAK', fade: 'FADING', relax: 'QUIET' }[this.director.phase];
         this.hud.setScoreLine(`SCORE ${this.scoreState.value}  ${phase}`);
       }

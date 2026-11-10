@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createArchetypePicker, ENEMY_ARCHETYPES } from './archetypes.ts';
+import { archetypeNamed, createArchetypePicker, ELITE_ARCHETYPES, ENEMY_ARCHETYPES, WARDEN } from './archetypes.ts';
 import { ENEMY_RING_BASE_RADIUS } from '../../core/config.ts';
 
 describe('archetype invariants', () => {
@@ -64,5 +64,37 @@ describe('createArchetypePicker', () => {
       // Loose tolerance - this guards against a weight being ignored entirely, not sampling noise.
       expect(Math.abs(actual - expected), archetype.name).toBeLessThan(0.03);
     }
+  });
+});
+
+describe('the Warden', () => {
+  const straggler = archetypeNamed('The Straggler');
+
+  it('is spawned by name and never by the random picker', () => {
+    expect(archetypeNamed('The Warden')).toBe(WARDEN);
+    expect(ENEMY_ARCHETYPES).not.toContain(WARDEN);
+    expect(ELITE_ARCHETYPES).toContain(WARDEN);
+    const pick = createArchetypePicker(4242);
+    for (let i = 0; i < 2000; i++) expect(pick().name).not.toBe(WARDEN.name);
+  });
+
+  it('has four times the health of a rifleman, is slower, and fires longer bursts', () => {
+    expect(WARDEN.health).toBe(straggler.health * 4);
+    expect(WARDEN.moveSpeed).toBeLessThan(straggler.moveSpeed);
+    expect(WARDEN.burstCount).toBeGreaterThan(straggler.burstCount);
+    // A burst is not simply more damage per second for longer: per round it hits softer.
+    expect(WARDEN.rangedDamage).toBeLessThan(straggler.rangedDamage);
+  });
+
+  it('is visibly bigger and tinted, and no ordinary archetype is', () => {
+    expect(WARDEN.look!.scale).toBeGreaterThan(1.15);
+    expect(WARDEN.look!.tint).not.toBe(0xffffff);
+    for (const archetype of ENEMY_ARCHETYPES) expect(archetype.look, archetype.name).toBeUndefined();
+  });
+
+  it('keeps the invariants every archetype keeps', () => {
+    expect(WARDEN.detectionRange).toBeLessThan(ENEMY_RING_BASE_RADIUS);
+    expect(WARDEN.leashRange).toBeGreaterThan(WARDEN.detectionRange);
+    expect(WARDEN.health).toBeGreaterThan(0);
   });
 });
