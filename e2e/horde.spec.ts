@@ -185,6 +185,9 @@ test('co-op: the host\'s waves on every client, a fall, a revive, the next wave,
   await waitForHorde(late.page, (state) => state.geese.length > 0, 'the flock, seen by the late joiner', undefined, 240000);
 
   // The guest leaves and comes back with its token: back in its slot, in the same run.
+  const opponents = (page: Page): Promise<number> => page.evaluate(() => window.__gameDebug!.getOpponentCount());
+  expect(await opponents(host.page), 'the host has both guests before one leaves').toBe(2);
+  expect(await host.page.evaluate(() => window.__gameDebug!.isMultiplayerMatchEnded())).toBe(false);
   const token = await rejoinToken(guest.page, code);
   const comeback = await openPlayer(browser, { code, token });
   comeback.page.on('pageerror', (error) => errors.push(String(error)));
