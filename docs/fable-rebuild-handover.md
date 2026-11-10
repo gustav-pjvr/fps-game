@@ -91,19 +91,30 @@ taken from a copy of the committed tree (`C:\tmp\fable-logs\snap-head.sh`).
 | UI guard (`ui-qa.spec.ts`) on the Skins screen | passes at phone and desktop width |
 | `e2e/koth.spec.ts` | 2 of 2: two players and a late joiner; four players two against two |
 | `e2e/horde.spec.ts` solo | passes: supply drop, Second Wind, death, a new run, the boss, the win |
+| `e2e/horde.spec.ts` two players, three tests of two browsers each | 3 of 3: the host's waves and kills on the guest, a fall, a revive (40 health, where they fell) and back with the next wave (4.0 min); a late joiner told the wave, the kills and the flock (5.2 min); a guest who leaves and comes back into its slot (5.0 min) |
 | `e2e/horde.spec.ts` four players | passes: a wave sized for four, the run lost when all four are down |
 | `e2e/director.spec.ts` | 6 of 6: the three original director tests and Showdown's three |
 | `e2e/mission.spec.ts` | 2 of 2: the whole operation with a redeploy and a graded win; both losses |
 | `e2e/facility-modes.spec.ts` | 2 of 2 |
 
-Still to be recorded here: the two-player Goose Horde test (revive, late join, rejoin), the core
-group, the full suite, and performance against the baseline. See "Open at handover" below.
+**The core smoke group (`smoke.spec.ts`) could not be judged on this machine today.** 11 of its 16
+tests pass; the other five overrun their own time budgets (60 to 120 s) with no assertion failing.
+Run back to back on the untouched v4.7.1 copy, three of the same four overran in the same way, and
+four other smoke tests took the same time on both trees (32 to 48 s each), so this is the machine,
+not the rebuild. It should be rerun on a quiet machine before release.
+
+**The full Playwright suite was not run** (Gustav's instruction, decision D28). The groups the
+rebuild maps to were run one at a time instead, as listed above. Not run: `world`, `houses`,
+`grenades`, `pickups`, `mp`, `mp4`, `ai` beyond `director.spec.ts`, and the facility group beyond
+`facility-modes.spec.ts`.
 
 ## Not done, and why
 
-- **Co-op for Operation Uplink and Showdown.** Both are solo. The rules already take a list of
-  players and scale to a squad, but enemies are simulated on one client only; making a host simulate
-  them for a room (decision D14) is the riskiest change in the brief and was left for last.
+- **Co-op for Operation Uplink and Showdown: postponed by Gustav** (decision D30). Both are solo.
+  The rules already take a list of players and scale to a squad, and the design to start from is
+  written down (decision D29: the host simulates every enemy, guests mirror them, enemy damage rides
+  the existing `damageEvent`). None of it is built.
+- **The full Playwright suite** (see Evidence).
 - **`server/`, `ServerTransport`, the relay and `feature/server-relay`** were not touched, as required.
 
 ## Known issues
