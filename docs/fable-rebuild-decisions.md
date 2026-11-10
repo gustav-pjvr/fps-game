@@ -183,3 +183,49 @@ to pick one. Each new or changed screen still gets `/web-design-guidelines`, `si
 
 - Reason: mock-ups exist to let Gustav choose; here the choice is delegated and the language is set.
 - Runner-up: build two directions and pick one myself. Double the cost for a screen inside a set system.
+
+## D18. Agents are Fable only (Gustav, 2026-11-10, mid-session)
+
+Gustav's instruction after the kit was built: no agents except Fable agents, or Haiku for read-only
+legwork; this run is also a test of Fable, so Fable does the main work. One Fable agent runs at a time
+at medium effort in the background (his rule 1.3) on batches of weapon models with a written brief and a
+runnable check, while the main session builds everything else. No Sonnet or Opus agent was started.
+Reviews that his rules give to Opus (the independent audit, the `ui-reviewer`) are run as Fable agents
+with a fresh context instead.
+
+- Reason: a direct instruction that overrides section 6 of the brief.
+- Runner-up: none.
+
+## D19. Skins screen and Loadout: the brief, self-authored under delegation
+
+The Skins screen is three columns on the existing menu language: every weapon by category on the left
+(with the skin it wears now), the weapon itself in the middle, six skin cards on the right (swatches,
+what the skin changes, the equipped corner the Loadout tiles use). Its one idea comes from this game's
+own rule: the preview shows the weapon three ways, on the rack, in hand and down the sights, so a skin
+that changes the sights shows the crosshair still sitting on them before it is equipped. Clicking a
+card equips at once, as the Loadout does. On a phone it is one column: preview, a strip of weapons to
+swipe, the cards. The Loadout gains a grid for 19 weapons, side-on pictures in each weapon's skin, the
+character holding the equipped primary, and a Skin row with a Change button.
+
+- Reason: the aim-point proof is the one thing no other skins screen needs to show; it is also what
+  the screenshot spec photographs.
+- Runner-up: a skins tab inside the Loadout page. Rejected: no room for a preview large enough to
+  judge sights.
+
+## D20. Ranged damage falls off with distance; a blade hits each target once per strike
+
+Guns other than the sniper and the launcher lose damage in a straight line between two ranges
+(`falloff`). A blade's strike is a fan of rays cast a moment into the swing (`hitAt`), and each target
+takes the attack's damage once, however many rays find it. Before, the knife's three rays each did 45,
+so a clean hit did 135: one hit killed. Blade damage is now what the table says (two hits for most).
+
+- Reason: twelve guns need range to tell them apart, and six blades need honest numbers to balance.
+- Runner-up: keep multi-ray stacking. Rejected: the stat shown would be a third of the damage dealt.
+
+## D21. Other players stand with the weapon up
+
+`RemotePlayer` plays the model's `Idle_Gun_Pointing` clip when standing (and `Run` when moving) now
+that a weapon is in the hand: a rifle hanging from one arm at the side read badly.
+
+- Reason: judged from lab renders of each clip with the rifle, pistol and knife.
+- Runner-up: `Run_Shoot` while moving. Rejected: the arm waves the weapon overhead mid-stride.
