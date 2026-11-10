@@ -33,6 +33,9 @@ Current version 4.7.0. Where a document and the code disagree, the code is right
 | [coop.md](coop.md) | The shared co-op layer: pings, down and revive |
 | [goose-buster.md](goose-buster.md) | The exploding goose, and King of the Hill and Goose Horde as first built (history) |
 | [enemy-ai-v2.md](enemy-ai-v2.md) | The enemy AI as built (step by step) |
+| [arsenal.md](arsenal.md) | The v5.0.0 arsenal: all 19 weapons and their numbers, models, clips, sounds, the aim rule |
+| [skins.md](skins.md) | The six skins, storage, the Skins screen, the aim proof |
+| [arsenal-modelling.md](arsenal-modelling.md) | How to write a weapon model with the kit |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |
 | [visual-overhaul.md](visual-overhaul.md), [visual-overhaul-ui.md](visual-overhaul-ui.md) | The v4.0 look, HUD and menu reskin |
 | [world-redesign.md](world-redesign.md) | The v4.1 world redesign (exteriors, towers, terrain) |
