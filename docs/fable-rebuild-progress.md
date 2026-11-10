@@ -13,10 +13,10 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | 2 | Skins: six families, storage, snapshot fields, remote held weapon, aim-point test | done (unit); e2e spec written, not yet run |
 | 3 | Menus: Loadout rework, Skins screen with aimed preview, screenshots spec | built; QA passes still owed |
 | 4 | Shared co-op layer: pings, down and revive, squad rows, kills on the scoreboard | done (unit); proven in the browser by the horde spec |
-| 5 | King of the Hill rebuild | done (unit); browser spec being rerun |
-| 6 | Goose Horde rebuild (solo and co-op) | built, unit tests pass; browser spec being run |
+| 5 | King of the Hill rebuild | done: unit tests and both browser tests pass (two players with a late joiner; four players in teams) |
+| 6 | Goose Horde rebuild (solo and co-op) | built; solo and four-player browser tests pass; the two-player test (revive, late join, rejoin) is waiting for a rerun |
 | 7 | Uplink operation rebuild (solo) | with Fable agent 3 (started 2026-11-10) |
-| 8 | Director Showdown rebuild (solo) | next, after the Warden lands with Uplink |
+| 8 | Director Showdown rebuild (solo) | rules, panel and doc committed; game wiring and browser tests written, uncommitted until Uplink lands (same `Game.ts`) |
 | 9 | Co-op enemies, then co-op Uplink and Showdown | |
 | 10 | New specs, full suite, performance after, docs, changelog, version | |
 | 11 | Preview deploy, handover report | |
@@ -60,8 +60,9 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 ## Working notes
 
 - Dev server for the worktree: `npx vite --port 5191 --strictPort` (background task of this session).
-- Long Playwright runs: `bash /c/tmp/fable-logs/snap.sh` mirrors the worktree to `C:\tmp\fable-e2e`,
-  then run there with `E2E_PORT=5192`.
+- Long Playwright runs: `bash /c/tmp/fable-logs/snap-head.sh` puts the committed tree (HEAD) in
+  `C:\tmp\fable-e2e`, then run there with `E2E_PORT=5192`. (`snap.sh` mirrors the working tree instead:
+  not while an agent is editing the checkout.)
 - Edits to CRLF files: the Edit tool, or `C:\tmp\fable-logs\ed.py` (keeps line endings).
 - Commit as `git -c user.email=gustavpjvr@gmail.com commit`. Never push to master, never deploy to
   production.
@@ -73,8 +74,10 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | typecheck | clean (2026-11-10, after Goose Horde) |
 | unit | 1867 of 1867 pass (146 files), 2026-11-10 after Goose Horde |
 | e2e quick (4 smoke tests) from the snapshot | 4 passed, with the new weapon manager |
-| e2e `koth.spec.ts` | two runs failed on the test itself (the briefing button reads "Skip (0/2)" in a room; the hill moved under a slow run): both fixed (`skipBriefing`, `holdKothHill`), rerun in progress |
-| e2e `horde.spec.ts` | first run in progress |
+| e2e `koth.spec.ts` | 2 of 2 pass: two players and a late joiner (6.4 min), four players two against two (10.4 min). Two earlier failures were the test's own (the briefing button reads "Skip (0/2)" in a room; the hill moved under a slow run), fixed with `skipBriefing` and `holdKothHill` |
+| e2e `horde.spec.ts` | solo passes (7.3 min); four players pass (8.5 min); co-op with two players failed once at the revive check (the next wave stood the guest up first), `holdHordeWave` added, rerun owed |
+| `showdown.test.ts` | 12 of 12 |
+| e2e groups skins, ui, core | running from a snapshot of the committed tree (`C:\tmp\fable-logs\snap-head.sh`) |
 | e2e full | not yet run on this branch |
 
 ## Next
