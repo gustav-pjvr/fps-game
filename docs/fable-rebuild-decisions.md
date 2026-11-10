@@ -315,3 +315,11 @@ fallen use the co-op layer (down, revive) and come back when an act or a stage i
   client already trusts, and needs the AI to change in one place (who its target is).
 - Runner-up: every client simulates its own enemies from a shared seed. Rejected: the AI reads the
   player's position every tick, so two clients would diverge within seconds.
+
+## D30. Co-op for Uplink and Showdown is postponed (Gustav, 2026-11-10)
+
+Gustav's later instruction the same day: do not build the co-op tasks now; they are postponed. This
+supersedes the last line of D28. D29 stays as the design to start from when the work is picked up:
+nothing of it is built. Uplink and Showdown ship solo; their rules already take a list of players.
+
+- Reason (Gustav's): his call; no reason given.
