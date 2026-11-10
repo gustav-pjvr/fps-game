@@ -11,12 +11,12 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | 0 | Setup: worktree, logs, baseline checks, baseline performance | done |
 | 1 | Arsenal: kit, 20 weapon definitions, handling, clips, sounds, models | done: all 19 models built (15 main session, mp5/smg/machinePistol and sniper/dmr/battleRifle/lmg by two Fable agents) |
 | 2 | Skins: six families, storage, snapshot fields, remote held weapon, aim-point test | done (unit); e2e spec written, not yet run |
-| 3 | Menus: Loadout rework, Skins screen with aimed preview, screenshots spec | built; QA passes still owed |
+| 3 | Menus: Loadout rework, Skins screen with aimed preview, screenshots spec | built; the UI guard passes at phone and desktop after two fixes (Skins opened from the Loadout was inert; the phone weapon strip ran off screen); `ui-reviewer`, `site-qa` and `/web-design-guidelines` passes still owed |
 | 4 | Shared co-op layer: pings, down and revive, squad rows, kills on the scoreboard | done (unit); proven in the browser by the horde spec |
 | 5 | King of the Hill rebuild | done: unit tests and both browser tests pass (two players with a late joiner; four players in teams) |
 | 6 | Goose Horde rebuild (solo and co-op) | built; solo and four-player browser tests pass; the two-player test (revive, late join, rejoin) is waiting for a rerun |
-| 7 | Uplink operation rebuild (solo) | with Fable agent 3 (started 2026-11-10) |
-| 8 | Director Showdown rebuild (solo) | rules, panel and doc committed; game wiring and browser tests written, uncommitted until Uplink lands (same `Game.ts`) |
+| 7 | Uplink operation rebuild (solo) | done by Fable agent 3, verified (typecheck, 241 unit tests in mission, sites and enemies, its screenshots read) and committed; its browser specs passed in its own snapshot, rerun from the committed tree owed |
+| 8 | Director Showdown rebuild (solo) | built and committed (rules, panel, wiring, briefing, end screen, hooks, doc); unit tests pass; its three browser tests not yet run |
 | 9 | Co-op enemies, then co-op Uplink and Showdown | |
 | 10 | New specs, full suite, performance after, docs, changelog, version | |
 | 11 | Preview deploy, handover report | |
@@ -55,6 +55,12 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 - Goose Horde rebuilt (`entities/hordeRules.ts`, `HordeGooseManager.ts`, `HordeGoose.ts`,
   `AmmoDropManager.dropFor`, `ui/hordeHud.ts`, the solo end screen through `DeathScreen.showResult`),
   `docs/goose-horde.md`, `e2e/horde.spec.ts`. The old `HordeWaveIndicator` file is unused now.
+- Operation Uplink (Fable agent 3): `core/mission/missionState.ts`, `missionGrade.ts`, `missionText.ts`,
+  `world/missionSites.ts`, `world/UplinkBeacons.ts`, the Warden (`enemies/archetypes.ts`,
+  `archetypeLook.ts`), `docs/uplink.md`, `e2e/mission.spec.ts`. The Warden's hit shape grows with its
+  model (`characterHitbox.ts` `scaledHitShape`), added by the main session after the agent's report.
+- Showdown: `enemies/director/showdown.ts`, `ui/showdownHud.ts`, `Game.onShowdownEvent` and its
+  neighbours, `docs/showdown.md`, three tests added to `e2e/director.spec.ts`.
 - e2e helpers for the mode specs: `e2e/coop.ts` (rooms, late join, rejoin with a token, briefing skip).
 
 ## Working notes
@@ -77,7 +83,9 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | e2e `koth.spec.ts` | 2 of 2 pass: two players and a late joiner (6.4 min), four players two against two (10.4 min). Two earlier failures were the test's own (the briefing button reads "Skip (0/2)" in a room; the hill moved under a slow run), fixed with `skipBriefing` and `holdKothHill` |
 | e2e `horde.spec.ts` | solo passes (7.3 min); four players pass (8.5 min); co-op with two players failed once at the revive check (the next wave stood the guest up first), `holdHordeWave` added, rerun owed |
 | `showdown.test.ts` | 12 of 12 |
-| e2e groups skins, ui, core | running from a snapshot of the committed tree (`C:\tmp\fable-logs\snap-head.sh`) |
+| e2e ui guard on the Skins screen | passes at phone and desktop (after the two fixes above) |
+| e2e groups skins, core | a first run failed under load (30 s test timeouts while two sessions ran browsers); rerun in progress |
+| unit, full | 1869 of 1912 while the browser runs held the CPU at 85 percent: all 43 failures were 5 s timeouts in heavy world and model tests; rerun on a quiet machine owed |
 | e2e full | not yet run on this branch |
 
 ## Next
