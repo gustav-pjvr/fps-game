@@ -28,7 +28,11 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
     thrownGeese: new Map(),
     isHordeMode: false,
     kingOfTheHill,
-    hordeGooseManager: { applyWaveStarted: vi.fn(), applyCleared: vi.fn() },
+    hordeGooseManager: { applyWaveStarted: vi.fn(), applyCleared: vi.fn(), applyState: vi.fn(), registerRemoteHit: vi.fn(), applyRemoteSpawn: vi.fn(), applyExplosion: vi.fn() },
+    squad: { teammateFell: vi.fn(), teammateStoodUp: vi.fn(), adoptFallen: vi.fn(), receiveRevive: vi.fn(), receivePing: vi.fn() },
+    hordeWaveStarted: vi.fn(),
+    gooseAnnouncement: { show: vi.fn() },
+    checkHordeAllEliminated: vi.fn(),
     killFeed: { show: vi.fn() },
     weaponManager: { activeWeaponId: 'rifle', replaceActiveWeapon: vi.fn(async () => {}) },
     healLocalPlayerToFull: vi.fn(),
@@ -221,6 +225,72 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(ctx.hordeGooseManager.applyCleared).toHaveBeenCalledTimes(1);
   });
 
+  it('Goose Horde: a fall, a stand-up, a revive and a ping reach the squad layer', () => {
+    const ctx = makeContext({ gameMode: 'gooseHorde', ownSlot: 1 });
+    ctx.multiplayer.opponents.set(2, {
+      lastMessageAt: 0, firstSnapshotAt: null, isDead: true, health: 0, lastStateSentAt: undefined,
+      remotePlayer: { teleportTo: vi.fn() },
+    });
+    route(ctx, { type: 'hordePlayerEliminated', slot: 2 }, 2);
+    expect([...ctx.multiplayer.hordeEliminatedSlots]).toEqual([2]);
+    expect(ctx.squad.teammateFell).toHaveBeenCalledWith(2);
+    expect(ctx.checkHordeAllEliminated).toHaveBeenCalledTimes(1);
+
+    route(ctx, { type: 'reviveEvent', senderSlot: 3, targetSlot: 2 }, 0);
+    expect(ctx.squad.receiveRevive).toHaveBeenCalledWith(3, 2);
+
+    // The fallen player's own respawnEvent is what takes it off the list.
+    route(ctx, { type: 'respawnEvent', senderSlot: 2, x: 1, y: 2, z: 3 }, 0);
+    expect([...ctx.multiplayer.hordeEliminatedSlots]).toEqual([]);
+    expect(ctx.squad.teammateStoodUp).toHaveBeenCalledWith(2);
+
+    route(ctx, { type: 'ping', senderSlot: 3, x: 4, y: 5, z: 6 }, 0);
+    expect(ctx.squad.receivePing).toHaveBeenCalledWith(3, 4, 5, 6);
+  });
+
+  it('Goose Horde: a guest takes the host\'s state, a wave start stands the fallen up, and the host takes a hit with its damage', () => {
+    const guest = makeContext({ gameMode: 'gooseHorde', ownSlot: 1 });
+    const state = { type: 'hordeState' as const, wave: 6, phase: 'active' as const, nextIn: 0, left: 5, meter: 1, need: 18, boss: { id: 'mother' as const, hp: 10, max: 2250 }, kills: [{ slot: 1 as PlayerSlot, kills: 3 }] };
+    route(guest, state);
+    expect(guest.hordeGooseManager.applyState).toHaveBeenCalledWith(state);
+    route(guest, { type: 'hordeWaveStarted', wave: 7 });
+    expect(guest.hordeGooseManager.applyWaveStarted).toHaveBeenCalledWith(7);
+    expect(guest.hordeWaveStarted).toHaveBeenCalledTimes(1);
+    route(guest, { type: 'hordeGooseSpawned', id: 'horde-9', x: 1, y: 2, z: 3, flavor: 'boss', boss: 'matriarch' });
+    expect(guest.hordeGooseManager.applyRemoteSpawn).toHaveBeenCalledWith('horde-9', 1, 2, 3, 'boss', 'matriarch');
+    route(guest, { type: 'hordeGooseExploded', id: 'horde-9', x: 1, y: 2, z: 3, stomp: true });
+    expect(guest.hordeGooseManager.applyExplosion).toHaveBeenCalledWith('horde-9', expect.anything(), true);
+
+    const host = makeContext({ role: 'host', gameMode: 'gooseHorde', ownSlot: 0 });
+    route(host, state, 2);
+    expect(host.hordeGooseManager.applyState).not.toHaveBeenCalled();
+    route(host, { type: 'hordeGooseHitEvent', senderSlot: 2, id: 'horde-9', damage: 55 }, 2);
+    expect(host.hordeGooseManager.registerRemoteHit).toHaveBeenCalledWith('horde-9', 2, 55);
+  });
+
+  it('bounds the new Goose Horde and co-op messages', () => {
+    const state = { type: 'hordeState', wave: 3, phase: 'intermission', nextIn: 6.5, left: 0, meter: 4, need: 14, boss: null, kills: [{ slot: 0, kills: 20 }] };
+    expect(isNetworkMessage(state)).toBe(true);
+    expect(isNetworkMessage({ ...state, boss: { id: 'mother', hp: 5, max: 1500 } })).toBe(true);
+    for (const bad of [
+      { ...state, wave: 0 }, { ...state, phase: 'won' }, { ...state, nextIn: -1 }, { ...state, nextIn: Number.NaN }, { ...state, left: 1e9 },
+      { ...state, meter: 1.5 }, { ...state, boss: { id: 'goose', hp: 5, max: 10 } }, { ...state, boss: { id: 'mother', hp: 50, max: 10 } },
+      { ...state, kills: [{ slot: 7, kills: 1 }] }, { ...state, kills: [{ slot: 0, kills: -1 }] }, { ...state, kills: 'x' },
+    ]) expect(isNetworkMessage(bad), JSON.stringify(bad)).toBe(false);
+
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1, z: 2, flavor: 'brute' })).toBe(true);
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1, z: 2, flavor: 'dragon' })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1e9, z: 2, flavor: 'walker' })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1, z: 2, flavor: 'boss', boss: 'king' })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'horde-1' })).toBe(true);
+    expect(isNetworkMessage({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'horde-1', damage: 1e9 })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'horde-1', damage: Number.NaN })).toBe(false);
+    expect(isNetworkMessage({ type: 'reviveEvent', senderSlot: 1, targetSlot: 2 })).toBe(true);
+    expect(isNetworkMessage({ type: 'reviveEvent', senderSlot: 1, targetSlot: 9 })).toBe(false);
+    expect(isNetworkMessage({ type: 'ping', senderSlot: 1, x: 1, y: 2, z: 3 })).toBe(true);
+    expect(isNetworkMessage({ type: 'ping', senderSlot: 1, x: 1, y: Number.POSITIVE_INFINITY, z: 3 })).toBe(false);
+  });
+
   it('drops a hordeSyncState with a malformed eliminated list or result', () => {
     expect(isNetworkMessage({ type: 'hordeSyncState', wave: 1, eliminated: ['x'] })).toBe(false);
     expect(isNetworkMessage({ type: 'hordeSyncState', wave: 1, result: 'won' })).toBe(false);
@@ -268,7 +338,8 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     const kothState: KothStateMessage = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] };
     const multiplayer = { ...base.multiplayer, hostRoster };
     multiplayer.hordeEliminatedSlots.add(2);
-    const horde = { currentWave: 4, isCleared: false, listForSync: vi.fn(() => []), applyWaveStarted: vi.fn(), applyCleared: vi.fn() };
+    const hordeState = { wave: 4, phase: 'active' as const, nextIn: 0, left: 7, meter: 2, need: 18, boss: null, kills: [{ slot: 0 as PlayerSlot, kills: 12 }] };
+    const horde = { currentWave: 4, isCleared: false, listForSync: vi.fn(() => []), statePayload: vi.fn(() => hordeState), applyWaveStarted: vi.fn(), applyCleared: vi.fn() };
     const verdict = { winnerSlot: 1 as PlayerSlot, scoreboard: [{ slot: 1 as PlayerSlot, score: 10 }] };
     const ctx = {
       ...base,
@@ -287,7 +358,7 @@ describe('routeMatchMessage, the host answers a sync request', () => {
         roster: hostRoster.connectedRoster(),
         koth: gameMode === 'kingOfTheHill' ? kothState : null,
         geese: ctx.gooseManager.listForSync(),
-        horde: gameMode === 'gooseHorde' ? { wave: 4, eliminated: [2], result: undefined, geese: [] } : null,
+        horde: gameMode === 'gooseHorde' ? { wave: 4, eliminated: [2], result: undefined, state: hordeState, geese: [] } : null,
         ammoDrops: [],
         bonusGeese: [],
         thrownGeese: ctx.thrownGeese.values(),

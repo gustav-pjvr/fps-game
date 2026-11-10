@@ -119,8 +119,29 @@ export interface GameDebugApi {
     hold: 'empty' | 'held' | 'contested'; holder: number | null; crown: number | null; crownAt: { x: number; z: number } | null;
     push: boolean; teams: boolean;
   } | null;
-  /** Goose Horde, null in every other mode: the current wave and every live horde goose. */
-  getHordeDebug(): { wave: number; geese: { x: number; y: number; z: number; flavor: string }[] } | null;
+  /** King of the Hill, on the host: stops (or restarts) the hill's clock, so a slow test run can
+   * finish its checks on one hill. */
+  holdKothHill(held: boolean): void;
+  /** Goose Horde, null in every other mode: the wave panel's numbers as this client shows them, every
+   * live horde goose, the supply crates on the field, and this player's own state. */
+  getHordeDebug(): {
+    wave: number; totalWaves: number; phase: 'active' | 'intermission' | 'cleared'; nextIn: number; left: number;
+    meter: number; need: number; boss: { id: string; hp: number; max: number } | null;
+    kills: { slot: number; kills: number }[];
+    geese: { id: string; x: number; y: number; z: number; flavor: string }[];
+    crates: { id: string; x: number; y: number; z: number }[];
+    /** 'up', 'down' (a teammate can revive) or 'out' (until the next wave); solo is always 'up'. */
+    own: 'up' | 'down' | 'out';
+    /** Slots this client holds to be down or out. */
+    fallen: number[];
+    /** Solo: the Second Winds left. */
+    secondWinds: number;
+  } | null;
+  /** Goose Horde, on the authoritative side (solo or the host): skips to wave `wave` (1 based), with
+   * nothing left of the current one, for tests of the late waves and the bosses. */
+  setHordeWave(wave: number): void;
+  /** Goose Horde, on the authoritative side: kills every live horde goose as this player's own. */
+  killHordeGeese(): void;
   /** The torch (render/Flashlight.ts): whether this match has one, whether it is on, the match's
    * weather and whether it is on the Facility. */
   getTorchDebug(): { available: boolean; on: boolean; weather: 'day' | 'night' | 'fog'; facility: boolean };

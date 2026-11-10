@@ -78,21 +78,25 @@ describe('buildMatchSync', () => {
     expect(isNetworkMessage({ type: 'scoreboardSync', scores: [entry, entry, entry, entry, entry] })).toBe(false);
   });
 
-  it('carries the Horde wave, eliminated set, result, flock and ammo crates', () => {
+  it('carries the Horde wave, fallen set, result, state, flock and supply crates', () => {
+    const state = { wave: 6, phase: 'active' as const, nextIn: 0, left: 9, meter: 3, need: 18, boss: { id: 'mother' as const, hp: 900, max: 2250 }, kills: [{ slot: 0 as const, kills: 31 }] };
     const messages = buildMatchSync({
       ...empty,
-      horde: { wave: 4, eliminated: new Set([0, 2]), result: 'wiped', geese: [{ id: 'h1', x: 0, y: 3, z: 0, flavor: 'flyer' }] },
+      horde: { wave: 6, eliminated: new Set([0, 2]), result: 'wiped', state, geese: [{ id: 'h1', x: 0, y: 3, z: 0, flavor: 'boss', boss: 'mother' }] },
       ammoDrops: [{ id: 'a1', x: 7, y: 0, z: 8 }],
     });
+    // The state comes before the flock: a boss is built with the health its state names.
     expect(messages).toEqual([
-      { type: 'hordeSyncState', wave: 4, eliminated: [0, 2], result: 'wiped' },
-      { type: 'hordeGooseSpawned', id: 'h1', x: 0, y: 3, z: 0, flavor: 'flyer' },
+      { type: 'hordeSyncState', wave: 6, eliminated: [0, 2], result: 'wiped' },
+      { type: 'hordeState', ...state },
+      { type: 'hordeGooseSpawned', id: 'h1', x: 0, y: 3, z: 0, flavor: 'boss', boss: 'mother' },
       { type: 'hordeAmmoDropSpawned', id: 'a1', x: 7, y: 0, z: 8 },
     ]);
+    for (const message of messages) expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
   });
 
   it('leaves the Horde result out while the run is still going', () => {
-    const [state] = buildMatchSync({ ...empty, horde: { wave: 1, eliminated: [], result: undefined, geese: [] } });
+    const [state] = buildMatchSync({ ...empty, horde: { wave: 1, eliminated: [], result: undefined, state: null, geese: [] } });
     expect(state).toEqual({ type: 'hordeSyncState', wave: 1, eliminated: [] });
   });
 });

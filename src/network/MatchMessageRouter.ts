@@ -19,6 +19,7 @@ import type { SoundEngine } from '../audio/SoundEngine.ts';
 import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume, undergroundMuffleFactor } from '../core/positionalAudio.ts';
 import { applyMatchDeath } from '../core/multiplayerScoring.ts';
 import type { KingOfTheHillController } from '../core/modeControllers/KingOfTheHillController.ts';
+import type { SquadController } from '../core/modeControllers/SquadController.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
 import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
 import { HOST_SLOT, type GrenadeDetonatedMessage, type GrenadeThrownMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
@@ -48,6 +49,8 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'gooseThrown',
   'gooseThrowExploded',
   'hordePlayerEliminated',
+  'reviveEvent',
+  'ping',
   'hordeAmmoDropPickedUp',
   'modeExplanationReady',
 ]);
@@ -92,6 +95,11 @@ export interface MatchMessageContext {
    * assigned just after the Game is constructed. */
   readonly kingOfTheHill: KingOfTheHillController | null;
   readonly hordeGooseManager: HordeGooseManager | null;
+  /** The shared co-op layer (pings, the fallen and their revives). Read through a getter: it is
+   * assigned just after the Game is constructed. */
+  readonly squad: SquadController | null;
+  /** Goose Horde, guest side: the host began a wave (a fallen player stands up with it). */
+  hordeWaveStarted(): void;
   readonly bonusGooseManager: BonusGooseManager | null;
   readonly ammoDropManager: AmmoDropManager | null;
   /** Health, ammo and grenade pickups (docs/pickups.md). Read through a getter: it is assigned just
@@ -223,6 +231,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // Only a living player broadcasts snapshots (see Game.updateMultiplayer), so one arriving means
       // they're alive again, even if their respawnEvent was somehow missed.
       opponent.isDead = false;
+      if (activeMultiplayer.hordeEliminatedSlots.delete(message.senderSlot)) ctx.squad?.teammateStoodUp(message.senderSlot);
       break;
     }
     case 'fireEvent': {
@@ -366,6 +375,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
         opponent.isDead = false;
         opponent.lastStateSentAt = afterStateEvent(opponent.lastStateSentAt, message.t);
       }
+      // A fallen co-op player standing up again (a revive, the next wave) says so with this.
+      if (activeMultiplayer.hordeEliminatedSlots.delete(message.senderSlot)) ctx.squad?.teammateStoodUp(message.senderSlot);
       break;
     }
     case 'footstepEvent': {
@@ -430,17 +441,17 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       if (activeMultiplayer.session.role === 'host') ctx.kingOfTheHill?.receiveClaim(senderSlot);
       break;
     case 'hordeGooseSpawned':
-      ctx.hordeGooseManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z, message.flavor);
+      ctx.hordeGooseManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z, message.flavor, message.boss);
       break;
     case 'hordeGooseSnapshot':
       ctx.hordeGooseManager?.applyRemoteSnapshot(message.id, message.x, message.y, message.z);
       break;
     case 'hordeGooseHitEvent':
       // Guest -> host only (see protocol.ts) - a guest's own connection never receives this.
-      if (activeMultiplayer.session.role === 'host') ctx.hordeGooseManager?.registerRemoteHit(message.id);
+      if (activeMultiplayer.session.role === 'host') ctx.hordeGooseManager?.registerRemoteHit(message.id, message.senderSlot, message.damage);
       break;
     case 'hordeGooseExploded':
-      ctx.hordeGooseManager?.applyExplosion(message.id, new THREE.Vector3(message.x, message.y, message.z));
+      ctx.hordeGooseManager?.applyExplosion(message.id, new THREE.Vector3(message.x, message.y, message.z), message.stomp === true);
       break;
     case 'hordeGooseRemoved':
       ctx.hordeGooseManager?.applyRemove(message.id);
@@ -461,21 +472,32 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     case 'hordeWaveStarted':
       ctx.hordeGooseManager?.applyWaveStarted(message.wave);
       ctx.gooseAnnouncement.show(`Wave ${message.wave} incoming...`);
+      ctx.hordeWaveStarted();
+      break;
+    case 'hordeState':
+      // Host-authored (senderAuthority.ts): the wave panel's numbers and the kill count, taken as is.
+      if (activeMultiplayer.session.role === 'guest') ctx.hordeGooseManager?.applyState(message);
+      break;
+    case 'reviveEvent':
+      ctx.squad?.receiveRevive(message.senderSlot, message.targetSlot);
+      break;
+    case 'ping':
+      ctx.squad?.receivePing(message.senderSlot, message.x, message.y, message.z);
       break;
     case 'hordeCleared':
       // Marks the follower manager cleared so Game.update()'s own isCleared check ends the match on
       // guests too. Before this, only the host's podium appeared and guests stayed in a frozen world.
       ctx.hordeGooseManager?.applyCleared();
-      ctx.gooseAnnouncement.show('The horde has been cleared - you survived!');
+      ctx.gooseAnnouncement.show('The horde is broken. You survived!');
       break;
     case 'hordeReset':
       ctx.hordeGooseManager?.applyReset();
       ctx.gooseAnnouncement.show('A player fell - the horde resets to wave 1...');
       break;
     case 'hordePlayerEliminated': {
+      // `slot` is down (docs/goose-horde.md): the squad layer says so and offers the revive.
       activeMultiplayer.hordeEliminatedSlots.add(message.slot);
-      const eliminatedName = activeMultiplayer.usernames.get(message.slot) ?? 'A player';
-      ctx.killFeed.show(`${eliminatedName} has been eliminated from the horde!`);
+      ctx.squad?.teammateFell(message.slot);
       ctx.checkHordeAllEliminated();
       break;
     }
@@ -498,6 +520,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // The eliminated set lets this player's own all-eliminated check count teammates already
       // out; a run that already finished on the host ends here the same way.
       for (const slot of message.eliminated ?? []) activeMultiplayer.hordeEliminatedSlots.add(slot);
+      ctx.squad?.adoptFallen(message.eliminated ?? []);
       if (message.result === 'cleared') ctx.hordeGooseManager?.applyCleared();
       else if (message.result === 'wiped') ctx.endLostHordeRun();
       break;
@@ -526,6 +549,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     case 'hordeAmmoDropSpawned':
       ctx.ammoDropManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z);
       activeMultiplayer.minimap.addItemDot(message.id);
+      ctx.gooseAnnouncement.show('Supply drop');
       break;
     case 'hordeAmmoDropPickedUp':
       ctx.ammoDropManager?.removeById(message.id);
@@ -591,6 +615,7 @@ function sendFullSync(ctx: MatchMessageContext, slot: PlayerSlot): void {
           wave: hordeGooseManager.currentWave,
           eliminated: multiplayer.hordeEliminatedSlots,
           result: ctx.matchHasEnded() ? (hordeGooseManager.isCleared ? 'cleared' : 'wiped') : undefined,
+          state: hordeGooseManager.statePayload(),
           geese: hordeGooseManager.listForSync(),
         }
       : null,

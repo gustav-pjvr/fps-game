@@ -25,6 +25,8 @@ export interface ModeExplanationStep {
 export interface ModeExplanation {
   title: string;
   steps: readonly ModeExplanationStep[];
+  /** The briefing for a player on their own, where the mode plays differently alone. */
+  solo?: { title: string; steps: readonly ModeExplanationStep[] };
 }
 
 /** Shown once, at the start of a match (and again on rematch - see MultiplayerSession.
@@ -84,10 +86,19 @@ export const MODE_EXPLANATIONS: Partial<Record<GameMode, ModeExplanation>> = {
   gooseHorde: {
     title: 'Goose Horde (Co-op)',
     steps: [
-      { icon: 'shield', text: 'Co-op: your team fights the horde together.' },
-      { icon: 'wave', text: 'Waves get bigger and faster, with jumpers and flyers later.' },
-      { icon: 'heart', text: 'Each player has 2 respawns. After that, a death is final.' },
-      { icon: 'trophy', text: 'Survive every wave to win. You lose when everyone is out.' },
+      { icon: 'wave', text: 'Twelve waves, each bigger and faster. Red brutes take the whole squad\'s fire; a boss leads waves 6 and 12.' },
+      { icon: 'heart', text: 'A fallen teammate can be revived: stand by them and hold E. Everyone gets back up when the next wave starts.' },
+      { icon: 'shield', text: 'Kills earn the squad supply drops: ammo, health and a grenade. Mark a target or a crate for your team with V.' },
+      { icon: 'trophy', text: 'Survive every wave to win. You lose when the whole squad is down at once.' },
     ],
+    solo: {
+      title: 'Goose Horde',
+      steps: [
+        { icon: 'wave', text: 'Twelve waves, each bigger and faster. Red brutes take real damage to stop; a boss leads waves 6 and 12.' },
+        { icon: 'heart', text: 'A Second Wind saves you from one death and clears the geese around you. You earn another every four waves.' },
+        { icon: 'shield', text: 'Kills earn supply drops: health and a grenade.' },
+        { icon: 'trophy', text: 'Survive every wave to win. Fall with no Second Wind left and the run starts over.' },
+      ],
+    },
   },
 };

@@ -54,6 +54,11 @@ export class KingOfTheHillController {
     return this.state;
   }
 
+  /** Test-only, host only: stops (or restarts) the hill's clock. */
+  debugHoldHill(held: boolean): void {
+    if (this.rules) this.rules.debugClockHeld = held;
+  }
+
   /** Whether `slot` is on this player's side: nobody shoots their own team. */
   isTeammate(slot: PlayerSlot): boolean {
     const state = this.state;

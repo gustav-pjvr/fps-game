@@ -13,14 +13,18 @@ import {
   GOOSE_RADIUS,
   HORDE_FLYER_DESCENT_SECONDS,
   HORDE_FLYER_SPAWN_HEIGHT,
-  HORDE_GOOSE_CONTACT_RADIUS,
   HORDE_JUMPER_BURST_MULTIPLIER,
   HORDE_JUMPER_BURST_SECONDS,
   HORDE_JUMPER_TRIGGER_RADIUS,
   PLAYER_HEIGHT,
 } from '../core/config.ts';
 
-export type HordeGooseFlavor = 'walker' | 'jumper' | 'flyer';
+import { HORDE_BOSSES, HORDE_FLAVORS, type HordeBossId, type HordeFlavorStats, type HordeGooseFlavor } from './hordeRules.ts';
+
+export type { HordeGooseFlavor } from './hordeRules.ts';
+
+/** Seconds a brute or a boss shows the flash of a hit. */
+const HIT_FLASH_SECONDS = 0.09;
 
 const WADDLE_BOB_SPEED = 11;
 const WADDLE_ROCK_ANGLE = 0.22;
@@ -33,18 +37,18 @@ const INDOOR_CLIMB_SPEED = 3;
 const ROOF_CLEARANCE = 1.5;
 
 /** Whether a horde goose centred at `goose` has reached a player whose body centre is `target`.
- * Contact is horizontal (within HORDE_GOOSE_CONTACT_RADIUS) outdoors, so a player on a watch tower or
+ * Contact is horizontal (within `reach`, the flavor's contact radius) outdoors, so a player on a watch tower or
  * a house roof is still reached by the geese gathering below. For a player standing on a Valley
  * house's floor it is also vertical (within that radius of the player's body, its upright axis from
  * feet to head), so a goose on the ground floor never reaches a player upstairs above it. */
-export function hordeGooseReaches(goose: THREE.Vector3Like, target: THREE.Vector3Like): boolean {
+export function hordeGooseReaches(goose: THREE.Vector3Like, target: THREE.Vector3Like, reach: number = HORDE_FLAVORS.walker.contactRadius): boolean {
   const across = Math.hypot(goose.x - target.x, goose.z - target.z);
-  if (across > HORDE_GOOSE_CONTACT_RADIUS) return false;
+  if (across > reach) return false;
   const feetY = target.y - PLAYER_HEIGHT / 2;
   const floorY = enemyFloorAt(target.x, target.z, feetY);
   if (floorY === null || feetY - floorY > ROOF_CLEARANCE) return true;
   const above = Math.max(0, Math.abs(goose.y - target.y) - PLAYER_HEIGHT / 2);
-  return Math.hypot(across, above) <= HORDE_GOOSE_CONTACT_RADIUS;
+  return Math.hypot(across, above) <= reach;
 }
 
 /** How far a horde goose must move horizontally before its ground height is resampled - same
@@ -59,15 +63,29 @@ const HEIGHT_RESAMPLE_DISTANCE_SQ = 0.25 * 0.25;
  * target position it's given each tick (Game.ts/HordeGooseManager pick the nearest player) and
  * explodes on contact - no idle/alert/search states, a horde goose aggros immediately on spawn.
  *
- * Dies in exactly one hit from any weapon (see takeDamage) - a killed goose just falls over
- * (`dead` without `reachedTarget`), only a goose that actually reaches its target explodes (see
- * HordeGooseManager's own update loop for where that distinction is read). */
+ * The three small flavors die in exactly one hit from any weapon (see takeDamage); a brute and a
+ * boss have real health (entities/hordeRules.ts). A killed goose just falls over (`dead` without
+ * `reachedTarget`), only a goose that actually reaches its target explodes (see HordeGooseManager's
+ * own update loop for where that distinction is read). A boss never dies of reaching a player: it
+ * stomps (`consumeStomp`) and keeps coming. */
 export class HordeGoose implements Entity, Damageable {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
   readonly mesh: THREE.Group;
   readonly flavor: HordeGooseFlavor;
+  readonly stats: HordeFlavorStats;
+  readonly maxHealth: number;
+  /** The slot whose hit was the last to land, for the kill count. Null in single-player. */
+  lastHitSlot: number | null = null;
 
+  private health: number;
+  /** Half the goose's height at its scale: its centre sits this far above the ground. */
+  private readonly halfHeight: number;
+  private readonly tinted: THREE.MeshStandardMaterial[] = [];
+  private flashRemaining = 0;
+  /** Boss only: seconds until it may stomp again, and whether a stomp is waiting to be read. */
+  private stompCooldown = 0;
+  private stompPending = false;
   private dead = false;
   private reachedTarget = false;
   private disposed = false;
@@ -118,18 +136,47 @@ export class HordeGoose implements Entity, Damageable {
     /** Presence selects follower mode (multiplayer guest): no local AI, position driven externally
      * via snapTo, and a local hit reports itself here instead of self-adjudicating - same pattern
      * as Goose.ts's onRemoteHitReport. */
-    private readonly onRemoteHitReport?: () => void,
+    private readonly onRemoteHitReport?: (amount: number) => void,
     /** Indoors (the Facility): the flight height over a point, under the local ceiling. A flyer then
      * flies in through the rooms instead of dropping from the sky (see updateIndoorFlight). */
     private readonly indoorFlightHeight?: (x: number, z: number) => number,
+    /** Hit points for a brute or a boss, already scaled to the squad. Small geese ignore it. */
+    health?: number,
+    /** Which boss, when the flavor is one: its colour and how often it stomps. */
+    private readonly boss?: HordeBossId,
   ) {
     this.flavor = flavor;
+    this.stats = HORDE_FLAVORS[flavor];
+    this.maxHealth = health ?? this.stats.health;
+    this.health = this.maxHealth;
+    this.halfHeight = (GOOSE_HEIGHT / 2) * this.stats.scale;
     this.flyerTargetX = position.x;
     this.flyerTargetZ = position.z;
 
     this.mesh = buildGooseMesh();
+    const tint = boss ? HORDE_BOSSES[boss].tint : this.stats.tint;
+    if (this.stats.scale !== 1) this.mesh.scale.setScalar(this.stats.scale);
+    if (tint !== null) {
+      // The white parts take the tint (the beak and legs stay orange), so a brute or a boss reads
+      // at a glance in a flock of white geese.
+      const seen = new Set<THREE.Material>();
+      this.mesh.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const material: THREE.Material = child.material;
+        if (seen.has(material) || !(material instanceof THREE.MeshStandardMaterial)) return;
+        seen.add(material);
+        if (material.color.r > 0.7 && material.color.b > 0.7) {
+          material.color.setHex(tint);
+          material.emissive.setHex(tint);
+          material.emissiveIntensity = 0.18;
+          this.tinted.push(material);
+        }
+      });
+    }
+    // A big goose stands on the ground: its centre is higher than the small goose's the spawn point assumed.
+    const groundedY = position.y + (this.halfHeight - GOOSE_HEIGHT / 2);
     const spawnY = flavor !== 'flyer'
-      ? position.y
+      ? groundedY
       : indoorFlightHeight
         ? indoorFlightHeight(position.x, position.z)
         : sampleHeight(position.x, position.z) + HORDE_FLYER_SPAWN_HEIGHT;
@@ -137,8 +184,29 @@ export class HordeGoose implements Entity, Damageable {
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(position.x, spawnY, position.z);
     this.rigidBody = physics.world.createRigidBody(bodyDesc);
-    this.bodyCollider = physics.world.createCollider(RAPIER.ColliderDesc.ball(GOOSE_RADIUS), this.rigidBody);
+    this.bodyCollider = physics.world.createCollider(RAPIER.ColliderDesc.ball(GOOSE_RADIUS * this.stats.scale), this.rigidBody);
     physics.registerCollider(this.bodyCollider, this);
+  }
+
+  get currentHealth(): number {
+    return this.health;
+  }
+
+  /** Which boss this is, or undefined for every other goose. */
+  get bossId(): HordeBossId | undefined {
+    return this.boss;
+  }
+
+  /** Boss only: true once per stomp, when it has just gone off (HordeGooseManager reads it each tick). */
+  consumeStomp(): boolean {
+    const pending = this.stompPending;
+    this.stompPending = false;
+    return pending;
+  }
+
+  /** Follower side: the host's count of a boss's health, for nothing but a local read. */
+  setHealth(health: number): void {
+    this.health = Math.max(0, Math.min(this.maxHealth, health));
   }
 
   get isDead(): boolean {
@@ -155,24 +223,43 @@ export class HordeGoose implements Entity, Damageable {
     return this.mesh.position;
   }
 
-  /** One hit from any weapon kills it outright, regardless of damage amount - see the class
-   * comment on why this diverges from both Enemy's amount-based health and the normal Goose's
-   * hit-count. */
-  takeDamage(_amount: number, _hitColliderHandle: number): void {
+  /** A small goose dies to one hit from any weapon, whatever its amount; a brute or a boss loses
+   * `amount` health. A follower only flashes and reports the hit: the host decides. */
+  takeDamage(amount: number, _hitColliderHandle: number): void {
     if (this.dead) return;
+    this.flash();
     if (this.onRemoteHitReport) {
-      this.onRemoteHitReport();
+      this.onRemoteHitReport(amount);
       return;
     }
+    this.applyHit(amount, null);
+  }
+
+  /** Authoritative side: a hit of `amount` by `slot` (null for single-player's own). Used directly
+   * for a hit a guest reported (HordeGooseManager.registerRemoteHit) and by takeDamage above. */
+  applyHit(amount: number, slot: number | null): void {
+    if (this.dead) return;
+    this.lastHitSlot = slot;
+    this.health = this.stats.health <= 1 ? 0 : Math.max(0, this.health - Math.max(0, amount));
+    if (this.health <= 0) this.dead = true;
+  }
+
+  /** Authoritative side: removes it outright (a Second Wind's blast, a reset). */
+  kill(): void {
     this.dead = true;
   }
 
-  /** Host-only: kills this goose outright, no damage amount involved - used when the host is
-   * applying a hit a guest already reported (HordeGooseManager.registerRemoteHit), where the
-   * hit is known-authoritative and there's nothing left to adjudicate. Never routes through
-   * onRemoteHitReport - only the host's own authoritative copy calls this. */
-  kill(): void {
-    this.dead = true;
+  private flash(): void {
+    if (this.tinted.length === 0) return;
+    this.flashRemaining = HIT_FLASH_SECONDS;
+    for (const material of this.tinted) material.emissiveIntensity = 1.4;
+  }
+
+  /** Fades the hit flash. Runs on every client (a follower's goose never runs `update`). */
+  tickEffects(dt: number): void {
+    if (this.flashRemaining <= 0) return;
+    this.flashRemaining -= dt;
+    if (this.flashRemaining <= 0) for (const material of this.tinted) material.emissiveIntensity = 0.18;
   }
 
   /** Follower mode only: snaps directly to a host-reported position, mirroring Goose.ts's
@@ -184,6 +271,7 @@ export class HordeGoose implements Entity, Damageable {
 
   update(dt: number, targetPosition: THREE.Vector3): void {
     if (this.dead || this.onRemoteHitReport) return;
+    if (this.stompCooldown > 0) this.stompCooldown -= dt;
 
     if (this.flavor === 'flyer' && this.indoorFlightHeight) {
       this.updateIndoorFlight(dt, targetPosition, this.indoorFlightHeight);
@@ -207,7 +295,7 @@ export class HordeGoose implements Entity, Damageable {
       this.flyerTargetZ = entrance ? entrance.z : targetPosition.z;
       // The descent never leaves this x/z, so its ground height is sampled exactly once here rather
       // than re-running the same expensive sampleHeight call at the same point every tick.
-      this.flyerGroundY = sampleHeight(this.flyerTargetX, this.flyerTargetZ) + GOOSE_HEIGHT / 2;
+      this.flyerGroundY = sampleHeight(this.flyerTargetX, this.flyerTargetZ) + this.halfHeight;
     }
     this.flyerAge += dt;
     const groundY = this.flyerGroundY;
@@ -218,11 +306,7 @@ export class HordeGoose implements Entity, Damageable {
     this.mesh.position.set(this.flyerTargetX, y, this.flyerTargetZ);
     this.mesh.rotation.x = -Math.PI / 2.4;
 
-    if (hordeGooseReaches(this.position, targetPosition)) {
-      this.reachedTarget = true;
-      this.dead = true;
-      return;
-    }
+    if (this.arrivedAt(this.position, targetPosition)) return;
     if (t >= 1) {
       this.flyerLanded = true;
       this.mesh.rotation.x = 0;
@@ -236,11 +320,7 @@ export class HordeGoose implements Entity, Damageable {
   private updateIndoorFlight(dt: number, targetPosition: THREE.Vector3, flightHeight: (x: number, z: number) => number): void {
     const current = this.rigidBody.translation();
     const distance = Math.hypot(targetPosition.x - current.x, targetPosition.z - current.z);
-    if (hordeGooseReaches(current, targetPosition)) {
-      this.reachedTarget = true;
-      this.dead = true;
-      return;
-    }
+    if (this.arrivedAt(current, targetPosition)) return;
     const waypoint = resolveMoveTarget(current.x, current.z, targetPosition.x, targetPosition.z);
     const wx = waypoint.x - current.x;
     const wz = waypoint.z - current.z;
@@ -251,7 +331,7 @@ export class HordeGoose implements Entity, Damageable {
     const nextX = waypointDistance > 1e-4 ? current.x + (wx / waypointDistance) * step : current.x;
     const nextZ = waypointDistance > 1e-4 ? current.z + (wz / waypointDistance) * step : current.z;
     const ceilingY = flightHeight(nextX, nextZ);
-    const lowY = Math.max(targetPosition.y, GOOSE_HEIGHT / 2);
+    const lowY = Math.max(targetPosition.y, this.halfHeight);
     const wantY = lowY + (ceilingY - lowY) * Math.min(1, distance / INDOOR_DIVE_DISTANCE);
     const climb = INDOOR_CLIMB_SPEED * dt;
     const y = Math.min(ceilingY, current.y + Math.max(-climb, Math.min(climb, wantY - current.y)));
@@ -267,16 +347,12 @@ export class HordeGoose implements Entity, Damageable {
     const dz = targetPosition.z - current.z;
     const distance = Math.sqrt(dx * dx + dz * dz);
 
-    if (hordeGooseReaches(current, targetPosition)) {
-      this.reachedTarget = true;
-      this.dead = true;
-      return;
-    }
+    if (this.arrivedAt(current, targetPosition)) return;
 
     if (this.flavor === 'jumper' && this.jumperBurstRemaining <= 0 && distance <= HORDE_JUMPER_TRIGGER_RADIUS) {
       this.jumperBurstRemaining = HORDE_JUMPER_BURST_SECONDS;
     }
-    let speed = this.chaseSpeed;
+    let speed = this.chaseSpeed * this.stats.speed;
     if (this.jumperBurstRemaining > 0) {
       this.jumperBurstRemaining -= dt;
       speed *= HORDE_JUMPER_BURST_MULTIPLIER;
@@ -285,7 +361,7 @@ export class HordeGoose implements Entity, Damageable {
     // Through the doors on the Facility and into the Valley houses (the enemies' navigator, told both
     // heights so a house's floors are told apart); straight at the target outdoors. The navigator
     // reads heights as an enemy's body centre, so the goose passes its feet plus that.
-    const feetY = current.y - GOOSE_HEIGHT / 2;
+    const feetY = current.y - this.halfHeight;
     const waypoint = resolveMoveTarget(current.x, current.z, targetPosition.x, targetPosition.z, feetY + ENEMY_HEIGHT / 2, targetPosition.y);
     const wx = waypoint.x - current.x;
     const wz = waypoint.z - current.z;
@@ -304,7 +380,7 @@ export class HordeGoose implements Entity, Damageable {
     const step = Math.min(reach, speed * dt);
     const nextX = current.x + steeredDir.x * step;
     const nextZ = current.z + steeredDir.z * step;
-    const groundY = this.groundHeightAt(nextX, nextZ, feetY) + GOOSE_HEIGHT / 2;
+    const groundY = this.groundHeightAt(nextX, nextZ, feetY) + this.halfHeight;
 
     this.rigidBody.setNextKinematicTranslation({ x: nextX, y: groundY, z: nextZ });
     this.waddlePhase += dt * WADDLE_BOB_SPEED;
@@ -313,11 +389,28 @@ export class HordeGoose implements Entity, Damageable {
     this.mesh.rotation.z = Math.sin(this.waddlePhase) * WADDLE_ROCK_ANGLE;
   }
 
+  /** Whether the goose at `current` has reached its target, and what that does: every goose but a
+   * boss goes off and dies (true: its tick is over); a boss stomps, at most once per its cooldown,
+   * and keeps moving (false). */
+  private arrivedAt(current: THREE.Vector3Like, targetPosition: THREE.Vector3Like): boolean {
+    if (!hordeGooseReaches(current, targetPosition, this.stats.contactRadius)) return false;
+    if (this.flavor === 'boss') {
+      if (this.stompCooldown <= 0) {
+        this.stompCooldown = this.boss ? HORDE_BOSSES[this.boss].stompEvery : 2.5;
+        this.stompPending = true;
+      }
+      return false;
+    }
+    this.reachedTarget = true;
+    this.dead = true;
+    return true;
+  }
+
   /** The door gate (enemyNavigator.ts) for a goose about to move along (dirX, dirZ) with its waypoint
    * `reach` m on: true while a closed door holds it, facing the door (the gate opens it after the
    * wait, synced like an enemy's opening). */
   private heldAtDoor(current: THREE.Vector3Like, dirX: number, dirZ: number, reach: number, dt: number): boolean {
-    if (!heldAtDoor(this.id, current.x, current.z, dirX, dirZ, dt, reach, current.y - GOOSE_HEIGHT / 2)) return false;
+    if (!heldAtDoor(this.id, current.x, current.z, dirX, dirZ, dt, reach, current.y - this.halfHeight)) return false;
     this.mesh.rotation.y = Math.atan2(dirX, dirZ);
     this.mesh.rotation.z = 0;
     return true;

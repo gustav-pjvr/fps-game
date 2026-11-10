@@ -323,7 +323,8 @@ Details that are easy to miss:
 | Change audio falloff | `positionalAudio.ts` and the matching constants in `config.ts`. For the surface boundary, `undergroundMuffleFactor` there; every new world sound that should be muffled multiplies it into its volume, as the `fireEvent` case does. |
 | Add a rule that changes below ground (a mode or a pickup) | Use `isBelowGround` (`world/underground.ts`), keep the rule in the pure controller or state class and pass the flag in (`KingOfTheHillController`, `MissionInput.underground`, `DirectorSignals.allPlayersUnderground`). A host check on a guest's claim must compare height as well as x and z, as `PickupSystem.handleMessage` does. |
 | Add another world object that shares the Valley door messages | Give it an id range above `TOWER_DOOR_BASE + WATCH_TOWER_COUNT` in `valleyHouseIds.ts` with its own `fooIndexFromId`, resolve it in `ValleyDoors.plane`, and make `state.has` reject every other id. The wire bounds in `protocol.ts` do not know about ranges. |
-| Change the Goose Horde waves | `HORDE_WAVE_TABLE_MULTIPLAYER`, `HORDE_MAX_RESPAWNS` in `config.ts`; `HordeGooseManager`. |
+| Change the Goose Horde waves | `HORDE_WAVE_TABLE` in `config.ts`, the goose kinds and the scaling in `entities/hordeRules.ts`; `HordeGooseManager` (docs/goose-horde.md). |
+| Change pings or down and revive | `core/modeControllers/reviveRules.ts`, `SquadController.ts` (docs/coop.md). |
 
 ### Checklist: every place a new message must be added
 

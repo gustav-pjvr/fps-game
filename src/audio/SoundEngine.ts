@@ -262,6 +262,12 @@ export class SoundEngine {
 
   /** A short cue for a change in an objective: `gain` rises (your side took something), `lose`
    * falls (the other side did), `alert` is three even pips (the objective itself changed). */
+  /** A teammate's ping (docs/coop.md): one short high note, quieter than an objective's cue. */
+  playPing(): void {
+    this.tone(988, 0.09, 0.1, 'sine');
+    this.tone(1319, 0.12, 0.08, 'sine', 0, 0.07);
+  }
+
   playObjectiveCue(kind: 'gain' | 'lose' | 'alert'): void {
     const notes = kind === 'gain' ? [523, 784] : kind === 'lose' ? [440, 294] : [660, 660, 660];
     notes.forEach((frequency, i) => this.tone(frequency, 0.12, 0.16, 'triangle', 0, i * 0.11));

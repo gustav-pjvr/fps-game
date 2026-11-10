@@ -83,14 +83,20 @@ export class DeathScreen {
 
   /** The Uplink mission's end screen, for a win or a loss. Respawn restarts the mission. */
   showMission(result: MissionResult): void {
-    this.titleElement.textContent = result.won ? 'Uplink complete' : 'Signal lost';
-    this.scoreElement.style.display = 'none';
-    const stats: [string, string][] = [
+    this.showResult(result.won ? 'Uplink complete' : 'Signal lost', null, [
       ['TIME', formatClock(result.seconds)],
       ['UPLINKS', `${result.online} / ${result.total}`],
       ['KILLS', String(result.kills)],
       ['DAMAGE TAKEN', String(Math.round(result.damageTaken))],
-    ];
+    ]);
+  }
+
+  /** A run's end screen (a mission, a solo Goose Horde run): a title, an optional line under it,
+   * and its numbers. Respawn starts the run again. */
+  showResult(title: string, line: string | null, stats: readonly (readonly [string, string])[]): void {
+    this.titleElement.textContent = title;
+    this.scoreElement.textContent = line ?? '';
+    this.scoreElement.style.display = line ? '' : 'none';
     this.statsElement.replaceChildren(
       ...stats.map(([label, value]) => {
         const cell = document.createElement('div');

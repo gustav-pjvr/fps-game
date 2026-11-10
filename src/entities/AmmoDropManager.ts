@@ -3,12 +3,11 @@ import { buildAmmoDropMesh } from './AmmoDrop.ts';
 import { disposeProceduralMesh } from './Goose.ts';
 import { sampleHeight } from '../world/TerrainGenerator.ts';
 import { inCutZone, isBelowGround, pointInUndergroundVolume } from '../world/underground.ts';
-import {
-  HORDE_AMMO_DROP_MAX_CONCURRENT,
-  HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS,
-  HORDE_AMMO_DROP_MIN_SPAWN_DELAY_SECONDS,
-  HORDE_AMMO_DROP_SPAWN_RADIUS,
-} from '../core/config.ts';
+import { HORDE_AMMO_DROP_MAX_CONCURRENT, HORDE_AMMO_DROP_SPAWN_RADIUS } from '../core/config.ts';
+
+/** A supply crate lands at least this far from the player it is for, so it is seen coming down
+ * rather than appearing underfoot (m). */
+const SUPPLY_MIN_DISTANCE = 4;
 
 interface LiveDrop {
   readonly id: string;
@@ -21,21 +20,22 @@ export interface AmmoDropManagerCallbacks {
   onNetworkSpawn?: (id: string, x: number, y: number, z: number) => void;
 }
 
-/** Goose Horde multiplayer's ammo crates (per explicit user request) - up to
- * HORDE_AMMO_DROP_MAX_CONCURRENT at once, spawned by the host near a randomly chosen
- * currently-connected player, no visual/physics collider needed since pickup is resolved by a
- * plain distance check (the same pattern the pickups use) rather than Rapier. Static once placed
- * (crates don't move), so unlike GooseManager there's no periodic snapshot broadcast to worry
- * about - a spawn message is the entire lifecycle until a pickup message removes it. */
+/** Goose Horde's supply crates (docs/goose-horde.md): earned by the squad's kills, one per standing
+ * player, placed by the authoritative side (the host, or single-player itself) near each of them,
+ * up to HORDE_AMMO_DROP_MAX_CONCURRENT at once. No visual/physics collider needed since pickup is
+ * resolved by a plain distance check (the same pattern the pickups use) rather than Rapier. Static
+ * once placed (crates don't move), so unlike GooseManager there's no periodic snapshot broadcast to
+ * worry about - a spawn message is the entire lifecycle until a pickup message removes it. */
 export class AmmoDropManager {
   private readonly drops = new Map<string, LiveDrop>();
-  private spawnTimer = randomSpawnDelay();
   private idCounter = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
     private readonly callbacks: AmmoDropManagerCallbacks,
     private readonly floor?: (x: number, y: number, z: number) => number,
+    /** Indoors (the Facility): a clear floor point near `anchor` for a crate, or null for none. */
+    private readonly indoorPoint?: (anchor: THREE.Vector3) => { x: number; z: number } | null,
   ) {}
 
   get count(): number {
@@ -48,27 +48,30 @@ export class AmmoDropManager {
     return new Map(Array.from(this.drops.values(), (drop) => [drop.id, drop.position] as const));
   }
 
-  // ---- Authoritative side (host only) ---------------------------------------------------------
+  // ---- Authoritative side (the host, or single-player) --------------------------------------
 
-  /** No-op for a non-host client - see the class comment. Callers don't need to check role
-   * themselves first. */
-  update(dt: number, playerPositions: readonly THREE.Vector3[], isHost: boolean): void {
-    if (!isHost || playerPositions.length === 0) return;
-    if (this.drops.size >= HORDE_AMMO_DROP_MAX_CONCURRENT) return;
+  /** A supply drop: one crate near each of `playerPositions` (the standing players), as far as the
+   * concurrent cap allows. Returns how many were placed. */
+  dropFor(playerPositions: readonly THREE.Vector3[]): number {
+    let placed = 0;
+    for (const anchor of playerPositions) {
+      if (this.drops.size >= HORDE_AMMO_DROP_MAX_CONCURRENT) break;
+      this.placeNear(anchor);
+      placed++;
+    }
+    return placed;
+  }
 
-    this.spawnTimer -= dt;
-    if (this.spawnTimer > 0) return;
-    this.spawnTimer = randomSpawnDelay();
-
-    const anchor = playerPositions[Math.floor(Math.random() * playerPositions.length)]!;
+  private placeNear(anchor: THREE.Vector3): void {
     // A player underground gets a crate in the same underground volume (1 m from its walls): a random
-    // point in the 18 m disc would mostly fall outside it, on the surface or inside a wall.
+    // point in the disc would mostly fall outside it, on the surface or inside a wall.
     const belowGround = isBelowGround(anchor.x, anchor.y, anchor.z);
     const inside = this.floor && belowGround ? pointInUndergroundVolume(anchor.x, anchor.y, anchor.z, Math.random(), Math.random()) : null;
     const angle = Math.random() * Math.PI * 2;
-    const radius = Math.random() * HORDE_AMMO_DROP_SPAWN_RADIUS;
-    const x = inside ? inside.x : anchor.x + Math.cos(angle) * radius;
-    const z = inside ? inside.z : anchor.z + Math.sin(angle) * radius;
+    const radius = SUPPLY_MIN_DISTANCE + Math.random() * (HORDE_AMMO_DROP_SPAWN_RADIUS - SUPPLY_MIN_DISTANCE);
+    const indoor = this.indoorPoint?.(anchor) ?? null;
+    const x = indoor ? indoor.x : inside ? inside.x : anchor.x + Math.cos(angle) * radius;
+    const z = indoor ? indoor.z : inside ? inside.z : anchor.z + Math.sin(angle) * radius;
     // A surface point inside a tower core's cut zone has no terrain floor (the stair hole is
     // there), so it asks the floor lookup too instead of floating at terrain height.
     const y = this.floor && (belowGround || inCutZone(x, z)) ? this.floor(x, anchor.y, z) : sampleHeight(x, z);
@@ -131,6 +134,11 @@ export class AmmoDropManager {
     return true;
   }
 
+  /** Takes every crate off the field (a solo run starting over). */
+  clearAll(): void {
+    this.dispose();
+  }
+
   dispose(): void {
     for (const drop of this.drops.values()) {
       this.scene.remove(drop.mesh);
@@ -140,6 +148,3 @@ export class AmmoDropManager {
   }
 }
 
-function randomSpawnDelay(): number {
-  return HORDE_AMMO_DROP_MIN_SPAWN_DELAY_SECONDS + Math.random() * (HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS - HORDE_AMMO_DROP_MIN_SPAWN_DELAY_SECONDS);
-}

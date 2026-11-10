@@ -20,8 +20,8 @@ export const GROUPS = {
   grenades: { files: ['e2e/grenades.spec.ts'] },
   // The Skins screen and the aim-point screenshots of every weapon in every skin (docs/skins.md).
   skins: { files: ['e2e/skins.spec.ts'] },
-  // The rebuilt multiplayer modes, each over several browser contexts (docs/king-of-the-hill.md).
-  modes: { files: ['e2e/koth.spec.ts'] },
+  // The rebuilt modes, each over several browser contexts (docs/king-of-the-hill.md, docs/goose-horde.md).
+  modes: { files: ['e2e/koth.spec.ts', 'e2e/horde.spec.ts'] },
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
@@ -77,7 +77,8 @@ export const RULES = [
   { match: /^src\/weapons\/(models|animation)\/|^src\/weapons\/viewModel\.ts$|^src\/core\/skins\.ts$|^src\/ui\/menu\/(SkinsScreen|WeaponPreview)\.ts$/, groups: ['skins'] },
   // The mode specs' own shared steps, and the modes' rules and presenters.
   { match: /^e2e\/coop\.ts$/, groups: ['modes'], stop: true },
-  { match: /^src\/core\/modeControllers\/(hillState|KingOfTheHillController)\.ts$|^src\/entities\/HillView\.ts$|^src\/ui\/kothHud\.ts$/, groups: ['modes'] },
+  { match: /^src\/core\/modeControllers\/(hillState|KingOfTheHillController|reviveRules|SquadController)\.ts$|^src\/entities\/HillView\.ts$|^src\/ui\/kothHud\.ts$/, groups: ['modes'] },
+  { match: /^src\/entities\/(HordeGoose|HordeGooseManager|hordeRules|AmmoDropManager)\.ts$|^src\/ui\/(hordeHud|downedOverlay)\.ts$/, groups: ['modes', 'facility'] },
   // What other players see in a hand.
   { match: /^src\/entities\/heldWeapon\.ts$/, groups: ['mp'] },
   { match: /^src\/ui\/|^index\.html$/, groups: ['quick', 'ui'] },

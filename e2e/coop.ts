@@ -9,10 +9,31 @@ export interface ModePlayer {
   readonly page: Page;
 }
 
-/** A small viewport: several software-rendered pages at once leave little CPU for pixels. */
-export async function openPlayer(browser: Browser): Promise<ModePlayer> {
+const REJOIN_KEY_PREFIX = 'fps-game-rejoin-';
+
+/** A small viewport: several software-rendered pages at once leave little CPU for pixels. With
+ * `rejoin`, the new context carries a player's old rejoin token for that room (see rejoinToken),
+ * so joining puts it back in its slot. */
+export async function openPlayer(browser: Browser, rejoin?: { code: string; token: string }): Promise<ModePlayer> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
+  if (rejoin) {
+    // core/multiplayerRejoin.ts keeps the token in sessionStorage per room code: a new context starts
+    // with none, so a rejoin hands it the old one before the page's own scripts run.
+    await context.addInitScript(
+      ({ key, token }) => {
+        if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, token);
+      },
+      { key: REJOIN_KEY_PREFIX + rejoin.code, token: rejoin.token },
+    );
+  }
   return { context, page: await context.newPage() };
+}
+
+/** The token that lets `page`'s player take its slot back in room `code` after it leaves. */
+export async function rejoinToken(page: Page, code: string): Promise<string> {
+  const token = await page.evaluate((key) => sessionStorage.getItem(key), REJOIN_KEY_PREFIX + code);
+  if (!token) throw new Error('this player has no rejoin token');
+  return token;
 }
 
 /** Opens Create Room with `mode` (a GameMode id) and `map` chosen and returns the room code. */
@@ -55,9 +76,11 @@ export async function joinLobby(guest: Page, code: string): Promise<void> {
   await ready.click();
 }
 
-/** A player joins a match that is already running. */
+/** A player joins a match that is already running (a late join, or a rejoin with its old token).
+ * Loading a running world takes minutes with several software-rendered pages open: a short wait
+ * would give up and press Join again on a page that is already loading the match. */
 export async function joinRunningMatch(guest: Page, code: string): Promise<void> {
-  await joinRoom(guest, code, () => guest.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 90000 }));
+  await joinRoom(guest, code, () => guest.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 240000 }));
 }
 
 /** The host starts the match; every page waits for its own match, then skips the mode briefing
@@ -72,9 +95,22 @@ export async function startMatch(host: Page, guests: readonly Page[]): Promise<v
   await start.click();
   const pages = [host, ...guests];
   for (const page of pages) await page.waitForFunction(() => window.__gameDebug !== undefined, undefined, { timeout: 120000 });
+  await skipBriefing(pages);
+}
+
+/** Dismisses the mode briefing on every page. The world stays frozen until every player has, and
+ * on a small viewport the Skip button sits below the fold of the briefing panel, so it is clicked
+ * through the DOM rather than by pointer. A page with no briefing (a mode without one) is left alone. */
+export async function skipBriefing(pages: readonly Page[]): Promise<void> {
   for (const page of pages) {
-    const skip = page.getByRole('button', { name: 'Skip', exact: true });
-    if (await skip.isVisible().catch(() => false)) await skip.click();
+    // In a room the button reads "Skip (1/2)": it counts the players who have.
+    const skip = page.getByRole('button', { name: /^Skip/ });
+    try {
+      await skip.waitFor({ state: 'attached', timeout: 30000 });
+    } catch {
+      continue;
+    }
+    await skip.evaluate((button) => (button as HTMLButtonElement).click());
   }
 }
 

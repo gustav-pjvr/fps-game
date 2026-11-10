@@ -109,6 +109,7 @@ export class Player implements Entity {
     this.previousCameraQuaternion.copy(this.currentCameraQuaternion);
     this.applyLook(input);
     this.applyMovement(dt, input);
+    if (this.shieldSeconds > 0) this.shieldSeconds -= dt;
     this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
     this.recoilYaw *= Math.max(0, 1 - RECOIL_DECAY * dt);
     this.knockbackVelocity.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY_PER_SECOND * dt));
@@ -172,8 +173,11 @@ export class Player implements Entity {
    * fight without the player dying and freezing the simulation. Never set by gameplay code. */
   debugInvulnerable = false;
 
+  /** Seconds of protection left after a revive or a Second Wind: no damage lands while it runs. */
+  private shieldSeconds = 0;
+
   takeDamage(amount: number, sourcePosition?: THREE.Vector3): void {
-    if (this.isDead || this.debugInvulnerable) return;
+    if (this.isDead || this.debugInvulnerable || this.shieldSeconds > 0) return;
     this.health = Math.max(0, this.health - amount);
     this.sounds.onDamaged(sourcePosition);
   }
@@ -187,7 +191,16 @@ export class Player implements Entity {
     return this.health - before;
   }
 
+  /** Stands a fallen player up where they are with `health` (a teammate's revive, a Second Wind),
+   * shielded for `shield` seconds so the blast that felled them does not do it again. */
+  revive(health: number, shield: number): void {
+    this.health = Math.max(1, Math.min(PLAYER_HEALTH, health));
+    this.shieldSeconds = shield;
+    this.knockbackVelocity.set(0, 0, 0);
+  }
+
   respawn(position: THREE.Vector3): void {
+    this.shieldSeconds = 0;
     this.health = PLAYER_HEALTH;
     this.verticalVelocity = 0;
     this.recoilPitch = 0;

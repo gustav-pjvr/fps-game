@@ -71,6 +71,9 @@ export class HillState {
   private hillIndex: number;
   private nextIndex: number;
   private moveIn: number = HILL_RULES.duration;
+  /** Test-only (window.__gameDebug.holdKothHill): the hill's clock stands still, so a slow browser
+   * run can finish its checks on one hill. Never set by gameplay code. */
+  debugClockHeld = false;
   private hold: HillHold = 'empty';
   private holder: number | null = null;
   private crown: PlayerSlot | null = null;
@@ -110,7 +113,7 @@ export class HillState {
   /** One tick: the hill's clock, who stands on it, and the points for a side holding it alone
    * (one a second, two while one of that side wears the crown on the hill). */
   update(dt: number, players: readonly HillPlayer[]): void {
-    this.moveIn -= dt;
+    if (!this.debugClockHeld) this.moveIn -= dt;
     if (this.moveIn <= 0) this.moveHill();
 
     // The crown falls where its wearer was if they are no longer in the match.

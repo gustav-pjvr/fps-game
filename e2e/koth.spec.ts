@@ -35,6 +35,9 @@ test('the hill, the crown and the score are the host\'s, and every client sees t
   await joinLobby(guest.page, code);
   await startMatch(host.page, [guest.page]);
 
+  // The hill's clock is stopped: three software-rendered pages take minutes over what a real
+  // match does in seconds, and the hill would move (and call the crown back) under the checks.
+  await host.page.evaluate(() => window.__gameDebug!.holdKothHill(true));
   // Both see the same hill, open, with the crown lying in its middle. Two players: no teams.
   const first = await waitForKoth(host.page, () => true, 'a first state on the host');
   const seenByGuest = await waitForKoth(guest.page, (state) => state.hill.x === first.hill.x && state.hill.z === first.hill.z, 'the host\'s hill on the guest');
@@ -79,4 +82,50 @@ test('the hill, the crown and the score are the host\'s, and every client sees t
 
   expect(errors).toEqual([]);
   for (const { context } of [host, guest, late]) await context.close();
+});
+
+test('four players play two against two: a side holds the hill together and scores together', async ({ browser }) => {
+  test.setTimeout(20 * 60 * 1000);
+  const players = [await openPlayer(browser), await openPlayer(browser), await openPlayer(browser), await openPlayer(browser)];
+  const [host, ...guests] = players as [typeof players[number], ...typeof players];
+  const errors: string[] = [];
+  for (const { page } of players) page.on('pageerror', (error) => errors.push(String(error)));
+
+  const code = await createRoom(host.page, 'kingOfTheHill');
+  for (const guest of guests) await joinLobby(guest.page, code);
+  await startMatch(host.page, guests.map((guest) => guest.page));
+  await host.page.evaluate(() => window.__gameDebug!.holdKothHill(true));
+
+  // Every client is told it is a team match, on the same hill.
+  const first = await waitForKoth(host.page, (state) => state.teams, 'a team match on the host');
+  for (const { page } of guests) {
+    await waitForKoth(page, (state) => state.teams && state.hill.x === first.hill.x && state.hill.z === first.hill.z, 'the team match on a guest');
+  }
+
+  // Slots 0 and 2 are one side, 1 and 3 the other.
+  const bySlot = new Map<number, Page>();
+  for (const { page } of players) {
+    bySlot.set(await page.evaluate(() => window.__gameDebug!.getScoreboardRows().find((row) => row.isYou)!.slot), page);
+  }
+  expect([...bySlot.keys()].sort()).toEqual([0, 1, 2, 3]);
+  const page = (slot: number): Page => bySlot.get(slot)!;
+
+  // Both of one side stand on the hill, the other side far off: the side holds it (a teammate does
+  // not contest it) and both of its players show the side's points.
+  await placeAt(page(1), first.hill.x + 40, first.hill.z + 40);
+  await placeAt(page(3), first.hill.x - 40, first.hill.z + 40);
+  await placeAt(page(0), first.hill.x + 3, first.hill.z);
+  await placeAt(page(2), first.hill.x - 3, first.hill.z);
+  await waitForKoth(page(1), (state) => state.hold === 'held' && state.holder === 0, 'side 0 holding the hill, seen by the other side');
+  await expect.poll(() => scoreOf(page(3), 0), { timeout: 120000 }).toBeGreaterThanOrEqual(2);
+  expect(await scoreOf(page(3), 2)).toBeGreaterThanOrEqual(2);
+  expect(await scoreOf(page(3), 1)).toBe(0);
+  await expect(page(2).getByTestId('koth-hud')).toContainText(/your team holds the hill/i);
+
+  // One of the other side steps on: contested.
+  await placeAt(page(1), first.hill.x, first.hill.z + 3);
+  await waitForKoth(page(0), (state) => state.hold === 'contested', 'a contested hill');
+
+  expect(errors).toEqual([]);
+  for (const { context } of players) await context.close();
 });

@@ -28,7 +28,10 @@ Current version 4.7.0. Where a document and the code disagree, the code is right
 | [music.md](music.md) | Lobby shuffle, the Facility track, the licence and why the files are not in git |
 | [ui-lobby.md](ui-lobby.md) | The lobby, death screen, menus, and the Loadout screen |
 | [multiplayer.md](multiplayer.md) | Multiplayer in depth, with history; the last section covers 3 to 4 players (v4.4.0) |
-| [goose-buster.md](goose-buster.md) | The exploding goose, King of the Hill and Goose Horde |
+| [king-of-the-hill.md](king-of-the-hill.md) | King of the Hill as rebuilt in v5.0.0: the moving hill, the crown, two against two |
+| [goose-horde.md](goose-horde.md) | Goose Horde as rebuilt in v5.0.0: twelve waves, brutes, bosses, supply drops, Second Wind, the co-op run |
+| [coop.md](coop.md) | The shared co-op layer: pings, down and revive |
+| [goose-buster.md](goose-buster.md) | The exploding goose, and King of the Hill and Goose Horde as first built (history) |
 | [enemy-ai-v2.md](enemy-ai-v2.md) | The enemy AI as built (step by step) |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |
 | [visual-overhaul.md](visual-overhaul.md), [visual-overhaul-ui.md](visual-overhaul-ui.md) | The v4.0 look, HUD and menu reskin |

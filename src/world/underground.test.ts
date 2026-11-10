@@ -168,7 +168,7 @@ describe('underground terrain cuts', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const drops = new AmmoDropManager(new THREE.Scene(), {}, (x, y, z) => floorBelow(physics.world, x, y, z));
     try {
-      drops.update(1000, [new THREE.Vector3(4, -2, 0)], true);
+      drops.dropFor([new THREE.Vector3(4, -2, 0)]);
       expect(drops.listForSync()[0]?.y).toBeCloseTo(-5);
     } finally {
       drops.dispose();
@@ -181,7 +181,7 @@ describe('underground terrain cuts', () => {
     const floor = vi.fn(() => -5);
     const drops = new AmmoDropManager(new THREE.Scene(), {}, floor);
     try {
-      drops.update(1000, [new THREE.Vector3(0, 1, 0)], true);
+      drops.dropFor([new THREE.Vector3(0, 1, 0)]);
       expect(floor).not.toHaveBeenCalled();
       expect(drops.listForSync()[0]?.y).toBe(0);
       expect(Math.abs(drops.listForSync()[0]!.x)).toBeGreaterThan(3);
@@ -197,8 +197,8 @@ describe('underground terrain cuts', () => {
       for (const rolls of [0, 0.5, 0.999]) {
         drops.dispose();
         vi.spyOn(Math, 'random').mockReturnValue(rolls);
-        // Anchor near a wall: the old 18 m disc landed out in the terrain or inside the wall.
-        drops.update(1000, [new THREE.Vector3(7.5, -2, -7.5)], true);
+        // Anchor near a wall: a point in the disc round it landed out in the terrain or inside the wall.
+        drops.dropFor([new THREE.Vector3(7.5, -2, -7.5)]);
         const drop = drops.listForSync()[0]!;
         expect(drop.x).toBeGreaterThanOrEqual(volume.minX + 1 - 1e-9);
         expect(drop.x).toBeLessThanOrEqual(volume.maxX - 1 + 1e-9);

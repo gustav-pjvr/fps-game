@@ -229,3 +229,66 @@ that a weapon is in the hand: a rifle hanging from one arm at the side read badl
 
 - Reason: judged from lab renders of each clip with the rifle, pistol and knife.
 - Runner-up: `Run_Shoot` while moving. Rejected: the arm waves the weapon overhead mid-stride.
+
+## D22. Goose Horde: one table of twelve waves, sized to the squad
+
+Solo and co-op share `HORDE_WAVE_TABLE` (twelve waves, bosses on 6 and 12). The table's counts are
+for one player; each further player adds 45 percent of the small geese, three or four players get half
+as many brutes again, a boss gains half its health per extra player, and the squad size is read when
+each wave begins (so a late joiner counts from the next wave). Before, solo had 10 waves and a room 15
+with fixed counts whatever the number of players.
+
+- Reason: fair from 1 to 4 players needs the flock to follow the squad; one table keeps the arc the
+  same for everyone and is one thing to tune.
+- Runner-up: a table per player count. Rejected: four tables to balance, and no answer for a player
+  joining or leaving mid-run.
+
+## D23. Co-op Goose Horde: down and revive replace the two respawns
+
+A fallen player is down for 25 s (a teammate holds interact for 3 s within 2.6 m to stand them up
+with 40 health), then out, and everyone down or out returns when the next wave starts. The run is
+lost when the whole squad is down at once. The fallen player has no death screen.
+
+- Reason: a count of lives gives teammates nothing to do for each other; a revive is the team play
+  the brief asks for, and "back next wave" keeps a fallen player in the evening.
+- Runner-up: keep limited lives and add revives on top. Rejected: two systems for one event.
+
+## D24. Solo Goose Horde: Second Wind, and a real ending
+
+Solo cannot be revived, so it starts with one Second Wind (stand up with 35 health, a 2.5 s shield, the
+geese within 7 m blown away) and earns another after waves 4 and 8, two at most. A death with none
+left ends the run and restarts from wave 1; surviving wave 12 wins on an end screen with the numbers.
+
+- Reason: one mistake ending a twelve wave run reads as unfair alone; an earned safety net rewards
+  progress without removing the stakes.
+- Runner-up: checkpoints every four waves. Rejected: it removes the tension of the late waves.
+
+## D25. Supply drops are earned, not timed
+
+The squad's kills fill a meter (small goose 1, brute 3, a boss fills it); a full meter drops a crate
+near every standing player: health, a grenade, and in a room ammunition. Before, a room got a timed
+ammo crate near a random player and solo got nothing.
+
+- Reason: a reward the squad sees coming ("5 kills to the drop") is a goal inside the wave, and one
+  crate each avoids a fight over supplies.
+- Runner-up: keep timed crates. Rejected: nothing to play for.
+
+## D26. The co-op layer lives in `core/modeControllers/`, and rides existing messages where it can
+
+`SquadController` and `reviveRules` sit beside the mode controllers (not in a new `core/coop/` as D15
+named). A fall reuses `hordePlayerEliminated` (now "this slot is down") and standing up is the ordinary
+`respawnEvent`; only `reviveEvent` and `ping` are new. The squad panel is the existing health rows top
+left with a `DOWN 18` or `OUT` tag, not a second panel.
+
+- Reason: fewer message types for the relay branch to classify, and one place for a player's health.
+- Runner-up: new `playerDowned` and `playerStoodUp` messages. Rejected: they would say what two
+  existing messages already say.
+
+## D27. Fable agent 3 builds Uplink in the shared checkout, by file ownership
+
+The Uplink rebuild is delegated with a list of files and of `Game.ts` members that are the agent's,
+and a list that is not; it does not commit. The main session keeps to the rest of `Game.ts` meanwhile.
+
+- Reason: a separate worktree would need its own `node_modules` junction, and a harness that removes
+  a worktree with a junction in it could delete the main checkout's modules (the brief's stop rule).
+- Runner-up: a worktree per agent. Rejected for that risk.

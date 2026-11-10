@@ -32,6 +32,7 @@ export const HOST_AUTHORED_MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = 
   'hordeReset',
   'hordeAmmoDropSpawned',
   'hordeSyncState',
+  'hordeState',
   'bonusGooseSpawned',
   'bonusGooseSnapshot',
   'bonusGooseKilled',

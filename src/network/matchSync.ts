@@ -1,4 +1,4 @@
-import type { HordeGooseSpawnedMessage, KothStateMessage, NetworkMessage, PlayerSlot, RosterEntry } from './protocol.ts';
+import type { HordeGooseSpawnedMessage, HordeStateMessage, KothStateMessage, NetworkMessage, PlayerSlot, RosterEntry } from './protocol.ts';
 
 interface SyncPoint {
   readonly id: string;
@@ -32,11 +32,13 @@ export interface MatchSyncSource {
   readonly koth: KothStateMessage | null;
   /** The wandering geese (GooseManager.listForSync). */
   readonly geese: readonly (SyncPoint & { readonly killerSlot?: PlayerSlot | null })[];
-  /** Goose Horde: the wave, who is out, the result once the run is over, and the live flock. */
+  /** Goose Horde: the wave, who is down, the result once the run is over, the wave panel's numbers
+   * and the live flock. */
   readonly horde: {
     readonly wave: number;
     readonly eliminated: Iterable<PlayerSlot>;
     readonly result: 'cleared' | 'wiped' | undefined;
+    readonly state: Omit<HordeStateMessage, 'type'> | null;
     readonly geese: readonly Omit<HordeGooseSpawnedMessage, 'type'>[];
   } | null;
   /** Goose Horde's ammo crates (AmmoDropManager.listForSync). */
@@ -68,8 +70,10 @@ export function buildMatchSync(source: MatchSyncSource): NetworkMessage[] {
   if (source.koth) messages.push(source.koth);
   for (const goose of source.geese) messages.push({ type: 'gooseSpawned', killerSlot: null, ...goose });
   if (source.horde) {
-    const { wave, eliminated, result, geese } = source.horde;
+    const { wave, eliminated, result, state, geese } = source.horde;
     messages.push({ type: 'hordeSyncState', wave, eliminated: [...eliminated], ...(result ? { result } : {}) });
+    // Before the flock: a boss's goose is built with the health its state names.
+    if (state) messages.push({ type: 'hordeState', ...state });
     for (const goose of geese) messages.push({ type: 'hordeGooseSpawned', ...goose });
   }
   for (const drop of source.ammoDrops) messages.push({ type: 'hordeAmmoDropSpawned', id: drop.id, x: drop.x, y: drop.y, z: drop.z });
