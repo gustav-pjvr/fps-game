@@ -21,6 +21,7 @@ const SCREENS: { name: string; open: string | null }[] = [
   { name: 'match setup', open: 'PLAY' },
   { name: 'multiplayer', open: 'MULTIPLAYER' },
   { name: 'loadout', open: 'LOADOUT' },
+  { name: 'skins', open: 'SKINS' },
   { name: 'settings', open: 'SETTINGS' },
 ];
 

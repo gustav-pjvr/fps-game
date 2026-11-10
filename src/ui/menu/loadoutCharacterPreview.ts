@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { loadGLTF } from '../../core/AssetLoader.ts';
 import { instantiateCharacter, PLAYER_CHARACTER } from '../../entities/characterModels.ts';
 import { PLAYER_HEIGHT } from '../../core/config.ts';
+import { HeldWeapon } from '../../entities/heldWeapon.ts';
 
 /** Slow, continuous turntable spin - fast enough to read as alive, slow enough not to distract
  * from actually picking a loadout. */
@@ -26,6 +27,9 @@ export class LoadoutCharacterPreview {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly turntable: THREE.Group;
   private mixer: THREE.AnimationMixer | null = null;
+  private heldWeapon: HeldWeapon | null = null;
+  /** What to hold, kept so a choice made before the character has loaded still shows. */
+  private held: { weaponId: string; skinId: string } | null = null;
   private rafHandle: number | null = null;
   private lastFrameMs: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -66,8 +70,17 @@ export class LoadoutCharacterPreview {
     const gltf = await loadGLTF(PLAYER_CHARACTER.path);
     const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
     this.turntable.add(model);
-    actions.idle?.play();
+    // Weapon up, the way other players see you.
+    (actions.aim ?? actions.idle)?.play();
     this.mixer = mixer;
+    this.heldWeapon = new HeldWeapon(model);
+    if (this.held) this.heldWeapon.set(this.held.weaponId, this.held.skinId);
+  }
+
+  /** The weapon the character holds: the equipped primary in the skin it wears. */
+  setHeldWeapon(weaponId: string, skinId: string): void {
+    this.held = { weaponId, skinId };
+    this.heldWeapon?.set(weaponId, skinId);
   }
 
   /** Camera aspect always tracks the container; the drawing buffer only once a renderer exists

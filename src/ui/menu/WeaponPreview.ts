@@ -120,7 +120,7 @@ export class WeaponPreview {
       this.holder.rotation.set(0, this.spin, 0);
     } else if (this.view === 'display') {
       this.camera.fov = 30;
-      this.camera.position.set(0, 0.14, 1.8);
+      this.camera.position.set(0, 0.12, 1.5);
       this.camera.lookAt(0, 0, 0);
       this.holder.rotation.set(0, this.spin, 0);
     } else {
@@ -160,6 +160,20 @@ export class WeaponPreview {
       if (this.view === 'held') this.showHeld();
       this.canvas.dataset.held = 'ready';
     });
+  }
+
+  /** How far the sight tip is drawn from the middle of the picture, in CSS pixels, in the hip and
+   * aimed views; null on the rack, in the hand view and for a weapon without sights. In the aimed
+   * view this is the aim-point check made on the real drawn frame: the middle of the picture is
+   * where a shot goes (e2e/skins.spec.ts reads it for every weapon and skin). */
+  sightOffsetPixels(): number | null {
+    if (this.view !== 'hip' && this.view !== 'aim') return null;
+    const dot = this.camera.getObjectByName('sight-dot');
+    if (!dot) return null;
+    this.camera.updateMatrixWorld(true);
+    const centre = new THREE.Box3().setFromObject(dot).getCenter(new THREE.Vector3()).project(this.camera);
+    const width = this.canvas.clientWidth, height = this.canvas.clientHeight;
+    return Math.hypot(centre.x * width / 2, centre.y * height / 2);
   }
 
   /** Plays the weapon's inspect (its own part moves plus the skin's turn) in the hip view. */

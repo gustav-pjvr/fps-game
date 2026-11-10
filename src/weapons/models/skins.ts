@@ -32,6 +32,8 @@ export interface SkinDefinition {
   readonly glow: { readonly full: number; readonly low: number };
   /** Sight dot colour. */
   readonly sightColor: number;
+  /** The look in four colours for the Skins screen: metal, furniture, trim, light. */
+  readonly swatches: readonly [string, string, string, string];
   readonly inspect: InspectStyle;
   /** The light lines breathe: cycles a second and depth (0 to 1) of the swing. */
   readonly pulse?: { readonly rate: number; readonly depth: number };
@@ -47,6 +49,7 @@ export const SKINS: Readonly<Record<SkinId, SkinDefinition>> = {
     features: {},
     glow: { full: 0x6ff0dc, low: 0xe8a64a },
     sightColor: 0xff6a3a,
+    swatches: ['#3a3d42', '#2a2c2f', '#d98a1e', '#6ff0dc'],
     inspect: 'standard',
   },
   ranger: {
@@ -56,6 +59,7 @@ export const SKINS: Readonly<Record<SkinId, SkinDefinition>> = {
     features: { sight: 'aperture', wraps: true },
     glow: { full: 0xa8d66a, low: 0xe8a64a },
     sightColor: 0xffb347,
+    swatches: ['#6f7867', '#5a6332', '#b39a66', '#a8d66a'],
     inspect: 'standard',
   },
   whiteout: {
@@ -65,6 +69,7 @@ export const SKINS: Readonly<Record<SkinId, SkinDefinition>> = {
     features: { wraps: true },
     glow: { full: 0x9fd8ff, low: 0xe8a64a },
     sightColor: 0xff5a3c,
+    swatches: ['#c4c8cc', '#e3e6ea', '#7fb6e8', '#9fd8ff'],
     inspect: 'standard',
   },
   ember: {
@@ -74,6 +79,7 @@ export const SKINS: Readonly<Record<SkinId, SkinDefinition>> = {
     features: { muzzle: 'ported' },
     glow: { full: 0xff9a3c, low: 0xff4a2a },
     sightColor: 0xffc24a,
+    swatches: ['#26211f', '#b56a2c', '#f2832a', '#ff9a3c'],
     inspect: 'standard',
   },
   gilded: {
@@ -83,6 +89,7 @@ export const SKINS: Readonly<Record<SkinId, SkinDefinition>> = {
     features: { engraving: true, medallion: true },
     glow: { full: 0xffd97a, low: 0xff7a3c },
     sightColor: 0xfff0b0,
+    swatches: ['#d2a644', '#6b3a1c', '#e7c26a', '#ffd97a'],
     inspect: 'showcase',
   },
   pulse: {
@@ -92,6 +99,7 @@ export const SKINS: Readonly<Record<SkinId, SkinDefinition>> = {
     features: { sight: 'reflex', lightLines: true },
     glow: { full: 0xc77dff, low: 0xff4f9a },
     sightColor: 0x7df9ff,
+    swatches: ['#3b3d49', '#3a3160', '#49d9e8', '#c77dff'],
     inspect: 'flick',
     pulse: { rate: 0.7, depth: 0.55 },
   },

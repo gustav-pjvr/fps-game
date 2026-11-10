@@ -1,6 +1,8 @@
 import { AMBER, SURFACE, SURFACE_RAISED, INK_FAINT, LABEL_CSS, MONO_FONT } from '../theme.ts';
 import { WEAPON_DEFINITIONS, weaponIdsIn, type WeaponDefinition } from '../../weapons/definitions.ts';
 import { createWeaponModel } from '../../weapons/models/weaponModels.ts';
+import { SKINS, type SkinId } from '../../weapons/models/skins.ts';
+import { equippedSkin, loadStoredSkins } from '../../core/skins.ts';
 import {
   createButton,
   createEyebrow,
@@ -95,6 +97,9 @@ function ensureLoadoutStyleInjected(): void {
     '  transition: border-color 150ms ease-out, background-color 150ms ease-out;' +
     '}' +
     '.loadout-tile-small { width: var(--loadout-grenade-tile); height: calc(var(--loadout-grenade-tile) * 0.66); }' +
+    // A weapon tile fills its grid cell; its picture is a landscape drawn to fit above the caption.
+    '.loadout-tile-wide { width: 100%; height: auto; aspect-ratio: 1.42; }' +
+    '.loadout-tile-wide img { left: 4%; top: 2px; width: 92%; height: calc(100% - 30px); aspect-ratio: auto; transform: none; }' +
     // The renders are square with the design centred and empty margins round it, so a square a
     // little wider than the tile is tall fills the tile, its empty top and bottom clipped by the
     // tile. Grenades stand upright, so their tiles show the whole render.
@@ -149,10 +154,10 @@ type DetailsTarget = { readonly kind: 'weapon'; readonly id: string } | { readon
 
 /** A landscape tile with a rendered design and permanent name caption.
  * `name` is also its accessible name; the details panel carries everything else. */
-function buildTile(name: string, thumbnailDataUrl: string | null, options: { small?: boolean; reward?: boolean } = {}): HTMLButtonElement {
+function buildTile(name: string, thumbnailDataUrl: string | null, options: { small?: boolean; reward?: boolean; wide?: boolean } = {}): HTMLButtonElement {
   const tile = document.createElement('button');
   tile.type = 'button';
-  tile.className = 'loadout-tile' + (options.small ? ' loadout-tile-small' : '') + (options.reward ? ' loadout-tile-reward' : '');
+  tile.className = 'loadout-tile' + (options.small ? ' loadout-tile-small' : '') + (options.wide ? ' loadout-tile-wide' : '') + (options.reward ? ' loadout-tile-reward' : '');
   tile.setAttribute('aria-label', options.reward ? `${name}, reward only` : name);
   if (thumbnailDataUrl) {
     const img = document.createElement('img');
@@ -169,23 +174,52 @@ function buildTile(name: string, thumbnailDataUrl: string | null, options: { sma
 }
 
 function weaponStats(weapon: WeaponDefinition): HTMLSpanElement[] {
+  // A blade: its two attacks, its reach and how often it strikes.
+  if (weapon.melee) {
+    const { primary, alt } = weapon.melee;
+    const altHits = 1 + (alt.repeats ?? 0);
+    return [
+      createStatBadge('damage', `${primary.damage} strike`),
+      createStatBadge('damage', altHits > 1 ? `${altHits} x ${alt.damage} aimed` : `${alt.damage} aimed`),
+      createStatBadge('reach', `${primary.range} m reach`),
+      createStatBadge('fireRate', `${(1 / primary.cooldown).toFixed(1)}/s`),
+    ];
+  }
   const stats = [
-    createStatBadge('damage', `${weapon.damage}`),
+    createStatBadge('damage', weapon.pelletCount > 1 ? `${weapon.pelletCount} x ${weapon.damage}` : `${weapon.damage}`),
     createStatBadge('fireRate', `${weapon.fireRate}/s`),
     createStatBadge('magazine', `${weapon.magazineSize}`),
-    createStatBadge('reload', `${weapon.reloadTime}s`),
   ];
+  if (!weapon.disableReload) stats.push(createStatBadge('reload', `${weapon.reloadTime}s`));
+  if (weapon.falloff) stats.push(createStatBadge('reach', `Full to ${weapon.falloff.start} m`));
   if (weapon.hasScope) stats.push(createStatBadge('scope', 'Scope'));
   if (weapon.burstCount && weapon.burstCount > 1) stats.push(createStatBadge('fireRate', `${weapon.burstCount}-round burst`));
   return stats;
 }
 
-/** A tile row: landscape tiles side by side, wrapping when the column is narrow. */
-function buildTileRow(label: string, tiles: readonly HTMLButtonElement[]): HTMLDivElement {
+/** The picture of a weapon in a skin for its tile: the design alone, without the shooter's arms.
+ * Cached per weapon and skin for the session (weaponThumbnail.ts); null if it cannot be drawn. */
+function weaponThumbnail(weaponId: string, skinId: SkinId): string | null {
+  const key = `${weaponId}:${skinId}`;
+  const cached = getCachedWeaponThumbnail(key);
+  if (cached !== null) return cached;
+  try {
+    return renderWeaponThumbnail(key, createWeaponModel(weaponId, skinId, { raw: true }).root, { wide: true });
+  } catch (error) {
+    console.warn(`Failed to render loadout thumbnail for "${weaponId}"`, error);
+    return null;
+  }
+}
+
+/** A tile row: landscape tiles side by side, wrapping when the column is narrow. `grid` lays them
+ * on an even grid that fills the column (the weapon bands, which hold up to seven tiles). */
+function buildTileRow(label: string, tiles: readonly HTMLButtonElement[], grid = false): HTMLDivElement {
   const row = document.createElement('div');
   row.setAttribute('role', 'group');
   row.setAttribute('aria-label', label);
-  row.style.cssText = 'display:flex; flex-wrap:wrap; gap:10px;';
+  row.style.cssText = grid
+    ? 'display:grid; grid-template-columns:repeat(auto-fill, minmax(var(--loadout-tile-w), 1fr)); gap:10px; width:100%;'
+    : 'display:flex; flex-wrap:wrap; gap:10px;';
   row.append(...tiles);
   return row;
 }
@@ -210,7 +244,11 @@ export class LoadoutScreen {
     readonly name: HTMLDivElement;
     readonly description: HTMLDivElement;
     readonly stats: HTMLDivElement;
+    readonly skinRow: HTMLDivElement;
+    readonly skinName: HTMLSpanElement;
   };
+  /** The skin each weapon wears (core/skins.ts), re-read whenever the page opens or Skins closes. */
+  private skins = loadStoredSkins();
   private readonly updateScrollHint: () => void;
   private readonly closeButton: HTMLButtonElement;
   private readonly grenadeKeyCap: HTMLSpanElement;
@@ -219,7 +257,7 @@ export class LoadoutScreen {
   private loadout: PlayerLoadout;
   private detailsTarget: DetailsTarget;
 
-  private constructor(root: HTMLElement, weaponTiles: WeaponTile[], grenadeTiles: GrenadeTile[], onClose: () => void) {
+  private constructor(root: HTMLElement, weaponTiles: WeaponTile[], grenadeTiles: GrenadeTile[], onClose: () => void, onOpenSkins?: (weaponId: string) => void) {
     ensureLoadoutStyleInjected();
     ensureMotionKeyframesInjected();
     this.weaponTiles = weaponTiles;
@@ -234,7 +272,7 @@ export class LoadoutScreen {
     this.overlay.style.cssText =
       `position:absolute; inset:0; display:none; flex-direction:column; background:${BG_VOID};` +
       ` color:${TEXT}; font-family:${BODY_FONT}; z-index:30; pointer-events:auto; padding:36px 48px; box-sizing:border-box;` +
-      ' --loadout-tile-w:clamp(112px, min(10.5vw, 16.5vh), 168px); --loadout-grenade-tile:calc(var(--loadout-tile-w) * 0.8);';
+      ' --loadout-tile-w:clamp(118px, min(9.5vw, 16vh), 150px); --loadout-grenade-tile:calc(var(--loadout-tile-w) * 0.8);';
 
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; flex-shrink:0;';
@@ -257,7 +295,7 @@ export class LoadoutScreen {
     // --- Left: the weapon catalog, grouped/ordered by category, scrollbar-free (see below) ---
     const leftColumnWrap = document.createElement('div');
     leftColumnWrap.className = 'loadout-catalog-wrap';
-    leftColumnWrap.style.cssText = 'flex:1.3; min-width:0; position:relative; display:flex; min-height:0;';
+    leftColumnWrap.style.cssText = 'flex:1.7; min-width:0; position:relative; display:flex; min-height:0;';
 
     const leftColumn = document.createElement('div');
     leftColumn.className = 'loadout-catalog loadout-scroll-hide';
@@ -270,21 +308,20 @@ export class LoadoutScreen {
       'flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:5px; margin:-5px;' +
       ' scrollbar-width:none; -ms-overflow-style:none;';
 
-    // Category bands stack in order, one per row: the label in a fixed column on the left, its
-    // tiles beside it, so the five bands fit a 900 px tall window without scrolling.
+    // Category bands stack in order: each a label, then its tiles on a grid that fills the column.
     const weaponSections = document.createElement('div');
-    weaponSections.style.cssText = 'display:flex; flex-direction:column; flex-shrink:0; gap:14px;';
+    weaponSections.style.cssText = 'display:flex; flex-direction:column; flex-shrink:0; gap:18px;';
     for (const category of ['primary', 'secondary', 'melee', 'special'] as const) {
       const section = document.createElement('div');
-      section.style.cssText = 'display:flex; align-items:center; width:100%; gap:16px;';
+      section.style.cssText = 'display:flex; flex-direction:column; width:100%; gap:8px;';
       const heading = document.createElement('div');
-      heading.style.cssText = 'flex:0 0 112px; display:flex; flex-direction:column; gap:6px;';
+      heading.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
       // The Goose Launcher's section says what it is in gold instead of "Special".
       const eyebrow = createEyebrow(category === 'special' ? 'Reward only' : CATEGORY_LABELS[category]);
       if (category === 'special') eyebrow.style.color = REWARD_GOLD;
       heading.appendChild(eyebrow);
       const tiles = weaponTiles.filter((t) => t.category === category).map((t) => t.element);
-      section.append(heading, buildTileRow(CATEGORY_LABELS[category], tiles));
+      section.append(heading, buildTileRow(CATEGORY_LABELS[category], tiles, true));
       weaponSections.appendChild(section);
     }
 
@@ -357,8 +394,27 @@ export class LoadoutScreen {
     detailsDescription.style.cssText = `font-family:${BODY_FONT}; font-size:0.8rem; line-height:1.4; color:${STEEL};`;
     const detailsStats = document.createElement('div');
     detailsStats.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:2px; font-size:0.72rem; opacity:0.8; font-variant-numeric:tabular-nums;';
-    detailsPanel.append(detailsTop, detailsName, detailsDescription, detailsStats);
-    this.details = { category: detailsCategory, status: detailsStatus, name: detailsName, description: detailsDescription, stats: detailsStats };
+    // The skin the weapon in view wears, and the way to the Skins page for it (lobby only).
+    const skinRow = document.createElement('div');
+    skinRow.dataset.testid = 'loadout-skin';
+    skinRow.style.cssText = `display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; padding-top:10px; border-top:1px solid ${HAIRLINE};`;
+    const skinLabel = document.createElement('div');
+    skinLabel.style.cssText = 'display:flex; flex-direction:column; gap:3px; min-width:0;';
+    const skinName = document.createElement('span');
+    skinName.style.cssText = `font-family:${BODY_FONT}; font-size:0.85rem; font-weight:600; color:${TEXT};`;
+    skinLabel.append(createEyebrow('Skin'), skinName);
+    skinRow.appendChild(skinLabel);
+    if (onOpenSkins) {
+      const change = createButton('Change');
+      change.dataset.testid = 'loadout-change-skin';
+      change.style.padding = '9px 14px';
+      change.addEventListener('click', () => {
+        if (this.detailsTarget.kind === 'weapon') onOpenSkins(this.detailsTarget.id);
+      });
+      skinRow.appendChild(change);
+    }
+    detailsPanel.append(detailsTop, detailsName, detailsDescription, detailsStats, skinRow);
+    this.details = { category: detailsCategory, status: detailsStatus, name: detailsName, description: detailsDescription, stats: detailsStats, skinRow, skinName };
     middleColumn.appendChild(detailsPanel);
 
     this.slotValueElements = {} as Record<LoadoutWeaponSlot | 'grenade', HTMLDivElement>;
@@ -461,12 +517,36 @@ export class LoadoutScreen {
     }
     for (const tile of this.grenadeTiles) tile.element.setAttribute('aria-pressed', String(tile.kind === grenade));
 
+    const primary = equippedWeaponId(this.loadout, 'primary');
+    this.characterPreview.setHeldWeapon(primary, equippedSkin(this.skins, primary));
     this.renderDetails();
+  }
+
+  /** Re-reads the equipped skins and redraws what shows them: each tile's picture, the character's
+   * weapon and the details panel. Called when the page opens and when the Skins page closes. */
+  refreshSkins(): void {
+    this.skins = loadStoredSkins();
+    try {
+      for (const tile of this.weaponTiles) {
+        const skinId = equippedSkin(this.skins, tile.weapon.id);
+        const image = tile.element.querySelector('img');
+        if (!image || image.dataset.skin === skinId) continue;
+        const url = weaponThumbnail(tile.weapon.id, skinId);
+        if (url) {
+          image.src = url;
+          image.dataset.skin = skinId;
+        }
+      }
+    } finally {
+      releaseThumbnailRenderer();
+    }
+    this.refresh();
   }
 
   private renderDetails(): void {
     const target = this.detailsTarget;
-    const { category, status, name, description, stats } = this.details;
+    const { category, status, name, description, stats, skinRow, skinName } = this.details;
+    skinRow.style.display = target.kind === 'weapon' ? 'flex' : 'none';
     if (target.kind === 'grenade') {
       const choice = GRENADE_CHOICES[target.id];
       category.textContent = 'Grenade';
@@ -485,6 +565,7 @@ export class LoadoutScreen {
     name.style.color = weaponCategory === 'special' ? REWARD_GOLD : TEXT;
     description.textContent = weapon.description;
     stats.replaceChildren(...weaponStats(weapon));
+    skinName.textContent = SKINS[equippedSkin(this.skins, weapon.id)].name;
     LoadoutScreen.setDetailsStatus(
       status,
       weaponCategory === 'special' ? 'reward' : equippedWeaponId(this.loadout, weaponCategory) === weapon.id ? 'equipped' : null,
@@ -496,7 +577,7 @@ export class LoadoutScreen {
     element.style.color = state === 'reward' ? REWARD_GOLD : ACCENT;
   }
 
-  static async create(root: HTMLElement, onClose: () => void): Promise<LoadoutScreen> {
+  static async create(root: HTMLElement, onClose: () => void, onOpenSkins?: (weaponId: string) => void): Promise<LoadoutScreen> {
     const orderedWeaponIds = [
       ...CATEGORY_DISPLAY_ORDER.primary,
       ...CATEGORY_DISPLAY_ORDER.secondary,
@@ -508,21 +589,17 @@ export class LoadoutScreen {
     // match) just reuses the cached data URLs and never touches WebGL at all.
     let weaponTiles: WeaponTile[];
     let grenadeTiles: GrenadeTile[];
+    const skins = loadStoredSkins();
     try {
       weaponTiles = await Promise.all(
         orderedWeaponIds.map(async (weaponId): Promise<WeaponTile> => {
           const weapon = WEAPON_DEFINITIONS[weaponId]!;
           const category = WEAPON_CATEGORIES[weaponId]!;
-          let thumbnailDataUrl = getCachedWeaponThumbnail(weapon.id);
-          if (thumbnailDataUrl === null) {
-            try {
-              // The weapon's design alone: a copy without the shooter's arms.
-              thumbnailDataUrl = renderWeaponThumbnail(weapon.id, createWeaponModel(weapon.id).root);
-            } catch (error) {
-              console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
-            }
-          }
-          return { element: buildTile(weapon.name, thumbnailDataUrl, { reward: category === 'special' }), weapon, category };
+          const skinId = equippedSkin(skins, weapon.id);
+          const element = buildTile(weapon.name, weaponThumbnail(weapon.id, skinId), { reward: category === 'special', wide: true });
+          const image = element.querySelector('img');
+          if (image) image.dataset.skin = skinId;
+          return { element, weapon, category };
         }),
       );
       grenadeTiles = GRENADE_KINDS.map((kind): GrenadeTile => {
@@ -546,13 +623,13 @@ export class LoadoutScreen {
     }
     for (const tile of weaponTiles) tile.element.dataset.weaponId = tile.weapon.id;
 
-    return new LoadoutScreen(root, weaponTiles, grenadeTiles, onClose);
+    return new LoadoutScreen(root, weaponTiles, grenadeTiles, onClose, onOpenSkins);
   }
 
   show(): void {
     this.overlay.style.display = 'flex';
     this.loadout = loadStoredLoadout();
-    this.refresh();
+    this.refreshSkins();
     this.refreshGrenadeHint();
     this.characterPreview.start();
     attachScanSweep(this.overlay);
