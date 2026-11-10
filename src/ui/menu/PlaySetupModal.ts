@@ -89,7 +89,7 @@ export class PlaySetupModal {
     modeGrid.style.cssText = 'display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;';
     const selectedMode = defaults.hordeMode ? 'horde' : defaults.directorMode ? 'director' : defaults.missionMode ? 'mission' : 'elimination';
     const eliminationRadio = this.buildModeCard(modeGrid, 'elimination', 'Elimination', 'Clear the hostiles and targets', selectedMode);
-    this.hordeModeRadio = this.buildModeCard(modeGrid, 'horde', 'Goose Horde', 'Survive 10 waves', selectedMode);
+    this.hordeModeRadio = this.buildModeCard(modeGrid, 'horde', 'Goose Horde', 'Survive 12 waves, bosses on 6 and 12', selectedMode);
     this.directorModeRadio = this.buildModeCard(modeGrid, 'director', 'Showdown', 'Five acts and a finale, paced by the Director', selectedMode);
     this.missionModeRadio = this.buildModeCard(modeGrid, 'mission', 'Operation Uplink', 'Breach, fetch the core, defend, extract', selectedMode);
     modeGroup.append(modeLabel, modeGrid);

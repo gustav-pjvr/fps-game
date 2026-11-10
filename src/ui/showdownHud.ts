@@ -1,4 +1,4 @@
-import { ACCENT, AMBER, INK, INK_DIM, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_SHADOW, THREAT } from './theme.ts';
+import { ACCENT, AMBER, HAIRLINE, INK, LABEL_CSS, MONO_FONT, SANS_FONT, SURFACE, TEXT_SHADOW, THREAT } from './theme.ts';
 import type { ShowdownView } from '../entities/enemies/director/showdown.ts';
 
 const STATUS: Readonly<Record<ShowdownView['phase'], string>> = { buildUp: 'THEY ARE COMING', peak: 'PEAK', fade: 'HOLD ON', relax: 'BREATHER' };
@@ -20,7 +20,9 @@ export class ShowdownHud {
     this.element.dataset.testid = 'showdown-hud';
     this.element.style.cssText =
       `position:absolute; top:122px; left:50%; transform:translateX(-50%); width:min(280px, 62vw); text-align:center; color:${INK};` +
-      ` font-family:${SANS_FONT}; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;`;
+      ` font-family:${SANS_FONT}; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;` +
+      // A backing like the scoreboard's: bare text was lost against the sky and the towers.
+      ` background:${SURFACE}; backdrop-filter:blur(10px); border:1px solid ${HAIRLINE}; border-radius:2px; padding:9px 16px 11px; box-sizing:border-box;`;
     const label = document.createElement('div');
     label.style.cssText = `${LABEL_CSS} margin-bottom:5px;`;
     label.textContent = 'SHOWDOWN';
@@ -40,7 +42,7 @@ export class ShowdownHud {
     this.heatBar.style.cssText = `height:100%; width:100%; transform-origin:left center; border-radius:2px; background:${AMBER};`;
     track.appendChild(this.heatBar);
     this.foot = document.createElement('div');
-    this.foot.style.cssText = `font-family:${MONO_FONT}; font-size:9.5px; font-weight:300; letter-spacing:0.06em; color:${INK_DIM};`;
+    this.foot.style.cssText = `font-family:${MONO_FONT}; font-size:10.5px; font-weight:400; letter-spacing:0.06em; color:${INK};`;
     this.element.append(label, this.act, this.status, this.score, track, this.foot);
     root.appendChild(this.element);
   }

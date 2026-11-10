@@ -20,7 +20,7 @@ screen as **Showdown**.
 - A headline at each act (`ACT 3`) and at the finale (`FINALE: THE WARDEN`); a line when an act is
   survived with its bonus, and when the multiplier changes.
 - A supply crate near the player in each breather, with a `SUPPLY` marker (health +35, a grenade).
-- The end screen: "Showdown won" or "Overrun", the grade, score, kills, best multiplier and time.
+- The end screen: "Showdown won" or "Showdown lost", the grade, score, kills, best multiplier and time.
 
 ## An act
 
@@ -62,7 +62,7 @@ is left alive.
 
 Solo has two **redeploys**. A death with one left does not end the run: the player is put back at
 the map's start point with full health and a 3 s shield, the enemies and the act stay as they are,
-and the multiplier starts again. A death with none left ends the run ("Overrun"). Respawn on the
+and the multiplier starts again. A death with none left ends the run ("Showdown lost"). Play again on the
 end screen starts a new run from act 1.
 
 ## Grade

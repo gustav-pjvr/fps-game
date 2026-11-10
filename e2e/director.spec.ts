@@ -152,13 +152,13 @@ test('Showdown: two deaths are redeploys, the third ends the run on its end scre
 
   await fall();
   const deathScreen = page.getByTestId('death-screen');
-  await expect(deathScreen).toContainText('Overrun', { timeout: 30000 });
+  await expect(deathScreen).toContainText('Showdown lost', { timeout: 30000 });
   await expect(deathScreen).toContainText('SCORE');
   await expect(deathScreen).toContainText('Grade');
   expect((await showdown(page)).stage).toBe('lost');
 
-  // Respawn starts a new run: act 1, the redeploys back.
-  await deathScreen.getByRole('button', { name: 'Respawn', exact: true }).click();
+  // Play again starts a new run: act 1, the redeploys back.
+  await deathScreen.getByRole('button', { name: 'Play again', exact: true }).click();
   await expect.poll(async () => (await showdown(page)).redeploysLeft, { timeout: 30000 }).toBe(2);
   expect(await showdown(page)).toMatchObject({ act: 1, stage: 'act', score: 0 });
 });

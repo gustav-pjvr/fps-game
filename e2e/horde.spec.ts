@@ -91,8 +91,8 @@ test('solo: waves, a supply drop, a Second Wind, a boss, and the run won', async
   await expect(deathScreen).toContainText('Overrun', { timeout: 30000 });
   await expect(deathScreen).toContainText('GEESE KILLED');
 
-  // A new run starts from wave 1 with its Second Wind back.
-  await deathScreen.getByRole('button', { name: 'Respawn', exact: true }).click();
+  // Play again starts a new run from wave 1 with its Second Wind back.
+  await deathScreen.getByRole('button', { name: 'Play again', exact: true }).click();
   await lockPointer(page);
   await invulnerable(page, true);
   const restarted = await waitForHorde(page, (state) => state.wave === 1 && state.secondWinds === 1, 'a fresh run');

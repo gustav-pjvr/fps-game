@@ -37,6 +37,8 @@ export class DeathScreen {
   private readonly titleElement: HTMLHeadingElement;
   private readonly scoreElement: HTMLDivElement;
   private readonly statsElement: HTMLDListElement;
+  private readonly respawnButton: HTMLButtonElement;
+  private readonly hint: HTMLDivElement;
 
   constructor(root: HTMLElement, onRespawnClick: () => void, onReturnToLobbyClick: () => void) {
     this.element = document.createElement('div');
@@ -66,6 +68,7 @@ export class DeathScreen {
     buttonRow.style.cssText = 'display:flex; gap:12px; margin-top:8px;';
 
     const respawnButton = createButton('Respawn', 'primary');
+    this.respawnButton = respawnButton;
     respawnButton.addEventListener('click', onRespawnClick);
 
     const lobbyButton = createButton('Return to Lobby');
@@ -74,6 +77,7 @@ export class DeathScreen {
     buttonRow.append(respawnButton, lobbyButton);
     this.element.append(title, this.scoreElement, this.statsElement, buttonRow);
     const hint = document.createElement('div');
+    this.hint = hint;
     hint.style.cssText = `${LABEL_CSS} color:${INK_DIM};`;
     setDeviceHint(hint, 'Click Respawn to play again', 'D-pad: select | A (Cross): activate');
     this.element.appendChild(hint);
@@ -82,6 +86,7 @@ export class DeathScreen {
 
   show(score: number): void {
     this.titleElement.textContent = 'YOU DIED';
+    this.setAction('Respawn', 'Click Respawn to play again');
     this.scoreElement.textContent = `Score: ${score}`;
     this.scoreElement.style.display = '';
     this.statsElement.style.display = 'none';
@@ -111,9 +116,18 @@ export class DeathScreen {
     this.scoreElement.style.textAlign = 'center';
   }
 
-  /** A run's end screen (a mission, a solo Goose Horde run): a title, an optional line under it,
-   * and its numbers. Respawn starts the run again. */
-  showResult(title: string, line: string | null, stats: readonly (readonly [string, string])[]): void {
+  /** The main button's label and the hint under it: a finished run offers "Play again", a death
+   * mid-run "Redeploy", an ordinary death "Respawn". */
+  private setAction(label: string, hint: string): void {
+    this.respawnButton.textContent = label;
+    setDeviceHint(this.hint, hint, 'D-pad: select | A (Cross): activate');
+  }
+
+  /** A run's end screen (a mission, a solo Goose Horde run, Showdown): a title, an optional line
+   * under it, and its numbers. `action` names what the main button does: "Play again" starts the
+   * run over, "Redeploy" goes back into a running one. */
+  showResult(title: string, line: string | null, stats: readonly (readonly [string, string])[], action: 'Play again' | 'Redeploy' = 'Play again'): void {
+    this.setAction(action, action === 'Redeploy' ? 'Click Redeploy to go back in' : 'Click Play again to start over');
     this.titleElement.textContent = title;
     this.scoreElement.textContent = line ?? '';
     this.scoreElement.style.display = line ? '' : 'none';

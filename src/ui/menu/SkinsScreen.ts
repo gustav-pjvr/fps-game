@@ -81,7 +81,9 @@ function ensureSkinsStyleInjected(): void {
     '  .skins-screen { padding: 20px 16px !important; }' +
     '  .skins-body { flex-direction: column; overflow-y: auto; gap: 18px !important; }' +
     '  .skins-body > * { flex: none !important; width: 100% !important; max-height: none !important; }' +
-    '  .skins-stage { order: 1; }' +
+    // The preview stays at the top while the lists scroll under it: a tap on a skin far down the
+    // page showed no result before.
+    '  .skins-stage { order: 1; position: sticky; top: -1px; z-index: 3; background: ' + BG_VOID + '; padding-bottom: 10px; }' +
     '  .skins-weapons { order: 2; overflow: visible !important; }' +
     '  .skins-weapons-list { gap: 12px !important; }' +
     '  .skins-weapons-group { flex-direction: row !important; flex-wrap: wrap; align-items: center; gap: 6px !important; }' +

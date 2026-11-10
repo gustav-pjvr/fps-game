@@ -53,7 +53,8 @@ async function die(page: Page): Promise<void> {
 }
 
 async function respawn(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Respawn', exact: true }).click();
+  // The button reads Redeploy mid-operation and Play again once it is over.
+  await page.getByTestId('death-screen').getByRole('button', { name: /^(Redeploy|Play again)$/ }).click();
   await expect(page.getByTestId('death-screen')).toBeHidden({ timeout: 30000 });
   await lockPointer(page);
   await page.evaluate(() => window.__gameDebug?.setPlayerInvulnerable(true));

@@ -1434,6 +1434,8 @@ export class Game {
     const bigAnnouncement = new BigAnnouncement(hudRoot);
     // Under the scoreboard in a room; in its place when playing alone.
     const hordeHud = isHordeMode ? new HordeHud(hudRoot, multiplayer ? 170 : 122) : null;
+    // A mode with a panel top centre takes its headlines below the crosshair.
+    if (isHordeMode || multiplayer?.gameMode === 'kingOfTheHill' || (matchConfig.directorMode && !multiplayer)) bigAnnouncement.moveBelowCrosshair();
     const explosionEffect = new ExplosionEffect(renderer.scene);
     // Single-player and the multiplayer host run every goose authoritative (see GooseManager's
     // class comment); a guest only ever mirrors what the host broadcasts, never spawns/adjudicates
@@ -2557,7 +2559,7 @@ export class Game {
     const won = view.stage === 'won';
     const seconds = Math.floor((performance.now() - this.matchStartedAt) / 1000);
     this.deathScreen.showResult(
-      won ? 'Showdown won' : 'Overrun',
+      won ? 'Showdown won' : 'Showdown lost',
       won ? `Grade ${showdown.grade()}` : `You fell in act ${view.act} of ${view.totalActs}  |  Grade ${showdown.grade()}`,
       [
         ['SCORE', view.score.toLocaleString('en-US')],
@@ -2753,7 +2755,7 @@ export class Game {
       const view = this.mission.view(this.missionPlayerList());
       if (view.awaitingRedeploy) {
         const screen = redeployScreen(view);
-        this.deathScreen.showResult(screen.title, screen.line, screen.stats);
+        this.deathScreen.showResult(screen.title, screen.line, screen.stats, 'Redeploy');
       } else {
         this.sound.playObjectiveCue('lose');
         this.deathScreen.showMission(this.missionResult(false));
@@ -3409,8 +3411,8 @@ export class Game {
     } else {
       this.hud.setScore(this.scoreState.value);
       if (this.showdown) {
-        const view = this.showdown.view();
-        this.hud.setScoreLine(`SCORE ${view.score.toLocaleString('en-US')}  x${view.multiplier}`);
+        // The score and its multiplier are on Showdown's own panel: not twice.
+        this.hud.setScoreLine(null);
       } else if (this.director) {
         const phase = { buildUp: 'BUILDING', peak: 'PEAK', fade: 'FADING', relax: 'QUIET' }[this.director.phase];
         this.hud.setScoreLine(`SCORE ${this.scoreState.value}  ${phase}`);

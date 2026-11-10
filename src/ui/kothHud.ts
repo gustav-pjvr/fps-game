@@ -1,4 +1,4 @@
-import { ACCENT, AMBER, INK, LABEL_CSS, MONO_FONT, SANS_FONT, TEXT_SHADOW, THREAT } from './theme.ts';
+import { ACCENT, AMBER, HAIRLINE, INK, LABEL_CSS, MONO_FONT, SANS_FONT, SURFACE, TEXT_SHADOW, THREAT } from './theme.ts';
 import type { HillTone } from '../entities/HillView.ts';
 
 const TONE_COLOURS: Readonly<Record<HillTone, string>> = { open: AMBER, ours: ACCENT, theirs: THREAT, contested: INK };
@@ -29,8 +29,10 @@ export class KothHud {
     this.element = document.createElement('div');
     this.element.dataset.testid = 'koth-hud';
     this.element.style.cssText =
-      `position:absolute; top:122px; left:50%; transform:translateX(-50%); width:min(300px, 60vw); text-align:center; color:${INK};` +
-      ` font-family:${SANS_FONT}; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;`;
+      // Under the scoreboard (top 128 px), with the same kind of backing.
+      `position:absolute; top:170px; left:50%; transform:translateX(-50%); width:min(300px, 60vw); text-align:center; color:${INK};` +
+      ` font-family:${SANS_FONT}; text-shadow:${TEXT_SHADOW}; font-variant-numeric:tabular-nums; pointer-events:none;` +
+      ` background:${SURFACE}; backdrop-filter:blur(10px); border:1px solid ${HAIRLINE}; border-radius:2px; padding:9px 16px 11px; box-sizing:border-box;`;
     this.label = document.createElement('div');
     this.label.style.cssText = `${LABEL_CSS} margin-bottom:5px;`;
     // Spoken as well as shown: who holds the hill is the state of the match.

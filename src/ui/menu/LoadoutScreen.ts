@@ -135,6 +135,14 @@ function ensureLoadoutStyleInjected(): void {
     '  .loadout-catalog { flex: none !important; width: 100%; overflow-y: visible !important; }' +
     '  .loadout-middle { width: 100% !important; }' +
     '  .loadout-rim { width: 100% !important; height: 340px !important; }' +
+    // The details of the weapon just tapped (and its Skin row) stay at the top while the grid scrolls
+    // under them: they sat a screen and a half below the grid, so a tap seemed to do nothing.
+    '  .loadout-middle { display: contents !important; }' +
+    // Its children are the body's flex items now: like the body's own, they keep their content's height.
+    '  .loadout-middle > * { flex: none !important; }' +
+    `  .loadout-details { order: -1; position: sticky; top: -1px; z-index: 3; background: ${BG_VOID} !important; }` +
+    '  [data-testid="loadout-screen"] { padding: 20px 16px !important; }' +
+    '  [data-testid="loadout-change-skin"] { min-height: 40px; }' +
     '}';
   document.head.appendChild(style);
 }

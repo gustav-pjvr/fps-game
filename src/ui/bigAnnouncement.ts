@@ -24,6 +24,12 @@ export class BigAnnouncement {
     root.appendChild(this.element);
   }
 
+  /** For a mode with its own panel top centre (Goose Horde, Showdown, King of the Hill): the
+   * headline moves below the crosshair, where it printed over the panel before. */
+  moveBelowCrosshair(): void {
+    this.element.style.top = 'max(64%, 430px)';
+  }
+
   show(label: string): void {
     this.headline.textContent = label;
     this.timeRemaining = ENTRY_DURATION;
