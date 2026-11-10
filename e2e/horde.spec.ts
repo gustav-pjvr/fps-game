@@ -134,6 +134,10 @@ async function startCoopRun(browser: Browser, errors: string[]): Promise<{ host:
 }
 
 const opponents = (page: Page): Promise<number> => page.evaluate(() => window.__gameDebug!.getOpponentCount());
+/** How long the host may take to notice a guest has gone. A page that closes without a word is
+ * dropped by the host's silence rule, and a guest that had been in the match under half a minute is
+ * still given its loading allowance of two minutes (core/opponentLiveness.ts). */
+const GONE_TIMEOUT = 200000;
 
 test('co-op: the host\'s waves and kills on the guest, a fall, a revive, and back with the next wave', async ({ browser }) => {
   test.setTimeout(15 * 60 * 1000);
@@ -200,7 +204,7 @@ test('co-op: a player who joins a running run is told the wave, the kills and th
 
   // The first guest leaves, so only two browsers are ever open: the host plays on alone.
   await guest.context.close();
-  await expect.poll(() => opponents(host.page), { timeout: 120000 }).toBe(0);
+  await expect.poll(() => opponents(host.page), { timeout: GONE_TIMEOUT }).toBe(0);
   expect(await host.page.evaluate(() => window.__gameDebug!.isMultiplayerMatchEnded())).toBe(false);
 
   const late = await openPlayer(browser);
@@ -228,7 +232,7 @@ test('co-op: a player who leaves comes back into its slot in the same run', asyn
   // The guest's page closes; the page that will take its place only opens once it has gone.
   const token = await rejoinToken(guest.page, code);
   await guest.context.close();
-  await expect.poll(() => opponents(host.page), { timeout: 120000 }).toBe(0);
+  await expect.poll(() => opponents(host.page), { timeout: GONE_TIMEOUT }).toBe(0);
   const comeback = await openPlayer(browser, { code, token });
   comeback.page.on('pageerror', (error) => errors.push(String(error)));
   await joinRunningMatch(comeback.page, code);
