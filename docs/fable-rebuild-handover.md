@@ -70,9 +70,34 @@ is down". No longer sent, still in the protocol so the relay branch compiles:
 `goldenGoosePickedUp`, `goldenGooseDropped`, `goldenGooseState`, `kothScoreTick`; `hordeReset` is
 not sent in a room any more.
 
+## Preview
+
+https://fable-rebuild.hunter-n-goose.pages.dev (a Cloudflare Pages preview of this branch, not
+production). Checked after deploying: it shows v5.0.0, the Skins preview draws, and Goose Horde,
+Showdown and Operation Uplink each start, with no page errors and no failed requests.
+
 ## Evidence
 
-(Filled in from the last runs; see the table at the end of `docs/fable-rebuild-progress.md` until then.)
+Every figure below is from this branch on 2026-11-10. Browser runs use software rendering and were
+taken from a copy of the committed tree (`C:\tmp\fable-logs\snap-head.sh`).
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | clean |
+| `npm run test:unit` | 1912 tests in 150 files: 1911 pass in the full run; the one that did not (`structureMaterials.test.ts`, a 60 s texture test the rebuild did not touch) passes when run alone (3 of 3 in 33 s) |
+| All 114 weapon and skin combinations (`weaponModels.test.ts`) | aim point, clear line of aim, budgets, arms and skin features pass |
+| `e2e/skins.spec.ts`: every weapon in every skin, aimed | passes; every measured offset between sight and crosshair is 0.00 px; screenshots of each aimed view are saved by the test |
+| `e2e/skins.spec.ts`: equip, reload, worn in a match | passes |
+| UI guard (`ui-qa.spec.ts`) on the Skins screen | passes at phone and desktop width |
+| `e2e/koth.spec.ts` | 2 of 2: two players and a late joiner; four players two against two |
+| `e2e/horde.spec.ts` solo | passes: supply drop, Second Wind, death, a new run, the boss, the win |
+| `e2e/horde.spec.ts` four players | passes: a wave sized for four, the run lost when all four are down |
+| `e2e/director.spec.ts` | 6 of 6: the three original director tests and Showdown's three |
+| `e2e/mission.spec.ts` | 2 of 2: the whole operation with a redeploy and a graded win; both losses |
+| `e2e/facility-modes.spec.ts` | 2 of 2 |
+
+Still to be recorded here: the two-player Goose Horde test (revive, late join, rejoin), the core
+group, the full suite, and performance against the baseline. See "Open at handover" below.
 
 ## Not done, and why
 
