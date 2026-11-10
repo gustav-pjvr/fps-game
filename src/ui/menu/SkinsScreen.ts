@@ -101,7 +101,9 @@ function ensureSkinsStyleInjected(): void {
  * changes the sights has to prove the crosshair still sits on them. */
 export class SkinsScreen {
   private readonly overlay: HTMLDivElement;
-  private readonly canvas: HTMLCanvasElement;
+  private canvas: HTMLCanvasElement;
+  /** Whether a preview has already drawn to the canvas (see show). */
+  private canvasUsed = false;
   private readonly cross: HTMLDivElement;
   private readonly stageName: HTMLDivElement;
   private readonly stageNote: HTMLDivElement;
@@ -305,12 +307,22 @@ export class SkinsScreen {
     this.skins = loadStoredSkins();
     if (weaponId && this.weaponButtons.has(weaponId)) this.weaponId = weaponId;
     this.overlay.style.display = 'flex';
+    // First, so the page can be used and closed even if the preview could not be built.
+    this.scope.enter(this.overlay, this.weaponButtons.get(this.weaponId)?.button ?? this.closeButton);
+    // A preview frees its WebGL context when the page closes, and a canvas whose context was lost
+    // cannot be given a new one: every opening after the first gets a fresh canvas. Reusing the old
+    // one threw here, and the page opened dead the second time.
+    if (this.canvasUsed) {
+      const fresh = this.canvas.cloneNode(false) as HTMLCanvasElement;
+      this.canvas.replaceWith(fresh);
+      this.canvas = fresh;
+    }
+    this.canvasUsed = true;
     this.preview = new WeaponPreview(this.canvas);
     window.addEventListener('resize', this.onResize);
     this.preview.resize();
     this.refresh();
     this.preview.start();
-    this.scope.enter(this.overlay, this.weaponButtons.get(this.weaponId)?.button ?? this.closeButton);
   }
 
   hide(): void {
