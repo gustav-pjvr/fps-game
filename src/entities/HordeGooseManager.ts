@@ -174,6 +174,9 @@ export class HordeGooseManager {
   private squadSize = 1;
   private meter = 0;
   private readonly kills = new Map<number, number>();
+  /** Test-only (window.__gameDebug.holdHordeWave): a wave that has run out of geese does not end,
+   * so a slow browser run can finish its checks inside one wave. Never set by gameplay code. */
+  debugWaveHeld = false;
   /** Follower side only: the host's last state, shown as is (see `view`). */
   private followerState: HordeStatePayload | null = null;
   /** Follower side only - a guest never advances its own `waveIndex` (see the constructor's
@@ -301,7 +304,7 @@ export class HordeGooseManager {
       if (goose.isDead) this.retire(goose);
     }
 
-    if (this.phase === 'active') {
+    if (this.phase === 'active' && !this.debugWaveHeld) {
       const completion = resolveWaveCompletion(this.remainingToSpawn, this.geese.size, this.waveIndex, this.waveTable.length);
       if (completion === 'cleared') {
         this.phase = 'cleared';

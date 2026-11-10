@@ -261,6 +261,18 @@ export class ShowdownState {
     return 'lost';
   }
 
+  /** Test-only (window.__gameDebug.setShowdownAct): the run jumps to the start of act `act`. */
+  debugSkipToAct(act: number): void {
+    if (this.over) return;
+    this.actNumber = Math.max(1, Math.min(SHOWDOWN_ACTS.length, Math.floor(act)));
+    this.stageValue = 'act';
+    this.peaked = false;
+    this.buildUpSeconds = 0;
+    this.director.reset();
+    this.director.retune(showdownOptions(this.base, this.actNumber, this.players()));
+    this.lastPhase = this.director.phase;
+  }
+
   /** A grade for the end screen, from how far the run got and how hot it was kept. */
   grade(): 'S' | 'A' | 'B' | 'C' {
     if (this.stageValue !== 'won') return this.actNumber >= 4 ? 'B' : 'C';
