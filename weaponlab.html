@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Weapon lab (dev only)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1c2a2c; overflow: hidden; }
+      canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      #cross { position: absolute; left: 50%; top: 50%; width: 21px; height: 21px; margin: -10.5px 0 0 -10.5px; pointer-events: none; }
+      #cross::before, #cross::after { content: ''; position: absolute; background: rgba(255, 255, 255, 0.85); }
+      #cross::before { left: 10px; top: 0; width: 1px; height: 21px; }
+      #cross::after { top: 10px; left: 0; height: 1px; width: 21px; }
+      #label { position: absolute; left: 12px; top: 10px; color: #e9efe9; font: 12px ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <canvas id="lab"></canvas>
+    <div id="cross"></div>
+    <div id="label"></div>
+    <script type="module" src="/src/dev/weaponLab.ts"></script>
+  </body>
+</html>
