@@ -84,8 +84,13 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | e2e `horde.spec.ts` | solo passes (7.3 min); four players pass (8.5 min); co-op with two players failed once at the revive check (the next wave stood the guest up first), `holdHordeWave` added, rerun owed |
 | `showdown.test.ts` | 12 of 12 |
 | e2e ui guard on the Skins screen | passes at phone and desktop (after the two fixes above) |
-| e2e groups skins, core | a first run failed under load (30 s test timeouts while two sessions ran browsers); rerun in progress |
-| unit, full | 1869 of 1912 while the browser runs held the CPU at 85 percent: all 43 failures were 5 s timeouts in heavy world and model tests; rerun on a quiet machine owed |
+| e2e `skins.spec.ts` | 2 of 2: every weapon in every skin aimed (all offsets 0.00 px); equip, reload, worn in a match |
+| e2e `director.spec.ts`, `mission.spec.ts`, `facility-modes.spec.ts` | 6 of 6, 2 of 2, 2 of 2 |
+| e2e `horde.spec.ts` two players | 3 of 3 after the test was split into three of two browsers each |
+| e2e core (`smoke.spec.ts`) | 11 of 16; five overrun their own time budgets, and so do three of the same four on the v4.7.1 copy: the machine, not the rebuild; rerun on a quiet machine before release |
+| performance (perf-log, real GPU) | Medium 58.0 to 59.5 fps in the fight, render 7.95 to 7.12 ms; Low 60.0 to 60.0 fps, render 2.58 to 2.19 ms: equal or better (handover has the table) |
+| preview deploy | https://fable-rebuild.hunter-n-goose.pages.dev checked: v5.0.0, Skins, three solo modes start, no errors |
+| unit, full | 1911 of 1912 on a quieter machine; the one failure (`structureMaterials.test.ts`, a 60 s texture test the rebuild did not touch) passes alone |
 | e2e full | not yet run on this branch |
 
 ## Next

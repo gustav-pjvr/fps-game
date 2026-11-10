@@ -108,6 +108,34 @@ rebuild maps to were run one at a time instead, as listed above. Not run: `world
 `grenades`, `pickups`, `mp`, `mp4`, `ai` beyond `director.spec.ts`, and the facility group beyond
 `facility-modes.spec.ts`.
 
+## Performance against the baseline
+
+`e2e/perf-log.spec.ts` (a solo match with 20 enemies: the player standing at spawn, then a fight),
+run on the untouched v4.7.1 copy and on this branch back to back on 2026-11-10, so both saw the same
+machine. The headed runs use the real GPU; frame rate is capped at 60 by the display.
+
+| Run (real GPU) | fps at spawn | fps in the fight | render ms per frame | frame p95 ms | ai ms per tick | physics ms per tick |
+|---|---|---|---|---|---|---|
+| Medium, v4.7.1 | 51.7 | 58.0 | 7.95 | 20.2 | 1.19 | 3.42 |
+| Medium, v5.0.0 | 56.3 | 59.5 | 7.12 | 18.9 | 1.16 | 3.04 |
+| Low, v4.7.1 | 59.8 | 60.0 | 2.58 | 18.5 | 0.94 | 3.54 |
+| Low, v5.0.0 | 59.9 | 60.0 | 2.19 | 18.3 | 1.37 | 3.80 |
+
+Equal or better on both tiers: Medium gains about 1.5 fps in the fight and 0.8 ms of render time per
+frame, Low sits on the 60 fps cap in both with 0.4 ms less render time. The per-tick AI and physics
+figures move by a few tenths of a millisecond in both directions between runs (the fights differ),
+well inside a 16.7 ms frame. Headless (software rendering, where only the per-tick CPU figures mean
+anything): Medium ai 1.31 to 0.77 ms and physics 2.75 to 1.52 ms; Low ai 0.82 to 0.77 ms and physics
+1.65 to 1.59 ms. Logs: `C:\tmp\fable-logs\perf2-*.log`.
+
+Download size: the script bundle grew from 3,949 kB to 4,130 kB (1,394 to 1,448 kB gzipped) with the
+weapon kit, 19 models and four modes in it, and the shipped asset files shrank from 5,517 kB to
+5,378 kB (the sampled sounds and old weapon models are gone). A cold first load of a match in the
+test browser took about the same on both trees.
+
+This run measures the solo fight. It does not measure a full Goose Horde wave with four players, or
+the new weapon models under a real match's worth of other players.
+
 ## Not done, and why
 
 - **Co-op for Operation Uplink and Showdown: postponed by Gustav** (decision D30). Both are solo.
