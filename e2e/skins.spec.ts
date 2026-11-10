@@ -26,9 +26,9 @@ async function waitForShown(page: Page, shown: string): Promise<void> {
 }
 
 test('every weapon in every skin aims with its sight on the true aim point', async ({ page }) => {
-  // 19 weapons by 6 skins, each a model build and a drawn frame on software rendering: measured
-  // at about 4 minutes here.
-  test.setTimeout(15 * 60 * 1000);
+  // 19 weapons by 6 skins, each a model build and a drawn frame on software rendering: about 4
+  // minutes on a quiet machine, and over 15 with other browser runs going at the same time.
+  test.setTimeout(45 * 60 * 1000);
   mkdirSync(SHOTS, { recursive: true });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(String(error)));

@@ -75,16 +75,18 @@ function ensureSkinsStyleInjected(): void {
     ".skins-cross::before, .skins-cross::after { content: ''; position: absolute; background: rgba(233, 239, 233, 0.9); }" +
     '.skins-cross::before { left: 10px; top: 0; width: 1px; height: 21px; }' +
     '.skins-cross::after { top: 10px; left: 0; height: 1px; width: 21px; }' +
-    // Phone and narrow windows: one column, the preview first, the weapons as a strip to swipe.
+    // Phone and narrow windows: one column, the preview first, then every weapon as a chip (all
+    // in view, wrapped under their category: a strip to swipe hid most of them), then the skins.
     '@media (max-width: 980px) {' +
     '  .skins-screen { padding: 20px 16px !important; }' +
     '  .skins-body { flex-direction: column; overflow-y: auto; gap: 18px !important; }' +
     '  .skins-body > * { flex: none !important; width: 100% !important; max-height: none !important; }' +
     '  .skins-stage { order: 1; }' +
-    '  .skins-weapons { order: 2; overflow-x: auto !important; overflow-y: hidden !important; }' +
-    '  .skins-weapons-list { flex-direction: row !important; align-items: stretch; gap: 14px !important; width: max-content; }' +
-    '  .skins-weapons-group { flex-direction: row !important; align-items: center; }' +
-    '  .skins-weapon { width: auto; white-space: nowrap; border-color: ' + HAIRLINE + '; }' +
+    '  .skins-weapons { order: 2; overflow: visible !important; }' +
+    '  .skins-weapons-list { gap: 12px !important; }' +
+    '  .skins-weapons-group { flex-direction: row !important; flex-wrap: wrap; align-items: center; gap: 6px !important; }' +
+    '  .skins-weapons-group > :first-child { flex-basis: 100%; padding-left: 2px !important; }' +
+    '  .skins-weapon { width: auto; min-height: 40px; white-space: nowrap; border-color: ' + HAIRLINE + '; }' +
     '  .skins-weapon small { display: none; }' +
     '  .skins-list { order: 3; overflow: visible !important; }' +
     '  .skins-cards { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }' +
