@@ -42,6 +42,7 @@ import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavig
 import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
+import { loadStoredSkins } from './skins.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
 import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
 import { Tracers } from '../combat/Tracers.ts';
@@ -921,6 +922,11 @@ export class Game {
         Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer: { position: p } }) => ({ slot, x: p.x, y: p.y, z: p.z })).sort(
           (a, b) => a.slot - b.slot,
         ),
+      getOpponentWeapons: () =>
+        Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer }) => ({
+          slot, weaponId: remotePlayer.heldWeaponId, skinId: remotePlayer.heldSkinId,
+        })).sort((a, b) => a.slot - b.slot),
+      getHeldWeapon: () => ({ weaponId: this.weaponManager.activeWeaponId, skinId: this.weaponManager.activeSkinId }),
       getScoreboardRows: () => {
         if (!this.multiplayer) return [];
         const { ownSlot } = this.multiplayer.session;
@@ -1208,14 +1214,14 @@ export class Game {
             endY: end.y,
             endZ: end.z,
             // activeWeaponId, not weaponSlotNames[activeWeaponIndex] - the latter returns the
-            // display name (e.g. "P9 Pistol"), which playGunshot's `${weaponId}_shot` buffer
-            // lookup never matches, silently falling through to its generic fallback sound. This is
-            // why every multiplayer opponent's gunshot sounded the same regardless of weapon.
+            // display name (e.g. "P9 Pistol"), which playGunshot's sound profile lookup never
+            // matches, silently falling through to its default sound. This is why every
+            // multiplayer opponent's gunshot once sounded the same regardless of weapon.
             weaponId: game.weaponManager.activeWeaponId,
           });
         },
         (origin, weaponId) => {
-          sound.playKnifeSwing();
+          sound.playKnifeSwing(1, 0, weaponId);
           multiplayer?.connection.send({
             type: 'fireEvent',
             senderSlot: multiplayer.ownSlot,
@@ -1275,6 +1281,8 @@ export class Game {
         reserveAmmo,
         // Facility lamps are not physics colliders: each ranged pellet's ray is tested against them.
         (origin, direction, distance) => game.handleHitscanRay(origin, direction, distance),
+        // Read fresh on every build, so a skin equipped mid-match shows from the next respawn.
+        loadStoredSkins(),
       );
     const weaponManager = await buildWeaponManager(loadout.weaponIds, loadout.damageOverrides, initialReserveAmmo);
 
@@ -3105,6 +3113,8 @@ export class Game {
         health: this.player.currentHealth,
         t: this.sendClock(),
         ...(this.torch ? { torch: this.torch.isOn } : {}),
+        w: this.weaponManager.activeWeaponId,
+        k: this.weaponManager.activeSkinId,
       });
     }
   }

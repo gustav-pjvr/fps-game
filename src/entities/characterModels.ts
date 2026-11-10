@@ -41,6 +41,9 @@ export const CHARACTER_CLIPS = {
   run: 'Run',
   fire: 'Gun_Shoot',
   death: 'Death',
+  /** Standing and running with the weapon up: how other players are shown (RemotePlayer). */
+  aim: 'Idle_Gun_Pointing',
+  runAim: 'Run_Shoot',
 } as const;
 
 export type CharacterClipRole = keyof typeof CHARACTER_CLIPS;

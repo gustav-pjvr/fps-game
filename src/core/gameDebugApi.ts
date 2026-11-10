@@ -214,6 +214,11 @@ export interface GameDebugApi {
   /** Multiplayer only: every opponent's smoothed position, by slot (ascending), for a 3 to 4
    * player e2e test. Empty outside a multiplayer match. */
   getOpponentPositions(): { slot: number; x: number; y: number; z: number }[];
+  /** Multiplayer only: the weapon and skin each opponent is seen holding, by slot (ascending); null
+   * until their first snapshot names one. Empty outside a multiplayer match. */
+  getOpponentWeapons(): { slot: number; weaponId: string | null; skinId: string | null }[];
+  /** The held weapon's id and the skin it wears. */
+  getHeldWeapon(): { weaponId: string; skinId: string };
   /** Multiplayer only: the scoreboard's rows as the HUD shows them (multiplayerHud.ts's
    * scoreboardRows), highest score first. Empty outside a multiplayer match. */
   getScoreboardRows(): { slot: number; name: string; score: number; isYou: boolean }[];

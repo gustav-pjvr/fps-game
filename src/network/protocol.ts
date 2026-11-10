@@ -174,6 +174,11 @@ export interface PlayerSnapshotMessage {
   /** Facility only (docs/facility-map.md, section 7): whether the sender's torch is lit. Missing
    * means on, so an older build's players still carry a light. */
   torch?: boolean;
+  /** The weapon the sender is holding (a weapon id) and the skin it wears (a skin id), so every
+   * other player sees it in their hands (entities/heldWeapon.ts). Both optional: an older build
+   * sends neither and is drawn empty-handed; an id this build does not know is ignored. */
+  w?: string;
+  k?: string;
 }
 
 /** Sent by the shooter on every shot - purely cosmetic (tracer/muzzle flash/positional gunshot
@@ -987,6 +992,9 @@ export const NETWORK_MAX_COORD = 10_000;
 export const NETWORK_MAX_SPEED = 200;
 /** Most damage one damageEvent may carry: a headshot with a one-shot mode's weapon is 300. */
 export const DAMAGE_EVENT_MAX_AMOUNT = 1000;
+/** Longest weapon or skin id a message may carry.
+ * The longest real one is 13 characters. */
+export const NETWORK_MAX_ID_LENGTH = 24;
 /** Highest score a kothScoreTick may report: the win, plus the few ticks a carrier may send before
  * the host's matchEnded reaches it. */
 export const KOTH_SCORE_TICK_MAX = KOTH_POINTS_TO_WIN + 10;
@@ -1000,6 +1008,8 @@ const isCoord = (value: unknown): boolean => typeof value === 'number' && Number
 const isFiniteNumber = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value);
 const isOptionalFinite = (value: unknown): boolean => value === undefined || isFiniteNumber(value);
 const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === 'string';
+/** An optional short identifier (a weapon or skin id): bounded so a snapshot cannot carry a payload. */
+const isOptionalId = (value: unknown): boolean => value === undefined || (typeof value === 'string' && value.length <= NETWORK_MAX_ID_LENGTH);
 const areCoords = (...values: unknown[]): boolean => values.every(isCoord);
 const isSpeed = (value: unknown): boolean => isFiniteNumber(value) && Math.abs(value as number) <= NETWORK_MAX_SPEED;
 
@@ -1021,7 +1031,7 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
     case 'playerSnapshot':
       return areCoords(value.x, value.y, value.z) && isFiniteNumber(value.yaw) && isFiniteNumber(value.pitch)
         && isFiniteNumber(value.health) && (value.health as number) >= 0 && (value.health as number) <= DAMAGE_EVENT_MAX_AMOUNT
-        && isOptionalFinite(value.t);
+        && isOptionalFinite(value.t) && isOptionalId(value.w) && isOptionalId(value.k);
     case 'fireEvent':
       return areCoords(value.originX, value.originY, value.originZ, value.endX, value.endY, value.endZ) && isOptionalFinite(value.t);
     case 'footstepEvent':

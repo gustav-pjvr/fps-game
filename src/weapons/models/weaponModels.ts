@@ -38,18 +38,22 @@ export interface WeaponModel {
 }
 
 /** One copy of a weapon in a skin. `arms` adds the shooter's hands and forearms (the first-person
- * view); thumbnails, the Skins preview and other players' copies leave them out. */
-export function createWeaponModel(id: string, skinId: SkinId = DEFAULT_SKIN, options: { arms?: boolean } = {}): WeaponModel {
+ * view); thumbnails, the Skins preview and other players' copies leave them out. `raw` leaves the
+ * model at its own origin and real size, without the first-person tuning (for a copy placed in the
+ * world or in a hand). */
+export function createWeaponModel(id: string, skinId: SkinId = DEFAULT_SKIN, options: { arms?: boolean; raw?: boolean } = {}): WeaponModel {
   const blueprint = getWeaponBlueprint(id, skinId);
   const materials = getSkinMaterials(skinId);
   const arms = options.arms ?? false;
   const root = new THREE.Group();
   root.name = 'model-tuning';
-  root.scale.setScalar(blueprint.tuning.scale);
-  root.position.set(...blueprint.tuning.offset);
-  if (blueprint.tuning.rotation) {
-    const [pitch, yaw, roll] = blueprint.tuning.rotation;
-    root.rotation.set(pitch, -yaw, -roll, 'YXZ');
+  if (!options.raw) {
+    root.scale.setScalar(blueprint.tuning.scale);
+    root.position.set(...blueprint.tuning.offset);
+    if (blueprint.tuning.rotation) {
+      const [pitch, yaw, roll] = blueprint.tuning.rotation;
+      root.rotation.set(pitch, -yaw, -roll, 'YXZ');
+    }
   }
 
   const parts = new Map<string, THREE.Object3D>();

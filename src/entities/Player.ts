@@ -42,6 +42,8 @@ export class Player implements Entity {
   private yaw = 0;
   private pitch = 0;
   private recoilPitch = 0;
+  private recoilYaw = 0;
+  private mobility = 1;
   private verticalVelocity = 0;
   private grounded = false;
   private health = PLAYER_HEALTH;
@@ -107,6 +109,7 @@ export class Player implements Entity {
     this.applyLook(input);
     this.applyMovement(dt, input);
     this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
+    this.recoilYaw *= Math.max(0, 1 - RECOIL_DECAY * dt);
     this.knockbackVelocity.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY_PER_SECOND * dt));
     if (this.knockbackVelocity.lengthSq() < 0.0001) this.knockbackVelocity.set(0, 0, 0);
   }
@@ -122,9 +125,17 @@ export class Player implements Entity {
     this.camera.quaternion.slerpQuaternions(this.previousCameraQuaternion, this.currentCameraQuaternion, alpha);
   }
 
-  /** Temporary upward camera kick that decays back to the player's held aim over time. */
-  addRecoil(kick: number): void {
+  /** Temporary camera kick that decays back to the player's held aim over time: `kick` upward,
+   * `side` to the left (positive) or right. */
+  addRecoil(kick: number, side = 0): void {
     this.recoilPitch += kick;
+    this.recoilYaw += side;
+  }
+
+  /** Walking and sprinting speed as a fraction of normal: the held weapon's weight
+   * (WeaponDefinition.mobility), set by WeaponManager each tick. */
+  setMobility(multiplier: number): void {
+    this.mobility = multiplier;
   }
 
   /** Pushes the player away from an explosion (or any other knockback source) along `direction`
@@ -246,7 +257,7 @@ export class Player implements Entity {
 
     const moveDir = forward.multiplyScalar(-move.y).addScaledVector(right, move.x);
 
-    const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
+    const speed = PLAYER_MOVE_SPEED * this.mobility * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
     moveDir.multiplyScalar(speed * dt);
 
     this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
@@ -300,7 +311,7 @@ export class Player implements Entity {
     this.rigidBody.setNextKinematicTranslation(next);
 
     const effectivePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + this.recoilPitch));
-    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw, 0, 'YXZ'));
+    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw + this.recoilYaw, 0, 'YXZ'));
     const cameraBobOffset = Math.sin(this.bobPhase) * CAMERA_BOB_AMPLITUDE * this.bobStrength;
     this.currentCameraPosition.set(next.x, next.y + EYE_OFFSET + cameraBobOffset, next.z);
     this.currentCameraQuaternion.copy(lookQuat);

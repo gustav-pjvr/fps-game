@@ -55,7 +55,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     const setTorch = vi.fn();
     ctx.multiplayer.opponents.set(2, {
       lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch, setHeldWeapon: vi.fn() },
     });
     registerUndergroundVolume({ minX: 10, maxX: 20, minZ: 10, maxZ: 20, floorY: -9, ceilY: -3 });
     try {
@@ -64,6 +64,20 @@ describe('routeMatchMessage, 3 to 4 players', () => {
         expect(setTorch).toHaveBeenLastCalledWith(allowed);
       }
     } finally { clearUnderground(); }
+  });
+
+  it('shows the weapon and skin a snapshot names in that player\'s hand', () => {
+    const ctx = makeContext({ map: 'valley' });
+    const setHeldWeapon = vi.fn();
+    ctx.multiplayer.opponents.set(2, {
+      lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon },
+    });
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, w: 'revolver', k: 'gilded' }, 2);
+    expect(setHeldWeapon).toHaveBeenLastCalledWith('revolver', 'gilded');
+    // An older build names neither: the player is drawn empty-handed.
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
+    expect(setHeldWeapon).toHaveBeenLastCalledWith(undefined, undefined);
   });
 
   it('the host relays through relay(), which skips directly linked guest pairs', () => {
@@ -116,7 +130,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
       firstSnapshotAt: null as number | null,
       isDead: false,
       health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon: vi.fn() },
     };
     ctx.multiplayer.opponents.set(3, opponent);
     // The connection layer talks while the world is still being built: that is not "playing".
@@ -137,7 +151,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
       firstSnapshotAt: null as number | null,
       isDead: false,
       health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon: vi.fn() },
     };
     ctx.multiplayer.opponents.set(2, opponent);
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, t: 500 }, 0);
@@ -172,7 +186,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     const ctx = makeContext({ role: 'host', ownSlot: 0, map });
     ctx.multiplayer.opponents.set(2, {
       lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon: vi.fn() },
     });
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
     expect(ctx.opponentInMatch).toHaveBeenCalledWith(2);

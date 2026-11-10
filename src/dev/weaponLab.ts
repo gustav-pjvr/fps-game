@@ -15,7 +15,7 @@ preview.resize();
 preview.show(weaponId, skinId, view);
 if (params.has('spin')) preview.freeze(Number(params.get('spin')));
 else preview.start();
-if (view === 'display' || params.get('cross') === '0') document.getElementById('cross')!.style.display = 'none';
+if (view === 'display' || view === 'held' || params.get('cross') === '0') document.getElementById('cross')!.style.display = 'none';
 document.getElementById('label')!.textContent = `${weaponId} | ${skinId} | ${view}`;
 window.addEventListener('resize', () => preview.resize());
 (window as unknown as { __weaponLab: WeaponPreview }).__weaponLab = preview;

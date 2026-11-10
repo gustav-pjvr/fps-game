@@ -62,7 +62,8 @@ describe('mergeKeyBindings', () => {
     const stored = { ...beforeTorch(), KeyG: 'grenadeFrag', KeyQ: 'grenadeFlash' } as unknown as Record<string, Action>;
     const merged = mergeKeyBindings(stored);
     expect(merged.KeyQ).toBe('grenade');
-    expect(merged.KeyG).toBeUndefined();
+    // G is free again, so the inspect action (added in v5.0.0) takes its default key.
+    expect(merged.KeyG).toBe('inspect');
     expect(Object.values(merged)).not.toContain('grenadeFrag');
     expect(Object.values(merged)).not.toContain('grenadeFlash');
     // Unknown actions are dropped wherever they sit.
@@ -75,7 +76,7 @@ describe('mergeKeyBindings', () => {
     delete stored.Space;
     const merged = mergeKeyBindings(stored);
     expect(merged.KeyQ).toBe('jump');
-    expect(merged.KeyG).toBeUndefined();
+    expect(merged.KeyG).toBe('inspect');
     expect(Object.values(merged)).not.toContain('grenade');
   });
 });

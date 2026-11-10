@@ -25,10 +25,11 @@ page.on('console', (message) => { if (message.type() === 'error') errors.push(me
 for (const w of weapons) {
   for (const k of skins) {
     for (const view of views) {
-      await page.goto(`http://localhost:${port}/weaponlab.html?w=${w}&k=${k}&view=${view}&spin=${spin}`);
+      await page.goto(`http://localhost:${port}/weaponlab.html?w=${w}&k=${k}&view=${view}&spin=${spin}${args.extra ? `&${args.extra}` : ''}`);
       await page.waitForFunction(() => document.body.dataset.ready === '1', { timeout: 30000 }).catch(() => {});
+      if (view === 'held') await page.waitForFunction(() => document.querySelector('canvas')?.dataset.held === 'ready', { timeout: 30000 }).catch(() => {});
       await page.waitForTimeout(400);
-      const file = `${out}/${w}-${k}-${view}${view === 'display' && spin !== '1.15' ? `-${spin}` : ''}.png`;
+      const file = `${out}/${w}-${k}-${view}${view !== 'hip' && view !== 'aim' && spin !== '1.15' ? `-${spin}` : ''}${args.tag ? `-${args.tag}` : ''}.png`;
       await page.screenshot({ path: file });
       console.log(file);
     }

@@ -1,6 +1,6 @@
 import { AMBER, SURFACE, SURFACE_RAISED, INK_FAINT, LABEL_CSS, MONO_FONT } from '../theme.ts';
-import { WEAPON_DEFINITIONS, type WeaponDefinition } from '../../weapons/definitions.ts';
-import { buildWeaponViewModel } from '../../weapons/models/arsenal.ts';
+import { WEAPON_DEFINITIONS, weaponIdsIn, type WeaponDefinition } from '../../weapons/definitions.ts';
+import { createWeaponModel } from '../../weapons/models/weaponModels.ts';
 import {
   createButton,
   createEyebrow,
@@ -34,7 +34,6 @@ import { keyHint } from '../../input/actions.ts';
 import { Settings } from '../../settings/Settings.ts';
 import { ModalScope } from './modalScope.ts';
 import { LoadoutCharacterPreview } from './loadoutCharacterPreview.ts';
-import type { Object3D } from 'three';
 
 const REWARD_GOLD = AMBER;
 
@@ -45,14 +44,13 @@ const CATEGORY_LABELS: Record<WeaponCategory, string> = {
   melee: 'Melee',
   special: 'Special',
 };
-// Explicit per-category ordering (per user request: "Sniper, AK, shotgun all primary... pistol and
-// mp5 are secondary") rather than relying on WEAPON_DEFINITIONS' own object-key order, which
-// doesn't necessarily match the order players should see them listed in.
+// Each category lists its weapons in the order the arsenal defines them (weapons/definitions.ts),
+// which is the order players should see: lightest to heaviest.
 const CATEGORY_DISPLAY_ORDER: Record<WeaponCategory, readonly string[]> = {
-  primary: ['sniper', 'rifle', 'shotgun'],
-  secondary: ['pistol', 'mp5'],
-  melee: ['knife'],
-  special: ['gooseLauncher'],
+  primary: weaponIdsIn('primary'),
+  secondary: weaponIdsIn('secondary'),
+  melee: weaponIdsIn('melee'),
+  special: weaponIdsIn('special'),
 };
 
 /** What the Loadout page says about each grenade. The numbers come from the grenades' own tuning
@@ -75,8 +73,6 @@ const GRENADE_CHOICES: Readonly<Record<GrenadeKind, GrenadeChoice>> = {
   },
 };
 
-/** View-model arm parts (arsenal.ts's hands()): the tiles show the weapon's design alone. */
-const ARM_PART_NAMES: ReadonlySet<string> = new Set(['trigger-hand', 'trigger-sleeve', 'support-hand', 'support-sleeve']);
 
 /** One-time injected rules: the tile states (hover, focus, equipped) need pseudo-classes and
  * pseudo-elements that inline `style.cssText` can't declare, and the weapon list hides its
@@ -520,11 +516,8 @@ export class LoadoutScreen {
           let thumbnailDataUrl = getCachedWeaponThumbnail(weapon.id);
           if (thumbnailDataUrl === null) {
             try {
-              const { group } = buildWeaponViewModel(weapon.id);
-              const arms: Object3D[] = [];
-              group.traverse((object) => { if (ARM_PART_NAMES.has(object.name)) arms.push(object); });
-              for (const arm of arms) arm.removeFromParent();
-              thumbnailDataUrl = renderWeaponThumbnail(weapon.id, group);
+              // The weapon's design alone: a copy without the shooter's arms.
+              thumbnailDataUrl = renderWeaponThumbnail(weapon.id, createWeaponModel(weapon.id).root);
             } catch (error) {
               console.warn(`Failed to render loadout thumbnail for "${weapon.id}"`, error);
             }

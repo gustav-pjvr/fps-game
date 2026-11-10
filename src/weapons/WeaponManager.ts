@@ -2,16 +2,19 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { Weapon } from './Weapon.ts';
 import { meleePose, type MeleeVariant } from './meleeSwing.ts';
-import { WEAPON_DEFINITIONS } from './definitions.ts';
+import { falloffMultiplier, WEAPON_DEFINITIONS, type MeleeAttack } from './definitions.ts';
 import {
   WEAPON_HIP_POSITION,
   type WeaponViewModel,
 } from './viewModel.ts';
-import { buildWeaponViewModel } from './models/arsenal.ts';
-import { WEAPON_GLOW_INTENSITY } from './models/weaponMaterials.ts';
+import { addClip, defaultMagazineReload, GUN_TRACK, inspectTurn, zeroOffset, type Clip, type PartOffset } from './animation/clips.ts';
+import { PartAnimator } from './animation/PartAnimator.ts';
+import { buildWeaponViewModel } from './models/weaponModels.ts';
+import { SKIN_GLOW_INTENSITY } from './models/skinMaterials.ts';
+import { DEFAULT_SKIN, SKINS, type SkinId } from './models/skins.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { GRENADE_THROW_ANIMATION_SECONDS } from '../combat/grenades/grenadeTuning.ts';
-import { isDamageable } from '../combat/damage.ts';
+import { isDamageable, type Damageable } from '../combat/damage.ts';
 import { applySpreadCone } from '../combat/spread.ts';
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
@@ -25,10 +28,7 @@ import {
   ADS_MOTION_DAMPING,
   CAMERA_FOV,
   MELEE_SWING_DURATION,
-  MELEE_STAB_DURATION,
   LONG_SHOT_DISTANCE,
-  RELOAD_DIP,
-  RELOAD_TILT_ANGLE,
   SCOPE_REVEAL_THRESHOLD,
   WEAPON_BOB_AMPLITUDE,
   WEAPON_HOLSTER_DROP,
@@ -46,17 +46,43 @@ const SLOT_ACTIONS: Action[] = ['weaponSlot1', 'weaponSlot2', 'weaponSlot3', 'we
 interface WeaponSlot extends Omit<WeaponViewModel, 'group'> {
   weapon: Weapon;
   viewModel: THREE.Object3D;
+  /** Poses the model's moving parts from the clips below (animation/clips.ts). */
+  animator: PartAnimator;
+  /** The weapon's reload clip, or the stock one for a magazine-fed model that defines none. */
+  reloadClip: Clip | undefined;
   previousAmmo: number;
-  shotFlash: number[];
+  /** Extra witness-light brightness from the last shot, decaying. */
+  shotFlash: number;
+  /** Seconds since this weapon last fired: the time base of its fire clip. */
+  fireClock: number;
+}
+
+/** A blade strike that has started swinging and has yet to connect. */
+interface PendingStrike {
+  attack: MeleeAttack;
+  /** Seconds until the next strike of this attack lands. */
+  timer: number;
+  /** Strikes still to come after that one (a flurry). */
+  repeats: number;
 }
 
 /** How fast the view model blends into and out of the sprint tuck. */
 const SPRINT_POSE_DAMP = 8;
-/** Peak roll (radians) at the middle of a reload, while the magazine is out. */
-const RELOAD_ROLL_ANGLE = 0.35;
 /** The gun drops for a grenade at this damp rate, and starts back up this long before the throw ends. */
 const THROW_POSE_DAMP = 18;
 const THROW_RAISE_SECONDS = 0.15;
+/** Sentinel for "has not fired": past the end of any fire clip. */
+const IDLE_FIRE_CLOCK = 1000;
+/** The whole-gun dip and roll of a reload for a weapon with neither a reload clip nor a magazine. */
+const PLAIN_RELOAD: Clip = {
+  duration: 1,
+  tracks: {
+    [GUN_TRACK]: [{ t: 0 }, { t: 0.5, p: [0, -0.08, 0], r: [0.5, 0, 0.35] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] }],
+  },
+};
+
+const scratchForward = new THREE.Vector3();
+const scratchUp = new THREE.Vector3();
 
 export class WeaponManager {
   private readonly slots: WeaponSlot[];
@@ -81,7 +107,7 @@ export class WeaponManager {
    * Cleared the instant the revert is kicked off (before the async rebuild resolves) so a slow
    * asset load can't re-trigger this on a later frame. */
   private pendingRestoreId: string | null = null;
-  /** Burst-fire (see WeaponDefinition.burstCount, currently only the MP5): rounds still owed from
+  /** Burst-fire (see WeaponDefinition.burstCount, currently only the S5): rounds still owed from
    * the burst a trigger pull just kicked off, and the countdown to the next one -
    * WEAPON_BURST_SHOT_INTERVAL_SECONDS apart, distinct from `fireRate`'s between-burst cooldown. */
   private burstShotsRemaining = 0;
@@ -108,7 +134,13 @@ export class WeaponManager {
   private meleeVariant: MeleeVariant = 'draw';
   private meleeProgress = 1;
   private meleeDuration = MELEE_SWING_DURATION;
-  private nextSlash: 'slashRight' | 'slashLeft' = 'slashRight';
+  /** How many primary and alternate attacks have been made, so each attack walks its pose list. */
+  private meleeCombo = { primary: 0, alt: 0 };
+  private pendingStrike: PendingStrike | null = null;
+  /** Seconds into a weapon inspect (G), or -1 when none is playing. */
+  private inspectTime = -1;
+  /** Reused every tick: this tick's clip offsets by part. */
+  private readonly offsets = new Map<string, PartOffset>();
 
   private constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -126,7 +158,9 @@ export class WeaponManager {
      * definitions.ts's WeaponDefinition.isProjectile) - currently only the Goose Launcher. */
     private readonly onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
     /** Every ranged hitscan pellet's ray, with the distance to its physics hit (or its range). */
-    private readonly onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
+    private readonly onHitscanRay: ((origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void) | undefined,
+    /** The player's skin per weapon id (core/skins.ts); a weapon with no entry wears the default. */
+    private readonly skins: Readonly<Record<string, SkinId>>,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -158,13 +192,15 @@ export class WeaponManager {
     initialReserveAmmo?: Readonly<Record<string, number>>,
     /** Per ranged hitscan pellet: its origin, unit direction and the distance to its physics hit
      * or, on a miss, its range. Lets the Facility test the ray against its lamps
-     * (docs/facility-map.md, section 11). The knife and the Goose Launcher never call it. */
+     * (docs/facility-map.md, section 11). The blades and the Goose Launcher never call it. */
     onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
+    /** The skin each weapon wears, by weapon id (core/skins.ts). */
+    skins: Readonly<Record<string, SkinId>> = {},
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
     const slots = await Promise.all(
-      definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id], initialReserveAmmo?.[id])),
+      definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id], initialReserveAmmo?.[id], skins[id] ?? DEFAULT_SKIN)),
     );
 
     return new WeaponManager(
@@ -181,6 +217,7 @@ export class WeaponManager {
       onMuzzleFlash,
       onProjectileFire,
       onHitscanRay,
+      skins,
     );
   }
 
@@ -190,20 +227,25 @@ export class WeaponManager {
     camera: THREE.PerspectiveCamera,
     id: string,
     damageOverride: number | undefined,
-    initialReserveAmmo?: number,
+    initialReserveAmmo: number | undefined,
+    skinId: SkinId,
   ): Promise<WeaponSlot> {
     const definition = WEAPON_DEFINITIONS[id];
     if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
-    const { group, ...model } = buildWeaponViewModel(id);
+    const { group, ...model } = buildWeaponViewModel(id, skinId);
     group.visible = false;
     camera.add(group);
+    const reloads = definition.kind === 'ranged' && !definition.disableReload;
     return {
       weapon: new Weapon(definition, damageOverride, initialReserveAmmo),
       viewModel: group,
       ...model,
+      animator: new PartAnimator(model.parts, model.model),
+      reloadClip: reloads ? model.animations.reload ?? (model.parts.has('magazine') ? defaultMagazineReload() : PLAIN_RELOAD) : undefined,
       previousAmmo: definition.magazineSize,
-      shotFlash: model.glowMaterials.map(() => 0),
+      shotFlash: 0,
+      fireClock: IDLE_FIRE_CLOCK,
     };
   }
 
@@ -215,7 +257,7 @@ export class WeaponManager {
   async replaceActiveWeapon(definitionId: string): Promise<void> {
     const index = this.activeIndex;
     const oldSlot = this.slots[index];
-    const newSlot = await WeaponManager.buildSlot(this.camera, definitionId, undefined);
+    const newSlot = await WeaponManager.buildSlot(this.camera, definitionId, undefined, undefined, this.skins[definitionId] ?? DEFAULT_SKIN);
     if (oldSlot) {
       this.camera.remove(oldSlot.viewModel);
     }
@@ -226,11 +268,13 @@ export class WeaponManager {
     // holding fire from the kill itself, and the fresh weapon shouldn't inherit that as a press.
     this.fireLockedUntilRelease = true;
     // Same burst reset as beginSwitch, for the same reason: a burst in flight belongs to the weapon
-    // that fired it. Without this, if round 1 of an MP5 burst kills the golden goose, rounds 2-3
+    // that fired it. Without this, if round 1 of an S5 burst kills the golden goose, rounds 2-3
     // fire from the freshly granted Goose Launcher and spend half its 4 shots (likewise a Gun Game
     // kill-upgrade landing mid-burst).
     this.burstShotsRemaining = 0;
     this.burstShotTimer = 0;
+    this.pendingStrike = null;
+    this.inspectTime = -1;
     // A pending bonus restore only means something while a disableReload weapon is held. If
     // anything else replaces the launcher first (a Gun Game kill-upgrade), the recorded target is
     // stale and must not survive into the next grant, which never overwrites a pending restore.
@@ -327,8 +371,18 @@ export class WeaponManager {
     return this.active.weapon.definition.id;
   }
 
+  /** The skin the held weapon wears: sent to the other players with the snapshot. */
+  get activeSkinId(): SkinId {
+    return this.active.skinId;
+  }
+
+  /** True while the held weapon is being looked over (G). */
+  get isInspecting(): boolean {
+    return this.inspectTime >= 0;
+  }
+
   /** Where the Facility's torch body hangs (docs/facility-map.md, section 7): the active view model
-   * and its muzzle for a ranged weapon, null for the knife and empty hands, which carry none. */
+   * and its muzzle for a ranged weapon, null for the blades and empty hands, which carry none. */
   get torchMount(): { viewModel: THREE.Object3D; muzzle: THREE.Vector3 } | null {
     const slot = this.active;
     return slot.weapon.definition.kind === 'ranged' ? { viewModel: slot.viewModel, muzzle: slot.muzzleLocalOffset } : null;
@@ -364,16 +418,20 @@ export class WeaponManager {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Whether a grenade throw may start: not while reloading, switching, mid knife swing or mid
+  private get meleeBusy(): boolean {
+    return this.active.weapon.definition.kind === 'melee' && (this.meleeProgress < 1 || this.pendingStrike !== null);
+  }
+
+  /** Whether a grenade throw may start: not while reloading, switching, mid blade swing or mid
    * burst, and not while one is already in the hand. */
   get canStartThrow(): boolean {
-    const meleeBusy = this.active.weapon.definition.kind === 'melee' && this.meleeProgress < 1;
-    return !this.active.weapon.isReloading && !this.switching && !meleeBusy && this.burstShotsRemaining === 0 && !this.handsBusy;
+    return !this.active.weapon.isReloading && !this.switching && !this.meleeBusy && this.burstShotsRemaining === 0 && !this.handsBusy;
   }
 
   /** GrenadeSystem: a grenade is cooking in the hand (true), or a cook was dropped (false). */
   setGrenadeInHand(inHand: boolean): void {
     this.grenadeInHand = inHand;
+    if (inHand) this.inspectTime = -1;
   }
 
   /** GrenadeSystem: the grenade just left the hand; the gun stays down for the throw. */
@@ -397,11 +455,16 @@ export class WeaponManager {
   }
 
   update(dt: number, input: InputManager, player: Player): void {
-    this.active.weapon.update(dt);
+    const slot = this.active;
+    slot.weapon.update(dt);
+    slot.fireClock = Math.min(IDLE_FIRE_CLOCK, slot.fireClock + dt);
+    if (this.inspectTime >= 0) this.inspectTime += dt;
     this.throwLowerTime = Math.max(0, this.throwLowerTime - dt);
     this.handleSwitchRequests(input);
     this.updateSwitching(dt);
+    this.updatePendingStrike(dt, player);
     this.updateAim(dt, input, player);
+    player.setMobility(this.active.weapon.definition.mobility ?? 1);
 
     if (this.switching) return;
 
@@ -410,6 +473,7 @@ export class WeaponManager {
       // comes back up needs a fresh press, like after a switch.
       input.consumeJustPressed('fire');
       input.consumeJustPressed('reload');
+      input.consumeJustPressed('inspect');
       if (input.isActionActive('fire')) this.fireLockedUntilRelease = true;
       return;
     }
@@ -429,34 +493,62 @@ export class WeaponManager {
       return;
     }
 
+    const definition = this.active.weapon.definition;
+    if (input.consumeJustPressed('inspect')) this.tryStartInspect(input);
+    // Anything the hands do ends a look at the weapon.
+    if (this.inspectTime >= 0 && (input.isActionActive('fire') || input.isActionActive('aim'))) this.inspectTime = -1;
+
+    if (definition.kind === 'melee') {
+      // A blade strikes from its attack table: fire is the primary attack, fire while holding aim
+      // the alternate one. The empty hands (no table) do nothing.
+      if (definition.melee && !this.fireLockedUntilRelease && input.consumeJustPressed('fire')) {
+        const alt = input.isActionActive('aim');
+        const attack = alt ? definition.melee.alt : definition.melee.primary;
+        if (this.active.weapon.tryFire(attack.cooldown)) this.startMeleeAttack(attack, alt);
+      }
+      return;
+    }
+
     const firePressed =
       !this.fireLockedUntilRelease &&
-      (this.active.weapon.definition.automatic ? input.isActionActive('fire') : input.consumeJustPressed('fire'));
+      (definition.automatic ? input.isActionActive('fire') : input.consumeJustPressed('fire'));
     if (firePressed) {
       if (this.active.weapon.tryFire()) {
-        this.fireShot(player, input.isActionActive('aim'));
-        const burstCount = this.active.weapon.definition.burstCount ?? 1;
+        this.fireShot(player);
+        const burstCount = definition.burstCount ?? 1;
         if (burstCount > 1) {
           this.burstShotsRemaining = burstCount - 1;
           this.burstShotTimer = WEAPON_BURST_SHOT_INTERVAL_SECONDS;
         }
       } else if (this.active.weapon.ammo <= 0 && this.active.weapon.startReload()) {
         // Auto-reload: trying to fire an empty magazine starts a reload without needing manual R.
-        this.onReloadStart(this.active.weapon.definition.id);
+        this.beginReload();
       }
     }
     if (input.consumeJustPressed('reload') && this.active.weapon.startReload()) {
-      this.onReloadStart(this.active.weapon.definition.id);
+      this.beginReload();
     }
 
     // The Goose Launcher (or any future disableReload weapon) disappears the instant its magazine
     // empties - see grantBonusWeapon. Cleared before the async rebuild starts so a slow asset load
     // can't re-trigger this next frame.
-    if (this.pendingRestoreId !== null && this.active.weapon.definition.disableReload && this.active.weapon.ammo <= 0) {
+    if (this.pendingRestoreId !== null && definition.disableReload && this.active.weapon.ammo <= 0) {
       const restoreId = this.pendingRestoreId;
       this.pendingRestoreId = null;
       void this.replaceActiveWeapon(restoreId);
     }
+  }
+
+  private beginReload(): void {
+    this.inspectTime = -1;
+    this.onReloadStart(this.active.weapon.definition.id);
+  }
+
+  /** G: look the weapon over. Only from rest: not aiming, reloading, mid swing or mid burst. */
+  private tryStartInspect(input: InputManager): void {
+    if (this.active.weapon.definition.id === 'unarmed') return;
+    if (this.inspectTime >= 0 || this.active.weapon.isReloading || this.meleeBusy || input.isActionActive('aim')) return;
+    this.inspectTime = 0;
   }
 
   /** Fires the next round of an in-progress burst (see the WEAPON_BURST_SHOT_INTERVAL_SECONDS
@@ -497,6 +589,8 @@ export class WeaponManager {
 
   private beginSwitch(targetIndex: number, input: InputManager): void {
     this.meleeProgress = 1;
+    this.pendingStrike = null;
+    this.inspectTime = -1;
     this.switching = true;
     this.pendingIndex = targetIndex;
     this.scopeOverlay.setVisible(false);
@@ -535,10 +629,12 @@ export class WeaponManager {
   }
 
   private updateAim(dt: number, input: InputManager, player: Player): void {
-    const { adsFov, hasScope } = this.active.weapon.definition;
-    const isMelee = this.active.weapon.definition.kind === 'melee';
+    const slot = this.active;
+    const { weapon } = slot;
+    const { adsFov, hasScope, adsSpeed } = weapon.definition;
+    const isMelee = weapon.definition.kind === 'melee';
     const targetAim = !isMelee && !this.switching && !this.handsBusy && input.isActionActive('aim') ? 1 : 0;
-    this.aimAmount = THREE.MathUtils.damp(this.aimAmount, targetAim, ADS_LERP_SPEED, dt);
+    this.aimAmount = THREE.MathUtils.damp(this.aimAmount, targetAim, adsSpeed ?? ADS_LERP_SPEED, dt);
     if (isMelee) this.aimAmount = 0;
 
     // The user's live FOV setting (see settings/Settings.ts), not the bare CAMERA_FOV constant -
@@ -558,7 +654,7 @@ export class WeaponManager {
     // The view model draws with its own fixed lens (VIEW_MODEL_FOV, see render/viewModelCamera.ts),
     // so neither the FOV setting nor the aim zoom above changes how the gun looks: the poses are
     // plain camera-space positions. Full aim puts this model's own sight on the screen centre.
-    this.active.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, this.active.adsPosition, this.aimAmount);
+    slot.viewModel.position.lerpVectors(WEAPON_HIP_POSITION, slot.adsPosition, this.aimAmount);
     // Bob and sway fade out while aiming so the sight stays steady on the centre.
     const handMotion = 1 - ADS_MOTION_DAMPING * this.aimAmount;
 
@@ -566,81 +662,114 @@ export class WeaponManager {
       // Holster drop: y slides from the pose above (switchProgress 0, so a switch's first and last
       // frames meet the normal pose exactly) to the fixed holster height below the frame
       // (switchProgress 1).
-      this.active.viewModel.position.y = THREE.MathUtils.lerp(
-        this.active.viewModel.position.y,
+      slot.viewModel.position.y = THREE.MathUtils.lerp(
+        slot.viewModel.position.y,
         WEAPON_HIP_POSITION.y - WEAPON_HOLSTER_DROP,
         this.switchProgress,
       );
     } else {
-      // Dip + tilt the weapon while reloading, peaking at the midpoint and settling back to
-      // neutral by the time the reload completes - a visual cue beyond the HUD's "RELOADING…" text.
-      const reloadCurve = Math.sin(this.active.weapon.reloadProgress * Math.PI);
-      this.active.viewModel.position.y -= RELOAD_DIP * reloadCurve;
-      this.active.viewModel.rotation.x = RELOAD_TILT_ANGLE * reloadCurve + this.swayPitch * handMotion;
-      this.active.viewModel.rotation.y = this.swayYaw * handMotion;
+      slot.viewModel.rotation.x = this.swayPitch * handMotion;
+      slot.viewModel.rotation.y = this.swayYaw * handMotion;
 
       // Same shared phase the camera bob uses (see Player.movementBobPhase) - the weapon and the
       // camera bob together rather than independently, matching the doc's framing of one phase
       // driving both.
-      this.active.viewModel.position.y +=
+      slot.viewModel.position.y +=
         Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength * handMotion;
 
-      // Sprint tuck and reload roll, after the Opus 5.5 viewmodel pose
-      // (reference/model-test/opus-5.5/game.js, renderViewmodel): the gun swings across the body
-      // while sprinting and rolls onto its side mid-reload while the magazine drops out.
+      // Sprint tuck, after the Opus 5.5 viewmodel pose (reference/model-test/opus-5.5/game.js,
+      // renderViewmodel): the gun swings across the body while sprinting.
       const sprinting = this.aimAmount < 0.05 && input.isActionActive('sprint') && player.movementBobStrength > 0.5;
       this.sprintPose = THREE.MathUtils.damp(this.sprintPose, sprinting ? 1 : 0, SPRINT_POSE_DAMP, dt);
       const sp = this.sprintPose;
-      this.active.viewModel.position.x += 0.02 * sp;
-      this.active.viewModel.position.y -= 0.04 * sp;
-      this.active.viewModel.rotation.x -= 0.25 * sp;
-      this.active.viewModel.rotation.y += 0.55 * sp;
-      this.active.viewModel.rotation.z = 0.15 * sp + RELOAD_ROLL_ANGLE * reloadCurve;
+      slot.viewModel.position.x += 0.02 * sp;
+      slot.viewModel.position.y -= 0.04 * sp;
+      slot.viewModel.rotation.x -= 0.25 * sp;
+      slot.viewModel.rotation.y += 0.55 * sp;
+      slot.viewModel.rotation.z = 0.15 * sp;
     }
 
     if (isMelee) {
-      if (this.switching) this.active.viewModel.rotation.set(0, 0, 0);
+      if (this.switching) slot.viewModel.rotation.set(0, 0, 0);
       const pose = meleePose(this.meleeProgress, this.meleeVariant);
-      this.active.viewModel.position.x += pose.px;
-      this.active.viewModel.position.y += pose.py;
-      this.active.viewModel.position.z += pose.pz;
-      this.active.viewModel.rotation.x += pose.rx;
-      this.active.viewModel.rotation.y += pose.ry;
-      this.active.viewModel.rotation.z += pose.rz;
+      slot.viewModel.position.x += pose.px;
+      slot.viewModel.position.y += pose.py;
+      slot.viewModel.position.z += pose.pz;
+      slot.viewModel.rotation.x += pose.rx;
+      slot.viewModel.rotation.y += pose.ry;
+      slot.viewModel.rotation.z += pose.rz;
       this.meleeProgress = Math.min(1, this.meleeProgress + dt / this.meleeDuration);
     }
 
-    const slot = this.active;
-    const { weapon, glowMaterials, magazine, magazineRestPosition } = slot;
-    const { magazineSize, kind, burstCount } = weapon.definition;
-    const ammoFrac = kind === 'melee' || !Number.isFinite(magazineSize) ? 1 : weapon.ammo / magazineSize;
-    const reloadCharge = weapon.isReloading ? weapon.reloadProgress : 1;
-    // Observe spent rounds in the pose pass, including the follow-up rounds of a burst.
-    const fired = weapon.ammo < slot.previousAmmo;
-    const burstRound = (magazineSize - weapon.ammo - 1) % (burstCount ?? 1);
-    for (let i = 0; i < glowMaterials.length; i++) {
-      const material = glowMaterials[i]!;
-      const flashThisPip = material.userData.burstPip === undefined || material.userData.burstPip === burstRound;
-      const shotFlash = fired && flashThisPip ? 6 : Math.max(0, slot.shotFlash[i]! - dt * 6 / 0.06);
-      slot.shotFlash[i] = shotFlash;
-      material.emissive.setHex(ammoFrac > 0.25 ? 0x6ff0dc : 0xe8a64a);
-      material.emissiveIntensity = WEAPON_GLOW_INTENSITY * (0.3 + 0.7 * ammoFrac) * reloadCharge + shotFlash;
-    }
-    slot.previousAmmo = weapon.ammo;
-    if (magazine) {
-      const drop = weapon.isReloading ? Math.min(1, Math.sin(weapon.reloadProgress * Math.PI) * 1.6) : 0;
-      magazine.position.copy(magazineRestPosition);
-      magazine.position.y -= 0.22 * drop;
-    }
+    this.poseParts(slot);
+    this.updateWitnessLight(slot, dt);
 
     // Grenade: the gun drops out of the way while one is in hand, and comes back up at the end of
     // the throw.
     this.throwPoseAmount = THREE.MathUtils.damp(this.throwPoseAmount, this.grenadeInHand || this.throwLowerTime > THROW_RAISE_SECONDS ? 1 : 0, THROW_POSE_DAMP, dt);
-    this.active.viewModel.position.y -= WEAPON_HOLSTER_DROP * this.throwPoseAmount;
+    slot.viewModel.position.y -= WEAPON_HOLSTER_DROP * this.throwPoseAmount;
 
     const scopeShouldShow = hasScope && this.aimAmount >= SCOPE_REVEAL_THRESHOLD;
     this.scopeOverlay.setVisible(scopeShouldShow);
-    this.active.viewModel.visible = !scopeShouldShow;
+    slot.viewModel.visible = !scopeShouldShow;
+  }
+
+  /** Poses the model's moving parts for this tick: the reload, the cycling action after a shot, an
+   * inspect, and the stock sliding out of view as the weapon is aimed. */
+  private poseParts(slot: WeaponSlot): void {
+    const offsets = this.offsets;
+    offsets.clear();
+    const { weapon, animations } = slot;
+    if (weapon.isReloading) addClip(offsets, slot.reloadClip, weapon.reloadProgress);
+    if (animations.fire && slot.fireClock < animations.fire.duration) {
+      addClip(offsets, animations.fire, slot.fireClock);
+      // The gun's own kick fades out with aim: at full aim the sights stay exactly on the aim
+      // point (the camera's recoil still moves the view).
+      const kick = offsets.get(GUN_TRACK);
+      if (kick && !weapon.isReloading) {
+        const keep = 1 - this.aimAmount;
+        kick.px *= keep; kick.py *= keep; kick.pf *= keep;
+        kick.pitch *= keep; kick.yaw *= keep; kick.roll *= keep;
+      }
+    }
+    if (this.inspectTime >= 0) {
+      const turn = inspectTurn(SKINS[slot.skinId].inspect);
+      if (this.inspectTime >= turn.duration) {
+        this.inspectTime = -1;
+      } else {
+        addClip(offsets, turn, this.inspectTime);
+        addClip(offsets, animations.inspect, this.inspectTime);
+      }
+    }
+    if (this.aimAmount > 0.001) {
+      for (const part in slot.aimRetract) {
+        let offset = offsets.get(part);
+        if (!offset) {
+          offset = zeroOffset();
+          offsets.set(part, offset);
+        }
+        offset.pf -= slot.aimRetract[part]! * this.aimAmount;
+      }
+    }
+    slot.animator.apply(offsets);
+  }
+
+  /** The ammo witness light: dims as the magazine empties, turns to the skin's warning colour on
+   * the last quarter, recharges through a reload and flashes on each shot. */
+  private updateWitnessLight(slot: WeaponSlot, dt: number): void {
+    const { weapon, glowMaterials } = slot;
+    const fired = weapon.ammo < slot.previousAmmo;
+    slot.previousAmmo = weapon.ammo;
+    slot.shotFlash = fired ? 6 : Math.max(0, slot.shotFlash - dt * 6 / 0.06);
+    if (glowMaterials.length === 0) return;
+    const { magazineSize, kind } = weapon.definition;
+    const ammoFrac = kind === 'melee' || !Number.isFinite(magazineSize) ? 1 : weapon.ammo / magazineSize;
+    const reloadCharge = weapon.isReloading ? weapon.reloadProgress : 1;
+    const glow = SKINS[slot.skinId].glow;
+    for (const material of glowMaterials) {
+      material.emissive.setHex(ammoFrac > 0.25 ? glow.full : glow.low);
+      material.emissiveIntensity = SKIN_GLOW_INTENSITY * (0.3 + 0.7 * ammoFrac) * reloadCharge + slot.shotFlash;
+    }
   }
 
   /** Computes this tick's lag offset from how much the camera itself rotated since last tick -
@@ -667,25 +796,80 @@ export class WeaponManager {
     this.meleeProgress = this.active.weapon.definition.kind === 'melee' ? 0 : 1;
     this.meleeVariant = 'draw';
     this.meleeDuration = MELEE_SWING_DURATION;
+    this.pendingStrike = null;
   }
 
-  /** One trigger pull, with independent hit rays and one visual attack. */
-  private fireShot(player: Player, aiming = false): void {
-    const { pelletCount, recoilKick, kind, isProjectile } = this.active.weapon.definition;
+  /** Starts a blade attack: the swing shows at once, the blade connects `hitAt` seconds in. */
+  private startMeleeAttack(attack: MeleeAttack, alt: boolean): void {
+    const which = alt ? 'alt' : 'primary';
+    this.meleeVariant = attack.poses[this.meleeCombo[which] % attack.poses.length]!;
+    this.meleeCombo[which]++;
+    this.meleeProgress = 0;
+    this.meleeDuration = attack.duration;
+    this.inspectTime = -1;
+    this.pendingStrike = { attack, timer: attack.hitAt, repeats: attack.repeats ?? 0 };
+    const id = this.active.weapon.definition.id;
+    // camera has no parent, so .position IS the world position.
+    this.onMeleeSwing(this.camera.position.clone(), id);
+    this.onFire(id);
+  }
+
+  private updatePendingStrike(dt: number, player: Player): void {
+    const strike = this.pendingStrike;
+    if (!strike) return;
+    strike.timer -= dt;
+    if (strike.timer > 0) return;
+    this.resolveMeleeStrike(strike.attack, player.ownCollider);
+    if (strike.repeats > 0) {
+      strike.repeats--;
+      strike.timer += strike.attack.repeatInterval ?? 0.15;
+    } else {
+      this.pendingStrike = null;
+    }
+  }
+
+  /** The moment a blade connects: a fan of rays across the strike. Each target takes the attack's
+   * damage once, however many rays find it. The centre ray is cast first, so a strike aimed at a
+   * head counts as one. */
+  private resolveMeleeStrike(attack: MeleeAttack, excludeCollider: RAPIER.Collider): void {
+    const origin = this.camera.position.clone();
+    const damage = this.active.weapon.damageOverride ?? attack.damage;
+    scratchForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    scratchUp.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    const struck = new Set<Damageable>();
+    for (let i = 0; i < attack.rays; i++) {
+      // Centre first, then alternating outward: 0, +1, -1, +2, -2 steps of the fan.
+      const step = Math.ceil(i / 2) * (i % 2 === 1 ? 1 : -1);
+      const steps = Math.max(1, Math.floor(attack.rays / 2));
+      const angle = attack.rays === 1 ? 0 : (step / steps) * attack.spread;
+      const direction = scratchForward.clone().applyAxisAngle(scratchUp, angle);
+      const hit = castHitscan(this.physics, origin, direction, attack.range, excludeCollider);
+      if (!hit) continue;
+      const target = this.physics.getEntity(hit.colliderHandle);
+      if (isDamageable(target)) {
+        if (struck.has(target)) continue;
+        struck.add(target);
+        this.onImpact(hit.point, true);
+        target.takeDamage(damage, hit.colliderHandle, origin);
+      } else if (i === 0) {
+        this.onImpact(hit.point, false);
+      }
+    }
+  }
+
+  /** One trigger pull of a gun: independent hit rays and one visual shot. */
+  private fireShot(player: Player): void {
+    const slot = this.active;
+    const { pelletCount, recoilKick, recoilSide, isProjectile, id } = slot.weapon.definition;
+    slot.fireClock = 0;
+    this.inspectTime = -1;
 
     // camera has no parent, so .position IS the world position - avoids reading a stale
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
     const origin = this.camera.position.clone();
-    if (kind === 'melee') {
-      this.meleeVariant = aiming ? 'stab' : this.nextSlash;
-      if (!aiming) this.nextSlash = this.nextSlash === 'slashRight' ? 'slashLeft' : 'slashRight';
-      this.meleeProgress = 0;
-      this.meleeDuration = aiming ? MELEE_STAB_DURATION : MELEE_SWING_DURATION;
-      this.onMeleeSwing(origin, this.active.weapon.definition.id);
-    }
-    const muzzleWorld = this.active.viewModel.position
+    const muzzleWorld = slot.viewModel.position
       .clone()
-      .add(this.active.muzzleLocalOffset)
+      .add(slot.muzzleLocalOffset)
       .applyQuaternion(this.camera.quaternion)
       .add(origin);
 
@@ -697,7 +881,7 @@ export class WeaponManager {
       // setting, the aim zoom), so it starts from the point the world camera shows where the
       // player sees the muzzle. The flash stays at muzzleWorld: it draws with the gun.
       const tracerStart = viewModelPointToWorldLens(
-        this.active.viewModel.position.clone().add(this.active.muzzleLocalOffset),
+        slot.viewModel.position.clone().add(slot.muzzleLocalOffset),
         this.camera.fov,
       ).applyQuaternion(this.camera.quaternion).add(origin);
       for (let i = 0; i < pelletCount; i++) {
@@ -705,34 +889,34 @@ export class WeaponManager {
       }
     }
 
-    this.onFire(this.active.weapon.definition.id);
-    // Melee has no muzzle - a flash there would be a light spawning out of a knife blade.
-    if (kind === 'ranged') this.onMuzzleFlash(muzzleWorld, this.active.weapon.definition.id);
-    if (kind !== 'melee') player.addRecoil(recoilKick);
+    this.onFire(id);
+    this.onMuzzleFlash(muzzleWorld, id);
+    player.addRecoil(recoilKick, (Math.random() * 2 - 1) * (recoilSide ?? 0));
   }
 
   private firePellet(origin: THREE.Vector3, tracerStart: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
-    const { spreadRadians, adsSpreadMultiplier, range } = this.active.weapon.definition;
-    const damage = this.active.weapon.effectiveDamage;
+    const { weapon } = this.active;
+    const { spreadRadians, adsSpreadMultiplier, falloff } = weapon.definition;
     const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
-    const effectiveRange = range ?? HITSCAN_RANGE;
 
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     applySpreadCone(direction, effectiveSpread);
 
     // camera.position sits inside the player's own capsule (EYE_OFFSET is well within its
     // radius/height), so without excluding it every shot immediately self-hit at distance 0.
-    const hit = castHitscan(this.physics, origin, direction, effectiveRange, excludeCollider);
+    const hit = castHitscan(this.physics, origin, direction, HITSCAN_RANGE, excludeCollider);
 
-    const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(effectiveRange));
-    if (this.active.weapon.definition.kind !== 'melee') this.onTracer(tracerStart, tracerEnd);
-    if (this.active.weapon.definition.kind === 'ranged') this.onHitscanRay?.(origin, direction, hit ? hit.distance : effectiveRange);
+    const tracerEnd = hit ? hit.point : origin.clone().add(direction.clone().multiplyScalar(HITSCAN_RANGE));
+    this.onTracer(tracerStart, tracerEnd);
+    this.onHitscanRay?.(origin, direction, hit ? hit.distance : HITSCAN_RANGE);
 
     if (hit) {
       const target = this.physics.getEntity(hit.colliderHandle);
       const isEntityHit = isDamageable(target);
       this.onImpact(hit.point, isEntityHit);
       if (isDamageable(target)) {
+        // A mode's damage override (a guaranteed one-hit kill) holds at any range.
+        const damage = weapon.damageOverride ?? weapon.definition.damage * falloffMultiplier(falloff, hit.distance);
         target.takeDamage(damage, hit.colliderHandle, origin);
         if (hit.distance >= LONG_SHOT_DISTANCE) this.onLongShot(hit.distance);
       }

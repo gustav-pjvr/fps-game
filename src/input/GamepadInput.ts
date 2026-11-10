@@ -4,16 +4,16 @@ import { Settings } from '../settings/Settings.ts';
 export type ActiveDevice = 'mouse' | 'gamepad';
 export interface StickVector { x: number; y: number }
 
-// Standard mapping. RB (5) throws the loadout's grenade; LB (4) stays unbound.
+// Standard mapping. RB (5) throws the loadout's grenade; LB (4) pings; D-pad down (13) inspects.
 export const GAMEPAD_ACTIONS: Readonly<Partial<Record<number, Action>>> = {
-  0: 'jump', 1: 'interact', 2: 'reload', 3: 'weaponNext', 5: 'grenade',
+  0: 'jump', 1: 'interact', 2: 'reload', 3: 'weaponNext', 4: 'ping', 5: 'grenade',
   6: 'aim', 7: 'fire', 8: 'resetPlay', 9: 'pause',
-  12: 'flashlight', 14: 'weaponPrev', 15: 'weaponNext',
+  12: 'flashlight', 13: 'inspect', 14: 'weaponPrev', 15: 'weaponNext',
 };
 
 const BUTTON_NAMES: Readonly<Record<number, string>> = {
-  0: 'A (Cross)', 1: 'B (Circle)', 2: 'X (Square)', 3: 'Y (Triangle)', 5: 'RB (R1)',
-  12: 'D-pad up', 14: 'D-pad left', 15: 'D-pad right',
+  0: 'A (Cross)', 1: 'B (Circle)', 2: 'X (Square)', 3: 'Y (Triangle)', 4: 'LB (L1)', 5: 'RB (R1)',
+  12: 'D-pad up', 13: 'D-pad down', 14: 'D-pad left', 15: 'D-pad right',
 };
 
 /** The controller button hint for `action`, from GAMEPAD_ACTIONS (the first button that triggers it),
@@ -28,9 +28,9 @@ export const GAMEPAD_MAPPING = [
   'Right stick: look; RT (R2): fire; LT (L2): aim',
   'A (Cross): jump / activate; B (Circle): interact / back',
   'X (Square): reload; Y (Triangle): next weapon',
-  'D-pad left / right: previous / next weapon; D-pad up: torch',
+  'D-pad left / right: previous / next weapon; D-pad up: torch; D-pad down: inspect weapon',
   'Start (Options): pause; View (Share): reset match',
-  'RB (R1): throw grenade (hold to cook); LB (L1): unbound',
+  'RB (R1): throw grenade (hold to cook); LB (L1): ping',
   'Menus: D-pad or left stick moves focus, left / right changes a value',
 ];
 

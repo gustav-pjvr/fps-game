@@ -7,10 +7,15 @@ import { updateSkinAnimations } from '../../weapons/models/skinMaterials.ts';
 import { SKINS, type SkinId } from '../../weapons/models/skins.ts';
 import { buildWeaponViewModel, createWeaponModel } from '../../weapons/models/weaponModels.ts';
 import { WEAPON_HIP_POSITION } from '../../weapons/viewModel.ts';
+import { loadGLTF } from '../../core/AssetLoader.ts';
+import { PLAYER_HEIGHT } from '../../core/config.ts';
+import { instantiateCharacter, PLAYER_CHARACTER } from '../../entities/characterModels.ts';
+import { HeldWeapon } from '../../entities/heldWeapon.ts';
 
-/** How a weapon is shown: on a turntable with no arms, or through the player's eyes at the hip and
- * at full aim, drawn with the same lens the match uses for the view model. */
-export type PreviewView = 'display' | 'hip' | 'aim';
+/** How a weapon is shown: on a turntable with no arms, through the player's eyes at the hip and
+ * at full aim (drawn with the same lens the match uses for the view model), or in the hand of the
+ * player character, as other players see it. */
+export type PreviewView = 'display' | 'hip' | 'aim' | 'held';
 
 const DISPLAY_SPIN = 0.45;
 
@@ -27,6 +32,9 @@ export class WeaponPreview {
   /** The weapon's own part moves during an inspect (first-person views only). */
   private ownInspect: Clip | undefined;
   private aimRetract: Readonly<Record<string, number>> = {};
+  /** The held view's character: its mixer and the weapon in its hand. Built on first use. */
+  private character: { model: THREE.Object3D; mixer: THREE.AnimationMixer; held: HeldWeapon } | null = null;
+  private characterLoading = false;
   private view: PreviewView = 'display';
   private skinId: SkinId = 'service';
   private weaponId = '';
@@ -64,8 +72,14 @@ export class WeaponPreview {
 
   /** Shows `weaponId` in `skinId`. Rebuilds the model only when either changes. */
   show(weaponId: string, skinId: SkinId, view: PreviewView): void {
-    const changed = weaponId !== this.weaponId || skinId !== this.skinId || (view === 'display') !== (this.view === 'display');
+    const changed = weaponId !== this.weaponId || skinId !== this.skinId || view !== this.view;
     this.view = view;
+    if (view === 'held') {
+      this.weaponId = weaponId;
+      this.skinId = skinId;
+      this.showHeld();
+      return;
+    }
     if (changed || this.holder.children.length === 0) {
       this.weaponId = weaponId;
       this.skinId = skinId;
@@ -99,7 +113,12 @@ export class WeaponPreview {
   }
 
   private pose(): void {
-    if (this.view === 'display') {
+    if (this.view === 'held') {
+      this.camera.fov = 30;
+      this.camera.position.set(0, 0.25, 4.1);
+      this.camera.lookAt(0, 0.05, 0);
+      this.holder.rotation.set(0, this.spin, 0);
+    } else if (this.view === 'display') {
       this.camera.fov = 30;
       this.camera.position.set(0, 0.14, 1.8);
       this.camera.lookAt(0, 0, 0);
@@ -112,6 +131,35 @@ export class WeaponPreview {
       if (group) group.position.copy(this.view === 'aim' ? this.aimPosition : WEAPON_HIP_POSITION);
     }
     this.camera.updateProjectionMatrix();
+  }
+
+  /** The player character holding the weapon, as other players see it. The character loads once. */
+  private showHeld(): void {
+    this.camera.clear();
+    this.animator = null;
+    if (this.character) {
+      this.holder.clear();
+      this.holder.add(this.character.model);
+      this.character.held.set(this.weaponId, this.skinId);
+      this.pose();
+      this.render();
+      return;
+    }
+    if (this.characterLoading) return;
+    this.characterLoading = true;
+    void loadGLTF(PLAYER_CHARACTER.path).then((gltf) => {
+      const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
+      // Dev only: ?clip=Run_Shoot&at=0.2 poses the character in another clip of the model.
+      const params = new URLSearchParams(location.search);
+      const named = gltf.animations.find((clip) => clip.name === params.get('clip'));
+      if (named) mixer.clipAction(named).play();
+      else (actions.aim ?? actions.idle)?.play();
+      mixer.update(Number(params.get('at') ?? 0));
+      this.character = { model, mixer, held: new HeldWeapon(model) };
+      this.characterLoading = false;
+      if (this.view === 'held') this.showHeld();
+      this.canvas.dataset.held = 'ready';
+    });
   }
 
   /** Plays the weapon's inspect (its own part moves plus the skin's turn) in the hip view. */
@@ -167,7 +215,8 @@ export class WeaponPreview {
       this.lastTime = now;
       this.clock += dt;
       if (this.inspectTime >= 0) this.inspectTime += dt;
-      if (this.view === 'display' && !this.frozen) {
+      if (this.view === 'held') this.character?.mixer.update(dt);
+      if ((this.view === 'display' || this.view === 'held') && !this.frozen) {
         this.spin += dt * DISPLAY_SPIN;
         this.holder.rotation.y = this.spin;
       }

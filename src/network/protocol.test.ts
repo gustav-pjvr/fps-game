@@ -279,6 +279,10 @@ describe('self-reported numbers and hello fields', () => {
     expect(raw({ ...snapshot, yaw: Number.POSITIVE_INFINITY })).toBe(false);
     expect(ok({ ...snapshot, health: -5 })).toBe(false);
     expect(ok({ ...snapshot, t: 'late' })).toBe(false);
+    // The held weapon and its skin are short optional ids: an older build sends neither.
+    expect(ok({ ...snapshot, w: 'battleRifle', k: 'whiteout' })).toBe(true);
+    expect(ok({ ...snapshot, w: 'x'.repeat(25) })).toBe(false);
+    expect(ok({ ...snapshot, k: 7 })).toBe(false);
     expect(ok({ type: 'footstepEvent', senderSlot: 2, x: 1, y: 2, z: 1e9 })).toBe(false);
     expect(ok({ type: 'respawnEvent', senderSlot: 2, x: 1, y: 2 })).toBe(false);
     expect(ok({ type: 'fireEvent', senderSlot: 2, originX: 0, originY: 0, originZ: 0, endX: 1, endY: 1, endZ: 1, weaponId: 'rifle' })).toBe(true);

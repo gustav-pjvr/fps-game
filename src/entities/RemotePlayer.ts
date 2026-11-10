@@ -6,6 +6,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { HEADSHOT_MULTIPLIER, PLAYER_HEIGHT } from '../core/config.ts';
 import { createHitColliders, PLAYER_HIT_SHAPE, yawRotation } from './characterHitbox.ts';
 import { instantiateCharacter, PLAYER_CHARACTER } from './characterModels.ts';
+import { HeldWeapon } from './heldWeapon.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { RemoteMotion } from './remoteMotion.ts';
 
@@ -63,6 +64,8 @@ export class RemotePlayer implements Entity, Damageable {
    * setTorch, so the Valley never builds a lens. */
   private torchLens: THREE.Mesh<THREE.CircleGeometry, THREE.MeshStandardMaterial> | null = null;
   private torchLit = false;
+  /** The weapon they are holding, in its skin, as their snapshots report it. */
+  private readonly heldWeapon: HeldWeapon;
 
   private constructor(
     private readonly physics: PhysicsWorld,
@@ -76,6 +79,7 @@ export class RemotePlayer implements Entity, Damageable {
   ) {
     this.mesh = new THREE.Group();
     this.mesh.add(model);
+    this.heldWeapon = new HeldWeapon(model);
     this.mesh.position.copy(initialPosition);
     scene.add(this.mesh);
 
@@ -116,8 +120,9 @@ export class RemotePlayer implements Entity, Damageable {
   ): Promise<RemotePlayer> {
     const gltf = await loadGLTF(PLAYER_CHARACTER.path);
     const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
-    // A moving player is nearly always at a run (walk and sprint are 5 m/s and up).
-    return new RemotePlayer(physics, scene, initialPosition, model, mixer, actions.idle, actions.run, onHit);
+    // A moving player is nearly always at a run (walk and sprint are 5 m/s and up). Standing, they
+    // hold their weapon up and forward, so it reads at a glance what they carry and where they face.
+    return new RemotePlayer(physics, scene, initialPosition, model, mixer, actions.aim ?? actions.idle, actions.run, onHit);
   }
 
   /** Always false from this client's perspective - it has no authority over the opponent's health
@@ -196,6 +201,20 @@ export class RemotePlayer implements Entity, Damageable {
     this.motion.reset(x, y, z);
     this.mesh.position.set(x, y, z);
     this.rigidBody.setNextKinematicTranslation({ x, y, z });
+  }
+
+  /** Shows the weapon and skin from their snapshot in their hand (entities/heldWeapon.ts). Unknown
+   * or missing ids show nothing. Cheap when nothing changed. */
+  setHeldWeapon(weaponId: string | undefined, skinId: string | undefined): void {
+    this.heldWeapon.set(weaponId, skinId);
+  }
+
+  get heldWeaponId(): string | null {
+    return this.heldWeapon.shownWeaponId;
+  }
+
+  get heldSkinId(): string | null {
+    return this.heldWeapon.shownSkinId;
   }
 
   setLeadSeconds(seconds: number): void {

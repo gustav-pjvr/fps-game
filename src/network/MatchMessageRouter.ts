@@ -214,6 +214,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       ctx.noteSnapshotApplied(message.senderSlot, performance.now());
       opponent.remotePlayer.applySnapshot(message.x, message.y, message.z, message.yaw, message.t, opponent.isDead);
       opponent.remotePlayer.setLookPitch(message.pitch);
+      opponent.remotePlayer.setHeldWeapon(message.w, message.k);
       const torchAllowed = torchAvailable(activeMultiplayer.map, activeMultiplayer.weather,
         activeMultiplayer.map === 'valley' && isUnderground(message.x, message.y, message.z));
       opponent.remotePlayer.setTorch(torchAllowed && (message.torch ?? torchOnByDefault(activeMultiplayer.map, activeMultiplayer.weather)));
@@ -236,7 +237,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
       if (WEAPON_DEFINITIONS[message.weaponId]?.kind === 'melee') {
         const volume = knifeSwingVolume(distance);
-        if (volume > 0) ctx.sound.playKnifeSwing(volume, pan);
+        if (volume > 0) ctx.sound.playKnifeSwing(volume, pan, message.weaponId);
         break;
       }
       ctx.tracers.spawn(origin, end);
