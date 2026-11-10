@@ -1,6 +1,6 @@
-# Server relay design (Phase A): proposed, not built
+# Server relay design (Phase A): Milestone 1 built, release pending
 
-Status: design only, written 2026-11-05 against v4.6.1 on `feature/underground-lab`. Nothing here is built.
+Status: written 2026-11-05 against v4.6.1. Built up to Milestone 1 on `feature/server-relay`; see section 13.1 for what is built and how it differs.
 Claims about current behaviour cite `path` plus class or function, read from the code. Anything not
 checked in this repository or that depends on a third party is marked UNVERIFIED.
 
@@ -796,7 +796,44 @@ its score, and the HUD shows a ping. Needs WP 1 to 4 and 6 to 8 (only what that 
 
 **Follow-ups after release 1:** F1 resume within 10 s (M, Opus); F2 WebRTC unreliable leg, only on
 measured need (L, Opus); F3 sender rounding then binary and batched snapshots (S then M); F4 host promotion,
-better done inside Phase B (L).
+better done inside Phase B (L). (F1 moved into release 1 with a 30 s window: section 1.1.)
+
+### 13.1 Build status (as built, 2026-11-10)
+
+**Milestone 1 reached on 2026-11-05** (branch `feature/server-relay`, not merged or deployed). WP 1 to 8 are
+built and committed, plus the part of WP 9 Milestone 1 needs. Evidence: `node scripts/relay-harness.mjs
+--players 4` zero loss and zero order violations; `e2e/multiplayer-match.spec.ts` with `E2E_TRANSPORT=server`
+passed (P2P control passed too); `node scripts/relay-menu-qa.mjs` 15 of 15 in a real browser; unit tests for
+`src/network`, `src/ui`, `src/core` and `server` green. Gustav played a server match in two browsers on
+2026-11-05: gameplay worked.
+
+**Built differently from the design above (code is right):**
+- `RELAY_URL` and `DEFAULT_NETWORK_TRANSPORT` live in `src/network/relaySettings.ts`, not `config.ts`: `config.ts`
+  is shared with the Node relay, where Vite's `import.meta.env` does not exist. Production `RELAY_URL` is `''`
+  until WP 10, which hides every server control. Dev builds also read a relay URL override from `?relay=` or
+  localStorage `fps-game-dev-relay-url` (the e2e config uses the latter).
+- Section 10.2's 2 s server lookup is not built. A join tries the server first and falls back to P2P on
+  `roomNotFound`, `serverLost`, `accessDenied` or `versionMismatch`, inside the 25 s join timeout. A refused or
+  outdated access code falls back too, so a stale stored code never blocks P2P rooms (found in QA).
+- The access code field sits in the Multiplayer menu; the "Game server" checkbox on Create Room shows only
+  when a code is stored, re-creates the room when changed, and locks once a guest has joined.
+- `ServerTransport`: 4 connect attempts in all (one try plus three retries), each capped at 4 s; a kicked
+  (4010) or replaced (4011) guest reports the host as disconnected, as on P2P.
+- E2E: `E2E_TRANSPORT=server` starts a relay on `E2E_PORT + 1000` with a throwaway local access code.
+
+**Found in testing, open:**
+- Rejoin after the host leaves fails: release 1 closes the room when the host goes (section 4.4), and there is
+  no visible "Rejoin" control. Plan: F1 (host resume within 30 s) plus a Rejoin button on the disconnect screen
+  and the Multiplayer menu, and the access code field on Join Room too (Gustav, 2026-11-05: low priority).
+- Server-mode e2e: 2 of 4 runs stopped at `lockPointer(guestPage)` before any network check, on a slow
+  machine. Check in WP 9.
+- The server-mode HUD ping is an application ping, so it includes the page's frame time; P2P reads RTCStats.
+  Compare the telemetry with that in mind.
+- `joinAnswer` is keyed by slot only; the client answers only the newest request. Echoing `peerId` would close
+  the gap (a server change, for the WP 11 audit to weigh).
+
+**Still to do:** F1 resume, WP 9 (rest), WP 10 deploy kit (DuckDNS, Oracle VM in Johannesburg, Gustav's
+sign-up), WP 11 audit, WP 13 release.
 
 ## 14. Phase B outline and rooms larger than 4
 
