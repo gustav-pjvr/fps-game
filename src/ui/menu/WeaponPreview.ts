@@ -87,7 +87,7 @@ export class WeaponPreview {
       this.camera.clear();
       this.inspectTime = -1;
       if (view === 'display') {
-        const model = createWeaponModel(weaponId, skinId);
+        const model = createWeaponModel(weaponId, skinId, { raw: true });
         this.animator = new PartAnimator(model.parts, null);
         this.ownInspect = undefined;
         // Centre the model on its own bounds so every weapon turns about its middle.
@@ -97,7 +97,8 @@ export class WeaponPreview {
         model.root.position.sub(centre);
         const pivot = new THREE.Group();
         pivot.add(model.root);
-        pivot.scale.setScalar(1 / Math.max(size.x, size.y, size.z));
+        // Fit the longest side to the width of the picture, or a tall weapon to its height.
+        pivot.scale.setScalar(1 / Math.max(size.x, size.z, size.y * 2.1));
         this.holder.add(pivot);
       } else {
         const viewModel = buildWeaponViewModel(weaponId, skinId);
