@@ -79,6 +79,8 @@ export const RULES = [
   { match: /^e2e\/coop\.ts$/, groups: ['modes'], stop: true },
   { match: /^src\/core\/modeControllers\/(hillState|KingOfTheHillController|reviveRules|SquadController)\.ts$|^src\/entities\/HillView\.ts$|^src\/ui\/kothHud\.ts$/, groups: ['modes'] },
   { match: /^src\/entities\/(HordeGoose|HordeGooseManager|hordeRules|AmmoDropManager)\.ts$|^src\/ui\/(hordeHud|downedOverlay)\.ts$/, groups: ['modes', 'facility'] },
+  // Showdown's panel: the director spec reads it.
+  { match: /^src\/ui\/showdownHud\.ts$/, groups: ['ai'] },
   // What other players see in a hand.
   { match: /^src\/entities\/heldWeapon\.ts$/, groups: ['mp'] },
   { match: /^src\/ui\/|^index\.html$/, groups: ['quick', 'ui'] },
