@@ -43,6 +43,11 @@ export function applyMatchDeath(
   payload: { victimSlot: PlayerSlot; killerSlot: PlayerSlot | null; killerWeaponId?: string },
 ): boolean {
   if (gameMode === 'gooseHorde') return false;
+  // King of the Hill is won on the hill: a kill clears it, but scores nothing itself.
+  if (gameMode === 'kingOfTheHill') {
+    applyPlayerDied(scoreboard, deathCounts, { victimSlot: payload.victimSlot, killerSlot: null });
+    return false;
+  }
   const { killerSlot } = payload;
   const credited = killerSlot !== null && creditsKill(gameMode, killLimit, scoreboard.get(killerSlot) ?? 0, payload.killerWeaponId);
   applyPlayerDied(scoreboard, deathCounts, { victimSlot: payload.victimSlot, killerSlot: credited ? killerSlot : null });

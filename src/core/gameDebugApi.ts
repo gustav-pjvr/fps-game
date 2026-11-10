@@ -112,6 +112,13 @@ export interface GameDebugApi {
   } | null;
   /** The Uplink mission's state (docs/visual-overhaul.md, phase 4), null outside a mission match. */
   getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
+  /** King of the Hill, null in every other mode and on a guest before the host's first state: the
+   * hill, the crown and who holds it, as this client shows them. */
+  getKothDebug(): {
+    hill: { x: number; z: number }; next: { x: number; z: number }; radius: number; moveIn: number;
+    hold: 'empty' | 'held' | 'contested'; holder: number | null; crown: number | null; crownAt: { x: number; z: number } | null;
+    push: boolean; teams: boolean;
+  } | null;
   /** Goose Horde, null in every other mode: the current wave and every live horde goose. */
   getHordeDebug(): { wave: number; geese: { x: number; y: number; z: number; flavor: string }[] } | null;
   /** The torch (render/Flashlight.ts): whether this match has one, whether it is on, the match's

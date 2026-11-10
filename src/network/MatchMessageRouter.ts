@@ -5,7 +5,6 @@ import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import type { Player } from '../entities/Player.ts';
 import type { GooseManager } from '../entities/GooseManager.ts';
-import type { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
 import type { HordeGooseManager } from '../entities/HordeGooseManager.ts';
 import type { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import type { AmmoDropManager } from '../entities/AmmoDropManager.ts';
@@ -19,7 +18,7 @@ import type { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import type { SoundEngine } from '../audio/SoundEngine.ts';
 import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume, undergroundMuffleFactor } from '../core/positionalAudio.ts';
 import { applyMatchDeath } from '../core/multiplayerScoring.ts';
-import { acceptsGoldenGooseClaim, acceptsGoldenGooseDrop } from '../core/modeControllers/KingOfTheHillController.ts';
+import type { KingOfTheHillController } from '../core/modeControllers/KingOfTheHillController.ts';
 import { pickGunGameUpgrade } from '../core/gameModes.ts';
 import { DEFAULT_MATCH_MAP, GOOSE_LAUNCHER_EXPLOSION_RADIUS, GOOSE_TOSS_EXPLOSION_RADIUS } from '../core/config.ts';
 import { HOST_SLOT, type GrenadeDetonatedMessage, type GrenadeThrownMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
@@ -48,9 +47,6 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'goosePickedUp',
   'gooseThrown',
   'gooseThrowExploded',
-  'goldenGoosePickedUp',
-  'goldenGooseDropped',
-  'kothScoreTick',
   'hordePlayerEliminated',
   'hordeAmmoDropPickedUp',
   'modeExplanationReady',
@@ -92,7 +88,9 @@ export interface MatchMessageContext {
   readonly thrownGeese: Map<string, ThrownGoose>;
   readonly scoreboard: Map<PlayerSlot, number>;
   readonly deathCounts: Map<PlayerSlot, number>;
-  readonly goldenGooseManager: GoldenGooseManager | null;
+  /** King of the Hill's controller, null in every other mode. Read through a getter: it is
+   * assigned just after the Game is constructed. */
+  readonly kingOfTheHill: KingOfTheHillController | null;
   readonly hordeGooseManager: HordeGooseManager | null;
   readonly bonusGooseManager: BonusGooseManager | null;
   readonly ammoDropManager: AmmoDropManager | null;
@@ -285,6 +283,8 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const credited = applyMatchDeath(ctx.scoreboard, ctx.deathCounts, activeMultiplayer.gameMode, activeMultiplayer.killLimit, message);
       const victim = activeMultiplayer.opponents.get(message.victimSlot);
       if (victim) {
+        // King of the Hill: the host drops the crown where its wearer fell.
+        ctx.kingOfTheHill?.playerDown(message.victimSlot, victim.remotePlayer.position);
         victim.isDead = true;
         victim.remotePlayer.stopPrediction();
         victim.lastStateSentAt = afterStateEvent(victim.lastStateSentAt, message.t);
@@ -414,42 +414,20 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       break;
     }
     case 'goldenGoosePickedUp':
-      // Only ever received for another player's claim - this client's own claim is applied
-      // locally at the moment it sends this (see updateGoldenGoose), same self-authoritative
-      // pattern as goosePickedUp above.
-      // message.senderSlot - see playerSnapshot's own comment on the transport-slot bug.
-      // Claims aren't arbitrated, so two players pressing E within one network round trip each saw
-      // the OTHER's claim arrive and handed the goose over: A thought B carried it and B thought A
-      // did, nobody scored and nobody could drop it, so the match could never end. Deterministic
-      // tie-break instead: a claim only displaces an existing carrier with a LOWER slot number.
-      // Every client applies the same rule to the same pair of claims, so all converge on the
-      // lowest-numbered claimant. A legitimate claim after a drop is unaffected (the ordered channel
-      // delivers the drop first, leaving no carrier to compare against).
-      if (ctx.goldenGooseManager && acceptsGoldenGooseClaim(ctx.goldenGooseManager.carrierSlot, message.senderSlot)) {
-        ctx.goldenGooseManager.claim(message.senderSlot);
-      }
-      break;
     case 'goldenGooseDropped':
-      // Only the carrier this client knows can drop it: a claimant that lost the tie-break may drop
-      // before it hears it lost (see acceptsGoldenGooseDrop).
-      if (ctx.goldenGooseManager && acceptsGoldenGooseDrop(ctx.goldenGooseManager.carrierSlot, message.senderSlot)) {
-        ctx.goldenGooseManager.drop(new THREE.Vector3(message.x, message.y, message.z));
-      }
-      break;
     case 'goldenGooseState':
-      // A late joiner's sync from the host: taken as is, whoever carried it before.
-      if (activeMultiplayer.session.role !== 'guest' || senderSlot !== HOST_SLOT || !ctx.goldenGooseManager) break;
-      if (message.carrierSlot !== null) ctx.goldenGooseManager.claim(message.carrierSlot);
-      else ctx.goldenGooseManager.drop(new THREE.Vector3(message.x, message.y, message.z));
-      break;
     case 'kothScoreTick':
-      // Never lower than the score already held (acceptsInMatch).
-      // message.senderSlot - see playerSnapshot's own comment; using the transport slot let
-      // one guest's points overwrite the host's own scoreboard row on every other guest's
-      // client, which could crown the wrong King of the Hill winner in a 3+ player match.
-      // At most KOTH_SCORE_STEP_MAX above what this client holds: a modified client cannot claim
-      // the win in one message, and a brief carrier mismatch between clients still catches up.
-      ctx.scoreboard.set(message.senderSlot, Math.min(message.score, (ctx.scoreboard.get(message.senderSlot) ?? 0) + KOTH_SCORE_STEP_MAX));
+      // Retired with the v5.0.0 King of the Hill (docs/king-of-the-hill.md): an older build's
+      // carry messages mean nothing to the hill. The types stay in the protocol until the relay
+      // branch, whose routing table names them, is merged.
+      break;
+    case 'kothState':
+      // Host-authored (senderAuthority.ts): the hill, the crown and every score, taken as is.
+      if (activeMultiplayer.session.role === 'guest') ctx.kingOfTheHill?.receiveState(message);
+      break;
+    case 'kothCrownClaim':
+      // Guest to host, never relayed: the claimant is the link it came in on.
+      if (activeMultiplayer.session.role === 'host') ctx.kingOfTheHill?.receiveClaim(senderSlot);
       break;
     case 'hordeGooseSpawned':
       ctx.hordeGooseManager?.applyRemoteSpawn(message.id, message.x, message.y, message.z, message.flavor);
@@ -585,18 +563,13 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
   }
 }
 
-/** Checks that need this client's match state, run before the host relays anything: a King of the
- * Hill score only ever rises (a lower one would rewrite another client's view of the race), and
- * grenade messages mean nothing where the mode has no grenades. */
-/** Most a King of the Hill score may rise in one kothScoreTick (see the router's case). */
-export const KOTH_SCORE_STEP_MAX = 2;
-
+/** Checks that need this client's match state, run before the host relays anything: the retired
+ * King of the Hill score tick is refused outright, and grenade messages mean nothing where the mode
+ * has no grenades. */
 function acceptsInMatch(ctx: MatchMessageContext, message: NetworkMessage): boolean {
   switch (message.type) {
     case 'kothScoreTick':
-      // Only the player this client sees carrying the golden goose scores, and only upwards.
-      return ctx.goldenGooseManager?.carrierSlot === message.senderSlot
-        && message.score > (ctx.scoreboard.get(message.senderSlot) ?? 0);
+      return false;
     case 'grenadeThrown':
     case 'grenadeDetonated':
       return ctx.grenades?.enabled === true;
@@ -608,10 +581,10 @@ function acceptsInMatch(ctx: MatchMessageContext, message: NetworkMessage): bool
 /** Host: the answer to either sync request (gooseSyncRequest, hordeSyncRequest), sent to that one
  * guest only (see matchSync.ts for what it holds and in which order). */
 function sendFullSync(ctx: MatchMessageContext, slot: PlayerSlot): void {
-  const { multiplayer, hordeGooseManager, goldenGooseManager } = ctx;
+  const { multiplayer, hordeGooseManager } = ctx;
   const messages = buildMatchSync({
     roster: multiplayer.hostRoster?.connectedRoster() ?? null,
-    goldenGoose: goldenGooseManager ? { carrierSlot: goldenGooseManager.carrierSlot, position: goldenGooseManager.position } : null,
+    koth: ctx.kingOfTheHill?.syncMessage() ?? null,
     geese: ctx.gooseManager.listForSync(),
     horde: hordeGooseManager
       ? {

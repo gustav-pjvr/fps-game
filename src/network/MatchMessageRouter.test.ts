@@ -3,14 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import { HostRoster } from './HostRoster.ts';
 import { buildMatchSync } from './matchSync.ts';
-import { KOTH_SCORE_STEP_MAX, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
-import { isNetworkMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
+import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
+import { isNetworkMessage, type KothStateMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import { clearUnderground, registerUndergroundVolume } from '../world/underground.ts';
 
 /** A context with only what the cases under test touch; everything else is left out on purpose. */
-function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; carrier?: PlayerSlot | null; map?: string } = {}) {
-  const goldenGoose = { carrierSlot: overrides.carrier ?? null, claim: vi.fn(), drop: vi.fn() };
-  goldenGoose.claim.mockImplementation((slot: PlayerSlot) => (goldenGoose.carrierSlot = slot));
+function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; map?: string } = {}) {
+  const kingOfTheHill = { receiveState: vi.fn(), receiveClaim: vi.fn(), playerDown: vi.fn(), syncMessage: vi.fn(() => null) };
   const opponents = new Map<PlayerSlot, unknown>();
   const ctx = {
     multiplayer: {
@@ -28,7 +27,7 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
     deathCounts: new Map<PlayerSlot, number>(),
     thrownGeese: new Map(),
     isHordeMode: false,
-    goldenGooseManager: goldenGoose,
+    kingOfTheHill,
     hordeGooseManager: { applyWaveStarted: vi.fn(), applyCleared: vi.fn() },
     killFeed: { show: vi.fn() },
     weaponManager: { activeWeaponId: 'rifle', replaceActiveWeapon: vi.fn(async () => {}) },
@@ -81,34 +80,51 @@ describe('routeMatchMessage, 3 to 4 players', () => {
   });
 
   it('the host relays through relay(), which skips directly linked guest pairs', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0, carrier: 2 });
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);
-    expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'kothScoreTick' }), 2);
-    expect(ctx.scoreboard.get(2)).toBe(1);
+    const ctx = makeContext({ role: 'host', ownSlot: 0 });
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
+    expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'playerSnapshot' }), 2);
   });
 
-  it('a drop from a claimant that lost the tie-break leaves the real carrier', () => {
-    const ctx = makeContext({ carrier: 1 });
-    route(ctx, { type: 'goldenGooseDropped', senderSlot: 3, x: 1, y: 2, z: 3 });
-    expect(ctx.goldenGooseManager.drop).not.toHaveBeenCalled();
-    route(ctx, { type: 'goldenGooseDropped', senderSlot: 1, x: 1, y: 2, z: 3 });
-    expect(ctx.goldenGooseManager.drop).toHaveBeenCalledTimes(1);
+  it('a guest takes the King of the Hill state from its host, and the host ignores one sent to it', () => {
+    const state = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] } as const;
+    const guest = makeContext({ gameMode: 'kingOfTheHill' });
+    route(guest, state as unknown as NetworkMessage);
+    expect(guest.kingOfTheHill.receiveState).toHaveBeenCalledWith(expect.objectContaining({ type: 'kothState', crown: 1 }));
+    const host = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill' });
+    route(host, state as unknown as NetworkMessage, 2);
+    expect(host.kingOfTheHill.receiveState).not.toHaveBeenCalled();
+    expect(host.multiplayer.session.connection.relay).not.toHaveBeenCalled();
   });
 
-  it('a claim displaces only a higher-slot carrier', () => {
-    const ctx = makeContext({ carrier: 2 });
-    route(ctx, { type: 'goldenGoosePickedUp', senderSlot: 3 });
-    expect(ctx.goldenGooseManager.carrierSlot).toBe(2);
-    route(ctx, { type: 'goldenGoosePickedUp', senderSlot: 1 });
-    expect(ctx.goldenGooseManager.carrierSlot).toBe(1);
+  it('a crown claim reaches the host as the link it came in on, is never relayed and means nothing to a guest', () => {
+    const host = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill' });
+    route(host, { type: 'kothCrownClaim' }, 3);
+    expect(host.kingOfTheHill.receiveClaim).toHaveBeenCalledWith(3);
+    expect(host.multiplayer.session.connection.relay).not.toHaveBeenCalled();
+    const guest = makeContext({ gameMode: 'kingOfTheHill' });
+    route(guest, { type: 'kothCrownClaim' });
+    expect(guest.kingOfTheHill.receiveClaim).not.toHaveBeenCalled();
   });
 
-  it('a late joiner takes the golden goose state from the host as is', () => {
-    const ctx = makeContext({ carrier: null });
-    route(ctx, { type: 'goldenGooseState', carrierSlot: 3, x: 0, y: 0, z: 0 });
-    expect(ctx.goldenGooseManager.carrierSlot).toBe(3);
-    route(ctx, { type: 'goldenGooseState', carrierSlot: null, x: 4, y: 5, z: 6 }, 2);
-    expect(ctx.goldenGooseManager.drop).not.toHaveBeenCalled(); // only the host's sync counts
+  it('a death tells King of the Hill where the victim fell, so the host can drop the crown there', () => {
+    const ctx = makeContext({ gameMode: 'kingOfTheHill' });
+    const position = { x: 7, y: 1, z: -3 };
+    ctx.multiplayer.opponents.set(2, { lastMessageAt: 0, isDead: false, remotePlayer: { position, stopPrediction: vi.fn() } });
+    route(ctx, { type: 'playerDied', senderSlot: 2, victimSlot: 2, killerSlot: 0 });
+    expect(ctx.kingOfTheHill.playerDown).toHaveBeenCalledWith(2, position);
+    // The kill clears the hill but scores nothing: the mode is won on the hill.
+    expect(ctx.scoreboard.get(0) ?? 0).toBe(0);
+    expect(ctx.deathCounts.get(2)).toBe(1);
+  });
+
+  it('the retired carry messages of the old King of the Hill change nothing and are not relayed', () => {
+    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill' });
+    ctx.scoreboard.set(2, 30);
+    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 31 }, 2);
+    route(ctx, { type: 'goldenGoosePickedUp', senderSlot: 2 }, 2);
+    route(ctx, { type: 'goldenGooseDropped', senderSlot: 2, x: 1, y: 2, z: 3 }, 2);
+    expect(ctx.scoreboard.get(2)).toBe(30);
+    expect(ctx.multiplayer.session.connection.relay).not.toHaveBeenCalled();
   });
 
   it('a Gun Game kill that is not credited does not upgrade the killer', () => {
@@ -160,26 +176,6 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     // Older than what is shown already: dropped before it is applied, so it is no telemetry sample either.
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, t: 400 }, 0);
     expect(ctx.noteSnapshotApplied).toHaveBeenCalledTimes(1);
-  });
-
-  it('a King of the Hill score only rises: a lower one is neither applied nor relayed', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill', carrier: 2 });
-    ctx.scoreboard.set(2, 30);
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 3 }, 2);
-    expect(ctx.scoreboard.get(2)).toBe(30);
-    expect(ctx.multiplayer.session.connection.relay).not.toHaveBeenCalled();
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 31 }, 2);
-    expect(ctx.scoreboard.get(2)).toBe(31);
-  });
-
-  it('a King of the Hill score counts only from the carrier, and rises at most KOTH_SCORE_STEP_MAX per tick', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill', carrier: 1 });
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);   // not the carrier
-    expect(ctx.scoreboard.get(2) ?? 0).toBe(0);
-    route(ctx, { type: 'kothScoreTick', senderSlot: 1, score: 90 }, 1);  // claims the win at once
-    expect(ctx.scoreboard.get(1)).toBe(KOTH_SCORE_STEP_MAX);
-    route(ctx, { type: 'kothScoreTick', senderSlot: 1, score: 4 }, 1);   // catches up after a mismatch
-    expect(ctx.scoreboard.get(1)).toBe(4);
   });
 
   it.each(['valley', 'facility'])("an opponent's snapshot on the %s cues the lamp and door catch-up", (map) => {
@@ -269,6 +265,7 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     hostRoster.handleHello('Cara', 'tc', 0, 'peer-cara');
     hostRoster.startMatch();
     const base = makeContext({ role: 'host', ownSlot: 0, gameMode });
+    const kothState: KothStateMessage = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] };
     const multiplayer = { ...base.multiplayer, hostRoster };
     multiplayer.hordeEliminatedSlots.add(2);
     const horde = { currentWave: 4, isCleared: false, listForSync: vi.fn(() => []), applyWaveStarted: vi.fn(), applyCleared: vi.fn() };
@@ -278,7 +275,7 @@ describe('routeMatchMessage, the host answers a sync request', () => {
       multiplayer,
       gooseManager: { listForSync: vi.fn(() => [{ id: 'g1', x: 1, y: 0, z: 2, killerSlot: null }]) },
       hordeGooseManager: gameMode === 'gooseHorde' ? horde : null,
-      goldenGooseManager: gameMode === 'kingOfTheHill' ? { carrierSlot: 1 as PlayerSlot | null, position: { x: 5, y: 6, z: 7 }, claim: vi.fn(), drop: vi.fn() } : null,
+      kingOfTheHill: { ...base.kingOfTheHill, syncMessage: vi.fn(() => (gameMode === 'kingOfTheHill' ? kothState : null)) },
       bonusGooseManager: null,
       ammoDropManager: null,
       matchHasEnded: vi.fn(() => false),
@@ -288,7 +285,7 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     const expected = (verdictOverride: typeof verdict | null = null) =>
       buildMatchSync({
         roster: hostRoster.connectedRoster(),
-        goldenGoose: ctx.goldenGooseManager ? { carrierSlot: ctx.goldenGooseManager.carrierSlot, position: ctx.goldenGooseManager.position } : null,
+        koth: gameMode === 'kingOfTheHill' ? kothState : null,
         geese: ctx.gooseManager.listForSync(),
         horde: gameMode === 'gooseHorde' ? { wave: 4, eliminated: [2], result: undefined, geese: [] } : null,
         ammoDrops: [],
@@ -298,7 +295,7 @@ describe('routeMatchMessage, the host answers a sync request', () => {
         deathCounts: ctx.deathCounts,
         verdict: verdictOverride,
       });
-    return { ctx, expected, verdict };
+    return { ctx, expected, verdict, kothState };
   }
 
   const sentMessages = (ctx: ReturnType<typeof hostContext>['ctx']) => ctx.multiplayer.session.connection.sendTo.mock.calls.map(([, message]) => message as NetworkMessage);
@@ -341,13 +338,13 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     expect(sentMessages(ctx)).toEqual(first);
   });
 
-  it('includes the golden goose in King of the Hill and the result once the match has ended', () => {
-    const { ctx, expected, verdict } = hostContext('kingOfTheHill');
+  it('includes the hill, crown and scores in King of the Hill and the result once the match has ended', () => {
+    const { ctx, expected, verdict, kothState } = hostContext('kingOfTheHill');
     ctx.endedMatchVerdict.mockReturnValue(verdict);
     route(ctx, { type: 'gooseSyncRequest', senderSlot: 3 }, 3);
     const messages = sentMessages(ctx);
     expect(messages).toEqual(expected(verdict));
-    expect(messages).toContainEqual({ type: 'goldenGooseState', carrierSlot: 1, x: 5, y: 6, z: 7 });
+    expect(messages).toContainEqual(kothState);
     expect(messages[messages.length - 1]).toEqual({ type: 'matchEnded', ...verdict });
   });
 

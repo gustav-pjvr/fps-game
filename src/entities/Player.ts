@@ -44,6 +44,7 @@ export class Player implements Entity {
   private recoilPitch = 0;
   private recoilYaw = 0;
   private mobility = 1;
+  private sprintAllowed = true;
   private verticalVelocity = 0;
   private grounded = false;
   private health = PLAYER_HEALTH;
@@ -136,6 +137,11 @@ export class Player implements Entity {
    * (WeaponDefinition.mobility), set by WeaponManager each tick. */
   setMobility(multiplier: number): void {
     this.mobility = multiplier;
+  }
+
+  /** False while a mode forbids sprinting (King of the Hill's crown): the sprint key does nothing. */
+  setSprintAllowed(allowed: boolean): void {
+    this.sprintAllowed = allowed;
   }
 
   /** Pushes the player away from an explosion (or any other knockback source) along `direction`
@@ -257,7 +263,7 @@ export class Player implements Entity {
 
     const moveDir = forward.multiplyScalar(-move.y).addScaledVector(right, move.x);
 
-    const speed = PLAYER_MOVE_SPEED * this.mobility * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
+    const speed = PLAYER_MOVE_SPEED * this.mobility * (this.sprintAllowed && input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
     moveDir.multiplyScalar(speed * dt);
 
     this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);

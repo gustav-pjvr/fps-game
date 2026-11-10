@@ -794,6 +794,31 @@ export interface GoldenGooseStateMessage {
   z: number;
 }
 
+/** Host -> everyone, King of the Hill (docs/king-of-the-hill.md): the whole state of the mode, a
+ * few times a second and at once on a change, and to a late joiner in its sync. Applied as is:
+ * the host owns the hill, the crown and the score. `hill`, `next` and `crownAt` are [x, z]; `holder`
+ * is a side (a slot, or a team of 0 or 1 when `teams`); `scores` is each slot's points. */
+export interface KothStateMessage {
+  type: 'kothState';
+  hill: [number, number];
+  next: [number, number];
+  radius: number;
+  moveIn: number;
+  hold: 'empty' | 'held' | 'contested';
+  holder: number | null;
+  crown: PlayerSlot | null;
+  crownAt: [number, number] | null;
+  push: boolean;
+  teams: boolean;
+  scores: { slot: PlayerSlot; score: number }[];
+}
+
+/** Guest -> host only, King of the Hill: this player reaches for the crown. The claimant is the
+ * link it came in on, never a field of the payload; the host grants it by where it sees them. */
+export interface KothCrownClaimMessage {
+  type: 'kothCrownClaim';
+}
+
 /** Host -> the one guest that just asked for a sync (see RosterSyncMessage): every connected slot's
  * score and death count now. A late joiner's welcome carried the scoreboard from before it started
  * loading; kills made while it loaded went past unheard. Applied as is: the host's count is the truth. */
@@ -865,7 +890,9 @@ export type NetworkMessage =
   | MeshStatusMessage
   | RosterSyncMessage
   | LinkQualityMessage
-  | GoldenGooseStateMessage;
+  | GoldenGooseStateMessage
+  | KothStateMessage
+  | KothCrownClaimMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchEnded',
@@ -930,6 +957,8 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'rosterSync',
   'linkQuality',
   'goldenGooseState',
+  'kothState',
+  'kothCrownClaim',
   'scoreboardSync',
 ]);
 
@@ -1082,7 +1111,29 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
   if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);
   if (type.startsWith('pickup')) return hasValidPickupFields(value as Record<string, unknown>);
+  if (type === 'kothState') return isValidKothState(value as Record<string, unknown>);
   return hasValidSquadShape(value as Record<string, unknown>) && hasValidGameplayFields(value as Record<string, unknown>);
+}
+
+/** King of the Hill's state: every position inside the world, the radius and the clock inside what
+ * the mode can produce, and at most one score per slot, none past the target. */
+function isValidKothState(message: Record<string, unknown>): boolean {
+  const pair = (value: unknown): boolean => Array.isArray(value) && value.length === 2 && areCoords(value[0], value[1]);
+  const { radius, moveIn, hold, holder, crown, crownAt, scores } = message;
+  return pair(message.hill) && pair(message.next)
+    && isFiniteNumber(radius) && (radius as number) > 0 && (radius as number) <= 50
+    && isFiniteNumber(moveIn) && (moveIn as number) >= 0 && (moveIn as number) <= 600
+    && (hold === 'empty' || hold === 'held' || hold === 'contested')
+    && (holder === null || isSlot(holder))
+    && (crown === null || isSlot(crown))
+    && (crownAt === null || pair(crownAt))
+    && typeof message.push === 'boolean' && typeof message.teams === 'boolean'
+    && Array.isArray(scores) && scores.length <= 4
+    && scores.every((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const { slot, score } = entry as { slot?: unknown; score?: unknown };
+      return isSlot(slot) && Number.isInteger(score) && (score as number) >= 0 && (score as number) <= KOTH_SCORE_TICK_MAX;
+    });
 }
 
 /** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */

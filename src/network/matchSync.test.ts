@@ -4,7 +4,7 @@ import { isNetworkMessage } from './protocol.ts';
 
 const empty: MatchSyncSource = {
   roster: null,
-  goldenGoose: null,
+  koth: null,
   geese: [],
   horde: null,
   ammoDrops: [],
@@ -24,7 +24,7 @@ describe('buildMatchSync', () => {
     const messages = buildMatchSync({
       ...empty,
       roster: [{ slot: 0, username: 'Host' }, { slot: 3, username: 'Dee', peerId: 'p3' }],
-      goldenGoose: { carrierSlot: 2, position: { x: 1, y: 2, z: 3 } },
+      koth: { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] },
       geese: [{ id: 'g1', x: 1, y: 0, z: 2 }],
       bonusGeese: [{ id: 'b1', x: 5, y: 0, z: 6 }],
       thrownGeese: [
@@ -33,9 +33,9 @@ describe('buildMatchSync', () => {
       ],
       verdict: { winnerSlot: 1, scoreboard: [{ slot: 1, score: 10 }] },
     });
-    expect(messages.map((m) => m.type)).toEqual(['rosterSync', 'scoreboardSync', 'goldenGooseState', 'gooseSpawned', 'bonusGooseSpawned', 'gooseThrown', 'matchEnded']);
+    expect(messages.map((m) => m.type)).toEqual(['rosterSync', 'scoreboardSync', 'kothState', 'gooseSpawned', 'bonusGooseSpawned', 'gooseThrown', 'matchEnded']);
     for (const message of messages) expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
-    expect(messages[2]).toEqual({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 });
+    expect(messages[2]).toMatchObject({ type: 'kothState', crown: 1, hill: [0, 0] });
     expect(messages[3]).toEqual({ type: 'gooseSpawned', id: 'g1', x: 1, y: 0, z: 2, killerSlot: null });
     expect(messages[5]).toEqual({
       type: 'gooseThrown',

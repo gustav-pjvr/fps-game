@@ -42,6 +42,7 @@ export const HOST_AUTHORED_MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = 
   'rosterSync',
   'linkQuality',
   'goldenGooseState',
+  'kothState',
   'scoreboardSync',
 ]);
 

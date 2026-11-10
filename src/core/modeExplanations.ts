@@ -75,10 +75,10 @@ export const MODE_EXPLANATIONS: Partial<Record<GameMode, ModeExplanation>> = {
   kingOfTheHill: {
     title: 'King of the Hill',
     steps: [
-      { icon: 'crown', text: 'Full arsenal. Race for the golden goose in the middle of the map.' },
-      { icon: 'lock', text: 'Carrying the goose locks your weapons and scores a point every second.' },
-      { icon: 'goose', text: 'If you die carrying it, the goose drops where you fell.' },
-      { icon: 'trophy', text: 'First to the point target wins.' },
+      { icon: 'shield', text: 'Stand on the hill alone to score a point a second. With an enemy on it, nobody scores.' },
+      { icon: 'crown', text: 'Take the golden goose in its middle (E) to be crowned: double points, no sprinting, everyone sees you.' },
+      { icon: 'wave', text: 'The hill moves every minute. Four players fight two against two.' },
+      { icon: 'trophy', text: 'First to 120 points wins. Kills clear the hill but score nothing.' },
     ],
   },
   gooseHorde: {

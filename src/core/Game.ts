@@ -8,7 +8,8 @@ import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { GooseManager } from '../entities/GooseManager.ts';
 import { ThrownGoose, throwSegmentBlocked } from '../entities/ThrownGoose.ts';
-import { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
+import { HillView } from '../entities/HillView.ts';
+import { KothHud } from '../ui/kothHud.ts';
 import { AmmoDropManager } from '../entities/AmmoDropManager.ts';
 import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
 import { BonusGooseManager } from '../entities/BonusGooseManager.ts';
@@ -39,7 +40,7 @@ import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
 import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
-import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
+import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityFloorPoints, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { loadStoredSkins } from './skins.ts';
@@ -147,6 +148,7 @@ import {
   HORDE_WAVE_TABLE,
   HORDE_WAVE_TABLE_MULTIPLAYER,
   KOTH_POINTS_TO_WIN,
+  HILL_SITE_SEED_OFFSET,
   type MatchWeather,
   type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
@@ -190,6 +192,7 @@ import { MatchTelemetryAccumulator, buildMultiplayerTelemetryExtras, type MatchT
 import { isHordeAllEliminated, MultiplayerMatchState } from '../network/MultiplayerMatchState.ts';
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
+import { playsInTeams, spreadSites, type HillPlayer, type HillSite } from './modeControllers/hillState.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
 import { Flashlight, RemoteTorches, remoteTorchesAvailable, torchAvailable, torchCastsShadow, torchOnByDefault } from '../render/Flashlight.ts';
@@ -539,7 +542,6 @@ export class Game {
     private readonly muzzleFlash: MuzzleFlash,
     private readonly glintMarkers: GlintMarkers,
     private readonly gooseManager: GooseManager,
-    private readonly goldenGooseManager: GoldenGooseManager | null,
     private readonly hordeGooseManager: HordeGooseManager | null,
     private readonly bonusGooseManager: BonusGooseManager | null,
     private readonly ammoDropManager: AmmoDropManager | null,
@@ -922,6 +924,7 @@ export class Game {
         Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer: { position: p } }) => ({ slot, x: p.x, y: p.y, z: p.z })).sort(
           (a, b) => a.slot - b.slot,
         ),
+      getKothDebug: () => this.kingOfTheHillController?.snapshot ?? null,
       getOpponentWeapons: () =>
         Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer }) => ({
           slot, weaponId: remotePlayer.heldWeaponId, skinId: remotePlayer.heldSkinId,
@@ -1391,16 +1394,6 @@ export class Game {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
-    // King of the Hill: one golden goose at the map's exact center (0, 0) - the same point
-    // pickMultiplayerSpawnPoints already rings every player equally around, so "spawn equidistant
-    // from the goose" needs no new placement math. Every client (host and guests alike) builds it
-    // locally at this same fixed point rather than needing a spawn broadcast - unlike the
-    // exploding geese, there's exactly one of these and its start position is a match constant.
-    const goldenGooseManager =
-      multiplayer?.gameMode === 'kingOfTheHill'
-        ? new GoldenGooseManager(renderer.scene, new THREE.Vector3(0, sampleHeight(0, 0), 0))
-        : null;
-
     // Multiplayer uses its own harder, 15-wave table (per explicit user request); single-player
     // keeps the original 10-wave one. Host-authoritative in multiplayer (same split as
     // GooseManager); single-player is always "authoritative" since there's no one else to defer to.
@@ -1640,7 +1633,6 @@ export class Game {
       muzzleFlash,
       glintMarkers,
       gooseManager,
-      goldenGooseManager,
       hordeGooseManager,
       bonusGooseManager,
       ammoDropManager,
@@ -1728,8 +1720,32 @@ export class Game {
     if (multiplayer?.gameMode === 'gooseToss') {
       game.gooseTossController = new GooseTossController(renderer.camera, renderer.scene, gooseManager, game.thrownGeese, multiplayer);
     }
-    if (multiplayer?.gameMode === 'kingOfTheHill' && goldenGooseManager) {
-      game.kingOfTheHillController = new KingOfTheHillController(goldenGooseManager, multiplayer, game.multiplayerMatchState);
+    if (multiplayer?.gameMode === 'kingOfTheHill' && activeMultiplayer) {
+      game.worldMarkers ??= new WorldMarkers(hudRoot);
+      // Only the host places the hill: its sites, their order and whether four players make teams.
+      const hostRng = mulberry32(getWorldSeed() + HILL_SITE_SEED_OFFSET);
+      const sites = multiplayer.role === 'host' ? Game.hillSites(facility, isSpawnBlocked, hostRng) : null;
+      game.kingOfTheHillController = new KingOfTheHillController(
+        {
+          session: multiplayer,
+          matchState: game.multiplayerMatchState,
+          view: new HillView(renderer.scene, (x, z) => sampleHeight(x, z)),
+          hud: new KothHud(hudRoot),
+          markers: game.worldMarkers,
+          players: () => game.hillPlayers(),
+          usernames: activeMultiplayer.usernames,
+          announce: (text) => bigAnnouncement.show(text),
+          notify: (text) => killFeed.show(text),
+          cue: (kind) => sound.playObjectiveCue(kind),
+          setPrompt: (text) => hud.setPrompt('interact', text),
+          setSprintAllowed: (allowed) => player.setSprintAllowed(allowed),
+        },
+        sites,
+        hostRng,
+        playsInTeams(multiplayer.roster.length),
+        // The Facility's rooms are small: a hill of 8 m would reach through their walls.
+        facility ? 0.65 : 1,
+      );
     }
     if (multiplayer?.gameMode === 'gunGame') {
       game.gunGameController = new GunGameController(multiplayer, game.multiplayerMatchState, gooseAnnouncement);
@@ -1748,6 +1764,8 @@ export class Game {
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
       // Goose Horde is co-op: a frag never hurts or pushes a teammate.
       friendlyFire: currentGameMode !== 'gooseHorde',
+      // King of the Hill with four players is two against two: a frag spares your own side.
+      isTeammate: (slot) => game.kingOfTheHillController?.isTeammate(slot) ?? false,
       floor: facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z),
       canStartThrow: () => game.weaponManager.canStartThrow,
       onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),
@@ -1798,7 +1816,9 @@ export class Game {
         thrownGeese: game.thrownGeese,
         scoreboard: game.multiplayerMatchState.scoreboard,
         deathCounts: game.multiplayerMatchState.deathCounts,
-        goldenGooseManager,
+        get kingOfTheHill() {
+          return game.kingOfTheHillController;
+        },
         hordeGooseManager,
         bonusGooseManager,
         ammoDropManager,
@@ -2066,7 +2086,7 @@ export class Game {
     this.grenades?.dispose();
     this.glintMarkers.dispose();
     this.gooseManager.dispose();
-    this.goldenGooseManager?.dispose();
+    this.kingOfTheHillController?.dispose();
     this.hordeGooseManager?.dispose();
     this.bonusGooseManager?.dispose();
     this.ammoDropManager?.dispose();
@@ -2702,11 +2722,6 @@ export class Game {
       // here first - WeaponManager never sees it, so the harmless 'unarmed' placeholder weapon
       // never has anything to (not) do with it either.
       this.gooseTossController?.update(this.player.position, this.input);
-      // Same input-consumption trick as GooseTossController above, narrower in scope: only a fire
-      // press while actually carrying is consumed here (to drop it), so aim/reload/switch and
-      // ordinary firing while NOT carrying all still reach WeaponManager normally - King of the
-      // Hill keeps the full arsenal, unlike Goose Toss's unarmed-only loadout.
-      this.kingOfTheHillController?.update(dt, this.player.position, this.input);
       this.player.update(dt, this.input);
       if (!this.facility) {
         const at = this.player.position;
@@ -2763,6 +2778,9 @@ export class Game {
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
       this.grenades?.update(dt, freezeLocalPlayer ? null : this.input);
+      // King of the Hill: in the simulation block, not with the player's own input, so the host
+      // keeps the hill running while its own player is dead or its pause menu is open.
+      this.kingOfTheHillController?.update(dt, this.input, this.player.position, !this.player.isDead);
 
       // Goose Horde: no-op for a follower (guest) manager - see HordeGooseManager's isAuthoritative
       // comment. Every living player (own + every opponent) is a valid target so co-op geese chase
@@ -2856,7 +2874,7 @@ export class Game {
       // fell, per explicit user request ("if the player is killed then the goose is left at the
       // location for anyone to pick up") - same drop path a voluntary fire-button drop uses.
       if (this.multiplayer) {
-        this.kingOfTheHillController?.dropIfCarrying(this.multiplayer.session.ownSlot, this.player.position.clone());
+        this.kingOfTheHillController?.playerDown(this.multiplayer.session.ownSlot, this.player.position);
       }
       // Per user request: the death/respawn screen must never overlay the pause menu - if the
       // pause menu is currently open (multiplayer only; single-player can't reach this block while
@@ -2969,7 +2987,7 @@ export class Game {
       position.underground = !this.facility && isBelowGround(at.x, at.y, at.z);
     }
     // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
-    if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
+    if (this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions(), undefined, !this.facility && isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z));
     this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
@@ -2979,7 +2997,7 @@ export class Game {
       opponentHealths,
       this.multiplayerMatchState.scoreboard,
       this.multiplayer.gameMode === 'kingOfTheHill'
-        ? { pointsToWin: KOTH_POINTS_TO_WIN, carrierSlot: this.goldenGooseManager?.carrierSlot ?? null }
+        ? { pointsToWin: KOTH_POINTS_TO_WIN, carrierSlot: this.kingOfTheHillController?.snapshot?.crown ?? null }
         : undefined,
     );
 
@@ -3029,7 +3047,7 @@ export class Game {
         if (winner !== null) {
           this.hostDeclaredWinner = winner;
           this.multiplayer.session.connection.send({ type: 'matchEnded', ...this.endedMatchVerdict()! });
-          this.endMultiplayerMatch(winner === this.multiplayer.session.ownSlot, 'killLimit');
+          this.endMultiplayerMatch(this.sharesVictory(winner), 'killLimit');
         }
       }
     }
@@ -3511,14 +3529,17 @@ export class Game {
       this.physics,
       this.renderer.scene,
       this.player.position,
-      (amount) =>
+      (amount) => {
+        // A team match (King of the Hill with four players): nobody shoots their own side.
+        if (this.kingOfTheHillController?.isTeammate(slot)) return;
         this.multiplayer!.session.connection.send({
           type: 'damageEvent',
           senderSlot: this.multiplayer!.session.ownSlot,
           targetSlot: slot,
           amount,
           weaponId: this.weaponManager.activeWeaponId,
-        }),
+        });
+      },
     );
     if (!this.multiplayer || this.multiplayer.opponents.has(slot) || this.opponentGenerations.get(slot) !== generation) {
       // Torn down, raced, or the slot left (or was added again) while the GLTF load above was in
@@ -3555,7 +3576,7 @@ export class Game {
     // match unwinnable for everyone else. Every remaining client reacts to the same relayed
     // `playerLeft` message independently, so this needs no extra broadcast - it converges exactly
     // like every other self-reported/relayed state in this protocol.
-    this.kingOfTheHillController?.dropLocallyIfCarrying(slot, opponent.remotePlayer.position.clone());
+    this.kingOfTheHillController?.playerDown(slot, opponent.remotePlayer.position);
     // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
     this.lampSync.forget(slot);
     this.facilityInteraction?.forget(slot);
@@ -3616,7 +3637,49 @@ export class Game {
   applyHostMatchEnd(winnerSlot: PlayerSlot, scoreboard: readonly { slot: PlayerSlot; score: number }[]): void {
     if (!this.multiplayer || this.multiplayerMatchState.hasEnded) return;
     this.multiplayerMatchState.replaceScoreboard(scoreboard);
-    this.endMultiplayerMatch(winnerSlot === this.multiplayer.session.ownSlot, 'killLimit');
+    this.endMultiplayerMatch(this.sharesVictory(winnerSlot), 'killLimit');
+  }
+
+  /** Whether the slot the host named as the winner is this player or, in a team match (King of
+   * the Hill with four players), one of this player's side. */
+  private sharesVictory(winnerSlot: PlayerSlot): boolean {
+    if (!this.multiplayer) return false;
+    return this.kingOfTheHillController?.sharesVictory(winnerSlot) ?? winnerSlot === this.multiplayer.session.ownSlot;
+  }
+
+  /** Every player in the match as King of the Hill's rules see them: where they stand, and
+   * whether they count (alive and on the surface). */
+  private hillPlayers(): HillPlayer[] {
+    const counts = (position: THREE.Vector3, dead: boolean): boolean =>
+      !dead && (this.facility !== null || !isBelowGround(position.x, position.y, position.z));
+    const own = this.player.position;
+    const players: HillPlayer[] = [{ slot: this.multiplayer!.session.ownSlot, x: own.x, z: own.z, counts: counts(own, this.player.isDead) }];
+    for (const [slot, opponent] of this.multiplayer!.opponents) {
+      const at = opponent.remotePlayer.position;
+      players.push({ slot, x: at.x, z: at.z, counts: counts(at, opponent.isDead) });
+    }
+    return players;
+  }
+
+  /** Where the hill may stand. The Valley: the middle of the map and a ring of five points round
+   * it, each stepped off any house or tower. The Facility: five points of clear room floor, spread
+   * as far apart as the layout allows. */
+  private static hillSites(facility: FacilityMatch | null, isBlocked: SpawnBlockedCheck, rng: () => number): HillSite[] {
+    if (facility) {
+      const floor = facilityFloorPoints(facility.layout, 2.5, true);
+      const candidates = floor.length >= 2 ? floor : facilityFloorPoints(facility.layout, 1, true);
+      // Start from the floor nearest the middle, so the first hill is a fair walk for everyone.
+      const sorted = [...candidates].sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+      return spreadSites(sorted, 5);
+    }
+    const start = rng() * Math.PI * 2;
+    const ring = Array.from({ length: 5 }, (_, i) => {
+      const angle = start + (i / 5) * Math.PI * 2;
+      return { x: Math.cos(angle) * 40, z: Math.sin(angle) * 40 };
+    });
+    // Hill radius plus a margin: the ring should not run through a wall.
+    const blocked: SpawnBlockedCheck = (x, z) => isBlocked(x, z) || [0, 1, 2, 3].some((k) => isBlocked(x + Math.cos(k * Math.PI / 2) * 5, z + Math.sin(k * Math.PI / 2) * 5));
+    return [{ x: 0, z: 0 }, ...ring].map((site) => findClearSpawnPoint(site, blocked));
   }
 
   /** Goose Horde's limited-lives loss condition (per explicit user request: "if both players have

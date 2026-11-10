@@ -824,7 +824,12 @@ export const GOOSE_THROW_MAX_LIFETIME_SECONDS = 5;
  * at the map center (the same point pickMultiplayerSpawnPoints already rings every player equally
  * around, so "spawn equidistant from the goose" needs no new placement math). Reuses
  * GOOSE_PICKUP_RADIUS for the pickup check. */
-export const KOTH_POINTS_TO_WIN = 90;
+export const KOTH_POINTS_TO_WIN = 120;
+/** Seconds between the host's King of the Hill state messages while nothing changes (a change
+ * goes out at once). */
+export const KOTH_STATE_SEND_INTERVAL = 0.2;
+/** Seed offset of the stream that picks the Valley's hill sites and their order. */
+export const HILL_SITE_SEED_OFFSET = 733;
 /** Whole seconds of continuous carry time before the carrier's own score increments by 1 (see
  * Game.ts's updateGoldenGoose) - "1 point per second held," per explicit user request. */
 export const KOTH_POINT_INTERVAL_SECONDS = 1;

@@ -24,7 +24,7 @@ export interface AmmoDropManagerCallbacks {
 /** Goose Horde multiplayer's ammo crates (per explicit user request) - up to
  * HORDE_AMMO_DROP_MAX_CONCURRENT at once, spawned by the host near a randomly chosen
  * currently-connected player, no visual/physics collider needed since pickup is resolved by a
- * plain distance check (same pattern as GoldenGooseManager) rather than Rapier. Static once placed
+ * plain distance check (the same pattern the pickups use) rather than Rapier. Static once placed
  * (crates don't move), so unlike GooseManager there's no periodic snapshot broadcast to worry
  * about - a spawn message is the entire lifecycle until a pickup message removes it. */
 export class AmmoDropManager {

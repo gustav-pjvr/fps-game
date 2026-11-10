@@ -105,6 +105,8 @@ export interface GrenadeSystemOptions {
   /** False in co-op (Goose Horde): a frag hurts and pushes no other player, only enemies, geese and
    * the thrower. Default true. */
   readonly friendlyFire?: boolean;
+  /** A team match (King of the Hill with four players): a frag deals no damage to this slot. */
+  readonly isTeammate?: (slot: PlayerSlot) => boolean;
   /** The terrain height, where a world has one (the Valley): a last floor under streamed-out ground. */
   readonly floor?: (x: number, y: number, z: number) => number;
   /** False while WeaponManager refuses a throw (a reload, a knife swing). */
@@ -731,7 +733,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     );
     if (network && this.options.friendlyFire !== false) {
       for (const opponent of network.opponents()) {
-        if (opponent.isDead) continue;
+        if (opponent.isDead || this.options.isTeammate?.(opponent.slot)) continue;
         const amount = computeFragDamage(opponent.position.distanceTo(blast));
         if (amount <= 0 || !blastReaches(blast, opponent.position, (from, to) => this.rayClear(from, to, opponent.entity))) continue;
         network.send({ type: 'damageEvent', senderSlot: network.ownSlot, targetSlot: opponent.slot, amount, weaponId: 'frag' });

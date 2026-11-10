@@ -260,6 +260,13 @@ export class SoundEngine {
     this.noiseBurst(duration, from, 'bandpass', gain * volumeScale, pan, 0, to, 0.025);
   }
 
+  /** A short cue for a change in an objective: `gain` rises (your side took something), `lose`
+   * falls (the other side did), `alert` is three even pips (the objective itself changed). */
+  playObjectiveCue(kind: 'gain' | 'lose' | 'alert'): void {
+    const notes = kind === 'gain' ? [523, 784] : kind === 'lose' ? [440, 294] : [660, 660, 660];
+    notes.forEach((frequency, i) => this.tone(frequency, 0.12, 0.16, 'triangle', 0, i * 0.11));
+  }
+
   playKnifeHit(): void {
     this.tone(95, 0.09, 0.35, 'sine');
     this.noiseBurst(0.025, 2200, 'highpass', 0.16);

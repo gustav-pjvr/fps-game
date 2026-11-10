@@ -1,4 +1,4 @@
-import type { HordeGooseSpawnedMessage, NetworkMessage, PlayerSlot, RosterEntry } from './protocol.ts';
+import type { HordeGooseSpawnedMessage, KothStateMessage, NetworkMessage, PlayerSlot, RosterEntry } from './protocol.ts';
 
 interface SyncPoint {
   readonly id: string;
@@ -28,8 +28,8 @@ export interface ThrownGooseSync {
 export interface MatchSyncSource {
   /** Who is connected now (HostRoster.connectedRoster). */
   readonly roster: readonly RosterEntry[] | null;
-  /** King of the Hill: who carries the golden goose, or where it lies. */
-  readonly goldenGoose: { readonly carrierSlot: PlayerSlot | null; readonly position: Vector3Like } | null;
+  /** King of the Hill: the mode's whole state as the host has it now (KingOfTheHillController.syncMessage). */
+  readonly koth: KothStateMessage | null;
   /** The wandering geese (GooseManager.listForSync). */
   readonly geese: readonly (SyncPoint & { readonly killerSlot?: PlayerSlot | null })[];
   /** Goose Horde: the wave, who is out, the result once the run is over, and the live flock. */
@@ -65,10 +65,7 @@ export function buildMatchSync(source: MatchSyncSource): NetworkMessage[] {
     const scores = source.roster.map(({ slot }) => ({ slot, score: source.scoreboard.get(slot) ?? 0, deaths: source.deathCounts.get(slot) ?? 0 }));
     messages.push({ type: 'scoreboardSync', scores });
   }
-  if (source.goldenGoose) {
-    const { carrierSlot, position } = source.goldenGoose;
-    messages.push({ type: 'goldenGooseState', carrierSlot, x: position.x, y: position.y, z: position.z });
-  }
+  if (source.koth) messages.push(source.koth);
   for (const goose of source.geese) messages.push({ type: 'gooseSpawned', killerSlot: null, ...goose });
   if (source.horde) {
     const { wave, eliminated, result, geese } = source.horde;

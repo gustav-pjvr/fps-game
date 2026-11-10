@@ -216,11 +216,13 @@ export class CreateRoomScreen {
     // are long enough that cramming a third select into the same row as kill-limit/goose-explosions
     // would read cluttered. Multiplayer-only, host-picked pre-match (per user request - single-
     // player never has a mode).
-    const gameModeLabel = document.createElement('div');
+    const gameModeLabel = document.createElement('label');
+    gameModeLabel.htmlFor = 'create-room-mode';
     gameModeLabel.textContent = 'Mode';
-    gameModeLabel.style.cssText = `${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
+    gameModeLabel.style.cssText = `display:block; ${LABEL_CSS} margin-top:16px; margin-bottom:8px;`;
     leftColumn.appendChild(gameModeLabel);
     this.gameModeSelect = document.createElement('select');
+    this.gameModeSelect.id = 'create-room-mode';
     this.gameModeSelect.style.cssText = this.killLimitInput.style.cssText + ' cursor:pointer;';
     for (const mode of GAME_MODES) {
       const optionElement = document.createElement('option');
