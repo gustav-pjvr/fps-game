@@ -1,7 +1,15 @@
-# Fable rebuild: handover (draft, updated as the last checks land)
+# Fable rebuild: handover
 
 Branch `feature/fable-rebuild` (pushed to `origin`), base `master` at v4.7.1, version on the branch
-5.0.0. Nothing is merged, nothing is deployed to production. The task is `docs/fable-rebuild-brief.md`;
+5.0.0. Nothing is merged, nothing is deployed to production. Written 2026-11-10.
+
+**In one paragraph:** all four modes are rebuilt, the arsenal and skins are built, and a preview is
+live. Three of the four modes are playable in a room as well as alone (King of the Hill is a room
+mode; Goose Horde is both); Operation Uplink and Showdown are solo, and their co-op was postponed by
+Gustav. Typecheck and the unit suite pass, the browser specs for everything new pass, performance
+is equal or better than v4.7.1, and an independent review's eight clear defects are fixed. Not
+verified: the full Playwright suite (skipped on Gustav's instruction) and the core smoke group
+(this machine was too slow today to judge it; the untouched baseline fails it the same way). The task is `docs/fable-rebuild-brief.md`;
 every decision and its reason is in `docs/fable-rebuild-decisions.md` (D1 to D27); the running log is
 `docs/fable-rebuild-progress.md`.
 
@@ -73,8 +81,9 @@ not sent in a room any more.
 ## Preview
 
 https://fable-rebuild.hunter-n-goose.pages.dev (a Cloudflare Pages preview of this branch, not
-production). Checked after deploying: it shows v5.0.0, the Skins preview draws, and Goose Horde,
-Showdown and Operation Uplink each start, with no page errors and no failed requests.
+production), redeployed after the UI review's fixes. Checked after each deploy: it shows v5.0.0, the
+Skins preview draws, Goose Horde, Showdown and Operation Uplink each start, the review fixes are
+present, and there are no page errors and no failed requests.
 
 ## Evidence
 
@@ -88,7 +97,7 @@ taken from a copy of the committed tree (`C:\tmp\fable-logs\snap-head.sh`).
 | All 114 weapon and skin combinations (`weaponModels.test.ts`) | aim point, clear line of aim, budgets, arms and skin features pass |
 | `e2e/skins.spec.ts`: every weapon in every skin, aimed | passes; every measured offset between sight and crosshair is 0.00 px; screenshots of each aimed view are saved by the test |
 | `e2e/skins.spec.ts`: equip, reload, worn in a match | passes |
-| UI guard (`ui-qa.spec.ts`) on the Skins screen | passes at phone and desktop width |
+| UI guard (`ui-qa.spec.ts`), every menu screen at phone and desktop width | 14 of 14 (console errors, 5xx, axe, nothing off screen), run after the review fixes |
 | `e2e/koth.spec.ts` | 2 of 2: two players and a late joiner; four players two against two |
 | `e2e/horde.spec.ts` solo | passes: supply drop, Second Wind, death, a new run, the boss, the win |
 | `e2e/horde.spec.ts` two players, three tests of two browsers each | 3 of 3: the host's waves and kills on the guest, a fall, a revive (40 health, where they fell) and back with the next wave (4.0 min); a late joiner told the wave, the kills and the flock (5.2 min); a guest who leaves and comes back into its slot (5.0 min) |
@@ -96,6 +105,7 @@ taken from a copy of the committed tree (`C:\tmp\fable-logs\snap-head.sh`).
 | `e2e/director.spec.ts` | 6 of 6: the three original director tests and Showdown's three |
 | `e2e/mission.spec.ts` | 2 of 2: the whole operation with a redeploy and a graded win; both losses |
 | `e2e/facility-modes.spec.ts` | 2 of 2 |
+| After the UI review's fixes | rerun and passing: the UI guard, Showdown's three tests, `mission.spec.ts`, solo Goose Horde, the skins equip test. Not rerun after those fixes: `koth.spec.ts` (its panel moved under the scoreboard and gained a backing), the three two-player Goose Horde tests and the two four-player tests (panel styling only) |
 
 **The core smoke group (`smoke.spec.ts`) could not be judged on this machine today.** 11 of its 16
 tests pass; the other five overrun their own time budgets (60 to 120 s) with no assertion failing.
@@ -107,6 +117,50 @@ not the rebuild. It should be rerun on a quiet machine before release.
 rebuild maps to were run one at a time instead, as listed above. Not run: `world`, `houses`,
 `grenades`, `pickups`, `mp`, `mp4`, `ai` beyond `director.spec.ts`, and the facility group beyond
 `facility-modes.spec.ts`.
+
+## Independent UI review
+
+A fresh Fable reviewer (the `ui-reviewer` agent, no knowledge of how the screens were built) looked
+at the preview at 390 px and 1440 px for the menus and at 1280 px in a match, and read every
+screenshot. Its verdict was "not fit to show yet": no blocker, eight clear defects (S2) and fifteen
+points of polish (S3). Screenshots and its notes: `C:\tmp\fable-logs\ui-review\`.
+
+**All eight S2 defects are fixed** (commit `5c59e44`), each checked again in a screenshot:
+
+| Finding | Fix |
+|---|---|
+| The Goose Horde panel was unreadable over a pale building, and the Second Wind count wrapped | The mode panels (Goose Horde, Showdown, King of the Hill) have a backing like the scoreboard's; Second Wind has its own line |
+| A headline printed over the boss bar (Goose Horde) and over the redeploy count (Showdown) | Headlines sit below the crosshair in modes with a panel top centre |
+| A world marker pinned to the screen's edge landed on the Uplink objective panel | A pinned marker keeps out of the top 250 px, where the HUD panels live |
+| The Goose Horde mode card said "Survive 10 waves" | It says 12, and names the bosses |
+| Phone Skins: the skin cards and the preview were never on screen together | The preview stays at the top while the lists scroll under it |
+| Phone Loadout: the weapon details and Skin row were a screen and a half below the grid | They stay at the top while the grid scrolls; the Change button is 40 px tall |
+| End screens said "Respawn" on a finished run, a win included | A finished run offers "Play again"; a death mid-operation offers "Redeploy" |
+
+Also fixed from the S3 list: Showdown's score no longer shows twice, its redeploy count is no longer
+faint, its loss has its own title ("Showdown lost", where it shared "Overrun" with Goose Horde), the
+phone Loadout uses the same 16 px margin as Skins, and the King of the Hill panel sits under the
+scoreboard where it sat on top of it.
+
+**Left as they are** (S3, judged not worth the risk now, or older than this rebuild):
+- Skins at 1440 px: about 240 px of empty space under the preview's buttons; the two side lists are
+  cut at the bottom with no scroll cue; a long weapon name with a long skin name wraps to two lines.
+- Skins previews: the aimed view is mostly hands and forearm with the weapon small (the sight is on
+  the crosshair in every capture); the in-hand view sits low and right as it does in play.
+- Loadout: the turning character's rifle is clipped by the panel's right edge; dark thumbnails barely
+  separate from their tiles.
+- Play setup: stock dropdown arrows, small steppers, "Goose Explosions" stays active in Goose Horde,
+  the Start Match arrow drops to a second line at 390 px (all older than this rebuild).
+- Uplink headlines are thin orange text that blends into a lit forest; the end screens sit in the top
+  half with the lower third empty; weapon slot 3 in the hotbar is hard to read over the arm.
+- One capture of the phone main menu six seconds after load showed no title or buttons; five later
+  captures all drew it. Not reproduced.
+
+Not looked at by the reviewer: the co-op screens that need two browsers (the downed panel, the revive
+prompt, pings, the King of the Hill panel), the pause menu, the Showdown win screen, keyboard and
+Back navigation, and a real touch device. `/web-design-guidelines` and `site-qa` were not run as
+separate passes; the UI guard spec (`ui-qa.spec.ts`: console errors, 5xx, axe, nothing off screen)
+covers part of what they check.
 
 ## Performance against the baseline
 

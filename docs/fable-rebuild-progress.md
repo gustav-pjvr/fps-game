@@ -11,15 +11,15 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | 0 | Setup: worktree, logs, baseline checks, baseline performance | done |
 | 1 | Arsenal: kit, 20 weapon definitions, handling, clips, sounds, models | done: all 19 models built (15 main session, mp5/smg/machinePistol and sniper/dmr/battleRifle/lmg by two Fable agents) |
 | 2 | Skins: six families, storage, snapshot fields, remote held weapon, aim-point test | done (unit); e2e spec written, not yet run |
-| 3 | Menus: Loadout rework, Skins screen with aimed preview, screenshots spec | built; the UI guard passes at phone and desktop after two fixes (Skins opened from the Loadout was inert; the phone weapon strip ran off screen); `ui-reviewer`, `site-qa` and `/web-design-guidelines` passes still owed |
+| 3 | Menus: Loadout rework, Skins screen with aimed preview, screenshots spec | done; three bugs found and fixed by the browser specs (Skins opened from the Loadout was inert; the phone weapon strip ran off screen; Skins opened dead the second time), then the independent review's eight S2 defects fixed; the UI guard passes 14 of 14 |
 | 4 | Shared co-op layer: pings, down and revive, squad rows, kills on the scoreboard | done (unit); proven in the browser by the horde spec |
 | 5 | King of the Hill rebuild | done: unit tests and both browser tests pass (two players with a late joiner; four players in teams) |
-| 6 | Goose Horde rebuild (solo and co-op) | built; solo and four-player browser tests pass; the two-player test (revive, late join, rejoin) is waiting for a rerun |
-| 7 | Uplink operation rebuild (solo) | done by Fable agent 3, verified (typecheck, 241 unit tests in mission, sites and enemies, its screenshots read) and committed; its browser specs passed in its own snapshot, rerun from the committed tree owed |
-| 8 | Director Showdown rebuild (solo) | built and committed (rules, panel, wiring, briefing, end screen, hooks, doc); unit tests pass; its three browser tests not yet run |
-| 9 | Co-op enemies, then co-op Uplink and Showdown | |
-| 10 | New specs, full suite, performance after, docs, changelog, version | |
-| 11 | Preview deploy, handover report | |
+| 6 | Goose Horde rebuild (solo and co-op) | done: solo, two players (three tests: revive and next wave, late join, rejoin) and four players all pass in the browser |
+| 7 | Uplink operation rebuild (solo) | done by Fable agent 3, verified and committed; `mission.spec.ts` 2 of 2 and the Facility modes 2 of 2 from the committed tree |
+| 8 | Director Showdown rebuild (solo) | done: `director.spec.ts` 6 of 6 (three for Showdown) |
+| 9 | Co-op enemies, then co-op Uplink and Showdown | postponed by Gustav (D30); the design is D29; nothing built |
+| 10 | New specs, full suite, performance after, docs, changelog, version | done except the full suite, skipped on Gustav's instruction (D28): the affected groups were run one at a time |
+| 11 | Preview deploy, handover report | done: https://fable-rebuild.hunter-n-goose.pages.dev, `docs/fable-rebuild-handover.md` |
 
 ## Done so far
 
@@ -93,20 +93,22 @@ base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main ch
 | unit, full | 1911 of 1912 on a quieter machine; the one failure (`structureMaterials.test.ts`, a 60 s texture test the rebuild did not touch) passes alone |
 | e2e full | not yet run on this branch |
 
-## Next
+## Next (for whoever picks this up)
 
-1. Confirm `koth.spec.ts` and `horde.spec.ts` in the browser; commit Goose Horde and the co-op layer.
-2. Verify Fable agent 3's Uplink (tests, its screenshots, a read of its Game.ts changes), commit.
-3. Director Showdown (five acts, supply crate in relax, finale with the Warden, score multiplier, a win).
-4. A four-player King of the Hill check (teams) in `koth.spec.ts`.
-5. Run `skins.spec.ts`, `ui-qa`, `core`, the mp groups; `/web-design-guidelines`, `site-qa` and a Fable
-   `ui-reviewer` pass on Skins, Loadout and the new HUD panels.
-6. Co-op enemies (D14) if reached, then co-op Uplink and Showdown.
-7. Docs still owed: `docs/arsenal.md`, `docs/skins.md`, Showdown's doc, updates to ARCHITECTURE and
-   `architecture/multiplayer-and-modes.md` (King of the Hill, Goose Horde and the co-op layer are
-   described there as first built), weapons-combat, ui-lobby, controller (inspect, ping), testing
-   (skins and modes groups), the credits note, CHANGELOG, version 5.0.0.
-8. Full suite, performance after, preview deploy, handover.
+The rebuild's run ended on 2026-11-10 with the handover written. What is left is Gustav's to decide:
+
+1. Play the preview and judge it (`docs/fable-rebuild-handover.md`, "What to try first").
+2. Before a release: rerun the core smoke group and the full Playwright suite on a quiet machine
+   (neither was judged here: see the handover's Evidence).
+3. Merge `feature/fable-rebuild` into `master` and deploy: Gustav's call, never done by the run.
+4. Co-op for Operation Uplink and Showdown, from decision D29, when it is wanted.
+5. `feature/server-relay` needs a routing class for each new message type (the table below).
+6. The polish the UI review left open (the handover lists it).
+
+Testing on this machine: keep browser runs small. One spec at a time, at most two browsers per test
+where the feature allows it, from `bash /c/tmp/fable-logs/snap-head.sh` (a copy of the committed
+tree). A run with three or four software-rendered pages takes minutes per step and starves the host
+page until its own silence rule drops the other players.
 
 ## New network message types (for the relay routing table)
 
