@@ -292,3 +292,26 @@ and a list that is not; it does not commit. The main session keeps to the rest o
 - Reason: a separate worktree would need its own `node_modules` junction, and a harness that removes
   a worktree with a junction in it could delete the main checkout's modules (the brief's stop rule).
 - Runner-up: a worktree per agent. Rejected for that risk.
+
+## D28. The full Playwright suite is skipped; co-op for Uplink and Showdown goes ahead (Gustav, 2026-11-10)
+
+Gustav's instruction during the run: skip the full suite, measure performance against the baseline,
+run the independent UI review, close those out, then build the co-op tasks. The groups the rebuild
+maps to were run one at a time instead (results in the handover's evidence table).
+
+- Reason (Gustav's): his call; no reason given. My reading: the affected groups already ran, and a
+  full run on this machine takes hours while other sessions share it.
+- This reopens D14's "if it is reached": co-op enemies are now in scope.
+
+## D29. Co-op enemies: the host simulates, guests mirror, damage rides the existing damageEvent
+
+Uplink and Showdown become room modes. The host runs the director, the mode's rules and every enemy;
+each enemy fights the nearest living player through a small `EnemyTarget` interface (the host's own
+player, or a remote player whose `takeDamage` sends that guest an ordinary `damageEvent`). Guests
+show each enemy as a puppet moved by the host's snapshots and report their hits to the host. The
+fallen use the co-op layer (down, revive) and come back when an act or a stage is cleared.
+
+- Reason: it keeps the host-authoritative star the brief requires, reuses the damage path every
+  client already trusts, and needs the AI to change in one place (who its target is).
+- Runner-up: every client simulates its own enemies from a shared seed. Rejected: the AI reads the
+  player's position every tick, so two clients would diverge within seconds.
