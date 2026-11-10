@@ -1,6 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 import { lockPointer, waitForGameTime } from './helpers.ts';
-import { createRoom, joinLobby, joinRunningMatch, openPlayer, placeAt, rejoinToken, startMatch } from './coop.ts';
+import { createRoom, joinLobby, joinRunningMatch, openPlayer, placeAt, rejoinToken, startMatch, type ModePlayer } from './coop.ts';
 
 /** Goose Horde (docs/goose-horde.md): a solo run, then the co-op one with two players, a late
  * joiner and a rejoin, then four players. The host (or the solo player) owns the waves; a fallen
@@ -114,22 +114,31 @@ test('solo: waves, a supply drop, a Second Wind, a boss, and the run won', async
   expect(errors).toEqual([]);
 });
 
-test('co-op: the host\'s waves on every client, a fall, a revive, the next wave, a late joiner and a rejoin', async ({ browser }) => {
-  // Three contexts on software rendering, a late join and a rejoin among them.
-  test.setTimeout(25 * 60 * 1000);
+// The co-op run is checked in three small tests, each with two browsers open at most: software
+// rendering makes every extra page cost about a gigabyte and minutes, and one long test with three
+// or four pages starved the host until its own silence rule dropped the others.
+
+/** A room of two in a running Goose Horde match, both invulnerable, with the wave held open (its
+ * geese blow up on the invulnerable players within seconds, and the next wave, which stands a fallen
+ * player up, would overtake what a test is looking at). */
+async function startCoopRun(browser: Browser, errors: string[]): Promise<{ host: ModePlayer; guest: ModePlayer; code: string }> {
   const host = await openPlayer(browser);
   const guest = await openPlayer(browser);
-  const late = await openPlayer(browser);
-  const errors: string[] = [];
-  for (const { page } of [host, guest, late]) page.on('pageerror', (error) => errors.push(String(error)));
-
+  for (const { page } of [host, guest]) page.on('pageerror', (error) => errors.push(String(error)));
   const code = await createRoom(host.page, 'gooseHorde');
   await joinLobby(guest.page, code);
   await startMatch(host.page, [guest.page]);
   for (const { page } of [host, guest]) await invulnerable(page, true);
-  // The wave is held open: its geese blow up on the invulnerable players within seconds, and the
-  // next wave (which stands a fallen player up) would overtake the revive this test is about.
   await host.page.evaluate(() => window.__gameDebug!.holdHordeWave(true));
+  return { host, guest, code };
+}
+
+const opponents = (page: Page): Promise<number> => page.evaluate(() => window.__gameDebug!.getOpponentCount());
+
+test('co-op: the host\'s waves and kills on the guest, a fall, a revive, and back with the next wave', async ({ browser }) => {
+  test.setTimeout(15 * 60 * 1000);
+  const errors: string[] = [];
+  const { host, guest } = await startCoopRun(browser, errors);
 
   // The guest shows the host's wave, sized for two, and the host's geese.
   const seen = await waitForHorde(guest.page, (state) => state.geese.length > 0 && state.need === 18, 'the host\'s wave on the guest', keepGeese(host.page));
@@ -176,32 +185,61 @@ test('co-op: the host\'s waves on every client, a fall, a revive, the next wave,
   await waitForHorde(guest.page, (state) => state.own === 'up' && state.wave > waveAtFall, 'the guest back with the next wave', killAll(host.page), 240000);
   expect(await health(guest.page)).toBe(100);
 
-  // A player joining now is told the wave, the kills and the flock.
+  expect(errors).toEqual([]);
+  for (const { context } of [host, guest]) await context.close();
+});
+
+test('co-op: a player who joins a running run is told the wave, the kills and the flock', async ({ browser }) => {
+  test.setTimeout(15 * 60 * 1000);
+  const errors: string[] = [];
+  const { host, guest, code } = await startCoopRun(browser, errors);
+  await waitForHorde(host.page, (state) => (state.kills.find((entry) => entry.slot === 0)?.kills ?? 0) > 0, 'some kills on the host', async () => {
+    await keepGeese(host.page)();
+    await killAll(host.page)();
+  });
+
+  // The first guest leaves, so only two browsers are ever open: the host plays on alone.
+  await guest.context.close();
+  await expect.poll(() => opponents(host.page), { timeout: 120000 }).toBe(0);
+  expect(await host.page.evaluate(() => window.__gameDebug!.isMultiplayerMatchEnded())).toBe(false);
+
+  const late = await openPlayer(browser);
+  late.page.on('pageerror', (error) => errors.push(String(error)));
   await joinRunningMatch(late.page, code);
   await invulnerable(late.page, true);
+  await expect.poll(() => opponents(host.page), { timeout: 120000 }).toBe(1);
   const hostNow = (await horde(host.page))!;
   const lateState = await waitForHorde(late.page, (state) => state.wave >= hostNow.wave && state.kills.length > 0, 'the run, seen by the late joiner');
   expect(lateState.totalWaves).toBe(12);
-  await waitForHorde(late.page, (state) => state.geese.length > 0, 'the flock, seen by the late joiner', undefined, 240000);
+  expect(lateState.own).toBe('up');
+  await waitForHorde(late.page, (state) => state.geese.length > 0, 'the flock, seen by the late joiner', keepGeese(host.page), 240000);
 
-  // The guest leaves and comes back with its token: back in its slot, in the same run.
-  const opponents = (page: Page): Promise<number> => page.evaluate(() => window.__gameDebug!.getOpponentCount());
-  expect(await opponents(host.page), 'the host has both guests before one leaves').toBe(2);
-  expect(await host.page.evaluate(() => window.__gameDebug!.isMultiplayerMatchEnded())).toBe(false);
+  expect(errors).toEqual([]);
+  for (const { context } of [host, late]) await context.close();
+});
+
+test('co-op: a player who leaves comes back into its slot in the same run', async ({ browser }) => {
+  test.setTimeout(15 * 60 * 1000);
+  const errors: string[] = [];
+  const { host, guest, code } = await startCoopRun(browser, errors);
+  expect(await opponents(host.page)).toBe(1);
+  const wave = (await horde(host.page))!.wave;
+
+  // The guest's page closes; the page that will take its place only opens once it has gone.
   const token = await rejoinToken(guest.page, code);
+  await guest.context.close();
+  await expect.poll(() => opponents(host.page), { timeout: 120000 }).toBe(0);
   const comeback = await openPlayer(browser, { code, token });
   comeback.page.on('pageerror', (error) => errors.push(String(error)));
-  await guest.context.close();
-  await expect.poll(() => host.page.evaluate(() => window.__gameDebug!.getOpponentCount()), { timeout: 120000 }).toBe(1);
   await joinRunningMatch(comeback.page, code);
   await invulnerable(comeback.page, true);
-  await expect.poll(() => host.page.evaluate(() => window.__gameDebug!.getOpponentCount()), { timeout: 120000 }).toBe(2);
-  const back = await waitForHorde(comeback.page, (state) => state.wave >= hostNow.wave, 'the run, seen by the rejoined guest');
+  await expect.poll(() => opponents(host.page), { timeout: 120000 }).toBe(1);
+  const back = await waitForHorde(comeback.page, (state) => state.wave >= wave, 'the run, seen by the rejoined guest');
   expect(back.own).toBe('up');
   expect(await comeback.page.evaluate(() => window.__gameDebug!.getScoreboardRows().find((row) => row.isYou)?.slot)).toBe(1);
 
   expect(errors).toEqual([]);
-  for (const { context } of [host, late, comeback]) await context.close();
+  for (const { context } of [host, comeback]) await context.close();
 });
 
 test('four players: a wave sized for four, and the run lost when all four are down at once', async ({ browser }) => {
