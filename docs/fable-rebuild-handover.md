@@ -23,6 +23,10 @@ every decision and its reason is in `docs/fable-rebuild-decisions.md` (D1 to D27
   file is loaded. Sounds are synthesised (`src/audio/weaponSounds.ts`); the sampled files are gone.
 - Damage falloff, side recoil, aim speed and weight per weapon; blades have two attacks each.
 - Other players see the weapon and skin you hold.
+- Spread and recoil by the kind of gun (added 2026-11-11 at Gustav's request, `docs/gun-handling.md`):
+  aimed fire holds each gun's real precision, the hip, movement and long bursts open it up, a burst
+  climbs then settles into a learnable weave, and each kick is sized to its cartridge. Unit suite
+  1930 of 1930 after it; `e2e/gun-handling.spec.ts` 2 of 2; the four smoke tests that fire and aim pass.
 
 **Skins** (`docs/skins.md`)
 - Six looks for every weapon (Service, Ranger, Whiteout, Ember, Gilded Goose, Pulse), equipped per
