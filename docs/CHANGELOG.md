@@ -10,7 +10,9 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v5.0.0 (current, on `feature/fable-rebuild`, not yet released)
+## v5.0.0 (current)
+
+Released to the live game on 2026-11-11.
 
 The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/arsenal.md`,
 `docs/skins.md`, `docs/king-of-the-hill.md`, `docs/goose-horde.md`, `docs/coop.md`,

@@ -1,5 +1,7 @@
 # Fable rebuild: handover
 
+**Released as v5.0.0 to https://hunter-n-goose.pages.dev on 2026-11-11** (merged to `master`).
+
 Branch `feature/fable-rebuild` (pushed to `origin`), base `master` at v4.7.1, version on the branch
 5.0.0. Nothing is merged, nothing is deployed to production. Written 2026-11-10.
 
