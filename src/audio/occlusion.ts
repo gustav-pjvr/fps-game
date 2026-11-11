@@ -39,7 +39,7 @@ const WALLS: readonly (readonly [number, number])[] = [
   [0.1, 430],
 ];
 /** The ground between: heavier than any wall. */
-const EARTH: readonly [number, number] = [0.14, 380];
+const EARTH: readonly [number, number] = [0.08, 380];
 /** One intact pane: a window muffles, less than a wall does. */
 const PANE_GAIN = 0.6;
 const PANE_CUTOFFS: readonly number[] = [OPEN_CUTOFF, 3600, 2400];

@@ -40,8 +40,9 @@ const snap = (value: number): number => Math.round(value / HOLE_GRID) * HOLE_GRI
 /** A hit of `power` at (u, v) on a pane in `state`: the new state and what happened. A broken pane
  * takes nothing more. A hit that breaks the pane leaves no hole: there is no glass left to hold it. */
 export function applyHit(state: PaneState, u: number, v: number, power: number): { state: PaneState; outcome: HitOutcome } {
-  if (state.broken || !(power > 0)) return { state, outcome: 'none' };
-  const damage = Math.min(PANE_STRENGTH, state.damage + Math.floor(power));
+  const cost = Math.floor(power);
+  if (state.broken || !(cost >= 1)) return { state, outcome: 'none' };
+  const damage = Math.min(PANE_STRENGTH, state.damage + cost);
   if (damage >= PANE_STRENGTH) return { state: { damage: PANE_STRENGTH, broken: true, holes: [] }, outcome: 'broke' };
   const holes = state.holes.length >= MAX_HOLES * 2 ? state.holes : [...state.holes, snap(u), snap(v)];
   return { state: { damage, broken: false, holes }, outcome: 'cracked' };
