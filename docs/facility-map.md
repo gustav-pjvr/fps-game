@@ -168,8 +168,10 @@ lit opponents and in a dark room sees only what the torch shows.
   the front of the gun (about `(0.18, -0.16, -0.35)`), aimed along the camera forward.
   Angle 0.38 rad, penumbra 0.55, distance 32 m, decay 2, colour `0xfff1dc`. Casts a shadow
   (512 map) when the quality preset has shadows.
-- A small torch body with an emissive lens mounted at the front of each ranged view model, near its
-  muzzle; the knife has none and the light then comes from the shoulder.
+- No torch body on the view model. The first one (a plain cylinder with a lens under the muzzle)
+  was removed after v5.0.0's arsenal: it hung on the weapon's outer group, so it stayed still while
+  the gun turned in a reload or an inspect, and it matched none of the new models. With the knife
+  or empty hands the light comes from the shoulder.
 - New action `flashlight`, default key F, rebindable, labelled "Torch". On by default on the
   Facility; F toggles it with a click. Since v4.4.0 it also works on the Valley at night and in fog (docs/night-and-visibility.md).
 - Other players: a pool of 3 extra spotlights (no shadows), created at match start so the shader

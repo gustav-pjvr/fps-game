@@ -1,5 +1,6 @@
 import { PLAYER_HEALTH } from './config.ts';
 import { GRENADE_KINDS, isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
+import { WEAPON_DEFINITIONS, weaponIdsIn, type WeaponCategory } from '../weapons/definitions.ts';
 
 /** Multiplayer-only, host-picked pre-match (per explicit user request - single-player never has a
  * mode, always the unrestricted default loadout). Threaded alongside `gooseDifficulty`/`killLimit`
@@ -53,25 +54,19 @@ export function grenadesEnabled(mode: GameMode | SinglePlayerMode): boolean {
   return GRENADES_ENABLED[mode];
 }
 
-/** Every weapon a Gun Game start/upgrade can draw from - never the knife, per explicit user
- * request ("knife is not in this mode"). */
-const GUN_GAME_POOL: readonly string[] = ['pistol', 'mp5', 'rifle', 'shotgun', 'sniper'];
+/** Every weapon a Gun Game start/upgrade can draw from: all twelve guns, never a blade, per
+ * explicit user request ("knife is not in this mode"). */
+const GUN_GAME_POOL: readonly string[] = [...weaponIdsIn('secondary'), ...weaponIdsIn('primary')];
 
-/** Which loadout slot a weapon belongs to (see ui/menu/LoadoutScreen.ts) - drives both the Loadout
- * page's left-column grouping and which slot a given weapon can be dragged into. 'special' (only
- * the Goose Launcher today) is shown for reference but is never draggable/equippable - it's a
- * mid-match reward, not a loadout choice. Weapons with no entry here (currently just 'unarmed',
- * Goose Toss's placeholder) never appear on the Loadout page at all. */
-export type WeaponCategory = 'primary' | 'secondary' | 'melee' | 'special';
-export const WEAPON_CATEGORIES: Readonly<Record<string, WeaponCategory>> = {
-  sniper: 'primary',
-  rifle: 'primary',
-  shotgun: 'primary',
-  pistol: 'secondary',
-  mp5: 'secondary',
-  knife: 'melee',
-  gooseLauncher: 'special',
-};
+/** Which loadout slot a weapon belongs to (see ui/menu/LoadoutScreen.ts): each weapon's own
+ * `category` (weapons/definitions.ts), gathered by id. 'special' (only the Goose Launcher today)
+ * is shown for reference but is never equippable - it's a mid-match reward, not a loadout choice.
+ * Weapons with no category (currently just 'unarmed', Goose Toss's placeholder) never appear on
+ * the Loadout page at all. */
+export type { WeaponCategory };
+export const WEAPON_CATEGORIES: Readonly<Record<string, WeaponCategory>> = Object.fromEntries(
+  Object.values(WEAPON_DEFINITIONS).flatMap((definition) => (definition.category ? [[definition.id, definition.category]] : [])),
+);
 
 /** A player's own chosen weapon per slot (see core/loadout.ts for persistence) - null means "not
  * chosen yet," resolved to LOADOUT_SLOT_DEFAULTS's entry for that slot rather than blocking match
@@ -120,7 +115,6 @@ export interface WeaponLoadout {
 const FIXED_LOADOUTS: Partial<Record<GameMode, WeaponLoadout>> = {
   oneShotOneKill: { weaponIds: ['pistol'], damageOverrides: { pistol: PLAYER_HEALTH } },
   sniperDuel: { weaponIds: ['sniper'], damageOverrides: { sniper: PLAYER_HEALTH } },
-  knifeOnly: { weaponIds: ['knife'] },
   // Not "no weapons" (WeaponManager requires at least one) - a harmless zero-damage placeholder
   // that Game.ts's Goose Toss handling never actually lets fire, see definitions.ts's 'unarmed'.
   gooseToss: { weaponIds: ['unarmed'] },
@@ -139,17 +133,20 @@ const FULL_ARSENAL: WeaponLoadout = { weaponIds: ['pistol', 'rifle', 'shotgun', 
  * across clients the way, say, the world seed does. */
 export function resolveWeaponLoadout(mode: GameMode, rng: () => number = Math.random, customLoadout?: PlayerLoadout): WeaponLoadout {
   if (mode === 'gunGame') return { weaponIds: [pickRandomGunGameWeapon(rng)] };
+  // Knife Only is fought with whichever blade the player has equipped.
+  if (mode === 'knifeOnly') return { weaponIds: [slotWeapon(customLoadout, 'melee')] };
   if (modeUsesCustomLoadout(mode)) {
     if (!customLoadout) return FULL_ARSENAL;
-    return {
-      weaponIds: [
-        customLoadout.primary ?? LOADOUT_SLOT_DEFAULTS.primary,
-        customLoadout.secondary ?? LOADOUT_SLOT_DEFAULTS.secondary,
-        customLoadout.melee ?? LOADOUT_SLOT_DEFAULTS.melee,
-      ],
-    };
+    return { weaponIds: [slotWeapon(customLoadout, 'primary'), slotWeapon(customLoadout, 'secondary'), slotWeapon(customLoadout, 'melee')] };
   }
   return FIXED_LOADOUTS[mode] ?? FULL_ARSENAL;
+}
+
+/** The weapon a loadout holds in `slot`: its default when nothing is chosen, or when the stored id
+ * is not a weapon of that slot (a loadout saved by another build). */
+function slotWeapon(loadout: PlayerLoadout | undefined, slot: 'primary' | 'secondary' | 'melee'): string {
+  const chosen = loadout?.[slot];
+  return chosen && WEAPON_CATEGORIES[chosen] === slot ? chosen : LOADOUT_SLOT_DEFAULTS[slot];
 }
 
 function pickRandomGunGameWeapon(rng: () => number): string {

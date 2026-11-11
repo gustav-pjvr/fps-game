@@ -21,6 +21,10 @@ import {
   PLAYER_MOVE_SPEED,
   PLAYER_RADIUS,
   RECOIL_DECAY,
+  RECOIL_DECAY_FIRING,
+  RECOIL_HOLD_SECONDS,
+  RECOIL_MAX_CLIMB,
+  RECOIL_MAX_SIDE,
   SPRINT_MULTIPLIER,
   WORLD_EDGE_PUSH_SPEED,
   WORLD_HARD_CLAMP_RADIUS,
@@ -42,6 +46,11 @@ export class Player implements Entity {
   private yaw = 0;
   private pitch = 0;
   private recoilPitch = 0;
+  private recoilYaw = 0;
+  /** Seconds since the last shot during which the recoil settles slowly (a burst is going). */
+  private recoilHold = 0;
+  private mobility = 1;
+  private sprintAllowed = true;
   private verticalVelocity = 0;
   private grounded = false;
   private health = PLAYER_HEALTH;
@@ -106,7 +115,13 @@ export class Player implements Entity {
     this.previousCameraQuaternion.copy(this.currentCameraQuaternion);
     this.applyLook(input);
     this.applyMovement(dt, input);
-    this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
+    if (this.shieldSeconds > 0) this.shieldSeconds -= dt;
+    // While a burst is going the sights come back slowly, so its shots stack into a climb; once the
+    // firing stops they settle at the usual rate.
+    const recoilDecay = this.recoilHold > 0 ? RECOIL_DECAY_FIRING : RECOIL_DECAY;
+    if (this.recoilHold > 0) this.recoilHold -= dt;
+    this.recoilPitch *= Math.max(0, 1 - recoilDecay * dt);
+    this.recoilYaw *= Math.max(0, 1 - recoilDecay * dt);
     this.knockbackVelocity.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY_PER_SECOND * dt));
     if (this.knockbackVelocity.lengthSq() < 0.0001) this.knockbackVelocity.set(0, 0, 0);
   }
@@ -122,9 +137,23 @@ export class Player implements Entity {
     this.camera.quaternion.slerpQuaternions(this.previousCameraQuaternion, this.currentCameraQuaternion, alpha);
   }
 
-  /** Temporary upward camera kick that decays back to the player's held aim over time. */
-  addRecoil(kick: number): void {
-    this.recoilPitch += kick;
+  /** Temporary camera kick that decays back to the player's held aim over time: `kick` upward,
+   * `side` to the left (positive) or right. */
+  addRecoil(kick: number, side = 0): void {
+    this.recoilPitch = Math.min(RECOIL_MAX_CLIMB, this.recoilPitch + kick);
+    this.recoilYaw = Math.max(-RECOIL_MAX_SIDE, Math.min(RECOIL_MAX_SIDE, this.recoilYaw + side));
+    this.recoilHold = RECOIL_HOLD_SECONDS;
+  }
+
+  /** Walking and sprinting speed as a fraction of normal: the held weapon's weight
+   * (WeaponDefinition.mobility), set by WeaponManager each tick. */
+  setMobility(multiplier: number): void {
+    this.mobility = multiplier;
+  }
+
+  /** False while a mode forbids sprinting (King of the Hill's crown): the sprint key does nothing. */
+  setSprintAllowed(allowed: boolean): void {
+    this.sprintAllowed = allowed;
   }
 
   /** Pushes the player away from an explosion (or any other knockback source) along `direction`
@@ -155,8 +184,11 @@ export class Player implements Entity {
    * fight without the player dying and freezing the simulation. Never set by gameplay code. */
   debugInvulnerable = false;
 
+  /** Seconds of protection left after a revive or a Second Wind: no damage lands while it runs. */
+  private shieldSeconds = 0;
+
   takeDamage(amount: number, sourcePosition?: THREE.Vector3): void {
-    if (this.isDead || this.debugInvulnerable) return;
+    if (this.isDead || this.debugInvulnerable || this.shieldSeconds > 0) return;
     this.health = Math.max(0, this.health - amount);
     this.sounds.onDamaged(sourcePosition);
   }
@@ -170,10 +202,21 @@ export class Player implements Entity {
     return this.health - before;
   }
 
+  /** Stands a fallen player up where they are with `health` (a teammate's revive, a Second Wind),
+   * shielded for `shield` seconds so the blast that felled them does not do it again. */
+  revive(health: number, shield: number): void {
+    this.health = Math.max(1, Math.min(PLAYER_HEALTH, health));
+    this.shieldSeconds = shield;
+    this.knockbackVelocity.set(0, 0, 0);
+  }
+
   respawn(position: THREE.Vector3): void {
+    this.shieldSeconds = 0;
     this.health = PLAYER_HEALTH;
     this.verticalVelocity = 0;
     this.recoilPitch = 0;
+    this.recoilYaw = 0;
+    this.recoilHold = 0;
     this.bobPhase = 0;
     this.bobStrength = 0;
     this.knockbackVelocity.set(0, 0, 0);
@@ -246,7 +289,7 @@ export class Player implements Entity {
 
     const moveDir = forward.multiplyScalar(-move.y).addScaledVector(right, move.x);
 
-    const speed = PLAYER_MOVE_SPEED * (input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
+    const speed = PLAYER_MOVE_SPEED * this.mobility * (this.sprintAllowed && input.isActionActive('sprint') ? SPRINT_MULTIPLIER : 1);
     moveDir.multiplyScalar(speed * dt);
 
     this.applyWorldEdgePush(moveDir, currentBeforeMove, dt);
@@ -300,7 +343,7 @@ export class Player implements Entity {
     this.rigidBody.setNextKinematicTranslation(next);
 
     const effectivePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + this.recoilPitch));
-    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw, 0, 'YXZ'));
+    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(effectivePitch, this.yaw + this.recoilYaw, 0, 'YXZ'));
     const cameraBobOffset = Math.sin(this.bobPhase) * CAMERA_BOB_AMPLITUDE * this.bobStrength;
     this.currentCameraPosition.set(next.x, next.y + EYE_OFFSET + cameraBobOffset, next.z);
     this.currentCameraQuaternion.copy(lookQuat);

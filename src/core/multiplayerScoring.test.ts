@@ -46,6 +46,14 @@ describe('creditsKill', () => {
     expect(creditsKill('kingOfTheHill', 10, 9, 'rifle')).toBe(true);
   });
 
+  it('scores nothing for a kill in King of the Hill, which is won on the hill, but still counts the death', () => {
+    const scoreboard = new Map<PlayerSlot, number>([[0, 40]]);
+    const deaths = new Map<PlayerSlot, number>();
+    expect(applyMatchDeath(scoreboard, deaths, 'kingOfTheHill', 10, { victimSlot: 1, killerSlot: 0, killerWeaponId: 'rifle' })).toBe(false);
+    expect(scoreboard.get(0)).toBe(40);
+    expect(deaths.get(1)).toBe(1);
+  });
+
   it('in Gun Game, the kill that would reach the limit needs the launcher', () => {
     expect(creditsKill('gunGame', 5, 3, 'rifle')).toBe(true);
     expect(creditsKill('gunGame', 5, 4, 'rifle')).toBe(false);

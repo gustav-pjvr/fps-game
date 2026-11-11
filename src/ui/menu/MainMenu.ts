@@ -11,6 +11,7 @@ export interface MainMenuCallbacks {
   onMultiplayer: () => void;
   onSettings: () => void;
   onLoadout: () => void;
+  onSkins: () => void;
 }
 
 /** Compass bearing (0 = north, clockwise) of the dusk sun, the same number the in-match compass
@@ -81,9 +82,11 @@ export class MainMenu {
     multiplayerButton.addEventListener('click', callbacks.onMultiplayer);
     const loadoutButton = createButton('LOADOUT');
     loadoutButton.addEventListener('click', callbacks.onLoadout);
+    const skinsButton = createButton('WORKBENCH');
+    skinsButton.addEventListener('click', callbacks.onSkins);
     const settingsButton = createButton('SETTINGS');
     settingsButton.addEventListener('click', callbacks.onSettings);
-    actions.append(playButton, multiplayerButton, loadoutButton, settingsButton);
+    actions.append(playButton, multiplayerButton, loadoutButton, skinsButton, settingsButton);
 
     const hints = document.createElement('div');
     hints.style.cssText = `display:flex; flex-wrap:wrap; gap:16px; margin-top:22px; ${LABEL_CSS} font-size:9.5px; letter-spacing:0.12em;`;

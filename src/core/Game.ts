@@ -8,9 +8,13 @@ import { RemotePlayer } from '../entities/RemotePlayer.ts';
 import { EntityManager } from '../entities/EntityManager.ts';
 import { GooseManager } from '../entities/GooseManager.ts';
 import { ThrownGoose, throwSegmentBlocked } from '../entities/ThrownGoose.ts';
-import { GoldenGooseManager } from '../entities/GoldenGooseManager.ts';
+import { HillView } from '../entities/HillView.ts';
+import { KothHud } from '../ui/kothHud.ts';
 import { AmmoDropManager } from '../entities/AmmoDropManager.ts';
 import { HordeGooseManager } from '../entities/HordeGooseManager.ts';
+import { HORDE_BOSSES, SECOND_WIND_RULES, SUPPLY_CRATE, type HordeBossId } from '../entities/hordeRules.ts';
+import { SquadController } from './modeControllers/SquadController.ts';
+import { DownedOverlay } from '../ui/downedOverlay.ts';
 import { BonusGooseManager } from '../entities/BonusGooseManager.ts';
 import { BuildingManager } from '../world/BuildingManager.ts';
 import { RoadManager } from '../world/RoadManager.ts';
@@ -39,18 +43,26 @@ import { FacilityNav } from '../world/facility/facilityNav.ts';
 import { FacilityObjects } from '../world/facility/FacilityObjects.ts';
 import { FacilityInteraction } from './facilityInteraction.ts';
 import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavigator } from '../entities/enemies/Enemy.ts';
-import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityGoosePlacement, facilityHordeSite, facilityMissionObjectives } from '../world/facility/facilityModes.ts';
+import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityFloorPoints, facilityGoosePlacement, facilityHordeSite } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
+import { loadStoredAttachments } from './attachments.ts';
+import { loadStoredSkins } from './skins.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
+import { LaserDot } from '../combat/LaserDot.ts';
 import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
+import { setTorchLensLit } from '../weapons/models/attachments.ts';
 import { Tracers } from '../combat/Tracers.ts';
 import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
 import { DamageArcs } from '../ui/damageArcs.ts';
 import { WorldMarkers } from '../ui/worldMarkers.ts';
-import { MissionState, missionMapMarkers, type MissionView } from './mission/missionState.ts';
+import { MissionState, missionMapMarkers, REDEPLOYS, type MissionEvent, type MissionPlayer, type MissionView } from './mission/missionState.ts';
+import { missionGrade } from './mission/missionGrade.ts';
+import { MISSION_HEADLINES, MISSION_MARKER_LABELS, missionObjective, redeployScreen } from './mission/missionText.ts';
 import { UplinkBeacons } from '../world/UplinkBeacons.ts';
+import { CONSOLE_STAND_RADIUS, CORE_HOVER_HEIGHT, facilityOperationSites, facilityStandBlocked, standPointNear, TOWER_STAND_RADIUS, valleyOperationSites } from '../world/missionSites.ts';
+import { applyArchetypeLook } from '../entities/enemies/archetypeLook.ts';
 import { FACILITY_CONSOLE_HEIGHT } from '../world/facility/facilityConsoles.ts';
 import { bearingDeg } from '../ui/compass.ts';
 import { Hotbar } from '../ui/hotbar.ts';
@@ -64,7 +76,9 @@ import { LongShotCallout } from '../ui/longShotCallout.ts';
 import { KillFeed } from '../ui/killFeed.ts';
 import { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import { BigAnnouncement } from '../ui/bigAnnouncement.ts';
-import { HordeWaveIndicator } from '../ui/hordeWaveIndicator.ts';
+import { HordeHud } from '../ui/hordeHud.ts';
+import { ShowdownHud } from '../ui/showdownHud.ts';
+import { ShowdownState, type ShowdownEvent } from '../entities/enemies/director/showdown.ts';
 import { ModeExplanationScreen } from '../ui/modeExplanationScreen.ts';
 import { Minimap, type MinimapPlayerDot } from '../ui/minimap.ts';
 import { ValleyHouseMapLayer } from '../ui/valleyHouseMapLayer.ts';
@@ -83,7 +97,7 @@ import { ObstacleRegistry } from '../entities/enemies/tactics/obstacleRegistry.t
 import { GlintMarkers } from '../combat/GlintMarkers.ts';
 import { PacingDirector, type DirectorOptions, type WaveBias } from '../entities/enemies/director/pacingDirector.ts';
 import { pickReinforcementSpawns, type SpawnOptions } from '../entities/enemies/director/reinforcementSpawner.ts';
-import { archetypeNamed, type EnemyArchetype } from '../entities/enemies/archetypes.ts';
+import { archetypeNamed, WARDEN, type EnemyArchetype } from '../entities/enemies/archetypes.ts';
 import { ENEMY_HEAD_OFFSET_Y } from '../entities/enemies/EnemyBody.ts';
 import { mulberry32 } from '../utils/rng.ts';
 import {
@@ -135,17 +149,12 @@ import {
   GOOSE_LAUNCHER_EXPLOSION_RADIUS,
   GOOSE_LAUNCHER_PROJECTILE_SPEED,
   HORDE_AMMO_DROP_PICKUP_RADIUS,
-  HORDE_AMMO_DROP_REFILL_MAGAZINES,
-  HORDE_GOOSE_EXPLOSION_MAX_DAMAGE,
-  HORDE_GOOSE_EXPLOSION_RADIUS,
-  HORDE_GOOSE_KNOCKBACK_STRENGTH,
-  HORDE_MAX_RESPAWNS,
   HORDE_PLAYER_SPAWN_MAX_RADIUS,
   HORDE_PLAYER_SPAWN_MIN_RADIUS,
   HORDE_STARTING_RESERVE_MAGAZINES,
   HORDE_WAVE_TABLE,
-  HORDE_WAVE_TABLE_MULTIPLAYER,
   KOTH_POINTS_TO_WIN,
+  HILL_SITE_SEED_OFFSET,
   type MatchWeather,
   type MatchMap,
   MULTIPLAYER_CONNECTION_POLL_INTERVAL,
@@ -173,13 +182,13 @@ import { GrenadeSystem } from '../combat/grenades/GrenadeSystem.ts';
 import { GrenadeEffects } from '../combat/grenades/GrenadeEffects.ts';
 import { grenadeNetworkFor } from '../combat/grenades/grenadeNetwork.ts';
 import { withBlastTargets } from '../combat/grenades/grenadeTargets.ts';
-import { MODE_EXPLANATIONS } from './modeExplanations.ts';
+import { MISSION_EXPLANATION, MODE_EXPLANATIONS, SHOWDOWN_EXPLANATION } from './modeExplanations.ts';
 import { equippedGrenade, loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
-import { HOST_SLOT, helloSupportsMap, type PlayerSlot } from '../network/protocol.ts';
+import { DAMAGE_EVENT_MAX_AMOUNT, HOST_SLOT, helloSupportsMap, type PlayerSlot } from '../network/protocol.ts';
 import { LampSyncTracker, parseLampList } from '../network/lampSync.ts';
 import { summarizeConnection } from '../network/connectionStats.ts';
 import { createSendClock } from '../network/stateOrder.ts';
@@ -189,6 +198,7 @@ import { MatchTelemetryAccumulator, buildMultiplayerTelemetryExtras, type MatchT
 import { isHordeAllEliminated, MultiplayerMatchState } from '../network/MultiplayerMatchState.ts';
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
+import { playsInTeams, spreadSites, type HillPlayer, type HillSite } from './modeControllers/hillState.ts';
 import { GunGameController } from './modeControllers/GunGameController.ts';
 import { FACILITY_LOOK, type LookPreset } from '../render/look.ts';
 import { Flashlight, RemoteTorches, remoteTorchesAvailable, torchAvailable, torchCastsShadow, torchOnByDefault } from '../render/Flashlight.ts';
@@ -362,6 +372,12 @@ export class Game {
   /** Enemy AI v2 step 6: the pacing director and its seeded stream, in a Director match only (see
    * updateDirector); null in every other match. */
   private readonly director: PacingDirector | null;
+  /** Showdown (docs/showdown.md): the director's acts, finale and score. Null outside the solo
+   * Director mode. Rebuilt with each new run. */
+  private showdown: ShowdownState | null = null;
+  private showdownHud: ShowdownHud | null = null;
+  /** How many of Showdown's finale squad are still to be placed (none yet: nowhere hidden to put them). */
+  private showdownFinalePending = 0;
   private readonly directorRng: () => number;
   /** Player health at the director's last look, so it can tell damage taken per tick. */
   private directorLastHealth = 0;
@@ -374,9 +390,18 @@ export class Game {
   private missionDamageTaken = 0;
   private missionLastHealth = 0;
   private missionClock = 0;
-  /** True from the mission's win until Respawn restarts it: the world freezes behind the end screen. */
+  /** True from the operation's end with the player alive (the win, or the extraction missed) until
+   * Respawn restarts it: the world freezes behind the end screen. */
   private missionWon = false;
   private readonly missionMarkerPosition = new THREE.Vector3();
+  /** Where the data core hovers while nobody carries it: at its site, or where its carrier fell. */
+  private readonly missionCorePosition = new THREE.Vector3();
+  /** The one player the solo operation feeds its state machine, updated in place each tick. */
+  private readonly missionPlayers: { x: number; z: number; alive: boolean; underground: boolean }[] = [{ x: 0, z: 0, alive: true, underground: false }];
+  /** secondsSinceShot at the mission's last look: a shot shows as that clock not having advanced. */
+  private missionLastShotAge = Infinity;
+  /** The compass markers now shown, as their ids joined, so they are only rebuilt on a change. */
+  private missionMarkerKey = '';
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   /** The last wave's reinforcements, for getDirectorDebug. */
   private directorLastSpawns: DirectorSpawnRecord[] = [];
@@ -407,6 +432,12 @@ export class Game {
   private hudRoot: HTMLElement | null = null;
   private readonly hudForward = new THREE.Vector3();
   private secondsSinceShot = Infinity;
+  /** Test-only clock hold (gameDebugApi holdTime, stepTime): see render. */
+  private debugClockHeld = false;
+  private debugClockStep = 0;
+  /** The laser sight's dot, made with the match (see updateLaser). */
+  private laserDot: LaserDot | null = null;
+  private readonly laserForward = new THREE.Vector3();
   private readonly playerVisibility = { value: 1, torchOn: false, eye: new THREE.Vector3(), aim: new THREE.Vector3() };
   private loadoutScreenLoading = false;
   private disposed = false;
@@ -469,6 +500,14 @@ export class Game {
   /** King of the Hill's own claim/drop/scoring controller (see
    * modeControllers/KingOfTheHillController.ts). Null for every mode but King of the Hill. */
   private kingOfTheHillController: KingOfTheHillController | null = null;
+  /** The shared co-op layer (modeControllers/SquadController.ts): pings, and in the co-op modes the
+   * fallen and their revives. Null in single-player. */
+  private squad: SquadController | null = null;
+  /** Solo Goose Horde: the Second Winds left (entities/hordeRules.ts), and whether the run is won. */
+  private hordeSecondWinds: number = SECOND_WIND_RULES.start;
+  private hordeWon = false;
+  /** The supply crates that have a marker and a map dot now (see updateHordeSupplies). */
+  private readonly shownSupplyIds = new Set<string>();
   /** Gun Game's own "one kill from winning" Goose Launcher grant controller (see
    * modeControllers/GunGameController.ts). Null for every mode but Gun Game. */
   private gunGameController: GunGameController | null = null;
@@ -538,13 +577,12 @@ export class Game {
     private readonly muzzleFlash: MuzzleFlash,
     private readonly glintMarkers: GlintMarkers,
     private readonly gooseManager: GooseManager,
-    private readonly goldenGooseManager: GoldenGooseManager | null,
     private readonly hordeGooseManager: HordeGooseManager | null,
     private readonly bonusGooseManager: BonusGooseManager | null,
     private readonly ammoDropManager: AmmoDropManager | null,
     private readonly gooseAnnouncement: GooseAnnouncement,
     private readonly bigAnnouncement: BigAnnouncement,
-    private readonly hordeWaveIndicator: HordeWaveIndicator | null,
+    private readonly hordeHud: HordeHud | null,
     private readonly explosionEffect: ExplosionEffect,
     private readonly hud: Hud,
     private readonly hotbar: Hotbar,
@@ -588,7 +626,8 @@ export class Game {
     this.directorRng = mulberry32(getWorldSeed() + DIRECTOR_SEED_OFFSET);
     this.director = !multiplayer && (matchConfig.directorMode || matchConfig.missionMode) && !matchConfig.hordeMode ? new PacingDirector(DIRECTOR_OPTIONS, this.directorRng) : null;
     this.directorLastHealth = player.currentHealth;
-    hud.setObjective(this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', this.director || matchConfig.hordeMode ? 'Survive the waves' : facility ? 'Clear the facility' : 'Clear the valley');
+    this.showdown = this.director && matchConfig.directorMode ? new ShowdownState(this.director, DIRECTOR_OPTIONS) : null;
+    hud.setObjective(this.showdown ? 'SHOWDOWN' : this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', matchConfig.hordeMode ? 'Survive twelve waves' : this.showdown ? 'Five acts, then the finale' : this.director ? 'Survive the waves' : facility ? 'Clear the facility' : 'Clear the valley');
     hud.compass.setSunDirection(renderer.currentLook.sunDirection);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
@@ -755,16 +794,31 @@ export class Game {
     this.fillLight.intensity = look.hemiIntensity * peak;
   }
 
+  /** The laser sight's dot (docs/attachments.md): on whatever the camera's forward meets, while the
+   * gun in hand carries a laser. One ray a frame, and none without the attachment. */
+  private updateLaser(): void {
+    const { laserDot } = this;
+    if (!laserDot) return;
+    if (!this.weaponManager.laserOn || this.player.isDead) {
+      laserDot.update(this.renderer.camera, null);
+      return;
+    }
+    const camera = this.renderer.camera;
+    camera.getWorldDirection(this.laserForward);
+    const hit = castHitscan(this.physics, camera.position, this.laserForward, laserDot.range, this.player.ownCollider);
+    laserDot.update(camera, hit ? hit.distance : null);
+  }
+
   /** The match's torches, after the camera's interpolation:
-   * the player's own on the gun (its body on the active ranged view model) or the shoulder, and one
+   * the player's own from the front of the gun or from the shoulder, and one
    * pooled light per opponent, dark while their torch is off or they are dead. */
   private updateTorches(): void {
     const { torch, remoteTorches } = this;
+    // The lens of a fitted weapon torch glows only while the torch is on.
+    setTorchLensLit(torch?.isOn ?? false);
     if (!torch) return;
     if (torch.isOn && !this.torchAvailableAt(this.player.position)) torch.setOn(false);
-    const mount = this.weaponManager.torchMount;
-    torch.mountBody(mount);
-    torch.update(this.renderer.camera, mount !== null);
+    torch.update(this.renderer.camera, this.weaponManager.torchOnGun);
     if (!remoteTorches) return;
     const sources = this.multiplayer
       ? Array.from(this.multiplayer.opponents.values(), (opponent) => ({
@@ -810,6 +864,15 @@ export class Game {
         };
       },
       getCameraFov: () => this.renderer.camera.fov,
+      holdTime: (held: boolean) => {
+        this.debugClockHeld = held;
+        this.loop.setHeld(held);
+      },
+      stepTime: (seconds: number) => {
+        this.debugClockStep += seconds;
+        this.loop.step(seconds);
+      },
+      getShotLog: () => this.weaponManager.recentShots.map((shot) => ({ ...shot })),
       getCameraChildrenDebug: () =>
         this.renderer.camera.children.map((child) => ({
           type: child.type,
@@ -822,6 +885,29 @@ export class Game {
             scale: { x: gc.scale.x, y: gc.scale.y, z: gc.scale.z },
           })),
         })),
+      getNearEyeObjects: (radius = 3) => {
+        const camera = this.renderer.camera;
+        const found: { path: string; kind: string; cam: number[]; screen: number[]; size: number[] }[] = [];
+        const box = new THREE.Box3();
+        const centre = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        const round = (v: THREE.Vector3): number[] => [v.x, v.y, v.z].map((n) => Math.round(n * 1000) / 1000);
+        this.renderer.scene.traverseVisible((object) => {
+          const drawn = object as THREE.Mesh;
+          if (!drawn.geometry && !(object as THREE.Sprite).isSprite) return;
+          box.setFromObject(object);
+          if (box.isEmpty()) return;
+          box.getCenter(centre);
+          box.getSize(size);
+          const sizeOut = round(size);
+          const inCamera = camera.worldToLocal(centre.clone());
+          if (inCamera.length() > radius) return;
+          const path: string[] = [];
+          for (let node: THREE.Object3D | null = object; node && node !== this.renderer.scene; node = node.parent) path.unshift(node.name || node.type);
+          found.push({ path: path.join('/'), kind: object.type, cam: round(inCamera), screen: round(centre.project(camera)), size: sizeOut });
+        });
+        return found;
+      },
       getWorldSeed: () => getWorldSeed(),
       // Queued, not applied immediately, so debug damage takes the exact same within-tick path enemy
       // damage takes (death handling itself copes with either, see deathHandled).
@@ -849,11 +935,46 @@ export class Game {
           : null,
       getMissionDebug: () => {
         if (!this.mission) return null;
-        const view = this.mission.view(this.player.position);
-        return { ...view, won: this.missionWon, kills: this.missionKills, damageTaken: this.missionDamageTaken };
+        const view = this.mission.view(this.missionPlayerList());
+        const core = this.missionCorePosition;
+        return {
+          ...view,
+          won: view.phase === 'won',
+          kills: this.missionKills,
+          damageTaken: this.missionDamageTaken,
+          carrying: view.core.carrier === 0,
+          corePosition: { x: core.x, y: core.y, z: core.z },
+        };
       },
-      getHordeDebug: () =>
-        this.hordeGooseManager ? { wave: this.hordeGooseManager.currentWave, geese: this.hordeGooseManager.listForSync() } : null,
+      completeMissionStage: () => {
+        if (this.mission) this.handleMissionEvents(this.mission.completeStage());
+      },
+      advanceMission: (seconds) => {
+        // In one second steps with the player where they stand, so waves and timers fire as in play.
+        for (let t = 0; t < seconds && this.mission && !this.missionWon; t++) {
+          this.handleMissionEvents(this.mission.update({ dt: Math.min(1, seconds - t), players: this.missionPlayerList(), interact: null, kills: 0, shots: 0 }));
+        }
+      },
+      getHordeDebug: () => {
+        const horde = this.hordeGooseManager;
+        if (!horde) return null;
+        const view = horde.view;
+        return {
+          wave: view.wave, totalWaves: view.totalWaves, phase: view.phase, nextIn: view.nextIn, left: view.left,
+          meter: view.meter, need: view.need, boss: view.boss,
+          kills: Array.from(view.kills, ([slot, kills]) => ({ slot, kills })),
+          geese: horde.listForSync(),
+          crates: this.ammoDropManager?.listForSync() ?? [],
+          own: this.squad?.ownState ?? 'up',
+          fallen: this.multiplayer ? [...this.multiplayer.hordeEliminatedSlots] : [],
+          secondWinds: this.multiplayer ? 0 : this.hordeSecondWinds,
+        };
+      },
+      setHordeWave: (wave: number) => this.hordeGooseManager?.debugSkipToWave(wave),
+      killHordeGeese: () => this.hordeGooseManager?.debugKillAll(),
+      holdHordeWave: (held: boolean) => {
+        if (this.hordeGooseManager) this.hordeGooseManager.debugWaveHeld = held;
+      },
       getFacilityDebug: () => {
         if (!this.facility) return null;
         const { layout, world } = this.facility;
@@ -921,6 +1042,29 @@ export class Game {
         Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer: { position: p } }) => ({ slot, x: p.x, y: p.y, z: p.z })).sort(
           (a, b) => a.slot - b.slot,
         ),
+      getKothDebug: () => this.kingOfTheHillController?.snapshot ?? null,
+      holdKothHill: (held: boolean) => this.kingOfTheHillController?.debugHoldHill(held),
+      setShowdownAct: (act: number) => this.showdown?.debugSkipToAct(act),
+      forceDirectorPeak: () => this.director?.forcePeak(),
+      killEnemies: () => {
+        for (let index = this.entityManager.count - 1; index >= 0; index--) this.entityManager.damageEnemy(index, 100000);
+      },
+      getShowdownDebug: () => {
+        if (!this.showdown) return null;
+        const view = this.showdown.view();
+        return {
+          act: view.act, totalActs: view.totalActs, stage: view.stage, phase: view.phase, score: view.score,
+          multiplier: view.multiplier, bestMultiplier: view.bestMultiplier, kills: view.kills, redeploysLeft: view.redeploysLeft,
+          alive: this.entityManager.enemyCounts().alive,
+          crates: this.ammoDropManager?.listForSync() ?? [],
+          warden: this.entityManager.getLiveEntityArchetypes().includes(WARDEN.name),
+        };
+      },
+      getOpponentWeapons: () =>
+        Array.from(this.multiplayer?.opponents.values() ?? [], ({ slot, remotePlayer }) => ({
+          slot, weaponId: remotePlayer.heldWeaponId, skinId: remotePlayer.heldSkinId,
+        })).sort((a, b) => a.slot - b.slot),
+      getHeldWeapon: () => ({ weaponId: this.weaponManager.activeWeaponId, skinId: this.weaponManager.activeSkinId }),
       getScoreboardRows: () => {
         if (!this.multiplayer) return [];
         const { ownSlot } = this.multiplayer.session;
@@ -1208,14 +1352,14 @@ export class Game {
             endY: end.y,
             endZ: end.z,
             // activeWeaponId, not weaponSlotNames[activeWeaponIndex] - the latter returns the
-            // display name (e.g. "P9 Pistol"), which playGunshot's `${weaponId}_shot` buffer
-            // lookup never matches, silently falling through to its generic fallback sound. This is
-            // why every multiplayer opponent's gunshot sounded the same regardless of weapon.
+            // display name (e.g. "P9 Pistol"), which playGunshot's sound profile lookup never
+            // matches, silently falling through to its default sound. This is why every
+            // multiplayer opponent's gunshot once sounded the same regardless of weapon.
             weaponId: game.weaponManager.activeWeaponId,
           });
         },
         (origin, weaponId) => {
-          sound.playKnifeSwing();
+          sound.playKnifeSwing(1, 0, weaponId);
           multiplayer?.connection.send({
             type: 'fireEvent',
             senderSlot: multiplayer.ownSlot,
@@ -1275,6 +1419,9 @@ export class Game {
         reserveAmmo,
         // Facility lamps are not physics colliders: each ranged pellet's ray is tested against them.
         (origin, direction, distance) => game.handleHitscanRay(origin, direction, distance),
+        // Read fresh on every build, so a skin equipped mid-match shows from the next respawn.
+        loadStoredSkins(),
+        loadStoredAttachments(),
       );
     const weaponManager = await buildWeaponManager(loadout.weaponIds, loadout.damageOverrides, initialReserveAmmo);
 
@@ -1342,7 +1489,10 @@ export class Game {
 
     const gooseAnnouncement = new GooseAnnouncement(hudRoot);
     const bigAnnouncement = new BigAnnouncement(hudRoot);
-    const hordeWaveIndicator = isHordeMode ? new HordeWaveIndicator(hudRoot) : null;
+    // Under the scoreboard in a room; in its place when playing alone.
+    const hordeHud = isHordeMode ? new HordeHud(hudRoot, multiplayer ? 170 : 122) : null;
+    // A mode with a panel top centre takes its headlines below the crosshair.
+    if (isHordeMode || multiplayer?.gameMode === 'kingOfTheHill' || (matchConfig.directorMode && !multiplayer)) bigAnnouncement.moveBelowCrosshair();
     const explosionEffect = new ExplosionEffect(renderer.scene);
     // Single-player and the multiplayer host run every goose authoritative (see GooseManager's
     // class comment); a guest only ever mirrors what the host broadcasts, never spawns/adjudicates
@@ -1383,30 +1533,42 @@ export class Game {
       gooseManager.spawnInitialBatch(ownSpawn.x, ownSpawn.y);
     }
 
-    // King of the Hill: one golden goose at the map's exact center (0, 0) - the same point
-    // pickMultiplayerSpawnPoints already rings every player equally around, so "spawn equidistant
-    // from the goose" needs no new placement math. Every client (host and guests alike) builds it
-    // locally at this same fixed point rather than needing a spawn broadcast - unlike the
-    // exploding geese, there's exactly one of these and its start position is a match constant.
-    const goldenGooseManager =
-      multiplayer?.gameMode === 'kingOfTheHill'
-        ? new GoldenGooseManager(renderer.scene, new THREE.Vector3(0, sampleHeight(0, 0), 0))
-        : null;
-
-    // Multiplayer uses its own harder, 15-wave table (per explicit user request); single-player
-    // keeps the original 10-wave one. Host-authoritative in multiplayer (same split as
-    // GooseManager); single-player is always "authoritative" since there's no one else to defer to.
-    const hordeWaveTable = multiplayer ? HORDE_WAVE_TABLE_MULTIPLAYER : HORDE_WAVE_TABLE;
+    // One table of twelve waves for solo and co-op (entities/hordeRules.ts scales it to the squad).
+    // Host-authoritative in multiplayer (same split as GooseManager); single-player is always
+    // "authoritative" since there's no one else to defer to.
+    const hordeWaveTable = HORDE_WAVE_TABLE;
+    // The manager starts its first wave as it is built, before the Game (and the live roster) exist:
+    // these are filled in further down, once they do.
+    let hordeEvents: {
+      waveStart(wave: number, boss: HordeBossId | undefined): void;
+      waveCleared(wave: number): void;
+      cleared(): void;
+      supplyEarned(): void;
+    } | null = null;
+    let hordeSquadSize: () => number = () => multiplayer?.roster.length ?? 1;
     const hordeGooseManager = isHordeMode
       ? new HordeGooseManager(
           renderer.scene,
           physics,
           {
-            onWaveStart: (wave) => gooseAnnouncement.show(`Wave ${wave} of ${hordeWaveTable.length} incoming...`),
-            onCleared: () => gooseAnnouncement.show('The horde has been cleared - you survived!'),
-            onExplosion: (position) => {
+            onWaveStart: (wave, boss) => {
+              if (boss) {
+                bigAnnouncement.show(HORDE_BOSSES[boss].name);
+                sound.playObjectiveCue('alert');
+              } else {
+                gooseAnnouncement.show(`Wave ${wave} of ${hordeWaveTable.length} incoming...`);
+              }
+              hordeEvents?.waveStart(wave, boss);
+            },
+            onWaveCleared: (wave) => hordeEvents?.waveCleared(wave),
+            onCleared: () => {
+              gooseAnnouncement.show('The horde is broken. You survived!');
+              hordeEvents?.cleared();
+            },
+            onSupplyEarned: () => hordeEvents?.supplyEarned(),
+            onExplosion: (position, stats) => {
               if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
-              explosionEffect.spawn(position, HORDE_GOOSE_EXPLOSION_RADIUS);
+              explosionEffect.spawn(position, stats.blastRadius);
               const distance = position.distanceTo(player.position);
               sound.playExplosion(
                 enemyGunshotVolume(distance) * undergroundMuffleFactor(
@@ -1418,25 +1580,30 @@ export class Game {
               // project) - this callback fires identically whether the local client decided the
               // explosion (authoritative side) or is just mirroring one via applyExplosion
               // (follower side), so no separate multiplayer-specific damage path is needed.
-              const damage = computeExplosionDamage(distance, HORDE_GOOSE_EXPLOSION_RADIUS, HORDE_GOOSE_EXPLOSION_MAX_DAMAGE);
+              const damage = computeExplosionDamage(distance, stats.blastRadius, stats.blastDamage);
               if (damage > 0) player.takeDamage(damage);
-              const knockback = computeKnockbackStrength(distance, HORDE_GOOSE_EXPLOSION_RADIUS, HORDE_GOOSE_KNOCKBACK_STRENGTH);
+              const knockback = computeKnockbackStrength(distance, stats.blastRadius, stats.knockback);
               if (knockback > 0) player.applyKnockback(player.position.clone().sub(position), knockback);
             },
             onNetworkSpawn:
               multiplayer?.role === 'host'
-                ? (id, x, y, z, flavor) => multiplayer.connection.send({ type: 'hordeGooseSpawned', id, x, y, z, flavor })
+                ? (id, x, y, z, flavor, boss) => multiplayer.connection.send({ type: 'hordeGooseSpawned', id, x, y, z, flavor, ...(boss ? { boss } : {}) })
                 : undefined,
             onNetworkSnapshot:
               multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'hordeGooseSnapshot', id, x, y, z }) : undefined,
             onNetworkExplosion:
-              multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'hordeGooseExploded', id, x, y, z }) : undefined,
+              multiplayer?.role === 'host'
+                ? (id, x, y, z, stomp) => multiplayer.connection.send({ type: 'hordeGooseExploded', id, x, y, z, ...(stomp ? { stomp } : {}) })
+                : undefined,
             onNetworkRemove: multiplayer?.role === 'host' ? (id) => multiplayer.connection.send({ type: 'hordeGooseRemoved', id }) : undefined,
             onNetworkWaveStart: multiplayer?.role === 'host' ? (wave) => multiplayer.connection.send({ type: 'hordeWaveStarted', wave }) : undefined,
             onNetworkCleared: multiplayer?.role === 'host' ? () => multiplayer.connection.send({ type: 'hordeCleared' }) : undefined,
             onNetworkReset: multiplayer?.role === 'host' ? () => multiplayer.connection.send({ type: 'hordeReset' }) : undefined,
+            onNetworkState: multiplayer?.role === 'host' ? (state) => multiplayer.connection.send({ type: 'hordeState', ...state }) : undefined,
             onLocalHitReported:
-              multiplayer?.role === 'guest' ? (id) => multiplayer.connection.send({ type: 'hordeGooseHitEvent', senderSlot: multiplayer.ownSlot, id }) : undefined,
+              multiplayer?.role === 'guest'
+                ? (id, damage) => multiplayer.connection.send({ type: 'hordeGooseHitEvent', senderSlot: multiplayer.ownSlot, id, damage: Math.min(DAMAGE_EVENT_MAX_AMOUNT, Math.max(0, damage)) })
+                : undefined,
           },
           // Centered on this client's own spawn point (random in single-player, this client's own
           // slot point in multiplayer) rather than a fixed world origin - now that single-player
@@ -1450,6 +1617,8 @@ export class Game {
           !multiplayer || multiplayer.role === 'host',
           // Indoors they come in through rooms away from every player (docs/facility-map.md).
           facility ? facilityHordeSite(facility.layout) : null,
+          () => hordeSquadSize(),
+          multiplayer?.ownSlot ?? 0,
         )
       : null;
 
@@ -1495,14 +1664,16 @@ export class Game {
         )
       : null;
 
-    // Goose Horde multiplayer's ammo crates (per explicit user request) - single-player keeps
-    // unlimited reloads, so this is multiplayer-only, unlike the other horde-mode systems above.
-    const ammoDropManager = isHordeMultiplayer
+    // Goose Horde's supply crates (docs/goose-horde.md): earned by the squad's kills, placed by the
+    // authoritative side (the host, or single-player itself). Indoors a crate lands on clear floor
+    // near the player it is for.
+    const supplyFloor = facility ? facilityFloorPoints(facility.layout, 1) : null;
+    const ammoDropManager = isHordeMode || (matchConfig.directorMode && !multiplayer)
       ? new AmmoDropManager(renderer.scene, {
           // `activeMultiplayer` isn't assigned in this outer scope until later in this same
-          // function, but this callback only ever fires during later gameplay ticks (from
-          // AmmoDropManager.update, which never runs until the whole create() call has resolved) -
-          // same forward-reference pattern already used for `game`/`weaponManager` elsewhere here.
+          // function, but this callback only ever fires during later gameplay ticks (a supply
+          // drop, which never comes until the whole create() call has resolved) - same
+          // forward-reference pattern already used for `game`/`weaponManager` elsewhere here.
           onNetworkSpawn:
             multiplayer?.role === 'host'
               ? (id, x, y, z) => {
@@ -1510,7 +1681,16 @@ export class Game {
                   activeMultiplayer?.minimap.addItemDot(id);
                 }
               : undefined,
-        }, facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z))
+        }, facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z),
+        supplyFloor
+          ? (anchor) => {
+              const near = supplyFloor.filter((point) => {
+                const distance = Math.hypot(point.x - anchor.x, point.z - anchor.z);
+                return distance >= 3 && distance <= 9;
+              });
+              return near.length > 0 ? near[Math.floor(Math.random() * near.length)]! : null;
+            }
+          : undefined)
       : null;
 
     // Every OTHER roster slot gets a RemotePlayer, positioned at its own match-start spawn point
@@ -1564,7 +1744,6 @@ export class Game {
         deathTimer: 0,
         lastDamageSourceSlot: null,
         lastDamageSourceAt: 0,
-        hordeRespawnsUsed: 0,
         hordeEliminatedSlots: new Set<PlayerSlot>(),
       };
     }
@@ -1632,13 +1811,12 @@ export class Game {
       muzzleFlash,
       glintMarkers,
       gooseManager,
-      goldenGooseManager,
       hordeGooseManager,
       bonusGooseManager,
       ammoDropManager,
       gooseAnnouncement,
       bigAnnouncement,
-      hordeWaveIndicator,
+      hordeHud,
       explosionEffect,
       hud,
       hotbar,
@@ -1711,6 +1889,49 @@ export class Game {
       game.facilityInteraction = interaction;
     }
     if (matchConfig.missionMode && !activeMultiplayer) game.startMission(hudRoot);
+    if (game.showdown) {
+      // The supply crates of its breathers carry a world marker.
+      game.worldMarkers ??= new WorldMarkers(hudRoot);
+      game.showdownHud = new ShowdownHud(hudRoot);
+      // A match option, not a GameMode: its briefing opens through the same gate the mission's does.
+      game.worldBriefingActive = true;
+      game.modeExplanationParticipants = new Set();
+      game.modeExplanationScreen.show(SHOWDOWN_EXPLANATION.title, SHOWDOWN_EXPLANATION.steps, 1);
+    }
+    if (hordeGooseManager) {
+      game.worldMarkers ??= new WorldMarkers(hudRoot);
+      if (activeMultiplayer) {
+        const live = activeMultiplayer;
+        hordeSquadSize = () => live.opponents.size + 1;
+      }
+      hordeEvents = {
+        waveStart: () => game.onHordeWaveStart(),
+        waveCleared: (wave) => game.onHordeWaveCleared(wave),
+        cleared: () => game.onHordeCleared(),
+        supplyEarned: () => game.dropHordeSupplies(),
+      };
+    }
+    // The shared co-op layer (docs/coop.md): pings for a player's own side in every mode that has
+    // sides, and the fallen and their revives in the co-op modes.
+    if (multiplayer && activeMultiplayer) {
+      const live = activeMultiplayer;
+      game.worldMarkers ??= new WorldMarkers(hudRoot);
+      game.squad = new SquadController({
+        session: multiplayer,
+        usernames: live.usernames,
+        markers: game.worldMarkers,
+        downed: new DownedOverlay(hudRoot, 'You are back when the next wave starts'),
+        revives: currentGameMode === 'gooseHorde',
+        isTeammate: (slot) => currentGameMode === 'gooseHorde' || (game.kingOfTheHillController?.isTeammate(slot) ?? false),
+        positionOf: (slot) => live.opponents.get(slot)?.remotePlayer.position ?? null,
+        aimPoint: () => game.aimPoint(),
+        setPrompt: (text) => hud.setPrompt('interact', text),
+        notify: (text) => killFeed.show(text),
+        cue: (kind) => (kind === 'ping' ? sound.playPing() : sound.playObjectiveCue(kind)),
+        setRowTag: (slot, tag) => live.multiplayerHud.setRowTag(slot, tag),
+        reviveOwn: (health) => game.reviveOwnPlayer(health),
+      });
+    }
 
     // Per-mode controllers (see core/modeControllers/) - each mode gets at most one, matching its
     // own gameMode. Constructed here rather than earlier alongside their underlying managers
@@ -1720,8 +1941,32 @@ export class Game {
     if (multiplayer?.gameMode === 'gooseToss') {
       game.gooseTossController = new GooseTossController(renderer.camera, renderer.scene, gooseManager, game.thrownGeese, multiplayer);
     }
-    if (multiplayer?.gameMode === 'kingOfTheHill' && goldenGooseManager) {
-      game.kingOfTheHillController = new KingOfTheHillController(goldenGooseManager, multiplayer, game.multiplayerMatchState);
+    if (multiplayer?.gameMode === 'kingOfTheHill' && activeMultiplayer) {
+      game.worldMarkers ??= new WorldMarkers(hudRoot);
+      // Only the host places the hill: its sites, their order and whether four players make teams.
+      const hostRng = mulberry32(getWorldSeed() + HILL_SITE_SEED_OFFSET);
+      const sites = multiplayer.role === 'host' ? Game.hillSites(facility, isSpawnBlocked, hostRng) : null;
+      game.kingOfTheHillController = new KingOfTheHillController(
+        {
+          session: multiplayer,
+          matchState: game.multiplayerMatchState,
+          view: new HillView(renderer.scene, (x, z) => sampleHeight(x, z)),
+          hud: new KothHud(hudRoot),
+          markers: game.worldMarkers,
+          players: () => game.hillPlayers(),
+          usernames: activeMultiplayer.usernames,
+          announce: (text) => bigAnnouncement.show(text),
+          notify: (text) => killFeed.show(text),
+          cue: (kind) => sound.playObjectiveCue(kind),
+          setPrompt: (text) => hud.setPrompt('interact', text),
+          setSprintAllowed: (allowed) => player.setSprintAllowed(allowed),
+        },
+        sites,
+        hostRng,
+        playsInTeams(multiplayer.roster.length),
+        // The Facility's rooms are small: a hill of 8 m would reach through their walls.
+        facility ? 0.65 : 1,
+      );
     }
     if (multiplayer?.gameMode === 'gunGame') {
       game.gunGameController = new GunGameController(multiplayer, game.multiplayerMatchState, gooseAnnouncement);
@@ -1740,6 +1985,8 @@ export class Game {
       network: activeMultiplayer ? grenadeNetworkFor(activeMultiplayer) : null,
       // Goose Horde is co-op: a frag never hurts or pushes a teammate.
       friendlyFire: currentGameMode !== 'gooseHorde',
+      // King of the Hill with four players is two against two: a frag spares your own side.
+      isTeammate: (slot) => game.kingOfTheHillController?.isTeammate(slot) ?? false,
       floor: facility ? undefined : (x, y, z) => floorBelow(physics.world, x, y, z),
       canStartThrow: () => game.weaponManager.canStartThrow,
       onHandChange: (state) => (state === 'thrown' ? game.weaponManager.beginThrowLower() : game.weaponManager.setGrenadeInHand(state === 'cooking')),
@@ -1752,6 +1999,7 @@ export class Game {
       },
     });
     game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot, sound });
+    game.laserDot = new LaserDot(renderer.scene);
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
@@ -1790,8 +2038,14 @@ export class Game {
         thrownGeese: game.thrownGeese,
         scoreboard: game.multiplayerMatchState.scoreboard,
         deathCounts: game.multiplayerMatchState.deathCounts,
-        goldenGooseManager,
+        get kingOfTheHill() {
+          return game.kingOfTheHillController;
+        },
         hordeGooseManager,
+        get squad() {
+          return game.squad;
+        },
+        hordeWaveStarted: () => game.onHordeWaveStart(),
         bonusGooseManager,
         ammoDropManager,
         applyNetworkDamage: (amount, sourceSlot, weaponId) => {
@@ -2050,15 +2304,18 @@ export class Game {
     this.killFeed.dispose();
     this.gooseAnnouncement.dispose();
     this.bigAnnouncement.dispose();
-    this.hordeWaveIndicator?.dispose();
+    this.hordeHud?.dispose();
+    this.showdownHud?.dispose();
+    this.squad?.dispose();
     this.modeExplanationScreen?.dispose();
     this.loadoutScreen?.dispose();
     this.explosionEffect.dispose();
     this.grenadeEffects?.dispose();
     this.grenades?.dispose();
     this.glintMarkers.dispose();
+    this.laserDot?.dispose();
     this.gooseManager.dispose();
-    this.goldenGooseManager?.dispose();
+    this.kingOfTheHillController?.dispose();
     this.hordeGooseManager?.dispose();
     this.bonusGooseManager?.dispose();
     this.ammoDropManager?.dispose();
@@ -2136,8 +2393,17 @@ export class Game {
     this.director?.reset();
     this.directorLastHealth = this.player.currentHealth;
     this.directorLastSpawns = [];
+    if (this.showdown && this.director) {
+      // A new run: act 1 again, the score and the redeploys back.
+      this.showdown = new ShowdownState(this.director, DIRECTOR_OPTIONS);
+      this.showdownFinalePending = 0;
+      this.ammoDropManager?.clearAll();
+    }
     if (this.mission) this.restartMission();
     if (this.hordeGooseManager) {
+      this.hordeSecondWinds = SECOND_WIND_RULES.start;
+      this.hordeWon = false;
+      this.ammoDropManager?.clearAll();
       this.hordeGooseManager.recenter(spawnPoint.x, spawnPoint.y);
       this.hordeGooseManager.resetToWaveOne();
     } else {
@@ -2288,45 +2554,170 @@ export class Game {
     }
     const allPlayersUnderground = !this.facility && livingPositions.length > 0 &&
       livingPositions.every(at => isBelowGround(at.x, at.y, at.z));
-    const command = director.update({ dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive, allPlayersUnderground });
+    const signals = { dt, damageTaken, nearbyKills, engagedEnemies: counts.engaged, aliveEnemies: counts.alive, allPlayersUnderground };
+    // Showdown runs the director itself: its acts retune it, and its finale replaces the last breather.
+    if (this.showdown) {
+      for (const event of this.showdown.update({ ...signals, kills: this.entityManager.killsThisTick.length })) this.onShowdownEvent(event);
+      if (this.showdownFinalePending > 0) this.placeShowdownFinale();
+      this.showdownHud?.set(this.showdown.view());
+      return;
+    }
+    const command = director.update(signals);
     if (command.kind === 'spawnWave') director.confirmSpawned(this.spawnDirectorWave(command.count, command.bias));
   }
 
-  /** The Uplink mission (docs/visual-overhaul.md, phase 4): world markers live for the whole match,
-   * the mission itself restarts with each Respawn. */
+  /** Showdown (docs/showdown.md): acts on what the run's rules just decided. */
+  private onShowdownEvent(event: ShowdownEvent): void {
+    const showdown = this.showdown;
+    if (!showdown) return;
+    switch (event.kind) {
+      case 'spawnWave':
+        showdown.confirmSpawned(this.spawnDirectorWave(event.count, event.bias));
+        break;
+      case 'actStarted':
+        this.bigAnnouncement.show(`ACT ${event.act}`);
+        this.sound.playObjectiveCue('alert');
+        break;
+      case 'actCleared':
+        this.gooseAnnouncement.show(`Act ${event.act} survived  +${event.bonus}`);
+        this.sound.playObjectiveCue('gain');
+        // The breather's reward: a supply crate near the player.
+        if (!this.player.isDead) this.ammoDropManager?.dropFor([this.player.position]);
+        break;
+      case 'finaleStarted':
+        this.bigAnnouncement.show('FINALE: THE WARDEN');
+        this.sound.playObjectiveCue('alert');
+        // The Warden and its escorts, placed as one wave with the Warden first.
+        this.showdownFinalePending = event.escorts + 1;
+        break;
+      case 'multiplier':
+        this.killFeed.show(`Multiplier x${event.value}`);
+        break;
+      case 'won':
+        this.sendMatchTelemetry(DEFAULT_GAME_MODE, showdown.view().score, performance.now() - this.matchStartedAt);
+        this.showShowdownResult();
+        this.deathScreenVisible = true;
+        this.input.releasePointerLock();
+        break;
+    }
+  }
+
+  /** Places Showdown's finale squad. Nothing placed (nowhere hidden to put it) tries again next tick. */
+  private placeShowdownFinale(): void {
+    const placed = this.spawnDirectorWave(this.showdownFinalePending, 'mixed', WARDEN);
+    if (placed === 0) return;
+    this.showdownFinalePending = 0;
+    this.showdown?.confirmFinalePlaced();
+  }
+
+  /** Showdown's end screen, for a win or a loss. Respawn starts a new run from act 1. */
+  private showShowdownResult(): void {
+    const showdown = this.showdown;
+    if (!showdown) return;
+    const view = showdown.view();
+    const won = view.stage === 'won';
+    const seconds = Math.floor((performance.now() - this.matchStartedAt) / 1000);
+    this.deathScreen.showResult(
+      won ? 'Showdown won' : 'Showdown lost',
+      won ? `Grade ${showdown.grade()}` : `You fell in act ${view.act} of ${view.totalActs}  |  Grade ${showdown.grade()}`,
+      [
+        ['SCORE', view.score.toLocaleString('en-US')],
+        ['KILLS', String(view.kills)],
+        ['BEST MULTIPLIER', `x${view.bestMultiplier}`],
+        ['TIME', `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`],
+      ],
+    );
+  }
+
+  /** Showdown: a death with a redeploy left does not end the run. The player is put back at a
+   * clear point away from the fight with full health and a moment's shield; the enemies and the act
+   * stay as they are, and the multiplier starts again. */
+  private tryShowdownRedeploy(): void {
+    const showdown = this.showdown;
+    if (!showdown || showdown.over) return;
+    if (showdown.playerFell() === 'lost') return;
+    const spawnPoint = this.facility ? new THREE.Vector2(this.facility.start.x, this.facility.start.z) : clearFixedSpawnPoint(this.isSpawnBlocked);
+    this.player.respawn(new THREE.Vector3(spawnPoint.x, sampleHeight(spawnPoint.x, spawnPoint.y) + SPAWN_HEIGHT_OFFSET, spawnPoint.y));
+    this.player.revive(this.player.maxHealth, 3);
+    this.directorLastHealth = this.player.currentHealth;
+    this.grenades?.resetForSpawn();
+    this.bigAnnouncement.show(`REDEPLOYED  |  ${showdown.view().redeploysLeft} LEFT`);
+    this.sound.playObjectiveCue('lose');
+  }
+
+  /** Operation Uplink (docs/uplink.md): the world markers live for the whole match, the operation
+   * itself restarts with each Respawn. */
   private startMission(root: HTMLElement): void {
     this.worldMarkers = new WorldMarkers(root);
     this.restartMission();
+    // The mission is a match option, not a GameMode, so it opens its own briefing through the gate
+    // beginModeExplanation uses: the world waits until it is skipped.
+    this.worldBriefingActive = true;
+    this.modeExplanationParticipants = new Set();
+    this.modeExplanationScreen?.show(MISSION_EXPLANATION.title, MISSION_EXPLANATION.steps, 1);
   }
 
+  /** Respawn after a death with a redeploy left puts the player back into the running operation;
+   * any other Respawn starts a new one. */
   private restartMission(): void {
-    this.uplinkBeacons?.dispose();
-    for (const uplink of this.mission?.view(this.player.position).uplinks ?? []) {
-      this.hud.compass.removeMarker(`uplink-${uplink.label}`);
-      this.worldMarkers?.remove(`uplink-${uplink.label}`);
+    if (this.mission?.waitingForRedeploy) {
+      this.redeployMission(this.mission);
+      return;
     }
-    this.hud.compass.removeMarker('extract');
-    this.worldMarkers?.remove('extract');
+    this.uplinkBeacons?.dispose();
+    for (const id of Object.keys(MISSION_MARKER_LABELS)) {
+      this.hud.compass.removeMarker(id);
+      this.worldMarkers?.remove(id);
+    }
+    this.missionMarkerKey = '';
 
     const position = this.player.position;
     // On the Facility four rooms' consoles stand in for the watch towers (docs/facility-map.md).
     const facility = this.facility;
-    const points = facility ? facilityMissionObjectives(facility.layout, facility.start) : getWatchTowerPositions();
-    const mission = new MissionState(points, { x: position.x, z: position.z });
-    this.mission = mission;
-    const view = mission.view(position);
-    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, view, facility
+    const operation = facility ? facilityOperationSites(facility.layout, facility.start) : valleyOperationSites({ x: position.x, z: position.z });
+    this.mission = new MissionState(operation.sites);
+    this.uplinkBeacons = new UplinkBeacons(this.renderer.scene, operation.sites, operation.consoles, facility
       ? { physics: this.physics, ceilingAt: (x, z) => facilityCeilingAt(facility.layout, x, z) }
       : null);
-    for (const uplink of view.uplinks) {
-      this.hud.compass.addMarker(`uplink-${uplink.label}`, () => bearingDeg(uplink.x - this.player.position.x, uplink.z - this.player.position.z));
-    }
+    this.missionCorePosition.set(operation.sites.core.x, operation.coreY, operation.sites.core.z);
     this.missionKills = 0;
     this.missionDamageTaken = 0;
     this.missionLastHealth = this.player.currentHealth;
+    this.missionLastShotAge = this.secondsSinceShot;
     this.missionClock = 0;
     this.missionWon = false;
-    this.hud.setPrompt('interact', null);
+    this.player.setSprintAllowed(true);
+    // The panel names the operation from the start, behind the briefing too.
+    this.updateMissionHud(this.mission.view(this.missionPlayerList()));
+  }
+
+  /** Spends a redeploy: the stage starts over and the player stands beside the site of the last
+   * finished stage (at the start in Breach, where resetPlay has already put them). */
+  private redeployMission(mission: MissionState): void {
+    const site = mission.redeploy();
+    const facility = this.facility;
+    if (site) {
+      const stand = facility
+        ? standPointNear(site, CONSOLE_STAND_RADIUS, (x, z) => facilityStandBlocked(facility.layout, x, z))
+        : standPointNear(site, TOWER_STAND_RADIUS, this.isSpawnBlocked);
+      this.player.debugTeleport(new THREE.Vector3(stand.x, sampleHeight(stand.x, stand.z) + SPAWN_HEIGHT_OFFSET, stand.z));
+    }
+    this.missionLastHealth = this.player.currentHealth;
+    this.missionLastShotAge = this.secondsSinceShot;
+    this.player.setSprintAllowed(true);
+    const left = mission.view(this.missionPlayerList()).redeploys;
+    this.bigAnnouncement.show(left === 0 ? 'REDEPLOYED: LAST CHANCE' : `REDEPLOYED: ${left} LEFT`);
+  }
+
+  /** The solo operation's one player, as the state machine wants it. */
+  private missionPlayerList(): readonly MissionPlayer[] {
+    const at = this.player.position;
+    const own = this.missionPlayers[0]!;
+    own.x = at.x;
+    own.z = at.z;
+    own.alive = !this.player.isDead;
+    own.underground = !this.facility && isBelowGround(at.x, at.y, at.z);
+    return this.missionPlayers;
   }
 
   /** Feeds the mission this tick's position and interact press, and acts on what it asks for: waves
@@ -2339,30 +2730,55 @@ export class Game {
     const health = this.player.currentHealth;
     this.missionDamageTaken += Math.max(0, this.missionLastHealth - health);
     this.missionLastHealth = health;
-    this.missionKills += this.entityManager.killsThisTick.length;
-    const position = this.player.position;
-    const events = mission.update({
+    const kills = this.entityManager.killsThisTick.length;
+    this.missionKills += kills;
+    // Noise raises the alert. A shot resets secondsSinceShot, so that clock not having advanced
+    // since the last look means one was fired.
+    const shots = Number.isFinite(this.secondsSinceShot) && this.secondsSinceShot <= this.missionLastShotAge ? 1 : 0;
+    this.missionLastShotAge = this.secondsSinceShot;
+    this.handleMissionEvents(mission.update({
       dt,
-      player: { x: position.x, z: position.z },
-      interactPressed: this.input.consumeJustPressed('interact'),
-      playerDead: false,
-      underground: !this.facility && isBelowGround(position.x, position.y, position.z),
-    });
+      players: this.missionPlayerList(),
+      interact: this.input.consumeJustPressed('interact') ? 0 : null,
+      kills,
+      shots,
+    }));
+  }
+
+  /** Acts on what the operation asks for: waves through the director's own reinforcement spawner,
+   * headlines, the core changing hands, and the end screen. */
+  private handleMissionEvents(events: readonly MissionEvent[]): void {
     for (const event of events) {
       if (event.kind === 'waveRequested') {
-        this.spawnDirectorWave(event.count, event.bias);
-      } else if (event.kind === 'uplinkOnline') {
-        this.bigAnnouncement.show(`UPLINK ${event.online} / ${event.total} ONLINE`);
-        this.hud.compass.removeMarker(`uplink-${event.label}`);
-        this.worldMarkers?.remove(`uplink-${event.label}`);
-      } else if (event.kind === 'extractionOpen') {
-        this.bigAnnouncement.show('EXTRACTION OPEN');
-        const { x, z } = mission.extraction;
-        this.hud.compass.addMarker('extract', () => bearingDeg(x - this.player.position.x, z - this.player.position.z));
-      } else if (event.kind === 'won') {
+        // A Warden comes on top of the wave's count.
+        this.spawnDirectorWave(event.warden ? event.count + 1 : event.count, event.bias, event.warden ? WARDEN : undefined);
+        if (event.warden) {
+          this.bigAnnouncement.show('WARDEN INBOUND');
+          this.sound.playObjectiveCue('alert');
+        }
+      } else if (event.kind === 'stageStarted') {
+        this.player.setSprintAllowed(true);
+        this.bigAnnouncement.show(MISSION_HEADLINES[event.stage]);
+        this.sound.playObjectiveCue('gain');
+      } else if (event.kind === 'corePicked') {
+        // The core is heavy: its carrier walks.
+        this.player.setSprintAllowed(false);
+        this.gooseAnnouncement.show('Data core taken: no sprinting');
+        this.sound.playObjectiveCue('gain');
+      } else if (event.kind === 'coreDropped') {
+        const at = this.player.position;
+        this.missionCorePosition.set(at.x, at.y - PLAYER_HEIGHT / 2 + CORE_HOVER_HEIGHT, at.z);
+        this.player.setSprintAllowed(true);
+        this.gooseAnnouncement.show('Data core dropped');
+      } else if (event.kind === 'alertRaised') {
+        this.gooseAnnouncement.show(`Alert level ${event.level}`);
+        this.sound.playObjectiveCue('alert');
+      } else if (event.kind === 'won' || (event.kind === 'lost' && event.reason === 'extractionMissed')) {
+        // Both end with the player alive; a death's loss is shown by showDeathScreen.
         this.missionWon = true;
         this.hud.setPrompt('interact', null);
-        this.deathScreen.showMission(this.missionResult(true));
+        this.sound.playObjectiveCue(event.kind === 'won' ? 'gain' : 'lose');
+        this.deathScreen.showMission(this.missionResult(event.kind === 'won'));
         this.deathScreenVisible = true;
         this.input.releasePointerLock();
       }
@@ -2373,58 +2789,178 @@ export class Game {
     // The killing blow lands on a tick updateMission no longer runs on, so settle it here.
     this.missionDamageTaken += Math.max(0, this.missionLastHealth - this.player.currentHealth);
     this.missionLastHealth = this.player.currentHealth;
-    const view = this.mission?.view(this.player.position);
+    const view = this.mission?.view(this.missionPlayerList());
+    const redeploysUsed = REDEPLOYS - (view?.redeploys ?? REDEPLOYS);
     return {
       won,
+      grade: won ? missionGrade({ seconds: this.missionClock, damageTaken: this.missionDamageTaken, redeploysUsed }) : null,
+      loss: view?.loss ?? null,
       seconds: this.missionClock,
       kills: this.missionKills,
       damageTaken: this.missionDamageTaken,
-      online: view?.online ?? 0,
-      total: view?.uplinks.length ?? 0,
+      stage: view?.stageNumber ?? 1,
+      redeploysUsed,
+      redeploys: REDEPLOYS,
+      alert: view?.alert ?? 1,
     };
   }
 
-  /** The death screen, or in the Uplink mission its "Signal lost" variant (death ends the mission;
-   * Respawn restarts it). */
+  /** The death screen. In Operation Uplink a death with a redeploy left shows "Operative down"
+   * (Respawn redeploys into the same operation); with none left it shows "Signal lost" (Respawn
+   * starts a new one). */
   private showDeathScreen(): void {
     if (this.mission) {
-      this.mission.update({ dt: 0, player: { x: this.player.position.x, z: this.player.position.z }, interactPressed: false, playerDead: true, underground: false });
-      this.deathScreen.showMission(this.missionResult(false));
+      this.handleMissionEvents(this.mission.update({ dt: 0, players: this.missionPlayerList(), interact: null, kills: 0, shots: 0 }));
+      const view = this.mission.view(this.missionPlayerList());
+      if (view.awaitingRedeploy) {
+        const screen = redeployScreen(view);
+        this.deathScreen.showResult(screen.title, screen.line, screen.stats, 'Redeploy');
+      } else {
+        this.sound.playObjectiveCue('lose');
+        this.deathScreen.showMission(this.missionResult(false));
+      }
+    } else if (this.hordeGooseManager && !this.multiplayer) {
+      this.showHordeResult(false);
+    } else if (this.showdown) {
+      this.showShowdownResult();
     } else {
       this.deathScreen.show(this.scoreState.value);
     }
   }
 
+  /** Solo Goose Horde's end screen, for a win or a loss. Respawn starts a new run from wave 1. */
+  private showHordeResult(won: boolean): void {
+    const horde = this.hordeGooseManager;
+    if (!horde) return;
+    const view = horde.view;
+    const seconds = Math.floor((performance.now() - this.matchStartedAt) / 1000);
+    this.deathScreen.showResult(
+      won ? 'The horde is broken' : 'Overrun',
+      won ? 'Every wave survived' : `You fell on wave ${view.wave} of ${view.totalWaves}`,
+      [
+        ['WAVES SURVIVED', `${won ? view.totalWaves : view.wave - 1} / ${view.totalWaves}`],
+        ['GEESE KILLED', String(view.kills.get(0) ?? 0)],
+        ['TIME', `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`],
+      ],
+    );
+  }
+
+  /** Solo Goose Horde: spends a Second Wind on a death that has not been handled yet. The player
+   * stands where they fell with a little health and a moment's shield, and the geese on top of
+   * them are blown away. */
+  private trySecondWind(): void {
+    if (this.multiplayer || !this.hordeGooseManager || this.hordeWon || this.hordeSecondWinds <= 0) return;
+    this.hordeSecondWinds--;
+    this.player.revive(SECOND_WIND_RULES.health, SECOND_WIND_RULES.shield);
+    this.hordeGooseManager.clearAround(this.player.position, SECOND_WIND_RULES.clearRadius);
+    this.explosionEffect.spawn(this.player.position.clone(), SECOND_WIND_RULES.clearRadius);
+    this.sound.playObjectiveCue('gain');
+    this.bigAnnouncement.show('SECOND WIND');
+  }
+
+  /** Goose Horde: a wave begins. In a room, a player who is down or out gets back up with it. */
+  private onHordeWaveStart(): void {
+    if (!this.multiplayer || !this.player.isDead || this.multiplayerMatchState.hasEnded) return;
+    this.standOwnPlayerUp();
+    void this.multiplayerRespawn();
+  }
+
+  /** Goose Horde, authoritative side: a wave is survived. Solo earns a Second Wind every few waves. */
+  private onHordeWaveCleared(wave: number): void {
+    this.gooseAnnouncement.show(`Wave ${wave} survived`);
+    if (this.multiplayer || wave % SECOND_WIND_RULES.everyWaves !== 0 || this.hordeSecondWinds >= SECOND_WIND_RULES.max) return;
+    this.hordeSecondWinds++;
+    this.killFeed.show('Second Wind ready');
+  }
+
+  /** Goose Horde, authoritative side: the last wave is survived. A room ends its match from the
+   * update loop (every client sees the cleared state); a solo run ends here. */
+  private onHordeCleared(): void {
+    if (this.multiplayer) return;
+    this.hordeWon = true;
+    this.sendMatchTelemetry('gooseHorde', this.hordeGooseManager?.totalWaves ?? 0, performance.now() - this.matchStartedAt);
+    this.showHordeResult(true);
+    this.deathScreenVisible = true;
+    this.input.releasePointerLock();
+  }
+
+  /** Goose Horde, authoritative side: the squad's kills earned a supply drop, a crate near every
+   * standing player. */
+  private dropHordeSupplies(): void {
+    if (!this.ammoDropManager) return;
+    const standing: THREE.Vector3[] = [];
+    if (!this.player.isDead) standing.push(this.player.position);
+    for (const opponent of this.multiplayer?.opponents.values() ?? []) {
+      if (opponent.isDead || this.multiplayer!.hordeEliminatedSlots.has(opponent.slot)) continue;
+      standing.push(opponent.remotePlayer.position);
+    }
+    if (this.ammoDropManager.dropFor(standing) > 0) {
+      this.gooseAnnouncement.show('Supply drop');
+      this.sound.playObjectiveCue('gain');
+    }
+  }
+
+  /** The point in the world under the crosshair, for a ping; null when it is the sky. */
+  private aimPoint(): THREE.Vector3 | null {
+    const camera = this.renderer.camera;
+    const direction = camera.getWorldDirection(new THREE.Vector3());
+    // From just beyond this player's own body, which the ray would otherwise start inside.
+    const origin = camera.position.clone().addScaledVector(direction, 0.8);
+    return castHitscan(this.physics, origin, direction, 150)?.point ?? null;
+  }
+
+  /** Co-op: this player is on its feet again, for everyone's count of the fallen. */
+  private standOwnPlayerUp(): void {
+    if (!this.multiplayer) return;
+    this.multiplayer.hordeEliminatedSlots.delete(this.multiplayer.session.ownSlot);
+    this.squad?.ownStoodUp();
+  }
+
+  /** Co-op: a teammate's revive reached this player. It stands up where it fell with `health`,
+   * the ammo it had, and a moment's shield, and tells everyone with an ordinary respawnEvent. */
+  private reviveOwnPlayer(health: number): void {
+    if (!this.multiplayer || !this.player.isDead || this.multiplayerMatchState.hasEnded) return;
+    this.player.revive(health, 2);
+    this.deathHandled = false;
+    this.multiplayer.deathTimer = 0;
+    this.multiplayer.lastDamageSourceSlot = null;
+    this.standOwnPlayerUp();
+    const at = this.player.position;
+    this.multiplayer.session.connection.send({ type: 'respawnEvent', senderSlot: this.multiplayer.session.ownSlot, x: at.x, y: at.y, z: at.z, t: this.sendClock() });
+  }
+
   /** The objective panel, the interaction prompt, the beams and the world markers for this tick. */
   private updateMissionHud(view: MissionView): void {
     const hud = this.hud;
-    if (view.phase === 'extract' || view.phase === 'won') {
-      hud.setObjective('UPLINK', 'Reach extraction');
-      if (view.extractionProgress > 0) hud.setScoreLine(`EXTRACTING  ${Math.round(view.extractionProgress * 100)}%`);
-      else hud.setObjectiveProgress(view.online, view.uplinks.length);
-    } else if (view.active) {
-      hud.setObjective('UPLINK', view.active.paused ? 'Upload paused, return to the tower' : 'Hold the tower');
-      hud.setScoreLine(`UPLINK ${view.active.label}  ${Math.floor(view.active.progress * 100)}%`);
-    } else {
-      hud.setObjective('UPLINK', 'Bring the uplinks online');
-      hud.setObjectiveProgress(view.online, view.uplinks.length);
-    }
+    const objective = missionObjective(view);
+    hud.setObjective(objective.label, objective.text);
+    hud.setScoreLine(objective.line);
     hud.setPrompt('interact', this.missionWon ? null : view.prompt);
-    this.uplinkBeacons?.update(view, this.missionClock, this.reducedMotion.matches);
-    // Only the Facility has a single-player map.
-    this.soloMinimap?.setMarkers(missionMapMarkers(view));
+    this.uplinkBeacons?.update(view, this.missionCorePosition, this.missionClock, this.reducedMotion.matches);
+    // Where the stage sends the player: on the Facility's map (the only single-player one), on the
+    // compass and in the world.
+    const wanted = missionMapMarkers(view);
+    this.soloMinimap?.setMarkers(wanted);
+    const key = wanted.map((marker) => marker.id).join(',');
+    if (key !== this.missionMarkerKey) {
+      this.missionMarkerKey = key;
+      for (const id of Object.keys(MISSION_MARKER_LABELS)) {
+        this.hud.compass.removeMarker(id);
+        if (!wanted.some((marker) => marker.id === id)) this.worldMarkers?.remove(id);
+      }
+      for (const marker of wanted) {
+        // The core's marker reads the live position, so it follows a core dropped somewhere new.
+        const point = marker.id === 'core' ? this.missionCorePosition : marker;
+        this.hud.compass.addMarker(marker.id, () => bearingDeg(point.x - this.player.position.x, point.z - this.player.position.z));
+      }
+    }
 
     const markers = this.worldMarkers;
     if (!markers) return;
-    for (const uplink of view.uplinks) {
-      if (uplink.status === 'online') continue;
-      this.missionMarkerPosition.set(uplink.x, sampleHeight(uplink.x, uplink.z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : WATCH_TOWER_ROOF_TOP + 3), uplink.z);
-      markers.set(`uplink-${uplink.label}`, this.missionMarkerPosition, `UPLINK ${uplink.label}`);
-    }
-    if (view.phase === 'extract') {
-      const { x, z } = view.extraction;
-      this.missionMarkerPosition.set(x, sampleHeight(x, z) + 2, z);
-      markers.set('extract', this.missionMarkerPosition, 'EXTRACT');
+    for (const { id, x, z } of wanted) {
+      if (id === 'core') this.missionMarkerPosition.copy(this.missionCorePosition).y += 0.7;
+      else this.missionMarkerPosition.set(x, sampleHeight(x, z) + (this.facility ? FACILITY_CONSOLE_HEIGHT + 1 : id === 'extract' ? 2 : WATCH_TOWER_ROOF_TOP + 3), z);
+      markers.set(id, this.missionMarkerPosition, MISSION_MARKER_LABELS[id]!);
     }
   }
 
@@ -2432,7 +2968,7 @@ export class Game {
    * (see reinforcementSpawner.ts), returning how many it placed. Each is recorded for
    * getDirectorDebug with a fresh on-screen check against its real head, which guards this wiring;
    * the spawner's own rules are unit-tested. */
-  private spawnDirectorWave(count: number, bias: WaveBias): number {
+  private spawnDirectorWave(count: number, bias: WaveBias, leader?: EnemyArchetype): number {
     const player = this.player;
     const forwardX = -Math.sin(player.facingYaw);
     const forwardZ = -Math.cos(player.facingYaw);
@@ -2451,7 +2987,10 @@ export class Game {
       DIRECTOR_SPAWN_OPTIONS,
     );
     this.directorLastSpawns = points.map((point, index) => {
-      const enemy = this.entityManager.spawnEnemy(new THREE.Vector3(point.x, point.y + 1, point.z), Game.waveArchetype(bias, index));
+      // A wave with a `leader` (the Warden) puts it first; the rest are the wave's usual mix.
+      const enemy = this.entityManager.spawnEnemy(new THREE.Vector3(point.x, point.y + 1, point.z), index === 0 && leader ? leader : Game.waveArchetype(bias, index));
+      // An elite stands out: bigger and in its own colour (no-op for the rank and file).
+      applyArchetypeLook(enemy.mesh, enemy.archetype);
       // A reinforcement is sent, not scattered: it comes looking for the player, already suspicious,
       // rather than patrolling behind them unnoticed through a quiet build-up (final review).
       enemy.dispatchToward(player.position);
@@ -2694,11 +3233,6 @@ export class Game {
       // here first - WeaponManager never sees it, so the harmless 'unarmed' placeholder weapon
       // never has anything to (not) do with it either.
       this.gooseTossController?.update(this.player.position, this.input);
-      // Same input-consumption trick as GooseTossController above, narrower in scope: only a fire
-      // press while actually carrying is consumed here (to drop it), so aim/reload/switch and
-      // ordinary firing while NOT carrying all still reach WeaponManager normally - King of the
-      // Hill keeps the full arsenal, unlike Goose Toss's unarmed-only loadout.
-      this.kingOfTheHillController?.update(dt, this.player.position, this.input);
       this.player.update(dt, this.input);
       if (!this.facility) {
         const at = this.player.position;
@@ -2755,6 +3289,9 @@ export class Game {
       this.gooseManager.update(dt, this.player, this.multiplayer?.gooseDifficulty ?? this.matchConfig.gooseDifficulty, this.multiplayer?.session.role === 'host');
       this.updateThrownGeese(dt);
       this.grenades?.update(dt, freezeLocalPlayer ? null : this.input);
+      // King of the Hill: in the simulation block, not with the player's own input, so the host
+      // keeps the hill running while its own player is dead or its pause menu is open.
+      this.kingOfTheHillController?.update(dt, this.input, this.player.position, !this.player.isDead);
 
       // Goose Horde: no-op for a follower (guest) manager - see HordeGooseManager's isAuthoritative
       // comment. Every living player (own + every opponent) is a valid target so co-op geese chase
@@ -2773,7 +3310,18 @@ export class Game {
           }
         }
         this.hordeGooseManager.update(dt, targets, this.multiplayer?.session.role === 'host');
-        this.hordeWaveIndicator?.set(this.hordeGooseManager.currentWave, this.hordeGooseManager.totalWaves);
+        const view = this.hordeGooseManager.view;
+        this.hordeHud?.set({
+          ...view,
+          boss: view.boss ? { name: HORDE_BOSSES[view.boss.id].name, hp: view.boss.hp, max: view.boss.max } : null,
+          secondWinds: this.multiplayer ? null : this.hordeSecondWinds,
+        });
+        // The scoreboard is each player's kills: the host's count, as every client has it.
+        if (this.multiplayer) {
+          for (const [slot, kills] of view.kills) this.multiplayerMatchState.scoreboard.set(slot as PlayerSlot, kills);
+        } else {
+          this.scoreState.value = view.kills.get(0) ?? 0;
+        }
         // Multiplayer Goose Horde previously had no win path at all - clearing wave 10 only ever
         // showed the "you survived!" toast (onCleared), with nothing calling endMultiplayerMatch,
         // so a co-op win just left the match running indefinitely with nothing left to fight.
@@ -2788,8 +3336,10 @@ export class Game {
       // Bonus golden goose - no-op for a follower (guest) manager, same reasoning as above.
       this.bonusGooseManager?.update(dt, this.multiplayer?.session.role === 'host');
 
-      // Goose Horde multiplayer's ammo crates.
-      if (this.ammoDropManager) this.updateHordeAmmoDrops(dt);
+      // Goose Horde's supply crates.
+      if (this.ammoDropManager) this.updateHordeSupplies();
+      // Pings and revives: with the simulation, so a paused or fallen player still sees its side's.
+      this.squad?.update(dt, this.input, this.player.position, !this.player.isDead);
 
       // Health, ammo and grenade pickups: timers, the walk-over check and the host's claims.
       this.pickups?.update(dt, this.player.position, !freezeLocalPlayer);
@@ -2832,6 +3382,9 @@ export class Game {
     this.soloMinimap?.update(this.player.position, NO_OPPONENTS, this.player.facingYaw, undefined, this.entityManager.liveEnemyMotion(), !this.facility && isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z));
     if (this.soloMinimap) this.updateMinimapPickups(this.soloMinimap);
 
+    // Solo Goose Horde: a Second Wind turns a death into a narrow escape. Showdown: a redeploy.
+    if (this.player.isDead && !this.deathHandled) this.trySecondWind();
+    if (this.player.isDead && !this.deathHandled) this.tryShowdownRedeploy();
     if (this.player.isDead && !this.deathHandled) {
       this.deathHandled = true;
       // Single-player's own match-end telemetry funnel - there's no explicit "match end" concept
@@ -2848,7 +3401,7 @@ export class Game {
       // fell, per explicit user request ("if the player is killed then the goose is left at the
       // location for anyone to pick up") - same drop path a voluntary fire-button drop uses.
       if (this.multiplayer) {
-        this.kingOfTheHillController?.dropIfCarrying(this.multiplayer.session.ownSlot, this.player.position.clone());
+        this.kingOfTheHillController?.playerDown(this.multiplayer.session.ownSlot, this.player.position);
       }
       // Per user request: the death/respawn screen must never overlay the pause menu - if the
       // pause menu is currently open (multiplayer only; single-player can't reach this block while
@@ -2856,7 +3409,11 @@ export class Game {
       // (see the top-of-tick check above). The death ITSELF - goose spawn, network broadcast,
       // scoreboard credit below - still happens immediately regardless, since other players are
       // watching this in real time and must not be held up by this client's own menu.
-      if (isPaused) {
+      // Co-op Goose Horde has no death screen: a fallen player is down, keeps watching the fight,
+      // and is stood up by a teammate or the next wave (docs/coop.md; see the horde block below).
+      if (this.multiplayer?.gameMode === 'gooseHorde') {
+        this.pendingDeathScreenReveal = false;
+      } else if (isPaused) {
         this.pendingDeathScreenReveal = true;
       } else {
         this.showDeathScreen();
@@ -2889,18 +3446,15 @@ export class Game {
         // applyDeath itself already skips Goose Horde internally (see its own comment) - this mode
         // has no kill-limit win condition anyway (see updateMultiplayer's own gooseHorde skip).
         this.multiplayerMatchState.applyDeath(this.multiplayer.gameMode, this.multiplayer.killLimit, { victimSlot: ownSlot, killerSlot, killerWeaponId });
-        // Goose Horde's limited-lives rule (per explicit user request): each player gets
-        // HORDE_MAX_RESPAWNS respawns before this exact death permanently eliminates them instead
-        // of auto-respawning (see updateMultiplayer's own gate on this). Self-authoritative and
-        // broadcast so every client converges on the same eliminated set without host adjudication.
+        // Goose Horde: this player is down (docs/goose-horde.md). No respawn timer runs for a
+        // fallen slot (see updateMultiplayer's own gate): a teammate's revive or the next wave
+        // stands it up. Self-reported and broadcast, so every client converges on the same fallen
+        // set without host adjudication, and the run is lost once it covers everyone.
         if (this.multiplayer.gameMode === 'gooseHorde') {
-          if (this.multiplayer.hordeRespawnsUsed >= HORDE_MAX_RESPAWNS) {
-            this.multiplayer.hordeEliminatedSlots.add(ownSlot);
-            this.multiplayer.session.connection.send({ type: 'hordePlayerEliminated', slot: ownSlot });
-            this.checkHordeAllEliminated();
-          } else {
-            this.multiplayer.hordeRespawnsUsed++;
-          }
+          this.multiplayer.hordeEliminatedSlots.add(ownSlot);
+          this.multiplayer.session.connection.send({ type: 'hordePlayerEliminated', slot: ownSlot });
+          this.squad?.ownFell();
+          this.checkHordeAllEliminated();
         }
       }
     }
@@ -2912,11 +3466,13 @@ export class Game {
       this.gooseTossController ? (this.gooseTossController.isHolding ? 'Holding a Goose' : 'Empty-Handed [E to pick up]') : this.weaponManager.weaponName,
     );
     if (this.mission) {
-      const at = this.player.position;
-      this.updateMissionHud(this.mission.view(at, !this.facility && isBelowGround(at.x, at.y, at.z)));
+      this.updateMissionHud(this.mission.view(this.missionPlayerList()));
     } else {
       this.hud.setScore(this.scoreState.value);
-      if (this.director) {
+      if (this.showdown) {
+        // The score and its multiplier are on Showdown's own panel: not twice.
+        this.hud.setScoreLine(null);
+      } else if (this.director) {
         const phase = { buildUp: 'BUILDING', peak: 'PEAK', fade: 'FADING', relax: 'QUIET' }[this.director.phase];
         this.hud.setScoreLine(`SCORE ${this.scoreState.value}  ${phase}`);
       }
@@ -2961,7 +3517,7 @@ export class Game {
       position.underground = !this.facility && isBelowGround(at.x, at.y, at.z);
     }
     // The hill on the Facility's map (docs/facility-map.md, "Modes on the Facility").
-    if (this.facility && this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
+    if (this.kingOfTheHillController) this.multiplayer.minimap.setMarkers(this.kingOfTheHillController.minimapMarkers());
     this.multiplayer.minimap.update(this.player.position, opponentPositions, this.player.facingYaw, this.ammoDropManager?.positions(), undefined, !this.facility && isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z));
     this.updateMinimapPickups(this.multiplayer.minimap);
     const opponentHealths = new Map(Array.from(this.multiplayer.opponents, ([slot, o]) => [slot, o.health] as const));
@@ -2971,7 +3527,7 @@ export class Game {
       opponentHealths,
       this.multiplayerMatchState.scoreboard,
       this.multiplayer.gameMode === 'kingOfTheHill'
-        ? { pointsToWin: KOTH_POINTS_TO_WIN, carrierSlot: this.goldenGooseManager?.carrierSlot ?? null }
+        ? { pointsToWin: KOTH_POINTS_TO_WIN, carrierSlot: this.kingOfTheHillController?.snapshot?.crown ?? null }
         : undefined,
     );
 
@@ -3021,7 +3577,7 @@ export class Game {
         if (winner !== null) {
           this.hostDeclaredWinner = winner;
           this.multiplayer.session.connection.send({ type: 'matchEnded', ...this.endedMatchVerdict()! });
-          this.endMultiplayerMatch(winner === this.multiplayer.session.ownSlot, 'killLimit');
+          this.endMultiplayerMatch(this.sharesVictory(winner), 'killLimit');
         }
       }
     }
@@ -3105,6 +3661,8 @@ export class Game {
         health: this.player.currentHealth,
         t: this.sendClock(),
         ...(this.torch ? { torch: this.torch.isOn } : {}),
+        w: this.weaponManager.activeWeaponId,
+        k: this.weaponManager.activeSkinId,
       });
     }
   }
@@ -3183,30 +3741,39 @@ export class Game {
     minimap.updatePickups(position, this.player.facingYaw, this.pickups?.minimapEntries(position.x, position.z) ?? []);
   }
 
-  /** Goose Horde multiplayer's ammo crates: host-only spawn tick (see AmmoDropManager.update's own
-   * role gate) plus every client's own walk-over pickup check - self-reported/relayed, no host
-   * arbitration (see protocol.ts's HordeAmmoDropPickedUpMessage). Only refills whatever weapon this
-   * player currently has active, per explicit user request. */
-  private updateHordeAmmoDrops(dt: number): void {
-    if (!this.ammoDropManager || !this.multiplayer) return;
-
-    // Living players only: crates used to anchor near corpses (and near permanently eliminated
-    // players) and could be walked over by a dead body.
-    const positions: THREE.Vector3[] = [];
-    if (!this.player.isDead) positions.push(this.player.position);
-    for (const opponent of this.multiplayer.opponents.values()) {
-      if (opponent.isDead || this.multiplayer.hordeEliminatedSlots.has(opponent.slot)) continue;
-      positions.push(opponent.remotePlayer.position);
+  /** Goose Horde's supply crates: a marker and a map dot for each one on the field, and this
+   * player's own walk-over pickup - self-reported/relayed, no host arbitration (see protocol.ts's
+   * HordeAmmoDropPickedUpMessage). A crate gives magazines for the weapon in hand (where the mode
+   * limits ammo), health and a grenade (entities/hordeRules.ts's SUPPLY_CRATE). */
+  private updateHordeSupplies(): void {
+    const drops = this.ammoDropManager;
+    if (!drops) return;
+    const minimap = this.multiplayer?.minimap ?? this.soloMinimap;
+    const live = drops.positions();
+    for (const [id, position] of live) {
+      if (!this.shownSupplyIds.has(id)) {
+        this.shownSupplyIds.add(id);
+        minimap?.addItemDot(id);
+      }
+      this.worldMarkers?.set(`supply-${id}`, position, 'SUPPLY');
     }
-    this.ammoDropManager.update(dt, positions, this.multiplayer.session.role === 'host');
+    for (const id of this.shownSupplyIds) {
+      if (live.has(id)) continue;
+      this.shownSupplyIds.delete(id);
+      minimap?.removeItemDot(id);
+      this.worldMarkers?.remove(`supply-${id}`);
+    }
 
     if (this.player.isDead) return;
-    const nearestId = this.ammoDropManager.findNearestWithinRadius(this.player.position, HORDE_AMMO_DROP_PICKUP_RADIUS);
-    if (nearestId === null || !this.ammoDropManager.removeById(nearestId)) return;
-    this.multiplayer.minimap.removeItemDot(nearestId);
-    const refillAmount = this.weaponManager.magazineSize * HORDE_AMMO_DROP_REFILL_MAGAZINES;
+    const nearestId = drops.findNearestWithinRadius(this.player.position, HORDE_AMMO_DROP_PICKUP_RADIUS);
+    if (nearestId === null || !drops.removeById(nearestId)) return;
+    const refillAmount = this.weaponManager.magazineSize * SUPPLY_CRATE.magazines;
     if (Number.isFinite(refillAmount)) this.weaponManager.addReserveAmmoToActive(refillAmount);
-    this.multiplayer.session.connection.send({ type: 'hordeAmmoDropPickedUp', senderSlot: this.multiplayer.session.ownSlot, id: nearestId });
+    this.player.heal(SUPPLY_CRATE.health);
+    this.grenades?.addGrenades(SUPPLY_CRATE.grenades);
+    this.sound.playObjectiveCue('gain');
+    this.killFeed.show('Supply crate: ammo, health and a grenade');
+    this.multiplayer?.session.connection.send({ type: 'hordeAmmoDropPickedUp', senderSlot: this.multiplayer.session.ownSlot, id: nearestId });
   }
 
   /** Advances every in-flight ThrownGoose (own throws and every other player's mirrored copy -
@@ -3353,8 +3920,9 @@ export class Game {
    * MODE_EXPLANATIONS entry) - called once, right at the end of create(), before this Game
    * instance's first tick. `totalPlayers` is 1 in single-player. */
   private beginModeExplanation(mode: GameMode, totalPlayers: number): void {
-    const explanation = MODE_EXPLANATIONS[mode];
-    if (!explanation) return;
+    const entry = MODE_EXPLANATIONS[mode];
+    if (!entry) return;
+    const explanation = (!this.multiplayer && entry.solo) || entry;
     this.worldBriefingActive = true;
     this.modeExplanationParticipants = this.multiplayer
       ? new Set([this.multiplayer.session.ownSlot, ...this.multiplayer.opponents.keys()])
@@ -3501,14 +4069,17 @@ export class Game {
       this.physics,
       this.renderer.scene,
       this.player.position,
-      (amount) =>
+      (amount) => {
+        // A team match (King of the Hill with four players): nobody shoots their own side.
+        if (this.kingOfTheHillController?.isTeammate(slot)) return;
         this.multiplayer!.session.connection.send({
           type: 'damageEvent',
           senderSlot: this.multiplayer!.session.ownSlot,
           targetSlot: slot,
           amount,
           weaponId: this.weaponManager.activeWeaponId,
-        }),
+        });
+      },
     );
     if (!this.multiplayer || this.multiplayer.opponents.has(slot) || this.opponentGenerations.get(slot) !== generation) {
       // Torn down, raced, or the slot left (or was added again) while the GLTF load above was in
@@ -3545,7 +4116,7 @@ export class Game {
     // match unwinnable for everyone else. Every remaining client reacts to the same relayed
     // `playerLeft` message independently, so this needs no extra broadcast - it converges exactly
     // like every other self-reported/relayed state in this protocol.
-    this.kingOfTheHillController?.dropLocallyIfCarrying(slot, opponent.remotePlayer.position.clone());
+    this.kingOfTheHillController?.playerDown(slot, opponent.remotePlayer.position);
     // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
     this.lampSync.forget(slot);
     this.facilityInteraction?.forget(slot);
@@ -3568,6 +4139,7 @@ export class Game {
     // Re-checking here also covers the reverse: the last surviving teammate leaving must end the run
     // for the eliminated players left waiting.
     this.multiplayer.hordeEliminatedSlots.delete(slot);
+    this.squad?.forget(slot);
     this.checkHordeAllEliminated();
   }
 
@@ -3606,7 +4178,49 @@ export class Game {
   applyHostMatchEnd(winnerSlot: PlayerSlot, scoreboard: readonly { slot: PlayerSlot; score: number }[]): void {
     if (!this.multiplayer || this.multiplayerMatchState.hasEnded) return;
     this.multiplayerMatchState.replaceScoreboard(scoreboard);
-    this.endMultiplayerMatch(winnerSlot === this.multiplayer.session.ownSlot, 'killLimit');
+    this.endMultiplayerMatch(this.sharesVictory(winnerSlot), 'killLimit');
+  }
+
+  /** Whether the slot the host named as the winner is this player or, in a team match (King of
+   * the Hill with four players), one of this player's side. */
+  private sharesVictory(winnerSlot: PlayerSlot): boolean {
+    if (!this.multiplayer) return false;
+    return this.kingOfTheHillController?.sharesVictory(winnerSlot) ?? winnerSlot === this.multiplayer.session.ownSlot;
+  }
+
+  /** Every player in the match as King of the Hill's rules see them: where they stand, and
+   * whether they count (alive and on the surface). */
+  private hillPlayers(): HillPlayer[] {
+    const counts = (position: THREE.Vector3, dead: boolean): boolean =>
+      !dead && (this.facility !== null || !isBelowGround(position.x, position.y, position.z));
+    const own = this.player.position;
+    const players: HillPlayer[] = [{ slot: this.multiplayer!.session.ownSlot, x: own.x, z: own.z, counts: counts(own, this.player.isDead) }];
+    for (const [slot, opponent] of this.multiplayer!.opponents) {
+      const at = opponent.remotePlayer.position;
+      players.push({ slot, x: at.x, z: at.z, counts: counts(at, opponent.isDead) });
+    }
+    return players;
+  }
+
+  /** Where the hill may stand. The Valley: the middle of the map and a ring of five points round
+   * it, each stepped off any house or tower. The Facility: five points of clear room floor, spread
+   * as far apart as the layout allows. */
+  private static hillSites(facility: FacilityMatch | null, isBlocked: SpawnBlockedCheck, rng: () => number): HillSite[] {
+    if (facility) {
+      const floor = facilityFloorPoints(facility.layout, 2.5, true);
+      const candidates = floor.length >= 2 ? floor : facilityFloorPoints(facility.layout, 1, true);
+      // Start from the floor nearest the middle, so the first hill is a fair walk for everyone.
+      const sorted = [...candidates].sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+      return spreadSites(sorted, 5);
+    }
+    const start = rng() * Math.PI * 2;
+    const ring = Array.from({ length: 5 }, (_, i) => {
+      const angle = start + (i / 5) * Math.PI * 2;
+      return { x: Math.cos(angle) * 40, z: Math.sin(angle) * 40 };
+    });
+    // Hill radius plus a margin: the ring should not run through a wall.
+    const blocked: SpawnBlockedCheck = (x, z) => isBlocked(x, z) || [0, 1, 2, 3].some((k) => isBlocked(x + Math.cos(k * Math.PI / 2) * 5, z + Math.sin(k * Math.PI / 2) * 5));
+    return [{ x: 0, z: 0 }, ...ring].map((site) => findClearSpawnPoint(site, blocked));
   }
 
   /** Goose Horde's limited-lives loss condition (per explicit user request: "if both players have
@@ -3685,7 +4299,10 @@ export class Game {
     this.grenades?.applyCameraShake(this.renderer.camera, now / 1000);
     this.renderer.camera.getWorldDirection(this.hudForward);
     const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
-    const hudDt = Math.max(0, frameMs / 1000);
+    // Test-only: with the clock held (holdTime) the per-frame effects advance by stepTime alone,
+    // so a frame capture photographs an explosion at exact moments.
+    const hudDt = this.debugClockHeld ? this.debugClockStep : Math.max(0, frameMs / 1000);
+    this.debugClockStep = 0;
     this.hud.compass.setSunDirection(this.renderer.currentLook.sunDirection);
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);
@@ -3698,6 +4315,7 @@ export class Game {
       this.updateUndergroundLight(hudDt);
     }
     this.updateTorches();
+    this.updateLaser();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
     this.grenadeEffects?.afterRender(this.renderer.webgl.domElement);

@@ -5,7 +5,7 @@
 /** Spec files by group. `quick` is the four `@quick` smoke tests, not a file of its own. */
 export const GROUPS = {
   quick: { files: ['e2e/smoke.spec.ts'], grep: '@quick' },
-  core: { files: ['e2e/smoke.spec.ts'] },
+  core: { files: ['e2e/smoke.spec.ts', 'e2e/gun-handling.spec.ts'] },
   ai: { files: ['e2e/enemy-ai.spec.ts', 'e2e/director.spec.ts'] },
   mission: { files: ['e2e/mission.spec.ts'] },
   ui: { files: ['e2e/ui-qa.spec.ts'] },
@@ -18,6 +18,10 @@ export const GROUPS = {
   houses: { files: ['e2e/houses.spec.ts'] },
   // Frag and flash grenades (docs/grenades.md), solo.
   grenades: { files: ['e2e/grenades.spec.ts'] },
+  // The Skins screen and the aim-point screenshots of every weapon in every skin (docs/skins.md).
+  skins: { files: ['e2e/skins.spec.ts'] },
+  // The rebuilt modes, each over several browser contexts (docs/king-of-the-hill.md, docs/goose-horde.md).
+  modes: { files: ['e2e/koth.spec.ts', 'e2e/horde.spec.ts'] },
   mp: {
     files: [
       'e2e/multiplayer.spec.ts',
@@ -39,7 +43,7 @@ export const GROUPS = {
 /** Every group a full run covers (everything but perf). mp4 is in it because the full suite means
  * every behaviour spec, and the shared helpers a full run follows (lockPointer, equipPistol) are what
  * it drives. It is the slowest group, which is one more reason the full suite stays a last resort. */
-export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'houses', 'grenades', 'mp', 'mp4'];
+export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'houses', 'grenades', 'skins', 'modes', 'mp', 'mp4'];
 
 /**
  * Path rules, checked in order; every matching rule adds its groups, except that a `stop` rule
@@ -69,6 +73,16 @@ export const RULES = [
   { match: /^src\/network\/(GuestMesh|directLinks|matchSync|HostRoster|PeerConnection|MatchMessageRouter)\w*\.ts$/, groups: ['mp4'] },
   { match: /^src\/(network|lobby)\/|^src\/entities\/RemotePlayer\.ts$|^src\/core\/(multiplayer\w*|modeControllers\/.*|gameModes)\.ts$|^src\/ui\/menu\/(CreateRoomScreen|JoinRoomScreen|MultiplayerMenu)\.ts$|^src\/ui\/matchEndScreen\.ts$/, groups: ['mp'] },
   { match: /^src\/core\/mission\/|^src\/world\/UplinkBeacons\.ts$|^src\/ui\/(worldMarkers|deathScreen)\.ts$/, groups: ['mission'] },
+  // Weapon models, skins and what draws them in the menus: the aim-point screenshots.
+  { match: /^src\/weapons\/(models|animation)\/|^src\/weapons\/viewModel\.ts$|^src\/core\/skins\.ts$|^src\/core\/attachments\.ts$|^src\/ui\/menu\/(WorkbenchScreen|WeaponPreview)\.ts$/, groups: ['skins'] },
+  // The mode specs' own shared steps, and the modes' rules and presenters.
+  { match: /^e2e\/coop\.ts$/, groups: ['modes'], stop: true },
+  { match: /^src\/core\/modeControllers\/(hillState|KingOfTheHillController|reviveRules|SquadController)\.ts$|^src\/entities\/HillView\.ts$|^src\/ui\/kothHud\.ts$/, groups: ['modes'] },
+  { match: /^src\/entities\/(HordeGoose|HordeGooseManager|hordeRules|AmmoDropManager)\.ts$|^src\/ui\/(hordeHud|downedOverlay)\.ts$/, groups: ['modes', 'facility'] },
+  // Showdown's panel: the director spec reads it.
+  { match: /^src\/ui\/showdownHud\.ts$/, groups: ['ai'] },
+  // What other players see in a hand.
+  { match: /^src\/entities\/heldWeapon\.ts$/, groups: ['mp'] },
   { match: /^src\/ui\/|^index\.html$/, groups: ['quick', 'ui'] },
   { match: /^src\/world\//, groups: ['quick', 'world'] },
   { match: /^src\/(weapons|combat|input)\/|^src\/entities\/Player\.ts$/, groups: ['core'] },

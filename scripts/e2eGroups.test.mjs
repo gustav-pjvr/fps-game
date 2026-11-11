@@ -42,6 +42,10 @@ describe('e2e spec selection', () => {
 
   it('grenade code runs the grenades spec, alongside the area it lives in', () => {
     expect(groupsForFiles(['src/combat/grenades/GrenadeSystem.ts']).groups).toEqual(['core', 'grenades']);
+    // A weapon model or a skin reruns the aim-point screenshots as well as the core weapon tests.
+    expect(groupsForFiles(['src/weapons/models/guns/rifle.ts']).groups).toEqual(['core', 'skins']);
+    expect(groupsForFiles(['src/ui/menu/WorkbenchScreen.ts']).groups).toEqual(['quick', 'skins', 'ui']);
+    expect(groupsForFiles(['src/entities/heldWeapon.ts']).groups).toEqual(['mp']);
     expect(groupsForFiles(['src/ui/flashOverlay.ts']).groups).toEqual(['grenades', 'quick', 'ui']);
     expect(playwrightRuns({ groups: ['grenades'], specs: [] })).toEqual([{ files: ['e2e/grenades.spec.ts'] }]);
   });
@@ -52,10 +56,10 @@ describe('e2e spec selection', () => {
     expect(groupsForFiles(['e2e/enemy-ai.spec.ts', 'src/entities/enemies/Enemy.ts']).specs).toEqual([]);
   });
 
-  it('an unnamed src file falls back to the full smoke spec, which covers the quick tests', () => {
+  it('an unnamed src file falls back to the core specs (the full smoke spec, which covers the quick tests, and gun handling)', () => {
     const selection = groupsForFiles(['src/utils/rng.ts']);
     expect(selection.groups).toEqual(['core']);
-    expect(playwrightRuns(selection)).toEqual([{ files: ['e2e/smoke.spec.ts'] }]);
+    expect(playwrightRuns(selection)).toEqual([{ files: ['e2e/gun-handling.spec.ts', 'e2e/smoke.spec.ts'] }]);
   });
 
   it('a render change runs only the quick tests; perf is never chosen by a change', () => {

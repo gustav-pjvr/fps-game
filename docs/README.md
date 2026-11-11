@@ -1,6 +1,6 @@
 # Documentation index
 
-Current version 4.7.0. Where a document and the code disagree, the code is right; fix the document.
+Current version 5.0.0. Where a document and the code disagree, the code is right; fix the document.
 
 ## Start here
 
@@ -28,8 +28,21 @@ Current version 4.7.0. Where a document and the code disagree, the code is right
 | [music.md](music.md) | Lobby shuffle, the Facility track, the licence and why the files are not in git |
 | [ui-lobby.md](ui-lobby.md) | The lobby, death screen, menus, and the Loadout screen |
 | [multiplayer.md](multiplayer.md) | Multiplayer in depth, with history; the last section covers 3 to 4 players (v4.4.0) |
-| [goose-buster.md](goose-buster.md) | The exploding goose, King of the Hill and Goose Horde |
+| [king-of-the-hill.md](king-of-the-hill.md) | King of the Hill as rebuilt in v5.0.0: the moving hill, the crown, two against two |
+| [goose-horde.md](goose-horde.md) | Goose Horde as rebuilt in v5.0.0: twelve waves, brutes, bosses, supply drops, Second Wind, the co-op run |
+| [uplink.md](uplink.md) | Operation Uplink as rebuilt in v5.0.0: breach, fetch, defend, extract; alert, redeploys, the grade, the Warden |
+| [showdown.md](showdown.md) | Showdown (the Director mode rebuilt in v5.0.0): five acts, the finale, the score multiplier |
+| [coop.md](coop.md) | The shared co-op layer: pings, down and revive |
+| [goose-buster.md](goose-buster.md) | The exploding goose, and King of the Hill and Goose Horde as first built (history) |
 | [enemy-ai-v2.md](enemy-ai-v2.md) | The enemy AI as built (step by step) |
+| [arsenal.md](arsenal.md) | The v5.0.0 arsenal: all 19 weapons and their numbers, models, clips, sounds, the aim rule |
+| [gun-handling.md](gun-handling.md) | Spread and recoil by the kind of gun: the model, every gun's numbers, what is sourced and what is estimated |
+| [skins.md](skins.md) | The six skins, storage, the aim proof |
+| [attachments.md](attachments.md) | Laser and torch, which guns take them, the Workbench page |
+| [release-v5-brief.md](release-v5-brief.md) | Brief for the session that merges and deploys v5.0.0 |
+| [fable-working-notes.md](fable-working-notes.md) | How to work on this repo with Gustav and on this machine: what the v5.0.0 session learnt |
+| [sound-and-glass-brief.md](sound-and-glass-brief.md) | Brief for the next Fable session: sound redesign and breakable glass windows |
+| [arsenal-modelling.md](arsenal-modelling.md) | How to write a weapon model with the kit |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |
 | [visual-overhaul.md](visual-overhaul.md), [visual-overhaul-ui.md](visual-overhaul-ui.md) | The v4.0 look, HUD and menu reskin |
 | [world-redesign.md](world-redesign.md) | The v4.1 world redesign (exteriors, towers, terrain) |

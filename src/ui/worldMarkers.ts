@@ -14,6 +14,10 @@ interface Marker {
 
 /** Pixels at the top of the screen the compass (docs/visual-overhaul-ui.md, "HUD layout") owns. */
 const COMPASS_CLEARANCE = 112;
+/** Pixels at the top a marker pinned to the screen's edge (its target is off screen) keeps out of:
+ * the objective panel, the squad's health rows and the mode panels all live there, and a pinned
+ * marker landed on their text. */
+const PINNED_TOP_CLEARANCE = 250;
 
 export class WorldMarkers {
   private readonly element: HTMLDivElement;
@@ -90,7 +94,7 @@ export class WorldMarkers {
         y *= scale;
       }
       // Never under the compass tape: a tall target seen from close by projects onto the top strip.
-      y = Math.max(y, COMPASS_CLEARANCE + halfHeight - height / 2);
+      y = Math.max(y, (offscreen ? PINNED_TOP_CLEARANCE : COMPASS_CLEARANCE) + halfHeight - height / 2);
       marker.element.style.left = `${width / 2 + x}px`;
       marker.element.style.top = `${height / 2 + y}px`;
       marker.arrow.style.display = offscreen ? 'block' : 'none';

@@ -18,9 +18,9 @@ export interface MatchSetupConfig {
   /** Enemy AI v2 step 6: the pacing director runs the enemies (see Game.ts's director), so
    * enemyCount/targetCount are ignored here too. Never together with hordeMode. */
   directorMode: boolean;
-  /** The Uplink mission (docs/visual-overhaul.md, phase 4): three watch-tower uplinks to bring
-   * online under Director pressure, then extraction. Runs the director itself, so the counts above
-   * are ignored. Never together with hordeMode or directorMode. */
+  /** Operation Uplink (docs/uplink.md): breach, fetch, defend and extract under Director pressure.
+   * Runs the director itself, so the counts above are ignored. Never together with hordeMode or
+   * directorMode. */
   missionMode: boolean;
 }
 
@@ -89,9 +89,9 @@ export class PlaySetupModal {
     modeGrid.style.cssText = 'display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;';
     const selectedMode = defaults.hordeMode ? 'horde' : defaults.directorMode ? 'director' : defaults.missionMode ? 'mission' : 'elimination';
     const eliminationRadio = this.buildModeCard(modeGrid, 'elimination', 'Elimination', 'Clear the hostiles and targets', selectedMode);
-    this.hordeModeRadio = this.buildModeCard(modeGrid, 'horde', 'Goose Horde', 'Survive 10 waves', selectedMode);
-    this.directorModeRadio = this.buildModeCard(modeGrid, 'director', 'Director', 'Waves paced to the fight', selectedMode);
-    this.missionModeRadio = this.buildModeCard(modeGrid, 'mission', 'Uplink mission', 'Bring 3 towers online, then extract', selectedMode);
+    this.hordeModeRadio = this.buildModeCard(modeGrid, 'horde', 'Goose Horde', 'Survive 12 waves, bosses on 6 and 12', selectedMode);
+    this.directorModeRadio = this.buildModeCard(modeGrid, 'director', 'Showdown', 'Five acts and a finale, paced by the Director', selectedMode);
+    this.missionModeRadio = this.buildModeCard(modeGrid, 'mission', 'Operation Uplink', 'Breach, fetch the core, defend, extract', selectedMode);
     modeGroup.append(modeLabel, modeGrid);
     panel.appendChild(modeGroup);
 

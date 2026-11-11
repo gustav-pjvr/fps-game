@@ -46,6 +46,8 @@ interface HealthRow {
   readonly row: HTMLDivElement;
   readonly fill: HTMLDivElement;
   readonly text: HTMLDivElement;
+  /** A word in place of the number ("DOWN 18", "OUT"): a co-op player who has fallen. */
+  tag: string | null;
   /** Last-seen health value - lets setHealthRow detect an actual decrease (a hit) to flash on,
    * rather than flashing on every update() tick regardless of whether anything changed. */
   previousHealth: number;
@@ -71,12 +73,12 @@ function createHealthRow(label: string): HealthRow {
   row.appendChild(track);
 
   const text = document.createElement('div');
-  text.style.cssText = `width:34px; font-family:${MONO_FONT}; font-size:12px;`;
+  text.style.cssText = `min-width:34px; white-space:nowrap; font-family:${MONO_FONT}; font-size:12px;`;
   row.appendChild(text);
 
   // -1 is a sentinel "no baseline yet" - health can't actually be negative, so the very first
   // setHealthRow call never misreads "went from nothing to something" as a hit.
-  return { row, fill, text, previousHealth: -1 };
+  return { row, fill, text, tag: null, previousHealth: -1 };
 }
 
 /** Multiplayer-only HUD replacement for the single-player Hud's score text and health bar (see
@@ -157,6 +159,13 @@ export class MultiplayerHud {
     this.healthContainer.appendChild(row.row);
   }
 
+  /** A fallen co-op player's row shows `tag` in place of its health (docs/coop.md); null puts the
+   * number back. */
+  setRowTag(slot: PlayerSlot, tag: string | null): void {
+    const row = slot === this.ownSlot ? this.ownHealthRow : this.opponentHealthRows.get(slot);
+    if (row) row.tag = tag;
+  }
+
   /** The name stays (see opponentNames): a score the player leaves behind keeps showing under it. */
   removeOpponentRow(slot: PlayerSlot): void {
     this.opponentHealthRows.get(slot)?.row.remove();
@@ -227,7 +236,8 @@ export class MultiplayerHud {
     const ratio = Math.max(0, Math.min(1, current / max));
     row.fill.style.width = `${ratio * 100}%`;
     row.fill.style.background = healthColor(ratio);
-    row.text.textContent = `${Math.ceil(Math.max(0, current))}`;
+    row.text.textContent = row.tag ?? `${Math.ceil(Math.max(0, current))}`;
+    row.text.style.color = row.tag ? THREAT : '';
 
     // A brief red flash on a real health drop - a "hit landed" cue on the HUD itself, distinct
     // from the screen-edge DamageVignette (own player only) and legible for opponent rows too.

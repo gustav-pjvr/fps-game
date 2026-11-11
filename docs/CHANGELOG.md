@@ -10,7 +10,123 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v4.7.1 (current)
+## v5.0.0 (current, on `feature/fable-rebuild`, not yet released)
+
+The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/arsenal.md`,
+`docs/skins.md`, `docs/king-of-the-hill.md`, `docs/goose-horde.md`, `docs/coop.md`,
+`docs/uplink.md`, `docs/showdown.md`. Decisions and their reasons: `docs/fable-rebuild-decisions.md`.
+
+**The arsenal**
+
+- **Nineteen weapons, each its own.** Seven primaries (VR-4 Assault Rifle, Wasp SMG, Kestrel Battle
+  Rifle, R60 Light Machine Gun, K14 Marksman Rifle, H12 Shotgun, L7 Sniper Rifle), five secondaries
+  (P9 Pistol, S5 Burst SMG, Rook .44 Revolver, Hornet Machine Pistol, Stub 12 Sawn-off), six blades
+  (Combat Knife, Talon Karambit, Bushline Machete, Kiri Tanto, Trail Hatchet, Trench Spike) and the
+  Goose Launcher. Twelve are new; the old seven were remodelled. All names are fictional.
+- **Every model is made in code.** A modelling kit builds each weapon from profiles and solids, with
+  moving parts, hands and sights; no weapon model file is loaded any more.
+- **Handling that tells them apart.** Damage falls off with distance, recoil kicks up and to a side,
+  heavy weapons aim more slowly and slow the player a little. Each weapon has its own reload and
+  inspect animation (inspect with G, or D-pad down).
+- **Attachments and the Workbench.** A laser sight and a weapon torch, each one designed unit that
+  looks the same under every skin, fit only the guns with a rail or a bare barrel for them (nine of
+  the thirteen; the pistol carries one at a time). The laser puts a red dot where the gun points;
+  the torch moves the player's light from the shoulder to the gun. Neither changes handling, and
+  other players do not see them yet. The Skins screen is replaced by the Workbench, one page per
+  weapon: the weapon large and turned with the mouse, skins and attachments as two sections under
+  it, the rack, in-hand, sights and inspect views over it, and no scrollbars (docs/attachments.md).
+- **Reloads keep each hand on its own side.** On the assault rifle, the battle rifle and the
+  machine gun the left hand used to pass through the gun to reach a handle on the top or the right.
+  The rifle's left hand now slaps the bolt catch on the left of the receiver; the other two are
+  racked by the right hand while the left holds the handguard (docs/arsenal-modelling.md).
+- **Grenades rebuilt.** A throw is an overarm lob that carries properly; a grenade bounces a few
+  times, each lower, then rolls and stops, rolls down a slope and off an edge, and flies the same
+  at any frame rate. A frag kills in the open out to about 3.5 m and wounds to 9 m; cover now
+  takes its share (legs, chest and head are judged separately) instead of all or nothing, and the
+  distance is to the nearest part of the body. The explosion is a flash, a dirt fountain, a dust
+  ring along the ground, fragments, clods and a smoke column that hangs for some five seconds
+  (docs/grenades.md).
+- **Spread and recoil by the kind of gun.** Aimed and still, a gun shoots as straight as the real
+  thing (half a minute of angle for the sniper rifle, about four for the assault rifle); the hip,
+  movement and a long burst open it up. A burst climbs for its first rounds, then settles and weaves
+  from side to side in a pattern that can be learned, and each kick is sized to its cartridge and
+  the weight behind it. Shotgun patterns are tighter and barely change when aimed. `docs/gun-handling.md`.
+- **Hand and weapon animation fixes.** The inspect (G) no longer swings a forearm across the screen:
+  the gun rolls onto its side, then tips muzzle-up, with both hands on it. A knife slash keeps the
+  forearm coming from the corner. Sprinting carries the weapon low and to the side where it swung
+  across the view. A weapon being put away no longer keeps its sprint tilt.
+- **The stray piece beside the guns is gone.** Every gun carried the old torch body (a plain dark
+  cylinder with a lens) on its outer group, so it stayed still while the gun turned in a reload or
+  an inspect. It is removed; the torch light is unchanged. A unit test now fails if any weapon
+  model has a piece floating free of it (`floatingGeometry.test.ts`).
+- **Blades have two attacks.** A click and an aimed click are different strikes with their own
+  damage, reach, speed and swing; a strike hits each target once (the knife no longer kills in one
+  clean hit).
+- **New sounds.** Gunshots, reloads and blade swings are synthesised per weapon; the sampled files
+  were removed.
+- **Others see what you hold.** The weapon and skin in your hand show in other players' view of you.
+- **Gun Game** draws from all twelve guns; **Knife Only** uses the blade you have equipped.
+
+**Skins**
+
+- **Six looks for every weapon:** Service, Ranger, Whiteout, Ember, Gilded Goose and Pulse. A skin
+  can change colour, material, shape (wraps, a ported muzzle, engraving and a medallion, light lines,
+  a peep or reflex sight) and the inspect animation.
+- **Aiming never breaks.** A test builds all 114 weapon and skin combinations and checks the sight
+  line of each; a browser test photographs every aimed view.
+- **A Skins screen** in the main menu to browse, preview (on the rack, in hand, down the sights) and
+  equip per weapon. Kept in the browser; other players see your skin.
+- **The Loadout** shows all weapons in a grid in the skin each wears.
+
+**King of the Hill**
+
+- **The hill moves.** Stand on it alone to score a point a second; with an enemy on it nobody
+  scores. It moves every minute, with a warning. First to 120 wins; kills score nothing.
+- **The golden goose is the crown.** It lies in the middle of each new hill: wearing it doubles your
+  points, stops you sprinting, and it drops where you die.
+- **Four players play two against two.** A team holds and scores together and cannot hurt each other.
+- **Final Push** when a side reaches 75%: a smaller hill that moves faster.
+
+**Goose Horde**
+
+- **Twelve waves with an ending,** the same for solo and co-op and sized to the number of players.
+  Red brutes take real damage to stop; Mother Goose leads wave 6 and the Matriarch wave 12.
+- **Supply drops** earned by the squad's kills: health, a grenade, and in a room ammunition.
+- **Co-op: down, not out.** A fallen teammate can be revived (hold E beside them) for 25 seconds,
+  and everyone gets back up when the next wave starts. The run is lost only when the whole squad is
+  down at once. This replaces the two respawns each player had.
+- **Solo: Second Wind** saves you from one death and clears the geese around you; you earn another
+  every four waves. Surviving wave 12 wins on an end screen with your numbers.
+- **The scoreboard** shows each player's kills.
+
+**Co-op layer**
+
+- **Pings.** Press V (middle mouse, or LB) to mark what you are looking at for your side.
+- **Down and revive,** with the fallen player's own small panel instead of a death screen.
+
+**Uplink mission**
+
+- **Operation Uplink, four stages:** breach the first terminal, fetch the data core and carry it to
+  the relay, defend the upload against three waves (the last led by the Warden), then extract
+  before the timer runs out. An alert level rises through the run and sizes the waves.
+- **Two redeploys** before the signal is lost, and a graded end screen.
+
+**Showdown (the Director mode)**
+
+- **Five acts and a finale.** Each act is harder than the last and ends in a breather with a supply
+  crate; the fifth ends with the Warden and its escorts. Killing them wins.
+- **A score with a multiplier** that climbs while you stay in the fight, two redeploys, and a graded
+  end screen.
+
+**Under the hood**
+
+- New network messages: `kothState`, `kothCrownClaim`, `hordeState`, `reviveEvent`, `ping`; two
+  optional snapshot fields for the weapon and skin in hand. The game server branch needs a routing
+  class for each (listed in `docs/fable-rebuild-handover.md`).
+- New browser tests for the modes over several browsers at once (group `modes`), for the skins
+  (group `skins`), and for Showdown.
+
+## v4.7.1
 
 Connection telemetry, 2026-11-05. As built: `docs/architecture/core.md` section 7.
 

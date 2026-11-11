@@ -268,8 +268,8 @@ describe('Weapon burst-fire round accounting (MP5, WeaponDefinition.burstCount) 
   });
 
   it('consumeBurstRound fails once the magazine actually runs dry mid-burst, ending the burst early', () => {
-    const weapon = new Weapon(PISTOL); // magazineSize 12, so 3 fires away from empty is easy to reach
-    for (let i = 0; i < 11; i++) weapon.consumeBurstRound();
+    const weapon = new Weapon(PISTOL); // a small magazine, so one round from empty is easy to reach
+    for (let i = 0; i < PISTOL.magazineSize - 1; i++) weapon.consumeBurstRound();
     expect(weapon.ammo).toBe(1);
     expect(weapon.consumeBurstRound()).toBe(true);
     expect(weapon.ammo).toBe(0);

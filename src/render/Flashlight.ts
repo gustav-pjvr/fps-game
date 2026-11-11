@@ -39,8 +39,6 @@ export const TORCH_INTENSITY = 14;
 const TORCH_SHADOW_MAP_SIZE = 512;
 const TORCH_SHADOW_BIAS = -0.0004;
 const TORCH_SHADOW_NORMAL_BIAS = 0.02;
-/** The lens glow while on: just over the bloom threshold, so it reads as lit without a halo. */
-const LENS_GLOW = 1.6;
 
 /** Where a torch sits and what it aims at: `offset` is in the frame of an eye at `eye` turned by
  * `orientation` (a camera's own position and quaternion, or a remote player's eye and look), and the
@@ -65,32 +63,16 @@ function createTorchLight(): THREE.SpotLight {
   return light;
 }
 
-/** What the torch body hangs on: the active ranged view model and its barrel tip in that model's
- * space (WeaponViewModel.muzzleLocalOffset). */
-export interface TorchMount {
-  readonly viewModel: THREE.Object3D;
-  readonly muzzle: THREE.Vector3;
-}
-
 /** The player's torch on the Facility and in every Valley weather. The SpotLight is a
  * top-level scene object placed from the camera every frame, never a camera child: Renderer moves
  * everything under the camera onto the view-model layer, where a light no longer reaches the world.
  * Toggling only changes the intensity (and whether the shadow map updates): adding, removing or
- * hiding a light changes the light count and recompiles every shader. A small torch body with an
- * emissive lens rides on whichever ranged view model is active, near its muzzle. */
+ * hiding a light changes the light count and recompiles every shader. The torch has no body on the
+ * view model: the one it had (a plain cylinder under the muzzle) hung on the weapon's outer group,
+ * so it stayed where it was while the gun turned in a reload or an inspect, and it matched none of
+ * the arsenal's models. */
 export class Flashlight {
   private readonly light = createTorchLight();
-  private readonly body = new THREE.Group();
-  private readonly bodyGeometry = new THREE.CylinderGeometry(0.017, 0.019, 0.1, 12);
-  private readonly lensGeometry = new THREE.CircleGeometry(0.016, 16);
-  private readonly bodyMaterial = new THREE.MeshStandardMaterial({ name: 'torch-body', color: 0x26292c, metalness: 0.8, roughness: 0.42 });
-  private readonly lensMaterial = new THREE.MeshStandardMaterial({
-    name: 'torch-lens',
-    color: 0x1a1a18,
-    emissive: TORCH_COLOR,
-    emissiveIntensity: LENS_GLOW,
-    roughness: 0.2,
-  });
   private on = true;
 
   constructor(private readonly scene: THREE.Scene, castShadow: boolean) {
@@ -101,15 +83,6 @@ export class Flashlight {
     this.light.shadow.camera.far = TORCH_RANGE;
     this.light.castShadow = castShadow;
     scene.add(this.light);
-
-    // Built along -Z (the view models' forward): the cylinder's axis is its local Y.
-    const casing = new THREE.Mesh(this.bodyGeometry, this.bodyMaterial);
-    casing.rotation.x = Math.PI / 2;
-    const lens = new THREE.Mesh(this.lensGeometry, this.lensMaterial);
-    lens.position.z = -0.0505;
-    lens.rotation.y = Math.PI;
-    this.body.add(casing, lens);
-    this.body.name = 'torch-body';
   }
 
   get isOn(): boolean {
@@ -125,24 +98,12 @@ export class Flashlight {
     // texture format and sampler type") and the whole world goes missing.
     this.light.shadow.autoUpdate = on;
     this.light.shadow.needsUpdate = true;
-    this.lensMaterial.emissiveIntensity = on ? LENS_GLOW : 0;
   }
 
   /** Follows the graphics preset like the sun does (Game.applyGraphicsQuality). A change here does
    * recompile, as a sun shadow change does on the Valley; only the toggle must not. */
   setCastShadow(castShadow: boolean): void {
     this.light.castShadow = castShadow;
-  }
-
-  /** Hangs the torch body under the active ranged view model, a little below and behind the barrel
-   * tip, or takes it off for the knife and empty hands (`mount` null). Cheap when nothing changed. */
-  mountBody(mount: TorchMount | null): void {
-    if (!mount) {
-      if (this.body.parent) this.body.removeFromParent();
-      return;
-    }
-    if (this.body.parent !== mount.viewModel) mount.viewModel.add(this.body);
-    this.body.position.set(mount.muzzle.x, mount.muzzle.y - 0.045, mount.muzzle.z + 0.09);
   }
 
   /** Every rendered frame, after the camera's interpolation: at the front of the gun when one is
@@ -157,11 +118,6 @@ export class Flashlight {
     this.scene.remove(this.light);
     this.light.shadow.map?.dispose();
     this.light.dispose();
-    this.body.removeFromParent();
-    this.bodyGeometry.dispose();
-    this.lensGeometry.dispose();
-    this.bodyMaterial.dispose();
-    this.lensMaterial.dispose();
   }
 }
 

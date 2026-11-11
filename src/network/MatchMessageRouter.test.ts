@@ -3,14 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
 import { HostRoster } from './HostRoster.ts';
 import { buildMatchSync } from './matchSync.ts';
-import { KOTH_SCORE_STEP_MAX, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
-import { isNetworkMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
+import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
+import { isNetworkMessage, type KothStateMessage, type NetworkMessage, type PlayerSlot } from './protocol.ts';
 import { clearUnderground, registerUndergroundVolume } from '../world/underground.ts';
 
 /** A context with only what the cases under test touch; everything else is left out on purpose. */
-function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; carrier?: PlayerSlot | null; map?: string } = {}) {
-  const goldenGoose = { carrierSlot: overrides.carrier ?? null, claim: vi.fn(), drop: vi.fn() };
-  goldenGoose.claim.mockImplementation((slot: PlayerSlot) => (goldenGoose.carrierSlot = slot));
+function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot; gameMode?: string; killLimit?: number; map?: string } = {}) {
+  const kingOfTheHill = { receiveState: vi.fn(), receiveClaim: vi.fn(), playerDown: vi.fn(), syncMessage: vi.fn(() => null) };
   const opponents = new Map<PlayerSlot, unknown>();
   const ctx = {
     multiplayer: {
@@ -28,8 +27,12 @@ function makeContext(overrides: { role?: 'host' | 'guest'; ownSlot?: PlayerSlot;
     deathCounts: new Map<PlayerSlot, number>(),
     thrownGeese: new Map(),
     isHordeMode: false,
-    goldenGooseManager: goldenGoose,
-    hordeGooseManager: { applyWaveStarted: vi.fn(), applyCleared: vi.fn() },
+    kingOfTheHill,
+    hordeGooseManager: { applyWaveStarted: vi.fn(), applyCleared: vi.fn(), applyState: vi.fn(), registerRemoteHit: vi.fn(), applyRemoteSpawn: vi.fn(), applyExplosion: vi.fn() },
+    squad: { teammateFell: vi.fn(), teammateStoodUp: vi.fn(), adoptFallen: vi.fn(), receiveRevive: vi.fn(), receivePing: vi.fn() },
+    hordeWaveStarted: vi.fn(),
+    gooseAnnouncement: { show: vi.fn() },
+    checkHordeAllEliminated: vi.fn(),
     killFeed: { show: vi.fn() },
     weaponManager: { activeWeaponId: 'rifle', replaceActiveWeapon: vi.fn(async () => {}) },
     healLocalPlayerToFull: vi.fn(),
@@ -55,7 +58,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     const setTorch = vi.fn();
     ctx.multiplayer.opponents.set(2, {
       lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch, setHeldWeapon: vi.fn() },
     });
     registerUndergroundVolume({ minX: 10, maxX: 20, minZ: 10, maxZ: 20, floorY: -9, ceilY: -3 });
     try {
@@ -66,35 +69,66 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     } finally { clearUnderground(); }
   });
 
+  it('shows the weapon and skin a snapshot names in that player\'s hand', () => {
+    const ctx = makeContext({ map: 'valley' });
+    const setHeldWeapon = vi.fn();
+    ctx.multiplayer.opponents.set(2, {
+      lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon },
+    });
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, w: 'revolver', k: 'gilded' }, 2);
+    expect(setHeldWeapon).toHaveBeenLastCalledWith('revolver', 'gilded');
+    // An older build names neither: the player is drawn empty-handed.
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
+    expect(setHeldWeapon).toHaveBeenLastCalledWith(undefined, undefined);
+  });
+
   it('the host relays through relay(), which skips directly linked guest pairs', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0, carrier: 2 });
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);
-    expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'kothScoreTick' }), 2);
-    expect(ctx.scoreboard.get(2)).toBe(1);
+    const ctx = makeContext({ role: 'host', ownSlot: 0 });
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
+    expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'playerSnapshot' }), 2);
   });
 
-  it('a drop from a claimant that lost the tie-break leaves the real carrier', () => {
-    const ctx = makeContext({ carrier: 1 });
-    route(ctx, { type: 'goldenGooseDropped', senderSlot: 3, x: 1, y: 2, z: 3 });
-    expect(ctx.goldenGooseManager.drop).not.toHaveBeenCalled();
-    route(ctx, { type: 'goldenGooseDropped', senderSlot: 1, x: 1, y: 2, z: 3 });
-    expect(ctx.goldenGooseManager.drop).toHaveBeenCalledTimes(1);
+  it('a guest takes the King of the Hill state from its host, and the host ignores one sent to it', () => {
+    const state = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] } as const;
+    const guest = makeContext({ gameMode: 'kingOfTheHill' });
+    route(guest, state as unknown as NetworkMessage);
+    expect(guest.kingOfTheHill.receiveState).toHaveBeenCalledWith(expect.objectContaining({ type: 'kothState', crown: 1 }));
+    const host = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill' });
+    route(host, state as unknown as NetworkMessage, 2);
+    expect(host.kingOfTheHill.receiveState).not.toHaveBeenCalled();
+    expect(host.multiplayer.session.connection.relay).not.toHaveBeenCalled();
   });
 
-  it('a claim displaces only a higher-slot carrier', () => {
-    const ctx = makeContext({ carrier: 2 });
-    route(ctx, { type: 'goldenGoosePickedUp', senderSlot: 3 });
-    expect(ctx.goldenGooseManager.carrierSlot).toBe(2);
-    route(ctx, { type: 'goldenGoosePickedUp', senderSlot: 1 });
-    expect(ctx.goldenGooseManager.carrierSlot).toBe(1);
+  it('a crown claim reaches the host as the link it came in on, is never relayed and means nothing to a guest', () => {
+    const host = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill' });
+    route(host, { type: 'kothCrownClaim' }, 3);
+    expect(host.kingOfTheHill.receiveClaim).toHaveBeenCalledWith(3);
+    expect(host.multiplayer.session.connection.relay).not.toHaveBeenCalled();
+    const guest = makeContext({ gameMode: 'kingOfTheHill' });
+    route(guest, { type: 'kothCrownClaim' });
+    expect(guest.kingOfTheHill.receiveClaim).not.toHaveBeenCalled();
   });
 
-  it('a late joiner takes the golden goose state from the host as is', () => {
-    const ctx = makeContext({ carrier: null });
-    route(ctx, { type: 'goldenGooseState', carrierSlot: 3, x: 0, y: 0, z: 0 });
-    expect(ctx.goldenGooseManager.carrierSlot).toBe(3);
-    route(ctx, { type: 'goldenGooseState', carrierSlot: null, x: 4, y: 5, z: 6 }, 2);
-    expect(ctx.goldenGooseManager.drop).not.toHaveBeenCalled(); // only the host's sync counts
+  it('a death tells King of the Hill where the victim fell, so the host can drop the crown there', () => {
+    const ctx = makeContext({ gameMode: 'kingOfTheHill' });
+    const position = { x: 7, y: 1, z: -3 };
+    ctx.multiplayer.opponents.set(2, { lastMessageAt: 0, isDead: false, remotePlayer: { position, stopPrediction: vi.fn() } });
+    route(ctx, { type: 'playerDied', senderSlot: 2, victimSlot: 2, killerSlot: 0 });
+    expect(ctx.kingOfTheHill.playerDown).toHaveBeenCalledWith(2, position);
+    // The kill clears the hill but scores nothing: the mode is won on the hill.
+    expect(ctx.scoreboard.get(0) ?? 0).toBe(0);
+    expect(ctx.deathCounts.get(2)).toBe(1);
+  });
+
+  it('the retired carry messages of the old King of the Hill change nothing and are not relayed', () => {
+    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill' });
+    ctx.scoreboard.set(2, 30);
+    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 31 }, 2);
+    route(ctx, { type: 'goldenGoosePickedUp', senderSlot: 2 }, 2);
+    route(ctx, { type: 'goldenGooseDropped', senderSlot: 2, x: 1, y: 2, z: 3 }, 2);
+    expect(ctx.scoreboard.get(2)).toBe(30);
+    expect(ctx.multiplayer.session.connection.relay).not.toHaveBeenCalled();
   });
 
   it('a Gun Game kill that is not credited does not upgrade the killer', () => {
@@ -116,7 +150,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
       firstSnapshotAt: null as number | null,
       isDead: false,
       health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon: vi.fn() },
     };
     ctx.multiplayer.opponents.set(3, opponent);
     // The connection layer talks while the world is still being built: that is not "playing".
@@ -137,7 +171,7 @@ describe('routeMatchMessage, 3 to 4 players', () => {
       firstSnapshotAt: null as number | null,
       isDead: false,
       health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon: vi.fn() },
     };
     ctx.multiplayer.opponents.set(2, opponent);
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, t: 500 }, 0);
@@ -148,31 +182,11 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(ctx.noteSnapshotApplied).toHaveBeenCalledTimes(1);
   });
 
-  it('a King of the Hill score only rises: a lower one is neither applied nor relayed', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill', carrier: 2 });
-    ctx.scoreboard.set(2, 30);
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 3 }, 2);
-    expect(ctx.scoreboard.get(2)).toBe(30);
-    expect(ctx.multiplayer.session.connection.relay).not.toHaveBeenCalled();
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 31 }, 2);
-    expect(ctx.scoreboard.get(2)).toBe(31);
-  });
-
-  it('a King of the Hill score counts only from the carrier, and rises at most KOTH_SCORE_STEP_MAX per tick', () => {
-    const ctx = makeContext({ role: 'host', ownSlot: 0, gameMode: 'kingOfTheHill', carrier: 1 });
-    route(ctx, { type: 'kothScoreTick', senderSlot: 2, score: 1 }, 2);   // not the carrier
-    expect(ctx.scoreboard.get(2) ?? 0).toBe(0);
-    route(ctx, { type: 'kothScoreTick', senderSlot: 1, score: 90 }, 1);  // claims the win at once
-    expect(ctx.scoreboard.get(1)).toBe(KOTH_SCORE_STEP_MAX);
-    route(ctx, { type: 'kothScoreTick', senderSlot: 1, score: 4 }, 1);   // catches up after a mismatch
-    expect(ctx.scoreboard.get(1)).toBe(4);
-  });
-
   it.each(['valley', 'facility'])("an opponent's snapshot on the %s cues the lamp and door catch-up", (map) => {
     const ctx = makeContext({ role: 'host', ownSlot: 0, map });
     ctx.multiplayer.opponents.set(2, {
       lastMessageAt: 0, firstSnapshotAt: null, isDead: false, health: 100,
-      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn() },
+      remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon: vi.fn() },
     });
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
     expect(ctx.opponentInMatch).toHaveBeenCalledWith(2);
@@ -209,6 +223,72 @@ describe('routeMatchMessage, 3 to 4 players', () => {
     expect(ctx.endLostHordeRun).toHaveBeenCalledTimes(1);
     route(ctx, { type: 'hordeSyncState', wave: 5, result: 'cleared' });
     expect(ctx.hordeGooseManager.applyCleared).toHaveBeenCalledTimes(1);
+  });
+
+  it('Goose Horde: a fall, a stand-up, a revive and a ping reach the squad layer', () => {
+    const ctx = makeContext({ gameMode: 'gooseHorde', ownSlot: 1 });
+    ctx.multiplayer.opponents.set(2, {
+      lastMessageAt: 0, firstSnapshotAt: null, isDead: true, health: 0, lastStateSentAt: undefined,
+      remotePlayer: { teleportTo: vi.fn() },
+    });
+    route(ctx, { type: 'hordePlayerEliminated', slot: 2 }, 2);
+    expect([...ctx.multiplayer.hordeEliminatedSlots]).toEqual([2]);
+    expect(ctx.squad.teammateFell).toHaveBeenCalledWith(2);
+    expect(ctx.checkHordeAllEliminated).toHaveBeenCalledTimes(1);
+
+    route(ctx, { type: 'reviveEvent', senderSlot: 3, targetSlot: 2 }, 0);
+    expect(ctx.squad.receiveRevive).toHaveBeenCalledWith(3, 2);
+
+    // The fallen player's own respawnEvent is what takes it off the list.
+    route(ctx, { type: 'respawnEvent', senderSlot: 2, x: 1, y: 2, z: 3 }, 0);
+    expect([...ctx.multiplayer.hordeEliminatedSlots]).toEqual([]);
+    expect(ctx.squad.teammateStoodUp).toHaveBeenCalledWith(2);
+
+    route(ctx, { type: 'ping', senderSlot: 3, x: 4, y: 5, z: 6 }, 0);
+    expect(ctx.squad.receivePing).toHaveBeenCalledWith(3, 4, 5, 6);
+  });
+
+  it('Goose Horde: a guest takes the host\'s state, a wave start stands the fallen up, and the host takes a hit with its damage', () => {
+    const guest = makeContext({ gameMode: 'gooseHorde', ownSlot: 1 });
+    const state = { type: 'hordeState' as const, wave: 6, phase: 'active' as const, nextIn: 0, left: 5, meter: 1, need: 18, boss: { id: 'mother' as const, hp: 10, max: 2250 }, kills: [{ slot: 1 as PlayerSlot, kills: 3 }] };
+    route(guest, state);
+    expect(guest.hordeGooseManager.applyState).toHaveBeenCalledWith(state);
+    route(guest, { type: 'hordeWaveStarted', wave: 7 });
+    expect(guest.hordeGooseManager.applyWaveStarted).toHaveBeenCalledWith(7);
+    expect(guest.hordeWaveStarted).toHaveBeenCalledTimes(1);
+    route(guest, { type: 'hordeGooseSpawned', id: 'horde-9', x: 1, y: 2, z: 3, flavor: 'boss', boss: 'matriarch' });
+    expect(guest.hordeGooseManager.applyRemoteSpawn).toHaveBeenCalledWith('horde-9', 1, 2, 3, 'boss', 'matriarch');
+    route(guest, { type: 'hordeGooseExploded', id: 'horde-9', x: 1, y: 2, z: 3, stomp: true });
+    expect(guest.hordeGooseManager.applyExplosion).toHaveBeenCalledWith('horde-9', expect.anything(), true);
+
+    const host = makeContext({ role: 'host', gameMode: 'gooseHorde', ownSlot: 0 });
+    route(host, state, 2);
+    expect(host.hordeGooseManager.applyState).not.toHaveBeenCalled();
+    route(host, { type: 'hordeGooseHitEvent', senderSlot: 2, id: 'horde-9', damage: 55 }, 2);
+    expect(host.hordeGooseManager.registerRemoteHit).toHaveBeenCalledWith('horde-9', 2, 55);
+  });
+
+  it('bounds the new Goose Horde and co-op messages', () => {
+    const state = { type: 'hordeState', wave: 3, phase: 'intermission', nextIn: 6.5, left: 0, meter: 4, need: 14, boss: null, kills: [{ slot: 0, kills: 20 }] };
+    expect(isNetworkMessage(state)).toBe(true);
+    expect(isNetworkMessage({ ...state, boss: { id: 'mother', hp: 5, max: 1500 } })).toBe(true);
+    for (const bad of [
+      { ...state, wave: 0 }, { ...state, phase: 'won' }, { ...state, nextIn: -1 }, { ...state, nextIn: Number.NaN }, { ...state, left: 1e9 },
+      { ...state, meter: 1.5 }, { ...state, boss: { id: 'goose', hp: 5, max: 10 } }, { ...state, boss: { id: 'mother', hp: 50, max: 10 } },
+      { ...state, kills: [{ slot: 7, kills: 1 }] }, { ...state, kills: [{ slot: 0, kills: -1 }] }, { ...state, kills: 'x' },
+    ]) expect(isNetworkMessage(bad), JSON.stringify(bad)).toBe(false);
+
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1, z: 2, flavor: 'brute' })).toBe(true);
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1, z: 2, flavor: 'dragon' })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1e9, z: 2, flavor: 'walker' })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseSpawned', id: 'horde-1', x: 0, y: 1, z: 2, flavor: 'boss', boss: 'king' })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'horde-1' })).toBe(true);
+    expect(isNetworkMessage({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'horde-1', damage: 1e9 })).toBe(false);
+    expect(isNetworkMessage({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'horde-1', damage: Number.NaN })).toBe(false);
+    expect(isNetworkMessage({ type: 'reviveEvent', senderSlot: 1, targetSlot: 2 })).toBe(true);
+    expect(isNetworkMessage({ type: 'reviveEvent', senderSlot: 1, targetSlot: 9 })).toBe(false);
+    expect(isNetworkMessage({ type: 'ping', senderSlot: 1, x: 1, y: 2, z: 3 })).toBe(true);
+    expect(isNetworkMessage({ type: 'ping', senderSlot: 1, x: 1, y: Number.POSITIVE_INFINITY, z: 3 })).toBe(false);
   });
 
   it('drops a hordeSyncState with a malformed eliminated list or result', () => {
@@ -255,16 +335,18 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     hostRoster.handleHello('Cara', 'tc', 0, 'peer-cara');
     hostRoster.startMatch();
     const base = makeContext({ role: 'host', ownSlot: 0, gameMode });
+    const kothState: KothStateMessage = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] };
     const multiplayer = { ...base.multiplayer, hostRoster };
     multiplayer.hordeEliminatedSlots.add(2);
-    const horde = { currentWave: 4, isCleared: false, listForSync: vi.fn(() => []), applyWaveStarted: vi.fn(), applyCleared: vi.fn() };
+    const hordeState = { wave: 4, phase: 'active' as const, nextIn: 0, left: 7, meter: 2, need: 18, boss: null, kills: [{ slot: 0 as PlayerSlot, kills: 12 }] };
+    const horde = { currentWave: 4, isCleared: false, listForSync: vi.fn(() => []), statePayload: vi.fn(() => hordeState), applyWaveStarted: vi.fn(), applyCleared: vi.fn() };
     const verdict = { winnerSlot: 1 as PlayerSlot, scoreboard: [{ slot: 1 as PlayerSlot, score: 10 }] };
     const ctx = {
       ...base,
       multiplayer,
       gooseManager: { listForSync: vi.fn(() => [{ id: 'g1', x: 1, y: 0, z: 2, killerSlot: null }]) },
       hordeGooseManager: gameMode === 'gooseHorde' ? horde : null,
-      goldenGooseManager: gameMode === 'kingOfTheHill' ? { carrierSlot: 1 as PlayerSlot | null, position: { x: 5, y: 6, z: 7 }, claim: vi.fn(), drop: vi.fn() } : null,
+      kingOfTheHill: { ...base.kingOfTheHill, syncMessage: vi.fn(() => (gameMode === 'kingOfTheHill' ? kothState : null)) },
       bonusGooseManager: null,
       ammoDropManager: null,
       matchHasEnded: vi.fn(() => false),
@@ -274,9 +356,9 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     const expected = (verdictOverride: typeof verdict | null = null) =>
       buildMatchSync({
         roster: hostRoster.connectedRoster(),
-        goldenGoose: ctx.goldenGooseManager ? { carrierSlot: ctx.goldenGooseManager.carrierSlot, position: ctx.goldenGooseManager.position } : null,
+        koth: gameMode === 'kingOfTheHill' ? kothState : null,
         geese: ctx.gooseManager.listForSync(),
-        horde: gameMode === 'gooseHorde' ? { wave: 4, eliminated: [2], result: undefined, geese: [] } : null,
+        horde: gameMode === 'gooseHorde' ? { wave: 4, eliminated: [2], result: undefined, state: hordeState, geese: [] } : null,
         ammoDrops: [],
         bonusGeese: [],
         thrownGeese: ctx.thrownGeese.values(),
@@ -284,7 +366,7 @@ describe('routeMatchMessage, the host answers a sync request', () => {
         deathCounts: ctx.deathCounts,
         verdict: verdictOverride,
       });
-    return { ctx, expected, verdict };
+    return { ctx, expected, verdict, kothState };
   }
 
   const sentMessages = (ctx: ReturnType<typeof hostContext>['ctx']) => ctx.multiplayer.session.connection.sendTo.mock.calls.map(([, message]) => message as NetworkMessage);
@@ -327,13 +409,13 @@ describe('routeMatchMessage, the host answers a sync request', () => {
     expect(sentMessages(ctx)).toEqual(first);
   });
 
-  it('includes the golden goose in King of the Hill and the result once the match has ended', () => {
-    const { ctx, expected, verdict } = hostContext('kingOfTheHill');
+  it('includes the hill, crown and scores in King of the Hill and the result once the match has ended', () => {
+    const { ctx, expected, verdict, kothState } = hostContext('kingOfTheHill');
     ctx.endedMatchVerdict.mockReturnValue(verdict);
     route(ctx, { type: 'gooseSyncRequest', senderSlot: 3 }, 3);
     const messages = sentMessages(ctx);
     expect(messages).toEqual(expected(verdict));
-    expect(messages).toContainEqual({ type: 'goldenGooseState', carrierSlot: 1, x: 5, y: 6, z: 7 });
+    expect(messages).toContainEqual(kothState);
     expect(messages[messages.length - 1]).toEqual({ type: 'matchEnded', ...verdict });
   });
 

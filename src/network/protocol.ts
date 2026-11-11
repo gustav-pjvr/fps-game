@@ -174,6 +174,11 @@ export interface PlayerSnapshotMessage {
   /** Facility only (docs/facility-map.md, section 7): whether the sender's torch is lit. Missing
    * means on, so an older build's players still carry a light. */
   torch?: boolean;
+  /** The weapon the sender is holding (a weapon id) and the skin it wears (a skin id), so every
+   * other player sees it in their hands (entities/heldWeapon.ts). Both optional: an older build
+   * sends neither and is drawn empty-handed; an id this build does not know is ignored. */
+  w?: string;
+  k?: string;
 }
 
 /** Sent by the shooter on every shot - purely cosmetic (tracer/muzzle flash/positional gunshot
@@ -515,15 +520,16 @@ export interface KothScoreTickMessage {
 }
 
 /** Goose Horde mode only (multiplayer co-op, see core/gameModes.ts) - host -> everyone, mirrors
- * GooseSpawnedMessage exactly, plus `flavor` (walker/jumper/flyer, see HordeGoose.ts) since a
- * follower needs it to render the right descent/lunge behavior locally. */
+ * GooseSpawnedMessage exactly, plus `flavor` (see entities/hordeRules.ts) since a follower needs it
+ * to build the right goose locally, and `boss` (which boss) when the flavor is one. */
 export interface HordeGooseSpawnedMessage {
   type: 'hordeGooseSpawned';
   id: string;
   x: number;
   y: number;
   z: number;
-  flavor: 'walker' | 'jumper' | 'flyer';
+  flavor: 'walker' | 'jumper' | 'flyer' | 'brute' | 'boss';
+  boss?: 'mother' | 'matriarch';
 }
 
 export interface HordeGooseSnapshotMessage {
@@ -534,12 +540,14 @@ export interface HordeGooseSnapshotMessage {
   z: number;
 }
 
-/** Guest -> host only, mirrors GooseHitEventMessage exactly - a horde goose dies in exactly one
- * hit, so there's nothing to count, just "this hit landed, host decides." */
+/** Guest -> host only, mirrors GooseHitEventMessage: "this hit landed, host decides." A small goose
+ * dies to any hit; `damage` is what the hit takes off a brute or a boss (missing on older guests,
+ * read then as a light hit). */
 export interface HordeGooseHitEventMessage {
   type: 'hordeGooseHitEvent';
   senderSlot: PlayerSlot;
   id: string;
+  damage?: number;
 }
 
 /** Host -> everyone: this goose reached a player and exploded - every client applies
@@ -551,6 +559,8 @@ export interface HordeGooseExplodedMessage {
   x: number;
   y: number;
   z: number;
+  /** A boss's stomp: the same blast, but the boss lives on. */
+  stomp?: boolean;
 }
 
 /** Host -> everyone: this goose was shot dead (no explosion) - distinct from
@@ -582,13 +592,50 @@ export interface HordeResetMessage {
   type: 'hordeReset';
 }
 
-/** Self-reported, relayed (see Game.ts's RELAYABLE_MESSAGE_TYPES) - `senderSlot` has just used its
- * final HORDE_MAX_RESPAWNS respawn and is permanently out for the rest of this co-op run. Every
- * client tracks the same set of eliminated slots this way and independently ends the match in a
- * loss once it covers every currently-connected player - see Game.ts's checkHordeAllEliminated. */
+/** Self-reported, relayed (see MatchMessageRouter's RELAYABLE_MESSAGE_TYPES): `slot` is down
+ * (docs/goose-horde.md). A teammate can revive it until it bleeds out, and it stands up again at
+ * the next wave either way; its respawnEvent takes it off the list. Every client tracks the same
+ * set of fallen slots and independently ends the run in a loss once it covers every connected
+ * player - see Game.ts's checkHordeAllEliminated. */
 export interface HordePlayerEliminatedMessage {
   type: 'hordePlayerEliminated';
   slot: PlayerSlot;
+}
+
+/** Host -> everyone, Goose Horde (docs/goose-horde.md): the numbers on the wave panel, twice a second
+ * and at once on a change, and to a late joiner in its sync. `left` is the geese still to kill this
+ * wave, `nextIn` the seconds to the next wave while `phase` is 'intermission', `meter` of `need` the
+ * squad's kills toward its next supply drop, `boss` the boss's health while one is alive, and
+ * `kills` each slot's kills (the scoreboard). */
+export interface HordeStateMessage {
+  type: 'hordeState';
+  wave: number;
+  phase: 'active' | 'intermission';
+  nextIn: number;
+  left: number;
+  meter: number;
+  need: number;
+  boss: { id: 'mother' | 'matriarch'; hp: number; max: number } | null;
+  kills: { slot: PlayerSlot; kills: number }[];
+}
+
+/** Self-reported, relayed, the co-op modes: `senderSlot` finished reviving `targetSlot`. Only the
+ * target acts on it, and only while it is down and still revivable: it stands up where it fell and
+ * says so with its own respawnEvent. */
+export interface ReviveEventMessage {
+  type: 'reviveEvent';
+  senderSlot: PlayerSlot;
+  targetSlot: PlayerSlot;
+}
+
+/** Self-reported, relayed: `senderSlot` marked a point in the world for its side (docs/coop.md).
+ * Shown for a few seconds to teammates only; a client drops one from a player not on its side. */
+export interface PingMessage {
+  type: 'ping';
+  senderSlot: PlayerSlot;
+  x: number;
+  y: number;
+  z: number;
 }
 
 /** Host -> everyone (broadcast, never relayed - host-authored): a new ammo crate exists at a fixed
@@ -789,6 +836,31 @@ export interface GoldenGooseStateMessage {
   z: number;
 }
 
+/** Host -> everyone, King of the Hill (docs/king-of-the-hill.md): the whole state of the mode, a
+ * few times a second and at once on a change, and to a late joiner in its sync. Applied as is:
+ * the host owns the hill, the crown and the score. `hill`, `next` and `crownAt` are [x, z]; `holder`
+ * is a side (a slot, or a team of 0 or 1 when `teams`); `scores` is each slot's points. */
+export interface KothStateMessage {
+  type: 'kothState';
+  hill: [number, number];
+  next: [number, number];
+  radius: number;
+  moveIn: number;
+  hold: 'empty' | 'held' | 'contested';
+  holder: number | null;
+  crown: PlayerSlot | null;
+  crownAt: [number, number] | null;
+  push: boolean;
+  teams: boolean;
+  scores: { slot: PlayerSlot; score: number }[];
+}
+
+/** Guest -> host only, King of the Hill: this player reaches for the crown. The claimant is the
+ * link it came in on, never a field of the payload; the host grants it by where it sees them. */
+export interface KothCrownClaimMessage {
+  type: 'kothCrownClaim';
+}
+
 /** Host -> the one guest that just asked for a sync (see RosterSyncMessage): every connected slot's
  * score and death count now. A late joiner's welcome carried the scoreboard from before it started
  * loading; kills made while it loaded went past unheard. Applied as is: the host's count is the truth. */
@@ -842,6 +914,9 @@ export type NetworkMessage =
   | HordeClearedMessage
   | HordeResetMessage
   | HordePlayerEliminatedMessage
+  | HordeStateMessage
+  | ReviveEventMessage
+  | PingMessage
   | HordeAmmoDropSpawnedMessage
   | HordeAmmoDropPickedUpMessage
   | BonusGooseSpawnedMessage
@@ -860,7 +935,9 @@ export type NetworkMessage =
   | MeshStatusMessage
   | RosterSyncMessage
   | LinkQualityMessage
-  | GoldenGooseStateMessage;
+  | GoldenGooseStateMessage
+  | KothStateMessage
+  | KothCrownClaimMessage;
 
 const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'matchEnded',
@@ -906,6 +983,9 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'hordeCleared',
   'hordeReset',
   'hordePlayerEliminated',
+  'hordeState',
+  'reviveEvent',
+  'ping',
   'hordeAmmoDropSpawned',
   'hordeAmmoDropPickedUp',
   'bonusGooseSpawned',
@@ -925,6 +1005,8 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'rosterSync',
   'linkQuality',
   'goldenGooseState',
+  'kothState',
+  'kothCrownClaim',
   'scoreboardSync',
 ]);
 
@@ -987,6 +1069,9 @@ export const NETWORK_MAX_COORD = 10_000;
 export const NETWORK_MAX_SPEED = 200;
 /** Most damage one damageEvent may carry: a headshot with a one-shot mode's weapon is 300. */
 export const DAMAGE_EVENT_MAX_AMOUNT = 1000;
+/** Longest weapon or skin id a message may carry.
+ * The longest real one is 13 characters. */
+export const NETWORK_MAX_ID_LENGTH = 24;
 /** Highest score a kothScoreTick may report: the win, plus the few ticks a carrier may send before
  * the host's matchEnded reaches it. */
 export const KOTH_SCORE_TICK_MAX = KOTH_POINTS_TO_WIN + 10;
@@ -1000,6 +1085,8 @@ const isCoord = (value: unknown): boolean => typeof value === 'number' && Number
 const isFiniteNumber = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value);
 const isOptionalFinite = (value: unknown): boolean => value === undefined || isFiniteNumber(value);
 const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === 'string';
+/** An optional short identifier (a weapon or skin id): bounded so a snapshot cannot carry a payload. */
+const isOptionalId = (value: unknown): boolean => value === undefined || (typeof value === 'string' && value.length <= NETWORK_MAX_ID_LENGTH);
 const areCoords = (...values: unknown[]): boolean => values.every(isCoord);
 const isSpeed = (value: unknown): boolean => isFiniteNumber(value) && Math.abs(value as number) <= NETWORK_MAX_SPEED;
 
@@ -1021,7 +1108,7 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
     case 'playerSnapshot':
       return areCoords(value.x, value.y, value.z) && isFiniteNumber(value.yaw) && isFiniteNumber(value.pitch)
         && isFiniteNumber(value.health) && (value.health as number) >= 0 && (value.health as number) <= DAMAGE_EVENT_MAX_AMOUNT
-        && isOptionalFinite(value.t);
+        && isOptionalFinite(value.t) && isOptionalId(value.w) && isOptionalId(value.k);
     case 'fireEvent':
       return areCoords(value.originX, value.originY, value.originZ, value.endX, value.endY, value.endZ) && isOptionalFinite(value.t);
     case 'footstepEvent':
@@ -1029,7 +1116,16 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
       return areCoords(value.x, value.y, value.z) && isOptionalFinite(value.t);
     case 'goldenGooseDropped':
     case 'gooseThrowExploded':
+    case 'ping':
       return areCoords(value.x, value.y, value.z);
+    case 'hordeGooseSpawned':
+      return typeof value.id === 'string' && value.id.length <= NETWORK_MAX_ID_LENGTH && areCoords(value.x, value.y, value.z)
+        && HORDE_FLAVORS_ON_THE_WIRE.has(value.flavor) && (value.boss === undefined || isHordeBoss(value.boss));
+    case 'hordeGooseHitEvent':
+      return typeof value.id === 'string' && value.id.length <= NETWORK_MAX_ID_LENGTH
+        && (value.damage === undefined || (isFiniteNumber(value.damage) && (value.damage as number) >= 0 && (value.damage as number) <= DAMAGE_EVENT_MAX_AMOUNT));
+    case 'reviveEvent':
+      return isPlayerSlot(value.targetSlot);
     case 'gooseThrown':
       return areCoords(value.originX, value.originY, value.originZ) && [value.velX, value.velY, value.velZ].every(isSpeed);
     case 'damageEvent':
@@ -1072,7 +1168,57 @@ export function isNetworkMessage(value: unknown): value is NetworkMessage {
   if (type === 'grenadeThrown') return isValidGrenadeThrown(value as Record<string, unknown>);
   if (type === 'grenadeDetonated') return isValidGrenadeDetonated(value as Record<string, unknown>);
   if (type.startsWith('pickup')) return hasValidPickupFields(value as Record<string, unknown>);
+  if (type === 'kothState') return isValidKothState(value as Record<string, unknown>);
+  if (type === 'hordeState') return isValidHordeState(value as Record<string, unknown>);
   return hasValidSquadShape(value as Record<string, unknown>) && hasValidGameplayFields(value as Record<string, unknown>);
+}
+
+/** King of the Hill's state: every position inside the world, the radius and the clock inside what
+ * the mode can produce, and at most one score per slot, none past the target. */
+function isValidKothState(message: Record<string, unknown>): boolean {
+  const pair = (value: unknown): boolean => Array.isArray(value) && value.length === 2 && areCoords(value[0], value[1]);
+  const { radius, moveIn, hold, holder, crown, crownAt, scores } = message;
+  return pair(message.hill) && pair(message.next)
+    && isFiniteNumber(radius) && (radius as number) > 0 && (radius as number) <= 50
+    && isFiniteNumber(moveIn) && (moveIn as number) >= 0 && (moveIn as number) <= 600
+    && (hold === 'empty' || hold === 'held' || hold === 'contested')
+    && (holder === null || isSlot(holder))
+    && (crown === null || isSlot(crown))
+    && (crownAt === null || pair(crownAt))
+    && typeof message.push === 'boolean' && typeof message.teams === 'boolean'
+    && Array.isArray(scores) && scores.length <= 4
+    && scores.every((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const { slot, score } = entry as { slot?: unknown; score?: unknown };
+      return isSlot(slot) && Number.isInteger(score) && (score as number) >= 0 && (score as number) <= KOTH_SCORE_TICK_MAX;
+    });
+}
+
+const HORDE_FLAVORS_ON_THE_WIRE: ReadonlySet<unknown> = new Set(['walker', 'jumper', 'flyer', 'brute', 'boss']);
+const isHordeBoss = (value: unknown): boolean => value === 'mother' || value === 'matriarch';
+/** The largest numbers a Goose Horde state may carry: far above what the mode produces. */
+export const HORDE_STATE_MAX_COUNT = 10_000;
+export const HORDE_STATE_MAX_HEALTH = 100_000;
+
+/** Goose Horde's state: small non-negative counts, a clock inside what the mode can produce, a boss
+ * whose health is within its maximum, and at most one kill count per slot. */
+function isValidHordeState(message: Record<string, unknown>): boolean {
+  const count = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= HORDE_STATE_MAX_COUNT;
+  const { wave, phase, nextIn, left, meter, need, boss, kills } = message;
+  const validBoss = boss === null || (typeof boss === 'object' && boss !== undefined && (() => {
+    const { id, hp, max } = boss as { id?: unknown; hp?: unknown; max?: unknown };
+    return isHordeBoss(id) && isFiniteNumber(hp) && isFiniteNumber(max)
+      && (max as number) > 0 && (max as number) <= HORDE_STATE_MAX_HEALTH && (hp as number) >= 0 && (hp as number) <= (max as number);
+  })());
+  return count(wave) && (wave as number) >= 1 && (phase === 'active' || phase === 'intermission')
+    && isFiniteNumber(nextIn) && (nextIn as number) >= 0 && (nextIn as number) <= 600
+    && count(left) && count(meter) && count(need) && validBoss
+    && Array.isArray(kills) && kills.length <= 4
+    && kills.every((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null) return false;
+      const { slot, kills: n } = entry as { slot?: unknown; kills?: unknown };
+      return isSlot(slot) && count(n);
+    });
 }
 
 /** Most pickups a state string may describe: far above any map's count, so a junk string is cheap to drop. */

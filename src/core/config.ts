@@ -253,6 +253,15 @@ export const PLAYER_MOVE_SPEED = 5;
 export const SPRINT_MULTIPLIER = 1.6;
 export const JUMP_SPEED = 6.5;
 export const RECOIL_DECAY = 8;
+/** How fast the kick settles while a burst is still going (per second, as a share of what is left):
+ * slow enough that an automatic's shots stack into a climb the player has to pull down. */
+export const RECOIL_DECAY_FIRING = 2.4;
+/** Seconds after a shot that count as "still firing" for the slower settle above. */
+export const RECOIL_HOLD_SECONDS = 0.16;
+/** The most a burst can lift and turn the view (radians): a long spray stops climbing here rather
+ * than pointing at the sky. */
+export const RECOIL_MAX_CLIMB = 0.3;
+export const RECOIL_MAX_SIDE = 0.12;
 export const FOOTSTEP_DISTANCE = 2.2;
 /** How fast an explosion knockback velocity bleeds off, same exponential-decay shape as
  * RECOIL_DECAY above (Player has no dynamic-body physics to lean on for a real impulse response -
@@ -412,11 +421,24 @@ export const ENEMY_KNOWLEDGE_SHARE_MAX_AGE = 1;
  * back to ENEMY_HEARING_RANGE (perception.ts's hearingRangeFor). */
 export const ENEMY_WEAPON_LOUDNESS_RANGE: Readonly<Record<string, number>> = {
   pistol: 30,
+  mp5: 34,
+  revolver: 55,
+  machinePistol: 32,
+  sawnOff: 55,
   rifle: 40,
+  smg: 34,
+  battleRifle: 50,
+  lmg: 50,
+  dmr: 55,
   shotgun: 50,
   sniper: 60,
   gooseLauncher: 45,
   knife: 0,
+  karambit: 0,
+  machete: 0,
+  tanto: 0,
+  hatchet: 0,
+  spike: 0,
   unarmed: 0,
   // Grenades (combat/grenades/GrenadeSystem.ts) go through the same hearing path as a shot.
   frag: 70,
@@ -811,56 +833,47 @@ export const GOOSE_THROW_MAX_LIFETIME_SECONDS = 5;
  * at the map center (the same point pickMultiplayerSpawnPoints already rings every player equally
  * around, so "spawn equidistant from the goose" needs no new placement math). Reuses
  * GOOSE_PICKUP_RADIUS for the pickup check. */
-export const KOTH_POINTS_TO_WIN = 90;
+export const KOTH_POINTS_TO_WIN = 120;
+/** Seconds between the host's King of the Hill state messages while nothing changes (a change
+ * goes out at once). */
+export const KOTH_STATE_SEND_INTERVAL = 0.2;
+/** Seed offset of the stream that picks the Valley's hill sites and their order. */
+export const HILL_SITE_SEED_OFFSET = 733;
 /** Whole seconds of continuous carry time before the carrier's own score increments by 1 (see
  * Game.ts's updateGoldenGoose) - "1 point per second held," per explicit user request. */
 export const KOTH_POINT_INTERVAL_SECONDS = 1;
 
-/** Goose Horde: wave-survival mode, single-player (PlaySetupModal toggle) and multiplayer
- * (co-op, see core/gameModes.ts's 'gooseHorde'). 10 waves, each escalating count/speed/aggression -
- * see docs/CHANGELOG.md for the full per-wave design table and rationale. `jumperChance`/
- * `flyerChance` are the probability (0-1) each individual spawn in that wave rolls as that
- * behavior flavor instead of a plain walker - see entities/HordeGoose.ts. */
+/** Goose Horde: wave survival, solo (PlaySetupModal) and co-op (core/gameModes.ts 'gooseHorde'),
+ * on one table of twelve waves (docs/goose-horde.md). `count` is the small geese for one player
+ * (entities/hordeRules.ts scales it to the squad); `jumperChance` and `flyerChance` are the odds
+ * each of them hatches as that kind instead of a walker; `brutes` are armoured geese on top of the
+ * count; `boss` makes it a boss wave: the boss comes first and the count is its escort. */
 export interface HordeWaveSpec {
   readonly count: number;
   readonly speedMultiplier: number;
   readonly jumperChance: number;
   readonly flyerChance: number;
+  readonly brutes?: number;
+  readonly boss?: 'mother' | 'matriarch';
 }
 export const HORDE_WAVE_TABLE: readonly HordeWaveSpec[] = [
-  { count: 5, speedMultiplier: 1.0, jumperChance: 0, flyerChance: 0 },
-  { count: 7, speedMultiplier: 1.1, jumperChance: 0, flyerChance: 0 },
-  { count: 9, speedMultiplier: 1.2, jumperChance: 0.2, flyerChance: 0 },
-  { count: 11, speedMultiplier: 1.3, jumperChance: 0.3, flyerChance: 0 },
-  { count: 13, speedMultiplier: 1.4, jumperChance: 0.4, flyerChance: 0.1 },
-  { count: 15, speedMultiplier: 1.5, jumperChance: 0.4, flyerChance: 0.2 },
-  { count: 18, speedMultiplier: 1.6, jumperChance: 0.45, flyerChance: 0.25 },
-  { count: 21, speedMultiplier: 1.7, jumperChance: 0.5, flyerChance: 0.3 },
-  { count: 25, speedMultiplier: 1.85, jumperChance: 0.55, flyerChance: 0.35 },
-  { count: 30, speedMultiplier: 2.0, jumperChance: 0.6, flyerChance: 0.4 },
+  { count: 6, speedMultiplier: 1.0, jumperChance: 0, flyerChance: 0 },
+  { count: 9, speedMultiplier: 1.1, jumperChance: 0.15, flyerChance: 0 },
+  { count: 12, speedMultiplier: 1.2, jumperChance: 0.25, flyerChance: 0, brutes: 1 },
+  { count: 14, speedMultiplier: 1.3, jumperChance: 0.3, flyerChance: 0.1 },
+  { count: 16, speedMultiplier: 1.4, jumperChance: 0.35, flyerChance: 0.15, brutes: 2 },
+  { count: 10, speedMultiplier: 1.4, jumperChance: 0.3, flyerChance: 0.1, boss: 'mother' },
+  { count: 20, speedMultiplier: 1.55, jumperChance: 0.4, flyerChance: 0.2, brutes: 2 },
+  { count: 24, speedMultiplier: 1.65, jumperChance: 0.45, flyerChance: 0.25, brutes: 3 },
+  { count: 28, speedMultiplier: 1.75, jumperChance: 0.5, flyerChance: 0.3, brutes: 3 },
+  { count: 32, speedMultiplier: 1.85, jumperChance: 0.5, flyerChance: 0.35, brutes: 4 },
+  { count: 36, speedMultiplier: 2.0, jumperChance: 0.55, flyerChance: 0.4, brutes: 5 },
+  { count: 16, speedMultiplier: 2.0, jumperChance: 0.5, flyerChance: 0.3, brutes: 2, boss: 'matriarch' },
 ];
-/** Multiplayer's own, harder, 15-wave table (per explicit user request: "much more difficult...
- * and up to 15 waves") - a real co-op squad can bring more sustained firepower to bear than a
- * single player, so this isn't just the single-player table extended, it's steeper at every
- * comparable wave (higher starting count, faster ramp, jumpers/flyers introduced a wave or two
- * earlier) and keeps climbing for 5 more waves past where single-player's finale sits. */
-export const HORDE_WAVE_TABLE_MULTIPLAYER: readonly HordeWaveSpec[] = [
-  { count: 8, speedMultiplier: 1.1, jumperChance: 0, flyerChance: 0 },
-  { count: 11, speedMultiplier: 1.2, jumperChance: 0.1, flyerChance: 0 },
-  { count: 14, speedMultiplier: 1.3, jumperChance: 0.25, flyerChance: 0 },
-  { count: 17, speedMultiplier: 1.4, jumperChance: 0.35, flyerChance: 0.1 },
-  { count: 20, speedMultiplier: 1.5, jumperChance: 0.4, flyerChance: 0.15 },
-  { count: 24, speedMultiplier: 1.6, jumperChance: 0.45, flyerChance: 0.2 },
-  { count: 28, speedMultiplier: 1.7, jumperChance: 0.5, flyerChance: 0.25 },
-  { count: 32, speedMultiplier: 1.8, jumperChance: 0.5, flyerChance: 0.3 },
-  { count: 36, speedMultiplier: 1.9, jumperChance: 0.55, flyerChance: 0.35 },
-  { count: 40, speedMultiplier: 2.0, jumperChance: 0.6, flyerChance: 0.4 },
-  { count: 45, speedMultiplier: 2.1, jumperChance: 0.6, flyerChance: 0.45 },
-  { count: 50, speedMultiplier: 2.2, jumperChance: 0.65, flyerChance: 0.5 },
-  { count: 55, speedMultiplier: 2.3, jumperChance: 0.65, flyerChance: 0.55 },
-  { count: 60, speedMultiplier: 2.4, jumperChance: 0.7, flyerChance: 0.55 },
-  { count: 70, speedMultiplier: 2.5, jumperChance: 0.75, flyerChance: 0.6 },
-];
+/** Seconds between brutes entering a wave, so they arrive through it rather than all at once. */
+export const HORDE_BRUTE_SPAWN_INTERVAL = 7;
+/** Seconds between the host's Goose Horde state messages (the wave panel's numbers). */
+export const HORDE_STATE_SEND_INTERVAL = 0.5;
 /** Caps how many horde geese exist on the map at once regardless of a wave's total `count` - my
  * own addition (not explicitly requested), necessary so wave 10's "A LOT" doesn't tank frame rate.
  * Remaining spawns for a wave queue up and trickle in as earlier ones die/explode, so pressure
@@ -875,8 +888,8 @@ export const HORDE_WAVE_TABLE_MULTIPLAYER: readonly HordeWaveSpec[] = [
  * but the back half of the table actually gets visibly denser wave over wave instead of flat. */
 export const HORDE_MAX_CONCURRENT_BASE = 12;
 export const HORDE_MAX_CONCURRENT_CEILING = 24;
-/** Breather between waves, long enough to read the "Wave N incoming" toast and catch a breath. */
-export const HORDE_WAVE_INTERMISSION_SECONDS = 4;
+/** Breather between waves: long enough to reload, reach a supply drop and revive a teammate. */
+export const HORDE_WAVE_INTERMISSION_SECONDS = 8;
 /** Base chase speed (m/s) before a wave's speedMultiplier - noticeably faster than the passive
  * GOOSE_WANDER_SPEED (1) since a horde goose is actively hunting, not ambling; at wave 10's 2.0x
  * multiplier this reaches player sprint speed (PLAYER_MOVE_SPEED * SPRINT_MULTIPLIER = 8),
@@ -953,14 +966,14 @@ export const HORDE_STARTING_RESERVE_MAGAZINES = 3;
  * pickup feels proportionally as generous for a 30-round rifle as a 5-round sniper. */
 export const HORDE_AMMO_DROP_REFILL_MAGAZINES = 2;
 /** Never more than this many ammo crates live on the map at once. */
-export const HORDE_AMMO_DROP_MAX_CONCURRENT = 3;
+export const HORDE_AMMO_DROP_MAX_CONCURRENT = 6;
 /** Slow-ish spawn cadence (per explicit user request) - a fresh roll for the next drop's delay
  * happens only once the concurrent count is back under the cap. */
 export const HORDE_AMMO_DROP_MIN_SPAWN_DELAY_SECONDS = 30;
 export const HORDE_AMMO_DROP_MAX_SPAWN_DELAY_SECONDS = 60;
 /** "Not far from players" (per explicit user request) - a drop spawns within this radius of a
  * randomly chosen currently-connected player's current position, not anywhere on the map. */
-export const HORDE_AMMO_DROP_SPAWN_RADIUS = 18;
+export const HORDE_AMMO_DROP_SPAWN_RADIUS = 9;
 /** How close a player must walk to auto-collect a drop - no interact key needed, just proximity,
  * matching a typical FPS ammo crate rather than requiring a deliberate pickup action. */
 export const HORDE_AMMO_DROP_PICKUP_RADIUS = 1.8;

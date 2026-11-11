@@ -2,6 +2,7 @@ import { LobbyScene } from '../lobby/LobbyScene.ts';
 import { MainMenu } from '../ui/menu/MainMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
+import { WorkbenchScreen } from '../ui/menu/WorkbenchScreen.ts';
 import { PlaySetupModal, type MatchSetupConfig } from '../ui/menu/PlaySetupModal.ts';
 import { LoadingScreen } from '../ui/menu/LoadingScreen.ts';
 import { MultiplayerMenu } from '../ui/menu/MultiplayerMenu.ts';
@@ -28,6 +29,7 @@ export class App {
   // Assigned in create() before enterLobby() shows the menu that can open it - LoadoutScreen's
   // creation is async (it renders each weapon's preview thumbnail), unlike the other lobby panels.
   private loadoutScreen!: LoadoutScreen;
+  private readonly skinsScreen: WorkbenchScreen;
   private readonly loadingScreen: LoadingScreen;
   private playSetupModal: PlaySetupModal | null = null;
   private readonly multiplayerMenu: MultiplayerMenu;
@@ -50,6 +52,12 @@ export class App {
       onMultiplayer: () => this.multiplayerMenu.show(),
       onSettings: () => this.settingsPanel.show(),
       onLoadout: () => this.loadoutScreen.show(),
+      onSkins: () => this.skinsScreen.show(),
+    });
+    // Closing the Workbench returns to whatever opened it: the Loadout page then shows the new looks.
+    this.skinsScreen = new WorkbenchScreen(overlayRoot, () => {
+      this.skinsScreen.hide();
+      this.loadoutScreen.refreshSkins();
     });
     this.settingsPanel = new SettingsPanel(overlayRoot, () => this.settingsPanel.hide());
     this.loadingScreen = new LoadingScreen(overlayRoot);
@@ -88,7 +96,7 @@ export class App {
     overlayRoot: HTMLElement,
   ): Promise<App> {
     const app = new App(lobbyContainer, gameContainer, hudRoot, overlayRoot);
-    app.loadoutScreen = await LoadoutScreen.create(overlayRoot, () => app.loadoutScreen.hide());
+    app.loadoutScreen = await LoadoutScreen.create(overlayRoot, () => app.loadoutScreen.hide(), (weaponId) => app.skinsScreen.show(weaponId));
     await app.enterLobby();
     return app;
   }

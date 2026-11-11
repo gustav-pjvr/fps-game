@@ -215,6 +215,26 @@ describe('squad message validation', () => {
     expect(accepts({ type: 'linkQuality', links: [{ slot: 9, rttMs: 40, relay: false }] })).toBe(false);
   });
 
+  it('kothState needs every part of the hill inside what the mode can produce', () => {
+    const state = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] };
+    expect(accepts(state)).toBe(true);
+    expect(accepts({ ...state, crown: null, crownAt: [3, -4], hold: 'contested', holder: null })).toBe(true);
+    expect(accepts({ ...state, hill: [1e9, 0] })).toBe(false);
+    expect(accepts({ ...state, next: [0] })).toBe(false);
+    expect(accepts({ ...state, radius: 0 })).toBe(false);
+    expect(accepts({ ...state, radius: 500 })).toBe(false);
+    expect(accepts({ ...state, moveIn: -1 })).toBe(false);
+    expect(accepts({ ...state, hold: 'mine' })).toBe(false);
+    expect(accepts({ ...state, holder: 7 })).toBe(false);
+    expect(accepts({ ...state, crown: 4 })).toBe(false);
+    expect(accepts({ ...state, crownAt: [Number.NaN, 0] })).toBe(false);
+    expect(accepts({ ...state, push: 'yes' })).toBe(false);
+    expect(accepts({ ...state, scores: [{ slot: 0, score: 1e9 }] })).toBe(false);
+    expect(accepts({ ...state, scores: [{ slot: 0, score: 1.5 }] })).toBe(false);
+    expect(accepts({ ...state, scores: Array.from({ length: 5 }, () => ({ slot: 0, score: 1 })) })).toBe(false);
+    expect(accepts({ type: 'kothCrownClaim' })).toBe(true);
+  });
+
   it('goldenGooseState needs a carrier slot or null and three numbers', () => {
     expect(accepts({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 })).toBe(true);
     expect(accepts({ type: 'goldenGooseState', carrierSlot: null, x: 1, y: 2, z: 3 })).toBe(true);
@@ -279,6 +299,10 @@ describe('self-reported numbers and hello fields', () => {
     expect(raw({ ...snapshot, yaw: Number.POSITIVE_INFINITY })).toBe(false);
     expect(ok({ ...snapshot, health: -5 })).toBe(false);
     expect(ok({ ...snapshot, t: 'late' })).toBe(false);
+    // The held weapon and its skin are short optional ids: an older build sends neither.
+    expect(ok({ ...snapshot, w: 'battleRifle', k: 'whiteout' })).toBe(true);
+    expect(ok({ ...snapshot, w: 'x'.repeat(25) })).toBe(false);
+    expect(ok({ ...snapshot, k: 7 })).toBe(false);
     expect(ok({ type: 'footstepEvent', senderSlot: 2, x: 1, y: 2, z: 1e9 })).toBe(false);
     expect(ok({ type: 'respawnEvent', senderSlot: 2, x: 1, y: 2 })).toBe(false);
     expect(ok({ type: 'fireEvent', senderSlot: 2, originX: 0, originY: 0, originZ: 0, endX: 1, endY: 1, endZ: 1, weaponId: 'rifle' })).toBe(true);

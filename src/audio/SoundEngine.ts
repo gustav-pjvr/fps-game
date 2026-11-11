@@ -1,33 +1,8 @@
 import { Settings } from '../settings/Settings.ts';
-import { WEAPON_SOUND_PATHS } from './weaponSounds.ts';
+import { BLADE_SWINGS, DEFAULT_BLADE_SWING, DEFAULT_GUN_SOUND, GUN_SOUNDS, reloadSteps, type ReloadStep } from './weaponSounds.ts';
+import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { DEAF_CUTOFF_OPEN, flashDeafness, RING_FREQUENCY } from './flashDeafness.ts';
 import { heartbeatFor, MUSIC_SILENT, musicMix, outdoorAmbienceGain, reactorHumGain, reverbSendFor, undergroundReverbScale, valleyImpulse, type MusicMix, type PacingPhase } from './ambience.ts';
-
-async function loadWeaponSoundBuffers(ctx: AudioContext): Promise<Map<string, AudioBuffer>> {
-  const buffers = new Map<string, AudioBuffer>();
-  const entries = Object.entries(WEAPON_SOUND_PATHS).flatMap(([weaponId, paths]) => [
-    [`${weaponId}_shot`, paths.shot],
-    [`${weaponId}_reload`, paths.reload],
-  ]);
-
-  await Promise.all(
-    entries.map(async ([key, path]) => {
-      if (!key || !path) return;
-      try {
-        const response = await fetch(path);
-        const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-        buffers.set(key, audioBuffer);
-      } catch (error) {
-        // Missing/corrupt sample for one weapon shouldn't break the rest - playGunshot/
-        // playReloadClick fall back to procedural synthesis when a key has no buffer.
-        console.warn(`Failed to load weapon sound "${key}" from ${path}`, error);
-      }
-    }),
-  );
-
-  return buffers;
-}
 
 /** The enemy callouts (enemy AI v2 step 5) - see SoundEngine.playCallout. */
 export type CalloutSound = 'spotted' | 'flanking' | 'lostThem';
@@ -52,9 +27,9 @@ const CALLOUT_PATTERNS: Readonly<Record<CalloutSound, readonly (readonly [number
 };
 
 /**
- * Weapon shot/reload sounds play real recorded samples (see weaponSounds.ts) with a procedural
- * Web Audio synthesis fallback if a sample fails to load. Footstep/hit-confirm/player-hurt stay
- * fully procedural - no recorded assets for those.
+ * Every effect is procedural Web Audio synthesis: weapon shots, reloads and blade swings from the
+ * per-weapon profiles in weaponSounds.ts, footsteps, hit confirms and the rest from fixed recipes.
+ * The only recorded audio in a match is the indoor music track.
  */
 /** Overall level of the music bus before the music volume setting: music sits under the fight. */
 const MUSIC_LEVEL = 0.2;
@@ -113,7 +88,6 @@ export class SoundEngine {
   /** The flash ring, made on the first flash and kept running at zero gain after. */
   private ring: { oscillator: OscillatorNode; gain: GainNode } | null = null;
   private deafLevel = 0;
-  private readonly buffers: Map<string, AudioBuffer>;
   private keepAliveOscillator: OscillatorNode | null = null;
   /** The valley reverb (phase 6): sounds send into this, it returns into master. */
   private readonly reverbSend: GainNode;
@@ -129,9 +103,8 @@ export class SoundEngine {
   private pulseStep = 0;
   private nextBeatTime = 0;
 
-  private constructor(ctx: AudioContext, buffers: Map<string, AudioBuffer>) {
+  private constructor(ctx: AudioContext) {
     this.ctx = ctx;
-    this.buffers = buffers;
     this.master = ctx.createGain();
     this.master.gain.value = Settings.getMasterVolume();
     this.deafFilter = ctx.createBiquadFilter();
@@ -159,8 +132,7 @@ export class SoundEngine {
 
   static async create(): Promise<SoundEngine> {
     const ctx = new AudioContext({ latencyHint: 'interactive' });
-    const buffers = await loadWeaponSoundBuffers(ctx);
-    return new SoundEngine(ctx, buffers);
+    return new SoundEngine(ctx);
   }
 
   /** Chrome (and some other browsers) can idle-throttle an AudioContext's render thread during
@@ -268,34 +240,37 @@ export class SoundEngine {
    * louder/quieter with distance. The player's own shots always pass pan=0 - a shot fired from your
    * own gun has no meaningful direction relative to yourself. */
   playGunshot(weaponId: string, volumeScale = 1, pan = 0): void {
+    const sound = GUN_SOUNDS[weaponId] ?? DEFAULT_GUN_SOUND;
     // Every shot rings off the valley; a distant one is mostly that ring (phase 6).
     const wet = reverbSendFor(volumeScale, 0.22);
-    if (this.playBuffer(`${weaponId}_shot`, volumeScale, pan, wet)) return;
-
-    switch (weaponId) {
-      case 'pistol':
-        this.noiseBurst(0.09, 2200, 'lowpass', 0.5 * volumeScale, pan, wet);
-        this.tone(180, 0.05, 0.3 * volumeScale, 'square', pan, 0, wet);
-        break;
-      case 'rifle':
-        this.noiseBurst(0.06, 2600, 'lowpass', 0.4 * volumeScale, pan, wet);
-        this.tone(220, 0.04, 0.22 * volumeScale, 'square', pan, 0, wet);
-        break;
-      case 'shotgun':
-        this.noiseBurst(0.18, 700, 'lowpass', 0.7 * volumeScale, pan, wet);
-        this.tone(100, 0.12, 0.4 * volumeScale, 'sawtooth', pan, 0, wet);
-        break;
-      case 'sniper':
-        this.noiseBurst(0.22, 900, 'lowpass', 0.8 * volumeScale, pan, wet);
-        this.tone(90, 0.18, 0.5 * volumeScale, 'sawtooth', pan, 0, wet);
-        break;
-      default:
-        this.noiseBurst(0.1, 2000, 'lowpass', 0.5 * volumeScale, pan, wet);
-    }
+    // A few percent of pitch drift, so automatic fire is not one sample repeated.
+    const drift = 0.96 + Math.random() * 0.08;
+    const [crackTime, crackFrom, crackTo, crackGain] = sound.crack;
+    this.noiseBurst(crackTime, crackFrom * drift, 'lowpass', crackGain * volumeScale, pan, wet, crackTo * drift);
+    const [thumpFrom, thumpTo, thumpTime, thumpGain] = sound.thump;
+    this.thump(thumpFrom * drift, thumpTo * drift, thumpTime, thumpGain * volumeScale, pan, wet);
+    const [tailTime, tailFilter, tailGain] = sound.tail;
+    this.noiseBurst(tailTime, tailFilter, 'lowpass', tailGain * volumeScale, pan, Math.min(1, wet * 1.6), tailFilter * 0.35, 0.012);
+    if (sound.action) this.reloadStep('rack', sound.action[1] * volumeScale, pan, sound.action[0]);
   }
 
-  playKnifeSwing(volumeScale = 1, pan = 0): void {
-    this.noiseBurst(0.18, 3600, 'bandpass', 0.28 * volumeScale, pan, 0, 650, 0.025);
+  /** A blade through the air. `weaponId` picks the blade's own whoosh (weaponSounds.ts). */
+  playKnifeSwing(volumeScale = 1, pan = 0, weaponId = 'knife'): void {
+    const [duration, from, to, gain] = BLADE_SWINGS[weaponId] ?? DEFAULT_BLADE_SWING;
+    this.noiseBurst(duration, from, 'bandpass', gain * volumeScale, pan, 0, to, 0.025);
+  }
+
+  /** A short cue for a change in an objective: `gain` rises (your side took something), `lose`
+   * falls (the other side did), `alert` is three even pips (the objective itself changed). */
+  /** A teammate's ping (docs/coop.md): one short high note, quieter than an objective's cue. */
+  playPing(): void {
+    this.tone(988, 0.09, 0.1, 'sine');
+    this.tone(1319, 0.12, 0.08, 'sine', 0, 0.07);
+  }
+
+  playObjectiveCue(kind: 'gain' | 'lose' | 'alert'): void {
+    const notes = kind === 'gain' ? [523, 784] : kind === 'lose' ? [440, 294] : [660, 660, 660];
+    notes.forEach((frequency, i) => this.tone(frequency, 0.12, 0.16, 'triangle', 0, i * 0.11));
   }
 
   playKnifeHit(): void {
@@ -303,9 +278,33 @@ export class SoundEngine {
     this.noiseBurst(0.025, 2200, 'highpass', 0.16);
   }
 
+  /** The whole reload, scheduled now: each step of the weapon's reload (magazine out, magazine in,
+   * the action racked) at its moment in the weapon's reload time. */
   playReloadClick(weaponId: string): void {
-    if (this.playBuffer(`${weaponId}_reload`)) return;
-    this.noiseBurst(0.03, 3000, 'highpass', 0.18);
+    const reloadTime = WEAPON_DEFINITIONS[weaponId]?.reloadTime ?? 1.5;
+    for (const [fraction, step] of reloadSteps(weaponId)) this.reloadStep(step, 1, 0, fraction * reloadTime);
+  }
+
+  private reloadStep(step: ReloadStep, volumeScale: number, pan: number, delay: number): void {
+    switch (step) {
+      case 'out':
+        this.noiseBurst(0.035, 3400, 'highpass', 0.16 * volumeScale, pan, 0, undefined, 0, delay);
+        this.noiseBurst(0.06, 500, 'lowpass', 0.2 * volumeScale, pan, 0, undefined, 0, delay + 0.03);
+        break;
+      case 'in':
+        this.noiseBurst(0.07, 900, 'lowpass', 0.3 * volumeScale, pan, 0, undefined, 0, delay);
+        this.noiseBurst(0.025, 3800, 'highpass', 0.18 * volumeScale, pan, 0, undefined, 0, delay + 0.035);
+        break;
+      case 'shell':
+        this.noiseBurst(0.05, 1300, 'bandpass', 0.24 * volumeScale, pan, 0, undefined, 0, delay);
+        break;
+      case 'rack':
+        this.noiseBurst(0.045, 2600, 'bandpass', 0.26 * volumeScale, pan, 0, undefined, 0, delay);
+        this.noiseBurst(0.05, 3200, 'bandpass', 0.3 * volumeScale, pan, 0, undefined, 0, delay + 0.09);
+        break;
+      default:
+        this.noiseBurst(0.03, 3000, 'highpass', 0.18 * volumeScale, pan, 0, undefined, 0, delay);
+    }
   }
 
   /** `volumeScale`/`pan` follow the same convention as `playGunshot` - used for a multiplayer
@@ -635,25 +634,7 @@ export class SoundEngine {
   }
 
   /** Plays a preloaded recorded sample by key - returns false (does nothing) if it never loaded. */
-  private playBuffer(key: string, volumeScale = 1, pan = 0, wet = 0): boolean {
-    const buffer = this.buffers.get(key);
-    if (!buffer) return false;
-
-    const source = this.ctx.createBufferSource();
-    source.buffer = buffer;
-    const output = this.outputNode(pan, wet);
-    if (volumeScale !== 1) {
-      const gain = this.ctx.createGain();
-      gain.gain.value = Math.max(0, Math.min(1, volumeScale));
-      source.connect(gain).connect(output);
-    } else {
-      source.connect(output);
-    }
-    source.start();
-    return true;
-  }
-
-  private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number, pan = 0, wet = 0, endFilterFreq?: number, attack = 0): void {
+  private noiseBurst(duration: number, filterFreq: number, filterType: BiquadFilterType, gain: number, pan = 0, wet = 0, endFilterFreq?: number, attack = 0, delay = 0): void {
     const bufferSize = Math.floor(this.ctx.sampleRate * duration);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -665,19 +646,39 @@ export class SoundEngine {
     const filter = this.ctx.createBiquadFilter();
     filter.type = filterType;
     filter.frequency.value = filterFreq;
+    const start = this.ctx.currentTime + delay;
     if (endFilterFreq !== undefined) {
-      filter.frequency.setValueAtTime(filterFreq, this.ctx.currentTime);
-      filter.frequency.exponentialRampToValueAtTime(endFilterFreq, this.ctx.currentTime + duration);
+      filter.frequency.setValueAtTime(filterFreq, start);
+      filter.frequency.exponentialRampToValueAtTime(endFilterFreq, start + duration);
     }
 
     const envelope = this.ctx.createGain();
-    envelope.gain.setValueAtTime(attack > 0 ? 0 : gain, this.ctx.currentTime);
-    if (attack > 0) envelope.gain.linearRampToValueAtTime(gain, this.ctx.currentTime + attack);
-    envelope.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+    envelope.gain.setValueAtTime(attack > 0 || delay > 0 ? 0 : gain, this.ctx.currentTime);
+    if (delay > 0 && attack <= 0) envelope.gain.setValueAtTime(gain, start);
+    if (attack > 0) {
+      envelope.gain.setValueAtTime(0, start);
+      envelope.gain.linearRampToValueAtTime(gain, start + attack);
+    }
+    envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
 
     source.connect(filter).connect(envelope).connect(this.outputNode(pan, wet));
-    source.start();
-    source.stop(this.ctx.currentTime + duration);
+    source.start(start);
+    source.stop(start + duration);
+  }
+
+  /** The low body of a gunshot: a sine that starts at once and falls in pitch as it dies. */
+  private thump(from: number, to: number, duration: number, gain: number, pan = 0, wet = 0): void {
+    const oscillator = this.ctx.createOscillator();
+    oscillator.type = 'sine';
+    const start = this.ctx.currentTime;
+    oscillator.frequency.setValueAtTime(from, start);
+    oscillator.frequency.exponentialRampToValueAtTime(to, start + duration);
+    const envelope = this.ctx.createGain();
+    envelope.gain.setValueAtTime(gain, start);
+    envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
+    oscillator.connect(envelope).connect(this.outputNode(pan, wet));
+    oscillator.start(start);
+    oscillator.stop(start + duration);
   }
 
   /** `delay` (seconds) schedules the tone after now - used to string notes into a callout. */
