@@ -56,10 +56,10 @@ describe('e2e spec selection', () => {
     expect(groupsForFiles(['e2e/enemy-ai.spec.ts', 'src/entities/enemies/Enemy.ts']).specs).toEqual([]);
   });
 
-  it('an unnamed src file falls back to the full smoke spec, which covers the quick tests', () => {
+  it('an unnamed src file falls back to the core specs (the full smoke spec, which covers the quick tests, and gun handling)', () => {
     const selection = groupsForFiles(['src/utils/rng.ts']);
     expect(selection.groups).toEqual(['core']);
-    expect(playwrightRuns(selection)).toEqual([{ files: ['e2e/smoke.spec.ts'] }]);
+    expect(playwrightRuns(selection)).toEqual([{ files: ['e2e/smoke.spec.ts', 'e2e/gun-handling.spec.ts'] }]);
   });
 
   it('a render change runs only the quick tests; perf is never chosen by a change', () => {
