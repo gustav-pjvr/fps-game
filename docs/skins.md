@@ -37,7 +37,7 @@ aim. Two checks hold it:
 - `src/weapons/models/weaponModels.test.ts` builds every weapon in every skin (19 x 6) and checks
   the aim point, the clear line of aim, the draw-call and triangle budgets, the arms, and that each
   skin's features are really there.
-- `e2e/skins.spec.ts` (group `skins`) opens the Skins screen, equips every skin on every gun, reads
+- `e2e/skins.spec.ts` (group `skins`) opens the Workbench, equips every skin on every gun, reads
   the preview's measured offset between the sight and the crosshair (`data-sight-offset`, in
   pixels) and saves a screenshot of each aimed view.
 
@@ -53,7 +53,7 @@ The snapshot fields `w` (weapon id) and `k` (skin id) carry what a player holds;
 builds that weapon in that skin in the player's hand (`entities/heldWeapon.ts`). An unknown skin id
 shows Service.
 
-## The Skins screen
+## Skins on the Workbench
 
 Skins are now a section of the Workbench (main menu, WORKBENCH, or Edit weapon on the Loadout):
 docs/attachments.md describes the page. The six skins are a row of cards under the weapon

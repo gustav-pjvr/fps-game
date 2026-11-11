@@ -323,3 +323,55 @@ supersedes the last line of D28. D29 stays as the design to start from when the 
 nothing of it is built. Uplink and Showdown ship solo; their rules already take a list of players.
 
 - Reason (Gustav's): his call; no reason given.
+
+## D31. Attachments change no handling (default, 2026-11-11)
+
+A laser sight and a weapon torch were asked for as attachments. Neither changes spread, recoil,
+damage or speed: the laser draws a dot, the torch moves the player's light from the shoulder to the
+gun. A laser that tightens hip fire would be a balance change nobody asked for.
+
+- Reason: the request was to design and build the attachments and a place to manage them.
+- Gustav may overrule: one number per gun in `gunHandling.ts` would do it.
+
+## D32. Which guns take which attachment (default, 2026-11-11)
+
+Nine of the thirteen guns have a mount (table in `attachments.md`). The revolver, the sawn-off, the
+sniper rifle and the launcher have none: no rail and no free barrel on the models as built. The
+pistol has one rail, so it carries one unit at a time.
+
+- Reason: Gustav's rule was that an attachment fits only guns allowed to take it and is not shown
+  otherwise. The list itself is mine.
+
+## D33. Attachments are not sent to other players (deferred, 2026-11-11)
+
+The snapshot carries the held weapon and its skin. Adding the fit would change the snapshot format,
+which the relay branch also reads. Other players therefore see a bare gun.
+
+- Reason: keep the network format unchanged while `feature/server-relay` is unmerged.
+
+## D34. The Workbench was built without a mock-up round (2026-11-11)
+
+Gustav's global rules ask for two or three mock-ups before a new screen. His message said to go
+ahead and design and build, so the page was built directly, then reviewed independently and fixed.
+
+## D35. Grenade numbers (default, 2026-11-11)
+
+Throw 21 m/s with a 0.1 rad lob; restitution 0.4; no bounce under 1.4 m/s; contact friction 0.45;
+rolling resistance 0.45 of the weight; frag 160 within 2 m, squared falloff to 9 m; knockback to
+6 m; cover by legs, chest and head; frag fuse 3.5 s (was 3.0). The flash keeps its fuse and its
+blinding and only gets the new flight.
+
+- Reason: Gustav asked for a complete redo of design, explosion, radius, damage and physics and
+  gave no numbers. These were chosen from how a real fragmentation grenade behaves, scaled to the
+  game's gravity (20 m/s2) and 100 health, then checked in a match.
+
+## D36. Right-side handles are worked by the right hand (default, 2026-11-11)
+
+Gustav offered two fixes for hands cutting through guns in a reload: flip the gun's design, or tilt
+the gun. Holding the gun in the left hand was ruled out. Chosen instead of either: the support hand
+only ever works parts on the left or underneath, and a handle on the right is racked by the right
+hand while the left holds the handguard, as the marksman and sniper rifles already did.
+
+- Reason: no model changes, one rule for all thirteen guns, and no hand ever crosses the gun.
+- Gustav may overrule: moving the battle rifle's and the machine gun's handles to the left side is
+  the alternative, if the right glove reads as too large while racking.

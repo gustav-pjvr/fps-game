@@ -52,6 +52,34 @@ every decision and its reason is in `docs/fable-rebuild-decisions.md` (D1 to D27
 **Showdown, the Director mode rebuilt** (`docs/showdown.md`)
 - Five acts and a finale with the Warden, a score multiplier, two redeploys, a graded end screen. Solo.
 
+## Follow-ups after the handover (2026-11-11)
+
+Five more requests from Gustav, all on this branch and on the preview. Each has its own doc.
+
+| Request | What changed | Doc |
+|---|---|---|
+| Spread and recoil by the kind of gun | Each gun has its own spread (aimed, hip, moving, bloom) and recoil pattern | `gun-handling.md` |
+| Knife, carry and inspect animations | Inspect no longer swings a forearm across the view; slash, sprint carry and holster fixed | `arsenal-modelling.md`, CHANGELOG |
+| A stray piece beside the guns | It was the old torch body, hung on the weapon's outer group. Removed; a unit test now fails on floating geometry | `facility-map.md` section 7 |
+| Attachments and a per-gun edit page | Laser sight and weapon torch for nine guns; the Workbench replaces the Skins screen | `attachments.md` |
+| Grenades redone | Flight (lob, bounce, roll, rest), frag damage (distance to the body, cover by body part), explosion effect | `grenades.md` |
+| Reload hands cutting through guns | Each hand stays on its own side: rifle bolt catch on the left; battle rifle and machine gun racked by the right hand | `arsenal-modelling.md` |
+
+Evidence for these (2026-11-11): typecheck clean; unit suite 1983 of 1983; `e2e/skins.spec.ts`
+attachments test and equip test pass; `ui-qa.spec.ts` passes for the Workbench and the Loadout at
+desktop and phone width; `e2e/grenades.spec.ts` 2 of 2; `e2e/gun-handling.spec.ts` 2 of 2. An
+independent visual review of the Workbench found three real defects, all fixed.
+
+Not verified for these: the aim-proof loop over all 114 weapon and skin combinations was not rerun
+after the Workbench replaced the Skins screen (its unit-test twin passes); attachments, the laser
+dot and the new grenades were not played with two clients; the reload fix was judged from frame
+captures in the weapon lab, not in a match; nothing was checked on a real phone or a real GPU.
+
+Defaults taken without asking, which Gustav may overrule (decisions D31 to D36): attachments change
+no handling and are not sent to other players; without a torch fitted the light comes from the
+shoulder; frag 160 damage within 2 m to nothing at 9 m; throw 21 m/s with a lob; frag fuse 3.5 s;
+right-side handles are worked by the right hand instead of flipping the models.
+
 ## What to try first
 
 1. Main menu, **SKINS**: pick a weapon, try each skin, switch between the three previews.
@@ -201,6 +229,7 @@ the new weapon models under a real match's worth of other players.
   written down (decision D29: the host simulates every enemy, guests mirror them, enemy damage rides
   the existing `damageEvent`). None of it is built.
 - **The full Playwright suite** (see Evidence).
+- **Attachments on other players:** the snapshot carries the skin but not the fit, so everyone else sees a bare gun.
 - **`server/`, `ServerTransport`, the relay and `feature/server-relay`** were not touched, as required.
 
 ## Known issues

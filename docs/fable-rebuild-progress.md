@@ -135,3 +135,15 @@ is no longer sent in a room.
 - The battle rifle's aimed view shows more of the receiver below the sight than the reference rifle
   (its rear sight sits far forward); the LMG's rear sight is chunky at the hip. Both pass the aim test.
 - The architecture docs still describe King of the Hill and Goose Horde as first built.
+
+## 2026-11-11: follow-ups
+
+- Gun handling by kind of gun (`gun-handling.md`); animation fixes (inspect, slash, sprint carry).
+- Stray torch body removed; `floatingGeometry.test.ts` added; debug hook `getNearEyeObjects`.
+- Attachments (`attachments.ts`, `core/attachments.ts`, `LaserDot.ts`) and the Workbench
+  (`WorkbenchScreen.ts`; `SkinsScreen.ts` deleted). Independent review, three defects fixed.
+- Grenades rebuilt: `grenadeFlight.ts`, `grenadeBlast.ts`, `grenadeTuning.ts`, `FragExplosion.ts`.
+- Reload clips of the rifle, battle rifle and machine gun: each hand on its own side.
+- Test tooling: `holdTime` and `stepTime` also step the per-frame effects; the weapon lab takes
+  `a=` (attachments), `pitch=`, `zoom=` and `reload=`.
+- Release brief for the main session: `release-v5-brief.md`.

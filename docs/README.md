@@ -39,6 +39,9 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 | [gun-handling.md](gun-handling.md) | Spread and recoil by the kind of gun: the model, every gun's numbers, what is sourced and what is estimated |
 | [skins.md](skins.md) | The six skins, storage, the aim proof |
 | [attachments.md](attachments.md) | Laser and torch, which guns take them, the Workbench page |
+| [release-v5-brief.md](release-v5-brief.md) | Brief for the session that merges and deploys v5.0.0 |
+| [fable-working-notes.md](fable-working-notes.md) | How to work on this repo with Gustav and on this machine: what the v5.0.0 session learnt |
+| [sound-and-glass-brief.md](sound-and-glass-brief.md) | Brief for the next Fable session: sound redesign and breakable glass windows |
 | [arsenal-modelling.md](arsenal-modelling.md) | How to write a weapon model with the kit |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |
 | [visual-overhaul.md](visual-overhaul.md), [visual-overhaul-ui.md](visual-overhaul-ui.md) | The v4.0 look, HUD and menu reskin |
