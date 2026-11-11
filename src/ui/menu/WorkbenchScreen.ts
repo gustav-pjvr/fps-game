@@ -136,6 +136,7 @@ function ensureWorkbenchStyleInjected(): void {
     `  position: absolute; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 4; display: none; flex-direction: column; gap: 16px; box-sizing: border-box;` +
     `  padding: 18px 20px; overflow-y: auto; background: rgba(6, 20, 23, 0.96); border: 1px solid ${HAIRLINE}; border-radius: 2px; backdrop-filter: blur(10px); }` +
     '.wb-sheet[data-open="true"] { display: flex; }' +
+    `.wb-sheet-head { position: sticky; top: -18px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -18px -20px 0; padding: 14px 20px 10px; background: rgba(6, 20, 23, 0.98); }` +
     '.wb-sheet-group { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px; }' +
     '.wb-sheet-group > :first-child { grid-column: 1 / -1; padding: 0 12px 4px; }' +
     '.wb-weapon {' +
@@ -362,6 +363,17 @@ export class WorkbenchScreen {
     this.sheet = element('nav', 'wb-sheet wb-scroll');
     this.sheet.id = 'workbench-sheet';
     this.sheet.setAttribute('aria-label', 'Weapons');
+    // Its own way out, always in view: on a phone the sheet covers the whole page.
+    const sheetHead = element('div', 'wb-sheet-head');
+    const sheetClose = element('button', 'wb-seg', 'Back');
+    sheetClose.type = 'button';
+    sheetClose.dataset.testid = 'workbench-weapons-close';
+    sheetClose.addEventListener('click', () => {
+      this.setSheetOpen(false);
+      this.weaponsButton.focus();
+    });
+    sheetHead.append(createEyebrow('All weapons'), sheetClose);
+    this.sheet.appendChild(sheetHead);
     for (const category of CATEGORIES) {
       const group = element('div', 'wb-sheet-group');
       group.setAttribute('role', 'group');
