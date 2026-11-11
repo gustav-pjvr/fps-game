@@ -5,7 +5,8 @@ Written 2026-11-11 by the session that carried out `docs/sound-and-glass-brief.m
 the branch. Nothing was pushed to `master`, merged or deployed to production; no branch or worktree
 was deleted; `server/`, `ServerTransport` and `feature/server-relay` were not touched.
 
-Preview: PREVIEW_URL
+Preview: https://sound-glass.hunter-n-goose.pages.dev (the sound test page is
+https://sound-glass.hunter-n-goose.pages.dev/soundlab). The live game is unchanged at 5.0.0.
 
 As built: `docs/sound.md`, `docs/glass.md`. Decisions: `docs/sound-glass-decisions.md`.
 
@@ -41,18 +42,52 @@ sound. It is the same for every player, a late joiner included, and survives a h
 
 ## Evidence
 
-**Unit tests.** 2,153 tests in 161 files pass; typecheck clean. New: `spatial`, `occlusion`, `mix`,
+**Unit tests.** 2,142 tests in 160 files pass; typecheck clean. New: `spatial`, `occlusion`, `mix`,
 `soundProbe` (a Rapier world), `glassPane`, `GlassStore`, `glassSync`, and added cases in
 `ambience`, `protocol` and `valleyHouses`.
 
 **Rendered audio** (`node scripts/soundRender.mjs`, every one of the 77 sounds rendered offline
 through the game's own engine in Chromium; all checks pass):
 
-SOUND_NUMBERS
+| What | Measured |
+|---|---|
+| The player's own shot, peak at full volume | pistol 0.32, rifle 0.31, battle rifle 0.46, shotgun 0.61, sniper 0.70 |
+| A rifle 3 m away, 120 m away | -35.2 dB, -49.4 dB, and less than half as bright |
+| The same rifle 8 m away behind a wall, behind a window | 9 dB and 3.5 dB under the open air |
+| A source on the left | 1.2 to 5 times louder in the left ear, and 0.75 ms earlier there |
+| A rifle with HRTF: how unlike "in front" (0 is identical) | behind 0.47, below 0.28, above 0.22 |
+| A rifle at 120 m arrives | 0.30 s late (0.29 expected) |
+| A firefight in one render (5 guns, a frag, a goose, a window) | peak 0.977: no clipping |
+| Night mode | a footstep at 10 m comes up 11 dB; the firefight peaks at 0.66 |
+| The ring 0.4 s after the player's own shot | in a house -82.7 dB, Facility -64.2 dB, valley -64.0 dB |
+
+Above is the weakest of the directions: it differs from in front, but least. Expect it to be the
+hardest to hear. The Facility's ring measures almost the same as the valley's at 0.4 s.
 
 **Browser specs,** each run alone from a snapshot of the commit:
 
-SPEC_RESULTS
+| Spec | Result |
+|---|---|
+| `glass.spec.ts` (2 tests) | passed |
+| `multiplayer-glass.spec.ts` (two players and a rejoin) | passed |
+| `soundlab.spec.ts` (3 tests, desktop and phone, axe clean) | passed |
+| `smoke.spec.ts` @quick (4) | passed |
+| `grenades.spec.ts` (2) | passed |
+| `houses.spec.ts` (2) | passed |
+| `enemy-ai.spec.ts` (10) | passed |
+| `facility.spec.ts` (2), `facility-doors.spec.ts` (1) | passed |
+| `ui-qa.spec.ts` (14, includes the Settings screen at both widths) | passed |
+| `multiplayer-combat.spec.ts` | **timed out, on this branch and on untouched `master` alike** |
+
+The multiplayer combat spec runs two full-size software-rendered players at about 1.6 frames a
+second on this machine and cannot finish inside its 150 s limit. It was run on a fresh copy of
+`master` at 5d4b8ef and failed the same way, so it says nothing about the branch either way. A
+script that repeats its steps on the branch showed shots firing, sounds placed and no page errors.
+The glass, grenade, houses and regression specs above ran before the audit fixes went in; after
+them, typecheck and the unit suite were run, not the browser specs.
+
+Not run: the groups `mission`, `modes`, `skins`, `world`, `pickups`, `mp4`, and the rest of `mp`,
+`ai` (`director.spec.ts`) and `core` (`gun-handling.spec.ts`, the non-quick smoke tests).
 
 **Frame captures** (`scripts/glassShots.mjs`): one window in every state, from outside and inside,
 at Medium and Low, with the clock held for the burst. Looked at: the hole sits where the hit was
@@ -63,9 +98,33 @@ the opening, the broken window keeps a jagged rim, pieces lie on the floor and t
 **Occlusion cost.** At most 10 ray casts per sound, at spawn. Measured in a unit test: about 17
 microseconds per probe through one wall in a world of 200 colliders.
 
-**Performance against the base.** PERF_RESULTS
+**Performance against the base.** `e2e/perf-log.spec.ts` headed (real GPU, 20 enemies,
+the fight phase), on a fresh copy of `master` and on this branch, back to back:
 
-**Independent audit.** AUDIT_RESULTS
+| Run | fps | render ms per frame | frame p95 ms | ai ms per tick | physics ms per tick | draw calls |
+|---|---|---|---|---|---|---|
+| Medium, master | 59.2 | 6.55 | 18.3 | 1.18 | 3.41 | 596 |
+| Medium, branch | 59.0 | 7.40 | 19.0 | 1.07 | 3.58 | 576 |
+| Low, master | 59.9 | 2.30 | 18.3 | 1.11 | 4.75 | 47 |
+| Low, branch | 59.9 | 2.12 | 18.3 | 1.29 | 3.18 | 47 |
+
+Both sit on the 60 fps cap. Medium shows 0.85 ms more render time in this one pair of runs; the
+fights differ from run to run and Low shows none, so it is not proven to be the glass, and not
+ruled out. One run each: treat it as "no visible cost", not as a precise figure. Logs:
+`C:\tmp\sound-glass-logs\perf\`. The script bundle grew from 4,130 kB to 4,201 kB (the main chunk
+plus the engine chunk the test page shares).
+
+**Independent audit.** An Opus 5.5 reviewer with a fresh context read the branch. No
+critical or high findings: hostile or malformed glass messages cannot throw, corrupt state or grow
+memory, and a hit cannot be applied twice. One medium and seven low findings, all fixed: a silent
+limit on drawn panes (now warns; the Valley has about 110 of 768), crack patterns that depended on
+the order hits arrived in (now seeded by position), enemy boots never crunching on shards, the
+heartbeat having moved bus, a blade hit also voiced as a bullet, a wall bounce able to ring as
+glass, four draw calls instead of two, and rays cast for sounds that were then dropped. A second
+reviewer re-checked the fixes: six right, one needing more (the grenade's glass contact, redone so
+the step's hardest contact decides), one housekeeping item missed (done). Before that, the unit
+test author found three issues, also fixed: the ground muffling less than three walls, a hit of
+under one point leaving a free hole, and a stale night-mode expectation.
 
 ## What is not verified
 
@@ -79,7 +138,14 @@ microseconds per probe through one wall in a world of 200 colliders.
   night, in fog and at a distance are not.
 - **Firefox and Safari.** Only Chromium was run. The engine falls back to the older listener and
   panner methods where the newer ones are missing, untested.
-- UNVERIFIED_EXTRA
+- **The last fixes in a browser.** The audit fixes (above) were verified by typecheck and the
+  unit suite only. The one that changes behaviour in play is the grenade's bounce off glass.
+- **Multiplayer sound.** That another player's shots and steps are placed correctly was seen in a
+  script (voices opened, no errors), not asserted by a spec, and never heard.
+- **A real firefight's load.** HRTF with many voices was not measured on a slow machine; 3D Audio
+  off is the cheaper path if it ever stutters.
+- **No listening tool was used.** The brief allowed a Gemini listening pass as a second opinion; it
+  was not done. Every statement about sound here is a measurement.
 
 ## New network messages
 
