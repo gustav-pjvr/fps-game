@@ -84,11 +84,13 @@ const paneFragment = /* glsl */ `
 
   // One bullet hole at h (metres from the pane's centre): the hole itself (gone), the crushed white
   // rim and the cracks running out from it (white). grow lengthens the cracks as the pane weakens.
-  void hole(vec2 h, float index, float grow, inout float gone, inout float white) {
+  void hole(vec2 h, float grow, inout float gone, inout float white) {
     vec2 d = vP - h;
     float r = length(d);
     if (r > 0.4 * grow) return;
-    float seed = vInfo.z * 31.0 + index * 7.3;
+    // Seeded by where the hole is, not by its place in the list: two players who received the same
+    // hits in a different order still see the same cracks.
+    float seed = vInfo.z * 31.0 + dot(h, vec2(127.1, 311.7));
     gone = max(gone, 1.0 - smoothstep(0.008, 0.012, r));
     white = max(white, (1.0 - smoothstep(0.014, 0.032, r)) * 0.9);
     float spokes = 7.0 + floor(hash(seed) * 4.0);
@@ -107,14 +109,14 @@ const paneFragment = /* glsl */ `
     float gone = 0.0;
     float white = 0.0;
     float grow = 1.0 + 0.16 * count;
-    if (count > 0.5) hole(vHoles0.xy, 0.0, grow, gone, white);
-    if (count > 1.5) hole(vHoles0.zw, 1.0, grow, gone, white);
-    if (count > 2.5) hole(vHoles1.xy, 2.0, grow, gone, white);
-    if (count > 3.5) hole(vHoles1.zw, 3.0, grow, gone, white);
-    if (count > 4.5) hole(vHoles2.xy, 4.0, grow, gone, white);
-    if (count > 5.5) hole(vHoles2.zw, 5.0, grow, gone, white);
-    if (count > 6.5) hole(vHoles3.xy, 6.0, grow, gone, white);
-    if (count > 7.5) hole(vHoles3.zw, 7.0, grow, gone, white);
+    if (count > 0.5) hole(vHoles0.xy, grow, gone, white);
+    if (count > 1.5) hole(vHoles0.zw, grow, gone, white);
+    if (count > 2.5) hole(vHoles1.xy, grow, gone, white);
+    if (count > 3.5) hole(vHoles1.zw, grow, gone, white);
+    if (count > 4.5) hole(vHoles2.xy, grow, gone, white);
+    if (count > 5.5) hole(vHoles2.zw, grow, gone, white);
+    if (count > 6.5) hole(vHoles3.xy, grow, gone, white);
+    if (count > 7.5) hole(vHoles3.zw, grow, gone, white);
     if (gone > 0.5) discard;
 
     vec2 toEdge = vHalf - abs(vP);
@@ -192,6 +194,7 @@ export class GlassView {
   private readonly slotOf = new Map<number, number>();
   private readonly freeSlots: number[] = [];
   private used = 0;
+  private warnedFull = false;
   private readonly flying: FlyingShard[] = [];
   private nextFlying = 0;
   private airborne = 0;
@@ -234,6 +237,9 @@ export class GlassView {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      // One draw, not three's default two (back faces, then front) for a see-through double-sided
+      // material: a flat pane has nothing behind itself to sort.
+      forceSinglePass: true,
     }));
     this.panes.name = 'window-glass';
     this.panes.frustumCulled = false;
@@ -243,7 +249,7 @@ export class GlassView {
     triangle.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, -0.35, 0.55, 0, -0.2, -0.1, 0, 0.6], 3));
     triangle.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
     this.shards = new THREE.InstancedMesh(triangle,
-      new THREE.MeshLambertMaterial({ name: 'window-shards', color: 0xc4e2e6, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }), SHARDS);
+      new THREE.MeshLambertMaterial({ name: 'window-shards', color: 0xc4e2e6, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false, forceSinglePass: true }), SHARDS);
     this.shards.name = 'window-shards';
     this.shards.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.shards.frustumCulled = false;
@@ -276,7 +282,13 @@ export class GlassView {
     let slot = this.slotOf.get(id);
     if (slot === undefined) {
       slot = this.freeSlots.pop() ?? (this.used < MAX_PANES ? this.used++ : -1);
-      if (slot < 0) return;
+      if (slot < 0) {
+        // The Valley has about 110 windows; a world that outgrows the pool must say so, because an
+        // undrawn pane would still stop grenades and muffle sound.
+        if (!this.warnedFull) console.warn(`More than ${MAX_PANES} windows are streamed in: some glass is not drawn (GlassView.MAX_PANES)`);
+        this.warnedFull = true;
+        return;
+      }
       this.slotOf.set(id, slot);
       this.panes.geometry.instanceCount = this.used;
     }

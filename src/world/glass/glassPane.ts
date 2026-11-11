@@ -198,8 +198,6 @@ export function sweepPane(pane: WorldPane, from: Point, to: Point, radius: numbe
   const px = from.x + (to.x - from.x) * at - pane.x, pz = from.z + (to.z - from.z) * at - pane.z;
   const u = px * pane.ux + pz * pane.uz, v = from.y + (to.y - from.y) * at - pane.y;
   if (Math.abs(u) > pane.halfWidth + radius * 0.5 || Math.abs(v) > pane.halfHeight + radius * 0.5) return null;
-  // A ball already past the plane's face on its own side is not stopped by the edge it is leaving.
-  if (start < 0) return null;
   return { at, u: Math.max(-pane.halfWidth, Math.min(pane.halfWidth, u)), v: Math.max(-pane.halfHeight, Math.min(pane.halfHeight, v)), side: sign > 0 ? -1 : 1 };
 }
 

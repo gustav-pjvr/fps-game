@@ -963,6 +963,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       return pane;
     }
     if (!hit) return null;
+    // The step's latest contact is this solid, not glass: its bounce must not ring or knock a pane.
+    this.struckGlass = null;
     // normal1 is the ball's own outward normal at the contact (the ball is never rotated, so local
     // is world): the surface's normal is its opposite.
     const n = hit.normal1;

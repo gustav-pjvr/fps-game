@@ -79,7 +79,8 @@ a broken window comes back broken with its shards on the floor and a cracked one
 
 ## Drawing and cost
 
-Two draw calls and two materials for every window in the world, in every state:
+Two draw calls and two materials for every window in the world, in every state (both materials
+are single-pass: three would otherwise draw a see-through double-sided material twice):
 
 - **Panes:** one instanced quad per streamed-in window (room for 768), one `ShaderMaterial`. A
   pane's holes travel as instance attributes (four `vec4`, two holes each) with its hole count,

@@ -445,15 +445,21 @@ export class SoundEngine {
     const relative = relativeToListener(this.pose, source);
     const loudness = LOUDNESS[spec.kind];
     const carried = distanceGain(loudness, relative.distance);
-    const occlusion = this.occlusionOverride ?? (carried > SILENT_BELOW && this.probe ? this.probe(this.pose.position, source) : CLEAR);
-    const gain = carried * occlusion.gain * (spec.gain ?? 1);
-    if (gain < SILENT_BELOW) {
+    const reach = carried * (spec.gain ?? 1);
+    if (reach < SILENT_BELOW) {
       this.stats.inaudible++;
       return null;
     }
     // Over the cap only the loud survive: a far footstep must not cost a near shot its voice.
-    if (this.live.length >= MAX_SPATIAL_VOICES && gain < 0.2) {
+    // Checked before the world is asked anything, so a dropped sound costs no rays.
+    if (this.live.length >= MAX_SPATIAL_VOICES && reach < 0.2) {
       this.stats.overCap++;
+      return null;
+    }
+    const occlusion = this.occlusionOverride ?? (this.probe ? this.probe(this.pose.position, source) : CLEAR);
+    const gain = reach * occlusion.gain;
+    if (gain < SILENT_BELOW) {
+      this.stats.inaudible++;
       return null;
     }
     input.gain.value = gain;
@@ -1043,8 +1049,9 @@ export class SoundEngine {
     while (this.nextBeatTime < now + SCHEDULE_AHEAD) {
       const at = this.nextBeatTime;
       // Lub, then a softer, lower dub.
-      this.scheduledTone(58, at, 0.12, 0.55 * beat.gain, 'sine', this.buses.ui);
-      this.scheduledTone(49, at + 0.17, 0.11, 0.38 * beat.gain, 'sine', this.buses.ui);
+      // Straight to the master, as it always was: the player's own pulse is not an effect.
+      this.scheduledTone(58, at, 0.12, 0.55 * beat.gain, 'sine', this.master);
+      this.scheduledTone(49, at + 0.17, 0.11, 0.38 * beat.gain, 'sine', this.master);
       this.nextBeatTime += 60 / beat.bpm;
     }
   }

@@ -83,7 +83,9 @@ source and the listener (`probeSoundPath`):
 | Three or more | 0.1 | 430 Hz |
 | The ground (a hill, or a lab under the valley) | 0.08 | 380 Hz |
 
-**Budget:** at most 10 ray casts per sound (`MAX_CASTS`), at spawn only, never per frame. The
+**Budget:** at most 10 ray casts per sound (`MAX_CASTS`; a cast that crosses a lab's cut zone asks
+the physics up to four times), at spawn only, never per frame, and never for a sound already dropped
+as too quiet or over the voice cap. The
 longest positioned one-shot lasts about 1.6 s, so none is refreshed while it plays. Only fixed
 world colliders count (walls, floors, doors, terrain, trees, crates); players, enemies and sensors
 do not. Terrain inside a lab's cut zone is skipped the way shots skip it. Measured cost is in the
@@ -157,7 +159,7 @@ carries on, now placed in the world and on a bus. "New" did not exist.
 | Hit confirm | Kept, refined | A second partial; kept apart from every world sound on purpose. |
 | Player hurt | Kept, refined | A small mid tick added. |
 | Ping, objective cues, pickups, torch click | Kept | Interface sounds, on the interface bus, never ducked. |
-| Heartbeat | Kept | On the interface bus. |
+| Heartbeat | Kept | Straight to the master, as before. |
 | Wind | New | See "Buildings matter". |
 | Reactor hum, combat music, Facility music | Kept | Unchanged. |
 

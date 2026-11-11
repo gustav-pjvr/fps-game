@@ -1483,7 +1483,8 @@ export class Game {
         scopeOverlay,
         (point, isEntityHit) => {
           impactMarkers.spawn(point, isEntityHit);
-          game.impactSound(point, isEntityHit);
+          // A blade has its own sound (playKnifeHit below); only rounds strike like bullets.
+          if (WEAPON_DEFINITIONS[game.weaponManager.activeWeaponId]?.kind !== 'melee') game.impactSound(point, isEntityHit);
           // Once per tick: this fires per pellet, so a shotgun blast stacked up to 8 hit sounds.
           if (isEntityHit && game.lastHitConfirmTick !== game.tickCount) {
             game.lastHitConfirmTick = game.tickCount;
@@ -1605,7 +1606,9 @@ export class Game {
           const reach = origin.distanceTo(end);
           if (reach > 0.01) game.shootGlass(origin, end.clone().sub(origin).divideScalar(reach), reach, 1);
         },
-        onFootstep: (position, running) => sound.playFootstep(game.stepSurfaceAt(position), running ? 'run' : 'walk', position, true),
+        // `position` is at the feet; stepSurfaceAt takes a body's centre.
+        onFootstep: (position, running) => sound.playFootstep(
+          game.stepSurfaceAt({ x: position.x, y: position.y + PLAYER_HEIGHT / 2, z: position.z }), running ? 'run' : 'walk', position, true),
         onMeleeSwing: (origin) => sound.playMeleeSwing(origin),
         // Enemy AI v2 step 5: the squad's voiced callout for this tick, and visual cues - both
         // attenuated and panned like enemy gunshots, so they read as coming from that enemy.
