@@ -94,7 +94,8 @@
     </style>
   </head>
   <body>
-    <div class="wrap">
+    <!-- One landmark holds the whole page, the status line included. -->
+    <main class="wrap">
       <header class="top">
         <a class="back" href="/">Back to the game</a>
         <h1>Sound test</h1>
@@ -104,9 +105,9 @@
            between every two plays. -->
       <div class="controls" id="placement"></div>
       <div class="options" id="options"></div>
-      <main id="sounds"></main>
-    </div>
-    <div class="status" id="status" role="status" aria-live="polite">Press any Play button to start the audio.</div>
+      <div id="sounds"></div>
+      <div class="status" id="status" role="status" aria-live="polite">Press any Play button to start the audio.</div>
+    </main>
     <script type="module" src="/src/soundlab/soundLab.ts"></script>
   </body>
 </html>
