@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WEAPON_DEFINITIONS, weaponIdsIn } from './definitions.ts';
-import { BLOOM_SETTLE_SECONDS, MOA, recoilForShot, SPRAY_RESET_SECONDS, spreadForShot, SprayState, type GunRecoil, type GunSpread } from './gunHandling.ts';
+import { BLOOM_HOLD_SECONDS, BLOOM_SETTLE_SECONDS, MOA, recoilForShot, SPRAY_RESET_SECONDS, spreadForShot, SprayState, type GunRecoil, type GunSpread } from './gunHandling.ts';
 
 const GUN_IDS = [...weaponIdsIn('primary'), ...weaponIdsIn('secondary')];
 const gun = (id: string): { spread: GunSpread; recoil: GunRecoil; fireRate: number; automatic: boolean } => {
@@ -98,10 +98,30 @@ describe('SprayState', () => {
     const spray = new SprayState();
     for (let i = 0; i < 10; i++) spray.shot(spread);
     expect(spray.bloom).toBeCloseTo(spread.bloomMax);
+    // Nothing settles for a moment after a shot, so shots in quick succession stack.
+    spray.update(BLOOM_HOLD_SECONDS, spread);
+    expect(spray.bloom).toBeCloseTo(spread.bloomMax);
     spray.update(BLOOM_SETTLE_SECONDS / 2, spread);
     expect(spray.bloom).toBeCloseTo(spread.bloomMax / 2);
     spray.update(BLOOM_SETTLE_SECONDS, spread);
     expect(spray.bloom).toBe(0);
+  });
+
+  it('keeps the bloom of automatic fire through the gaps between its shots, and lets slow aimed fire recover', () => {
+    const rifle = WEAPON_DEFINITIONS['rifle']!;
+    const spray = new SprayState();
+    for (let i = 0; i < 8; i++) {
+      spray.shot(rifle.spread!);
+      spray.update(1 / rifle.fireRate, rifle.spread!);
+    }
+    expect(spray.bloom).toBeCloseTo(Math.min(rifle.spread!.bloomMax, 8 * rifle.spread!.bloomPerShot));
+
+    const revolver = WEAPON_DEFINITIONS['revolver']!;
+    const slow = new SprayState();
+    slow.shot(revolver.spread!);
+    // One long frame covering the whole gap between two revolver shots still only settles the part past the hold.
+    slow.update(1 / revolver.fireRate, revolver.spread!);
+    expect(slow.bloom).toBeLessThan(revolver.spread!.bloomPerShot * 0.5);
   });
 
   it('starts fresh for another weapon', () => {

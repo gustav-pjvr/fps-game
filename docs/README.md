@@ -36,6 +36,7 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 | [goose-buster.md](goose-buster.md) | The exploding goose, and King of the Hill and Goose Horde as first built (history) |
 | [enemy-ai-v2.md](enemy-ai-v2.md) | The enemy AI as built (step by step) |
 | [arsenal.md](arsenal.md) | The v5.0.0 arsenal: all 19 weapons and their numbers, models, clips, sounds, the aim rule |
+| [gun-handling.md](gun-handling.md) | Spread and recoil by the kind of gun: the model, every gun's numbers, what is sourced and what is estimated |
 | [skins.md](skins.md) | The six skins, storage, the Skins screen, the aim proof |
 | [arsenal-modelling.md](arsenal-modelling.md) | How to write a weapon model with the kit |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |

@@ -43,7 +43,11 @@ export interface GunRecoil {
 
 /** Seconds without a shot after which a burst is over: the next shot is a first shot again. */
 export const SPRAY_RESET_SECONDS = 0.38;
-/** Seconds bloom takes to settle from its most to nothing once the firing stops. */
+/** Seconds after a shot before bloom starts to settle: shots closer together than this stack (any
+ * automatic, a pistol fired fast), slower aimed fire (the revolver, the marksman rifle) recovers
+ * between shots. */
+export const BLOOM_HOLD_SECONDS = 0.22;
+/** Seconds bloom then takes to settle from its most to nothing. */
 export const BLOOM_SETTLE_SECONDS = 0.45;
 /** How far through its weave one shot of sustained fire moves the burst (radians of phase). */
 const WEAVE_STEP = 0.85;
@@ -100,7 +104,9 @@ export class SprayState {
   update(dt: number, spread: GunSpread): void {
     this.sinceShot += dt;
     if (this.sinceShot >= SPRAY_RESET_SECONDS) this.shots = 0;
-    if (this.bloomValue > 0) this.bloomValue = Math.max(0, this.bloomValue - (spread.bloomMax / BLOOM_SETTLE_SECONDS) * dt);
+    // Only the time past the hold settles anything, so a slow frame cannot eat a burst's bloom.
+    const settling = Math.min(dt, this.sinceShot - BLOOM_HOLD_SECONDS);
+    if (this.bloomValue > 0 && settling > 0) this.bloomValue = Math.max(0, this.bloomValue - (spread.bloomMax / BLOOM_SETTLE_SECONDS) * settling);
   }
 
   /** A shot was fired: read `shotIndex` and `bloom` for it before calling this. */

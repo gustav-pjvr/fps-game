@@ -5,7 +5,7 @@
 /** Spec files by group. `quick` is the four `@quick` smoke tests, not a file of its own. */
 export const GROUPS = {
   quick: { files: ['e2e/smoke.spec.ts'], grep: '@quick' },
-  core: { files: ['e2e/smoke.spec.ts'] },
+  core: { files: ['e2e/smoke.spec.ts', 'e2e/gun-handling.spec.ts'] },
   ai: { files: ['e2e/enemy-ai.spec.ts', 'e2e/director.spec.ts'] },
   mission: { files: ['e2e/mission.spec.ts'] },
   ui: { files: ['e2e/ui-qa.spec.ts'] },

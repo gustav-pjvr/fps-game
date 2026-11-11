@@ -28,6 +28,11 @@ The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/ars
 - **Handling that tells them apart.** Damage falls off with distance, recoil kicks up and to a side,
   heavy weapons aim more slowly and slow the player a little. Each weapon has its own reload and
   inspect animation (inspect with G, or D-pad down).
+- **Spread and recoil by the kind of gun.** Aimed and still, a gun shoots as straight as the real
+  thing (half a minute of angle for the sniper rifle, about four for the assault rifle); the hip,
+  movement and a long burst open it up. A burst climbs for its first rounds, then settles and weaves
+  from side to side in a pattern that can be learned, and each kick is sized to its cartridge and
+  the weight behind it. Shotgun patterns are tighter and barely change when aimed. `docs/gun-handling.md`.
 - **Blades have two attacks.** A click and an aimed click are different strikes with their own
   damage, reach, speed and swing; a strike hits each target once (the knife no longer kills in one
   clean hit).

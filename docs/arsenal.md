@@ -11,7 +11,7 @@ by code in this repository (`public/assets/credits/README.md`); no weapon asset 
 - Animation clips: `src/weapons/animation/`. Blade swings: `src/weapons/meleeSwing.ts`.
 - The weapon in play: `src/weapons/WeaponManager.ts`, `Weapon.ts`.
 - Sounds: `src/audio/weaponSounds.ts`, played by `SoundEngine`.
-- Skins: `docs/skins.md`.
+- Skins: `docs/skins.md`. Spread and recoil: `docs/gun-handling.md` (the recoil columns in the tables below are each gun's first-shot kick; the full numbers are there).
 
 ## What changed for a player
 
