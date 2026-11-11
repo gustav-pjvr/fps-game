@@ -185,7 +185,7 @@ import { MISSION_EXPLANATION, MODE_EXPLANATIONS, SHOWDOWN_EXPLANATION } from './
 import { equippedGrenade, loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
-import { probeOcclusion } from '../world/soundProbe.ts';
+import { probeOcclusion, probeStats } from '../world/soundProbe.ts';
 import { poseFromQuaternion, type Vec3Like } from '../audio/spatial.ts';
 import type { ListenerSpace } from '../audio/occlusion.ts';
 import type { Surface } from '../audio/surfaces.ts';
@@ -1144,6 +1144,29 @@ export class Game {
         };
       },
       setTowerDoor: (index, open) => (this.buildings ? this.facilityInteraction?.requestState('door', towerDoorId(index), open) ?? false : false),
+      getGlassDebug: (radius) => {
+        const houses = this.buildings?.houses;
+        if (!houses) return null;
+        const at = this.player.position;
+        return {
+          streamed: houses.glass.streamedCount,
+          revision: houses.glass.revision,
+          drawn: houses.glassCounts(),
+          panes: houses.glass.streamed()
+            .filter((pane) => radius === undefined || Math.hypot(pane.x - at.x, pane.z - at.z) <= radius)
+            .map((pane) => {
+              const state = houses.glass.stateOf(pane.id);
+              return { id: pane.id, x: pane.x, y: pane.y, z: pane.z, ux: pane.ux, uz: pane.uz, nx: pane.nx, nz: pane.nz, halfWidth: pane.halfWidth, halfHeight: pane.halfHeight, damage: state.damage, broken: state.broken, holes: [...state.holes] };
+            }),
+        };
+      },
+      hitGlass: (id, u, v, power) => {
+        const houses = this.buildings?.houses;
+        if (!houses?.isPaneId(id) || houses.glass.stateOf(id).broken) return false;
+        this.hitGlass(id, u, v, power, -1, true);
+        return true;
+      },
+      getSoundDebug: () => ({ voices: { ...this.sound.stats }, probe: { ...probeStats }, space: this.listenerSpace() }),
       getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
       shootLamp: (index) => (this.facility ? this.destroyFacilityLamp(index, true) : this.destroyHouseLamp(index, true)),
       lampPosition: (index) => this.facility?.world.lampPosition(index) ?? null,
@@ -3936,6 +3959,14 @@ export class Game {
           this.thrownGeese.delete(thrown.id);
         }
         continue;
+      }
+
+      // This player's goose goes through a window like anything heavy: the pane it crosses breaks
+      // and the goose flies on (docs/glass.md).
+      const flown = Math.hypot(thrown.position.x - fromX, thrown.position.y - fromY, thrown.position.z - fromZ);
+      if (flown > 1e-4) {
+        this.shootGlass({ x: fromX, y: fromY, z: fromZ },
+          { x: (thrown.position.x - fromX) / flown, y: (thrown.position.y - fromY) / flown, z: (thrown.position.z - fromZ) / flown }, flown, BREAK_POWER);
       }
 
       const groundY = this.facility ? sampleHeight(thrown.position.x, thrown.position.z)

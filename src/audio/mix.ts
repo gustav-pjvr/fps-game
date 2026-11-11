@@ -7,15 +7,17 @@
 /** `blast` is its own bus so an explosion is not ducked by itself. */
 export type SoundBus = 'weapons' | 'movement' | 'world' | 'voices' | 'blast' | 'ui';
 
-/** Each bus's level before the effects volume. Weapons lead, the world sits under them, and the
- * interface is clear without being loud. */
+/** Each bus's level before the effects volume, set from the offline measurements
+ * (scripts/soundRender.mjs) so that at full volume the player's own pistol peaks near 0.3, a sniper
+ * and a near frag reach the limiter, a footstep sits near 0.05 and the interface near 0.1 to 0.2.
+ * Weapons lead, the world sits under them, and the interface is clear without being loud. */
 export const BUS_LEVELS: Readonly<Record<SoundBus, number>> = {
-  weapons: 0.62,
-  movement: 0.9,
-  world: 0.8,
-  voices: 0.8,
-  blast: 0.85,
-  ui: 0.8,
+  weapons: 1.6,
+  movement: 2.4,
+  world: 1.6,
+  voices: 0.75,
+  blast: 1.3,
+  ui: 1.3,
 };
 
 /** A near explosion pulls these down for a moment. The interface (hit ticks, objective cues) and the
@@ -48,9 +50,27 @@ export interface Dynamics {
  * The master dynamics. Full range is a limiter: nothing happens until several loud sounds stack
  * up, then the peaks are held under clipping. Night mode is a compressor: quiet sounds (footsteps,
  * a far shot) come up and loud ones come down, for playing at low volume.
+ *
+ * `makeup` is on top of the browser's own: a DynamicsCompressorNode already raises its output by
+ * an amount it derives from its settings. That amount is not what the textbook formula gives, so
+ * night mode's makeup was set by measurement (scripts/soundRender.mjs): a footstep ten metres away
+ * comes up about 6 dB while a firefight comes down. The soft clipper after it (softClip) holds
+ * whatever the compressor's attack lets through.
  */
 export function dynamicsFor(range: DynamicRange): Dynamics {
   return range === 'night'
-    ? { threshold: -34, knee: 14, ratio: 5, attack: 0.004, release: 0.22, makeup: 2.6 }
+    ? { threshold: -36, knee: 12, ratio: 8, attack: 0.001, release: 0.2, makeup: 1.4 }
     : { threshold: -5, knee: 4, ratio: 20, attack: 0.002, release: 0.12, makeup: 1 };
+}
+
+/** Below this the soft clipper leaves a sample alone. */
+export const CLIP_KNEE = 0.7;
+
+/** The last stage before the master volume: straight up to CLIP_KNEE, then bending so that no
+ * input, however large, leaves above 1. A compressor's attack lets a transient through; this is
+ * what makes "never clips" true rather than likely. */
+export function softClip(sample: number): number {
+  const size = Math.abs(sample);
+  if (size <= CLIP_KNEE) return sample;
+  return Math.sign(sample) * (CLIP_KNEE + (1 - CLIP_KNEE) * Math.tanh((size - CLIP_KNEE) / (1 - CLIP_KNEE)));
 }

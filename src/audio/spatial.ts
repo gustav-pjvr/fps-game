@@ -29,8 +29,8 @@ export interface Loudness {
 export type LoudnessKind = 'gunshot' | 'explosion' | 'footstep' | 'voice' | 'world' | 'impact' | 'small' | 'blade';
 
 export const LOUDNESS: Readonly<Record<LoudnessKind, Loudness>> = {
-  gunshot: { refDistance: 8, rolloff: 1, maxDistance: 400, floor: 0.05, airHalving: 45 },
-  explosion: { refDistance: 10, rolloff: 1, maxDistance: 500, floor: 0.05, airHalving: 60 },
+  gunshot: { refDistance: 8, rolloff: 1, maxDistance: 400, floor: 0.05, airHalving: 30 },
+  explosion: { refDistance: 10, rolloff: 1, maxDistance: 500, floor: 0.05, airHalving: 45 },
   footstep: { refDistance: 2, rolloff: 1.1, maxDistance: 32, floor: 0, airHalving: 22 },
   voice: { refDistance: 5, rolloff: 1, maxDistance: 70, floor: 0, airHalving: 40 },
   world: { refDistance: 4, rolloff: 1, maxDistance: 60, floor: 0, airHalving: 35 },
@@ -82,9 +82,11 @@ export function arrivalDelay(distance: number): number {
 }
 
 /** How much more of a sound goes to the reverb as it gets farther: a distant shot is mostly its
- * ring off the valley, a close one mostly itself. `base` is the send up close. */
+ * ring off the valley, a close one mostly itself. `base` is the send up close; it grows up to four
+ * times with distance, so a sound that barely rings up close (a footstep) still barely rings far
+ * away and keeps its direction. */
 export function reverbSendAt(base: number, gain: number): number {
-  return Math.max(0, Math.min(1, base + 0.5 * (1 - Math.max(0, Math.min(1, gain)))));
+  return Math.max(0, Math.min(1, base * (1 + 3 * (1 - Math.max(0, Math.min(1, gain))))));
 }
 
 export interface ListenerPose {
@@ -138,12 +140,15 @@ export function poseFromQuaternion(position: Vec3Like, q: { readonly x: number; 
 
 /** The cutoff a sound from straight behind is held to when HRTF is off: plain stereo panning cannot
  * tell front from back, so the rear is made duller, the way the outer ear does it. */
-export const REAR_CUTOFF = 5200;
+export const REAR_CUTOFF = 3200;
+/** With HRTF on the ear model already colours the rear; a lighter shadow backs it up, because a
+ * generic ear model alone is often heard front to back. */
+export const REAR_CUTOFF_HRTF = 8000;
 
-/** Low-pass cutoff (Hz) standing in for the ear's shadow when HRTF is off: open ahead and to the
- * sides, closing as the source moves behind the head. */
-export function rearShadowCutoff(front: number): number {
+/** Low-pass cutoff (Hz) standing in for the ear's shadow: open ahead and to the sides, closing to
+ * `rear` as the source moves behind the head. */
+export function rearShadowCutoff(front: number, rear = REAR_CUTOFF): number {
   if (front >= 0) return OPEN_CUTOFF;
   const behind = Math.min(1, -front);
-  return OPEN_CUTOFF * Math.pow(REAR_CUTOFF / OPEN_CUTOFF, behind);
+  return OPEN_CUTOFF * Math.pow(rear / OPEN_CUTOFF, behind);
 }

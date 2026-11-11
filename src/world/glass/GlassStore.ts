@@ -64,6 +64,11 @@ export class GlassStore {
     return this.panes.size;
   }
 
+  /** Every pane streamed in right now. */
+  streamed(): WorldPane[] {
+    return [...this.panes.values()];
+  }
+
   private isIntact(id: number): boolean {
     return !this.states.get(id)?.broken;
   }

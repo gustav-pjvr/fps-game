@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sound test | Hunter 'n Goose</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#071518" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;600;700&family=Martian+Mono:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #e9efe9;
+        --ink-dim: #93a8a0;
+        --hairline: rgba(202, 231, 219, 0.2);
+        --surface: rgba(16, 48, 52, 0.62);
+        --void: #071518;
+        --accent: #6ff0dc;
+        --accent-ink: #0d2a28;
+        --amber: #e8a64a;
+        --mono: 'Martian Mono', ui-monospace, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--void); color: var(--ink); font-family: 'Manrope', system-ui, sans-serif; }
+      body { min-height: 100vh; }
+      a { color: var(--accent); }
+      .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px 96px; }
+      header.top { padding: 28px 0 8px; }
+      header.top h1 { margin: 0 0 6px; font-size: 1.7rem; font-weight: 300; letter-spacing: 0.01em; }
+      header.top p { margin: 0; color: var(--ink-dim); max-width: 62ch; line-height: 1.5; }
+      .back { display: inline-flex; align-items: center; min-height: 44px; font-size: 0.85rem; }
+
+      .controls { position: sticky; top: 0; z-index: 5; margin: 12px -20px 0; padding: 12px 20px 14px; background: rgba(7, 21, 24, 0.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--hairline); }
+      .control + .control { margin-top: 10px; }
+      .options { padding: 14px 0 4px; }
+      .control-label { display: block; margin-bottom: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-dim); }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .chip {
+        min-height: 40px; padding: 0 12px; border: 1px solid var(--hairline); border-radius: 3px; background: transparent; color: var(--ink-dim);
+        font: 600 0.8rem 'Manrope', system-ui, sans-serif; cursor: pointer;
+      }
+      .chip:hover { color: var(--ink); border-color: var(--ink-dim); }
+      /* Selected is more than a colour: filled, heavier, and marked. */
+      .chip[aria-checked='true'] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+      .chip[aria-checked='true']::before { content: '\2713\00a0'; }
+      .hint { margin: 8px 0 0; min-height: 1.3em; font-size: 0.82rem; line-height: 1.3; color: var(--amber); }
+      .toggles { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+      .toggle { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--ink); font: 400 0.88rem 'Manrope', system-ui, sans-serif; cursor: pointer; }
+      .toggle .track { position: relative; width: 40px; height: 22px; flex: none; border: 1px solid var(--ink-dim); border-radius: 11px; }
+      .toggle .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-dim); transition: transform 120ms ease-out; }
+      .toggle[aria-checked='true'] .track { background: var(--accent); border-color: var(--accent); }
+      .toggle[aria-checked='true'] .track::after { transform: translateX(18px); background: var(--accent-ink); }
+      .toggle .state { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); min-width: 2.2em; }
+      .volume { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 0.88rem; }
+      .volume input { width: 150px; accent-color: var(--accent); }
+      .volume output { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); min-width: 3.2em; }
+
+      section.group { margin-top: 30px; }
+      section.group h2 { margin: 0 0 4px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline); font-size: 11px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-dim); }
+      .sounds { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); column-gap: 28px; }
+      .sound { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; border-bottom: 1px solid rgba(202, 231, 219, 0.08); }
+      .sound .name { font-size: 0.92rem; }
+      .sound .buttons { display: flex; gap: 6px; flex: none; }
+      .play {
+        min-width: 68px; min-height: 44px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 3px; background: transparent; color: var(--accent);
+        font: 700 0.74rem 'Manrope', system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer;
+      }
+      .play.mine { border-color: var(--hairline); color: var(--ink); }
+      .play:hover { background: rgba(111, 240, 220, 0.12); }
+      .play:active { background: var(--accent); color: var(--accent-ink); }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .status { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; padding: 10px 20px; background: rgba(7, 21, 24, 0.96); border-top: 1px solid var(--hairline); font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+      @media (max-width: 560px) {
+        .wrap { padding: 0 16px 96px; }
+        .controls { margin: 12px -16px 0; padding: 10px 16px 12px; }
+        header.top h1 { font-size: 1.4rem; }
+        .chip { min-height: 44px; padding: 0 10px; font-size: 0.78rem; }
+        .sounds { grid-template-columns: 1fr; }
+        /* The bar must not eat the phone's screen: the choices scroll sideways on one line each. */
+        .chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 0 16px 2px; scrollbar-width: none; }
+        .chips::-webkit-scrollbar { display: none; }
+        .chip { flex: none; }
+        .hint { min-height: 3.9em; }
+        .controls .control-label { margin-bottom: 4px; }
+      }
+      @media (prefers-reduced-motion: reduce) { .toggle .track::after { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <a class="back" href="/">Back to the game</a>
+        <h1>Sound test</h1>
+        <p>Every sound in the game. Choose where the sound comes from, then press Play on any sound. You stand still, facing forward. Use headphones to judge direction.</p>
+      </header>
+      <!-- Only the choice of place stays on screen while the list scrolls: it is the one control used
+           between every two plays. -->
+      <div class="controls" id="placement"></div>
+      <div class="options" id="options"></div>
+      <main id="sounds"></main>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite">Press any Play button to start the audio.</div>
+    <script type="module" src="/src/soundlab/soundLab.ts"></script>
+  </body>
+</html>

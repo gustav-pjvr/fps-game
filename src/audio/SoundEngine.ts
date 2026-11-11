@@ -5,10 +5,10 @@ import { DEAF_CUTOFF_OPEN, flashDeafness, RING_FREQUENCY } from './flashDeafness
 import { heartbeatFor, MUSIC_SILENT, musicMix, reactorHumGain, roomImpulse, valleyImpulse, windLevel, type MusicMix, type PacingPhase } from './ambience.ts';
 import { CLEAR, type ListenerSpace, type Occlusion } from './occlusion.ts';
 import {
-  airCutoff, arrivalDelay, distanceGain, LOUDNESS, OPEN_CUTOFF, rearShadowCutoff, relativeToListener, reverbSendAt,
+  airCutoff, arrivalDelay, distanceGain, LOUDNESS, REAR_CUTOFF, REAR_CUTOFF_HRTF, rearShadowCutoff, relativeToListener, reverbSendAt,
   type ListenerPose, type LoudnessKind, type Vec3Like,
 } from './spatial.ts';
-import { BUS_LEVELS, DUCKED_BUSES, dynamicsFor, MAX_SPATIAL_VOICES, SILENT_BELOW, type SoundBus } from './mix.ts';
+import { BUS_LEVELS, DUCKED_BUSES, dynamicsFor, MAX_SPATIAL_VOICES, SILENT_BELOW, softClip, type SoundBus } from './mix.ts';
 import type { Surface } from './surfaces.ts';
 
 /** The enemy callouts (enemy AI v2 step 5) - see SoundEngine.playCallout. */
@@ -53,6 +53,10 @@ const SCHEDULE_AHEAD = 0.2;
 const NOISE_SECONDS = 2;
 /** The wind bed's level at full, before the effects volume. */
 const WIND_LEVEL = 0.05;
+/** The soft clipper (mix.ts softClip) as a WaveShaper curve: how many times full scale it covers,
+ * and how finely. */
+const CLIP_REACH = 4;
+const CLIP_CURVE_POINTS = 4097;
 /** The least time between two casings' tinkles: automatic fire must not become a wind chime. */
 const CASING_GAP = 0.11;
 
@@ -226,7 +230,15 @@ export class SoundEngine {
     this.limiter = ctx.createDynamicsCompressor();
     this.makeup = ctx.createGain();
     this.effects = ctx.createGain();
-    this.effects.connect(this.limiter).connect(this.makeup).connect(this.master).connect(this.deafFilter).connect(ctx.destination);
+    // The soft clipper's curve covers inputs up to CLIP_REACH times full scale: the signal is
+    // scaled into the shaper's own -1 to 1 and the curve gives back real levels.
+    const clipInput = ctx.createGain();
+    clipInput.gain.value = 1 / CLIP_REACH;
+    const clipper = ctx.createWaveShaper();
+    const curve = new Float32Array(CLIP_CURVE_POINTS);
+    for (let i = 0; i < CLIP_CURVE_POINTS; i++) curve[i] = softClip(((i / (CLIP_CURVE_POINTS - 1)) * 2 - 1) * CLIP_REACH);
+    clipper.curve = curve;
+    this.effects.connect(this.limiter).connect(this.makeup).connect(clipInput).connect(clipper).connect(this.master).connect(this.deafFilter).connect(ctx.destination);
     this.duck = ctx.createGain();
     this.duck.connect(this.effects);
     const bus = (name: SoundBus): GainNode => {
@@ -345,11 +357,12 @@ export class SoundEngine {
   }
 
   /** Reads the audio settings (effects volume, night mode, 3D audio) and applies them; the Settings
-   * panel calls it after each change, so a running match follows at once. */
-  applySettings(): void {
-    this.effects.gain.value = Settings.getEffectsVolume();
-    this.hrtf = Settings.getSpatialAudio();
-    const dynamics = dynamicsFor(Settings.getNightAudio() ? 'night' : 'full');
+   * panel calls it after each change, so a running match follows at once. `overrides` stand in for
+   * the stored settings on the sound test page's measurements. */
+  applySettings(overrides: { readonly effects?: number; readonly spatial?: boolean; readonly night?: boolean } = {}): void {
+    this.effects.gain.value = overrides.effects ?? Settings.getEffectsVolume();
+    this.hrtf = overrides.spatial ?? Settings.getSpatialAudio();
+    const dynamics = dynamicsFor((overrides.night ?? Settings.getNightAudio()) ? 'night' : 'full');
     this.limiter.threshold.value = dynamics.threshold;
     this.limiter.knee.value = dynamics.knee;
     this.limiter.ratio.value = dynamics.ratio;
@@ -447,7 +460,7 @@ export class SoundEngine {
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.Q.value = 0.5;
-    filter.frequency.value = Math.min(airCutoff(loudness, relative.distance), occlusion.cutoff, this.hrtf ? OPEN_CUTOFF : rearShadowCutoff(relative.front));
+    filter.frequency.value = Math.min(airCutoff(loudness, relative.distance), occlusion.cutoff, rearShadowCutoff(relative.front, this.hrtf ? REAR_CUTOFF_HRTF : REAR_CUTOFF));
     const panner = this.ctx.createPanner();
     panner.panningModel = this.hrtf ? 'HRTF' : 'equalpower';
     // The loudness model is the engine's own (spatial.ts), so the panner only places the sound.
@@ -841,10 +854,10 @@ export class SoundEngine {
   playDoorSlide(closing: boolean, source: Vec3Like): void {
     const voice = this.open({ bus: 'world', kind: 'world', source, wet: 0.1, life: 0.8 });
     if (!voice) return;
-    this.noiseLayer(voice, { seconds: 0.6, filter: 'bandpass', from: 900, to: 420, gain: 0.2, attack: 0.08 });
-    this.toneLayer(voice, { from: closing ? 110 : 80, to: closing ? 80 : 110, seconds: 0.55, gain: 0.05, wave: 'sawtooth', attack: 0.08 });
-    this.toneLayer(voice, { from: closing ? 55 : 70, seconds: 0.16, gain: 0.22, delay: 0.56 });
-    this.noiseLayer(voice, { seconds: 0.03, filter: 'bandpass', from: 1400, gain: 0.12, delay: 0.56 });
+    this.noiseLayer(voice, { seconds: 0.6, filter: 'bandpass', from: 900, to: 420, gain: 0.14, attack: 0.08 });
+    this.toneLayer(voice, { from: closing ? 110 : 80, to: closing ? 80 : 110, seconds: 0.55, gain: 0.035, wave: 'sawtooth', attack: 0.08 });
+    this.toneLayer(voice, { from: closing ? 55 : 70, seconds: 0.16, gain: 0.14, delay: 0.56 });
+    this.noiseLayer(voice, { seconds: 0.03, filter: 'bandpass', from: 1400, gain: 0.09, delay: 0.56 });
   }
 
   /** A breaker lever thrown (section 12): a heavy clunk, then mains hum winding down when the zone
@@ -852,8 +865,8 @@ export class SoundEngine {
   playBreakerSwitch(on: boolean, source: Vec3Like): void {
     const voice = this.open({ bus: 'world', kind: 'world', source, wet: 0.1, life: 1.6 });
     if (!voice) return;
-    this.noiseLayer(voice, { seconds: 0.08, filter: 'lowpass', from: 650, gain: 0.45 });
-    this.toneLayer(voice, { from: 90, seconds: 0.12, gain: 0.28, wave: 'square' });
+    this.noiseLayer(voice, { seconds: 0.08, filter: 'lowpass', from: 650, gain: 0.4 });
+    this.toneLayer(voice, { from: 90, seconds: 0.12, gain: 0.16, wave: 'square' });
     if (on) this.toneLayer(voice, { from: 35, to: 100, seconds: 0.7, gain: 0.07, wave: 'sawtooth', attack: 0.08, delay: 0.05 });
     else this.toneLayer(voice, { from: 100, to: 30, seconds: 1.4, gain: 0.08, wave: 'sawtooth', attack: 0.08, delay: 0.05 });
   }
@@ -934,9 +947,9 @@ export class SoundEngine {
   playCallout(kind: CalloutSound, source: Vec3Like): void {
     const voice = this.open({ bus: 'voices', kind: 'voice', source, wet: 0.1, life: 0.35 });
     if (!voice) return;
-    this.noiseLayer(voice, { seconds: 0.04, filter: 'bandpass', from: 1800, gain: 0.14 });
+    this.noiseLayer(voice, { seconds: 0.04, filter: 'bandpass', from: 1800, gain: 0.12 });
     for (const [frequency, offset] of CALLOUT_PATTERNS[kind]) {
-      this.toneLayer(voice, { from: frequency, seconds: 0.08, gain: 0.2, wave: 'square', delay: 0.04 + offset });
+      this.toneLayer(voice, { from: frequency, seconds: 0.08, gain: 0.15, wave: 'square', delay: 0.04 + offset });
     }
   }
 

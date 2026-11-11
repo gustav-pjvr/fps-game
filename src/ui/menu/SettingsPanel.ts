@@ -89,6 +89,9 @@ function ensureSettingsStyleInjected(): void {
     `  content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: ${INK_DIM};` +
     '  transition: transform 150ms ease-out, background-color 150ms ease-out;' +
     '}' +
+    // The sound test page's link: a row like the switches, so it is a full-width 44 px target.
+    `.settings-panel .settings-link { display: flex; align-items: center; min-height: 44px; color: ${ACCENT}; font-size: 0.9rem; text-decoration: underline; text-underline-offset: 4px; }` +
+    `.settings-panel .settings-link:hover { color: ${INK}; }` +
     `.settings-panel .settings-switch[aria-checked="true"] .settings-switch-track { background: ${ACCENT}; border-color: ${ACCENT}; }` +
     `.settings-panel .settings-switch[aria-checked="true"] .settings-switch-track::after { transform: translateX(18px); background: ${ACCENT_INK}; }` +
     '.settings-panel .settings-map { display: grid; grid-template-columns: max-content 1fr max-content 1fr; column-gap: 16px; row-gap: 4px; margin-top: 10px; font-size: 0.85rem; line-height: 1.45; }' +

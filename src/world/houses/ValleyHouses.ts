@@ -90,6 +90,11 @@ export class ValleyHouses {
     this.glass.merge(parseGlassSync(value, (id) => this.isPaneId(id)));
   }
 
+  /** What the glass view draws right now (tests and the performance report). */
+  glassCounts(): { panes: number; airborne: number; lying: number } {
+    return this.glassView.counts();
+  }
+
   /** Low draws flat glass; Medium and High add the sky's reflection. */
   setGlassReflections(on: boolean): void {
     this.glassView.setReflections(on);

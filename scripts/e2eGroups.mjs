@@ -16,6 +16,10 @@ export const GROUPS = {
   pickups: { files: ['e2e/pickups.spec.ts'] },
   // The enterable Valley houses (docs/enterable-buildings.md): doors, interiors, enemies inside.
   houses: { files: ['e2e/houses.spec.ts'] },
+  // The glass in the house windows (docs/glass.md): solo, then two players and a late joiner.
+  glass: { files: ['e2e/glass.spec.ts', 'e2e/multiplayer-glass.spec.ts'] },
+  // The sound test page (docs/sound.md): layout, accessibility and the engine's placement of a sound.
+  sound: { files: ['e2e/soundlab.spec.ts'] },
   // Frag and flash grenades (docs/grenades.md), solo.
   grenades: { files: ['e2e/grenades.spec.ts'] },
   // The Skins screen and the aim-point screenshots of every weapon in every skin (docs/skins.md).
@@ -43,7 +47,7 @@ export const GROUPS = {
 /** Every group a full run covers (everything but perf). mp4 is in it because the full suite means
  * every behaviour spec, and the shared helpers a full run follows (lockPointer, equipPistol) are what
  * it drives. It is the slowest group, which is one more reason the full suite stays a last resort. */
-export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'houses', 'grenades', 'skins', 'modes', 'mp', 'mp4'];
+export const FULL = ['core', 'ai', 'mission', 'ui', 'world', 'facility', 'pickups', 'houses', 'glass', 'sound', 'grenades', 'skins', 'modes', 'mp', 'mp4'];
 
 /**
  * Path rules, checked in order; every matching rule adds its groups, except that a `stop` rule
@@ -62,6 +66,11 @@ export const RULES = [
   { match: /^e2e\/.+\.spec\.ts$/, groups: [], stop: true },
 
   // Game areas.
+  // The windows' glass, and its sync: its own specs, not the whole multiplayer group.
+  { match: /^src\/world\/glass\/|^src\/network\/glassSync\.ts$/, groups: ['glass'], stop: true },
+  // The sound engine and its test page. The page is a build input of its own (vite.config.ts).
+  { match: /^src\/soundlab\/|^soundlab\.html$|^scripts\/soundRender\.mjs$/, groups: ['sound'], stop: true },
+  { match: /^src\/audio\/|^src\/world\/soundProbe\.ts$/, groups: ['quick', 'sound'] },
   { match: /^src\/world\/(underground|towerUnderground|labInterior|undergroundLights)\.ts$/, groups: ['world'] },
   { match: /^src\/pickups\//, groups: ['pickups'] },
   { match: /^src\/world\/(houses|doors)\/|^src\/ui\/valleyHouseMapLayer\.ts$/, groups: ['houses'] },
