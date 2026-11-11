@@ -140,7 +140,8 @@ const paneFragment = /* glsl */ `
     // A faint slanting sheen, so the pane reads as a surface even seen square on.
     float sheen = pow(0.5 + 0.5 * sin((vP.x * 0.9 + vP.y * 1.3) * 3.1 + vInfo.z * 6.0), 10.0);
     vec3 color = mix(uTint * (0.18 + 0.82 * light), sky * 1.12, uReflect * (0.22 + 0.78 * fresnel));
-    float alpha = mix(0.17, 0.52, fresnel * uReflect) + sheen * 0.07 * uReflect;
+    // Without the reflection (Low) the tint alone must show there is a pane: a little more of it.
+    float alpha = mix(0.26 - 0.09 * uReflect, 0.52, fresnel * uReflect) + sheen * 0.07 * uReflect;
     // A dark line where the pane meets the frame seats it in the wall.
     alpha = max(alpha, (1.0 - smoothstep(0.0, 0.012, edge)) * 0.45);
     color = mix(color, vec3(0.9, 0.95, 0.96) * (0.3 + 0.7 * light), white);
