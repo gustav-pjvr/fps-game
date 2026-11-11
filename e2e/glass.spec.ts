@@ -49,7 +49,9 @@ async function standAtWindow(page: Page, distance: number): Promise<{ pane: Pane
   throw new Error('no window with a clear line to it was found near the spawn');
 }
 
-async function fireOnce(page: Page): Promise<void> {
+/** One round at the pane's centre. Aimed again every time: recoil walks the sights off a window. */
+async function fireOnce(page: Page, pane: Pane): Promise<void> {
+  await page.evaluate(({ x, y, z }) => window.__gameDebug!.lookAt(x, y, z), { x: pane.x, y: pane.y, z: pane.z });
   await page.mouse.down();
   await page.mouse.up();
   await waitForGameTime(page, 0.45);
@@ -65,7 +67,7 @@ test('a shot holes a window where it struck, more shots break it, and it stays b
   const voicesBefore = (await page.evaluate(() => window.__gameDebug!.getSoundDebug())).voices.opened;
 
   // One pistol round: one hole, inside the pane, near where the round was aimed (its centre).
-  await fireOnce(page);
+  await fireOnce(page, pane);
   await expect.poll(async () => (await paneNow(page, pane.id))?.damage, { timeout: 10000 }).toBe(1);
   const holed = (await paneNow(page, pane.id))!;
   expect(holed.broken).toBe(false);
@@ -77,7 +79,7 @@ test('a shot holes a window where it struck, more shots break it, and it stays b
   expect((await page.evaluate(() => window.__gameDebug!.getSoundDebug())).voices.opened).toBeGreaterThan(voicesBefore);
 
   // Six pistol rounds break a pane (docs/glass.md); a few spare for a round that strays off it.
-  for (let shot = 0; shot < 12 && !(await paneNow(page, pane.id))!.broken; shot++) await fireOnce(page);
+  for (let shot = 0; shot < 12 && !(await paneNow(page, pane.id))!.broken; shot++) await fireOnce(page, pane);
   const broken = (await paneNow(page, pane.id))!;
   expect(broken.broken).toBe(true);
   expect(broken.holes).toHaveLength(0);
