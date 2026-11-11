@@ -152,6 +152,8 @@ export class SettingsPanel {
     onVolumeChange?: (value: number) => void,
     onGraphicsQualityChange?: (quality: GraphicsQuality) => void,
     onFovChange?: (value: number) => void,
+    /** The effects volume, night mode or 3D audio changed: a running match re-reads them. */
+    onAudioChange?: () => void,
   ) {
     ensureSettingsStyleInjected();
     this.overlay = createOverlay();
@@ -211,6 +213,15 @@ export class SettingsPanel {
         onVolumeChange?.(value);
       }),
       this.buildSliderRow('Music Volume', Settings.getMusicVolume(), 0, 1, 0.01, formatPercent, (value) => Settings.setMusicVolume(value)),
+      this.buildSliderRow('Effects Volume', Settings.getEffectsVolume(), 0, 1, 0.01, formatPercent, (value) => {
+        Settings.setEffectsVolume(value);
+        onAudioChange?.();
+      }),
+      this.buildSwitchGroup([
+        ['3D Audio (headphones)', Settings.getSpatialAudio(), (value) => { Settings.setSpatialAudio(value); onAudioChange?.(); }],
+        ['Night Mode (even out loud and quiet)', Settings.getNightAudio(), (value) => { Settings.setNightAudio(value); onAudioChange?.(); }],
+      ]),
+      this.buildSoundTestLink(),
     );
 
     this.addTabPanel(body, 'keyboard').append(this.buildKeyBindSection());
@@ -443,6 +454,17 @@ export class SettingsPanel {
 
   /** Switch toggles: a button with role="switch" so it stays a focusable button for the controller
    * menu focus, with a track and knob drawn in CSS. */
+  /** Opens the sound test page (docs/sound.md): every sound, near, far, behind and behind a wall. */
+  private buildSoundTestLink(): HTMLAnchorElement {
+    const link = document.createElement('a');
+    link.className = 'settings-link';
+    link.href = '/soundlab.html';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'Open the sound test page';
+    return link;
+  }
+
   private buildSwitchGroup(
     switches: readonly (readonly [label: string, checked: boolean, onChange: (value: boolean) => void])[],
   ): HTMLDivElement {

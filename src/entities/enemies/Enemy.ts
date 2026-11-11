@@ -76,6 +76,10 @@ const RETREAT_LOOKAHEAD = 3;
  * clip as it falls. Hit detection uses invisible capsule and ball colliders fitted to that model
  * (characterHitbox.ts); the model itself is cosmetic only.
  */
+/** Metres between an enemy's footsteps, and the speed (m/s) above which they land as a run. */
+const ENEMY_STEP_DISTANCE = 1.9;
+const ENEMY_RUN_SPEED = 2.8;
+
 export class Enemy implements Entity, Damageable, EnemyBody {
   readonly id = allocateEntityId();
   readonly isDamageableTarget = true;
@@ -96,6 +100,8 @@ export class Enemy implements Entity, Damageable, EnemyBody {
   private baseClip: CharacterClipRole | null = null;
   /** The speed of this tick's move, for choosing walk or run. */
   private moveSpeed = 0;
+  /** Metres walked since the last footstep sound. */
+  private stepDistance = 0;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -105,7 +111,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     coordinator: CombatCoordinator,
     knowledge: SquadKnowledge,
     intents: IntentSink,
-    combatHooks: EnemyCombatHooks,
+    private readonly combatHooks: EnemyCombatHooks,
     patrolRng: () => number,
     tacticsRng: () => number,
   ) {
@@ -297,6 +303,7 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     // instead of thinking.
     if (this.debugTarget) this.moveToward(this.debugTarget.x, this.debugTarget.z, this.archetype.moveSpeed, dt, this.debugTarget.y);
     else this.brain.update(dt, player, visibility);
+    this.stepFootsteps(dt);
     this.updateBaseAnimation();
     // The hit shapes sit forward of the centre line where the model carries its head and chest,
     // so the body turns with the model.
@@ -304,6 +311,16 @@ export class Enemy implements Entity, Damageable, EnemyBody {
     // A heavy hit tips the model back, easing upright as the stagger ends (step 5).
     this.mesh.rotation.x = -this.brain.lurch * ENEMY_STAGGER_LURCH_RAD;
     this.mixer.update(dt);
+  }
+
+  /** A boot lands every ENEMY_STEP_DISTANCE metres walked (docs/sound.md): enemies are heard coming. */
+  private stepFootsteps(dt: number): void {
+    if (!this.moving) return;
+    this.stepDistance += this.moveSpeed * dt;
+    if (this.stepDistance < ENEMY_STEP_DISTANCE) return;
+    this.stepDistance -= ENEMY_STEP_DISTANCE;
+    const at = this.rigidBody.translation();
+    this.combatHooks.onFootstep?.(new THREE.Vector3(at.x, at.y - ENEMY_HEIGHT / 2, at.z), this.moveSpeed > ENEMY_RUN_SPEED);
   }
 
   /** Straight-line movement with whisker obstacle steering (see enemySteering.ts) - used by every

@@ -1,13 +1,13 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { castRaySkippingCuts, inCutZone, isTerrainCollider, isBelowGround } from '../../world/underground.ts';
+import { castRaySkippingCuts, inCutZone, isTerrainCollider } from '../../world/underground.ts';
 import type { PhysicsWorld } from '../../physics/PhysicsWorld.ts';
 import type { Player } from '../../entities/Player.ts';
 import type { InputManager } from '../../input/InputManager.ts';
 import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage, PlayerSlot } from '../../network/protocol.ts';
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
-import { computeStereoPan, enemyGunshotVolume, grenadeBounceVolume, undergroundMuffleFactor } from '../../core/positionalAudio.ts';
+import { GRENADE_BOUNCE_LOUD_SPEED } from '../../core/positionalAudio.ts';
 import { GRAVITY, PLAYER_HEIGHT } from '../../core/config.ts';
 import { FlashBlindness, flashSeconds, flashStrength } from './flashStrength.ts';
 import { predictArc, stepGrenade, type ArcPrediction, type FlightParams, type GrenadeBody, type Sweep, type Vec3 } from './grenadeFlight.ts';
@@ -116,6 +116,29 @@ export interface GrenadeSystemOptions {
   onHandChange(state: GrenadeHandState): void;
   /** Facility only: shoot out every live lamp within `radius` (through the lampDestroyed path). */
   shootLampsNear(position: THREE.Vector3, radius: number): void;
+  /** Valley only: the windows' glass (docs/glass.md). An intact pane stops a thrown grenade, and
+   * this player's own frag breaks the panes near it. */
+  readonly glass?: GrenadeGlass;
+}
+
+/** Where a grenade touched a pane: the sweep's answer, and what a knock needs to name the spot. */
+export interface GlassContact {
+  readonly fraction: number;
+  readonly normal: Vec3;
+  readonly pane: number;
+  readonly u: number;
+  readonly v: number;
+  readonly side: 1 | -1;
+}
+
+export interface GrenadeGlass {
+  /** The first intact pane a ball of `radius` touches moving from `from` to `to`: how far along the
+   * move, and the pane's normal on the side the ball came from. */
+  sweep(from: Vec3, to: Vec3, radius: number): GlassContact | null;
+  /** This player's grenade struck the pane hard enough to clink: the pane takes the knock. */
+  knock(contact: GlassContact): void;
+  /** This player's frag went off at `position`. */
+  blast(position: THREE.Vector3): void;
 }
 
 /** A live grenade as the visuals see it. */
@@ -265,6 +288,9 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private readonly rollAxis = new THREE.Vector3();
   private readonly loftAxis = new THREE.Vector3();
 
+  /** The sweep of the grenade being stepped touched a window's glass: its bounce rings as glass. */
+  private struckGlass: GlassContact | null = null;
+
   constructor(private readonly options: GrenadeSystemOptions) {
     this.hand = new GrenadeHand(options.kind, options.enabled);
     this.params = {
@@ -297,6 +323,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     this.updateHand(dt, input);
 
     for (const grenade of Array.from(this.live.values())) {
+      this.struckGlass = null;
       const step = stepGrenade(grenade.body, dt, grenade.own ? this.sweep : this.remoteSweep, this.params);
       grenade.mesh.position.set(grenade.body.position.x, grenade.body.position.y, grenade.body.position.z);
       if (grenade.hiddenFor > 0) {
@@ -306,9 +333,9 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       for (let bounce = 0; bounce < step.bounces; bounce++) grenade.spinRate *= 0.5;
       if (step.impactSpeed >= CLINK_MIN_SPEED && this.clock - grenade.lastClinkAt >= CLINK_INTERVAL) {
         grenade.lastClinkAt = this.clock;
-        const { distance, pan } = this.hearing(grenade.mesh.position);
-        const volume = grenadeBounceVolume(distance, step.impactSpeed);
-        if (volume > 0.01) this.options.sound.playGrenadeBounce(volume, pan);
+        // As loud as the impact; the engine places it and decides whether it is heard at all.
+        this.options.sound.playGrenadeBounce(Math.min(1, step.impactSpeed / GRENADE_BOUNCE_LOUD_SPEED), grenade.mesh.position, this.struckGlass !== null);
+        if (this.struckGlass && grenade.own) this.options.glass?.knock(this.struckGlass);
       }
       this.turnModel(grenade, dt);
       grenade.fuseLeft -= dt;
@@ -414,8 +441,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     for (const grenade of this.live.values()) if (!grenade.own) remote++;
     if (remote >= MAX_REMOTE_GRENADES) return;
     this.addLive(message.id, message.kind, message.senderSlot, message.origin, message.velocity, message.fuseLeft, message.t, 0);
-    const { distance, pan } = this.hearing(message.origin);
-    this.options.sound.playGrenadeThrow(enemyGunshotVolume(distance), pan);
+    this.options.sound.playGrenadeThrow(message.origin);
   }
 
   /** Only a copy this client is flying, thrown by the same sender, goes off: a detonation out of
@@ -735,9 +761,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       : position;
     this.lightBlast(lightAt, FRAG_LIGHT_COLOR, FRAG_LIGHT_INTENSITY, FRAG_LIGHT_RANGE, FRAG_LIGHT_SECONDS);
     const eye = this.options.camera.getWorldPosition(new THREE.Vector3());
-    const heard = this.hearing(position);
-    sound.playFragExplosion(enemyGunshotVolume(heard.distance) * undergroundMuffleFactor(
-      isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(position.x, position.y, position.z)), heard.pan);
+    sound.playFragExplosion(position);
     this.shake.add(fragShakeAmplitude(eye.distanceTo(blast)));
 
     // The local player: damage only from its own frag (others' arrives as damageEvent); knockback
@@ -767,6 +791,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       }
     }
     this.options.shootLampsNear(position, FRAG_LAMP_RADIUS);
+    if (own) this.options.glass?.blast(position);
     targets.notifyGunshot(position, 'frag');
   }
 
@@ -782,9 +807,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private goOffFlash(blast: THREE.Vector3, own: boolean): void {
     const { player, sound, camera, targets } = this.options;
     this.lightBlast(blast, FLASH_LIGHT_COLOR, FLASH_LIGHT_INTENSITY, FLASH_LIGHT_RANGE, FLASH_LIGHT_SECONDS);
-    const heard = this.hearing(blast);
-    sound.playFlashBang(enemyGunshotVolume(heard.distance) * undergroundMuffleFactor(
-      isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(blast.x, blast.y, blast.z)), heard.pan);
+    sound.playFlashBang(blast);
 
     if (!player.isDead) {
       const eye = camera.getWorldPosition(new THREE.Vector3());
@@ -855,13 +878,6 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       }
     }
     return best;
-  }
-
-  /** How far `position` is from the local player and its stereo pan, for a positional sound. */
-  private hearing(position: Vec3): { distance: number; pan: number } {
-    const { player } = this.options;
-    const source = new THREE.Vector3(position.x, position.y, position.z);
-    return { distance: source.distanceTo(player.position), pan: computeStereoPan(player.position, player.facingYaw, source) };
   }
 
   /** Nothing solid between `from` and `to`, or the first thing hit is `target` itself (its own
@@ -937,6 +953,12 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
           !inCutZone(from.x + displacement.x * hit.time_of_impact, from.z + displacement.z * hit.time_of_impact)) break;
       skipped.add(hit.collider.handle);
       hit = null;
+    }
+    // A window's glass is no collider: an intact pane nearer than the physics hit stops the ball.
+    const pane = this.options.glass?.sweep(from, { x: from.x + displacement.x, y: from.y + displacement.y, z: from.z + displacement.z }, GRENADE_RADIUS);
+    if (pane && (!hit || pane.fraction <= hit.time_of_impact)) {
+      this.struckGlass = pane;
+      return pane;
     }
     if (!hit) return null;
     // normal1 is the ball's own outward normal at the contact (the ball is never rotated, so local

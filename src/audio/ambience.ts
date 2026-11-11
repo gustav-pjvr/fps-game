@@ -93,6 +93,41 @@ export function valleyImpulse(sampleRate: number, seconds: number, random: () =>
   return channels;
 }
 
+/**
+ * A stereo impulse response for an enclosed space: dense early reflections off near walls, then a
+ * tail that decays over `seconds`. `brightness` (0 to 1) is how much of the top the walls give back:
+ * a furnished house is bright and short, a concrete hall longer and duller. `random` makes it
+ * deterministic in tests.
+ */
+export function roomImpulse(sampleRate: number, seconds: number, brightness: number, random: () => number): [Float32Array<ArrayBuffer>, Float32Array<ArrayBuffer>] {
+  const length = Math.max(1, Math.floor(sampleRate * seconds));
+  const channels: [Float32Array<ArrayBuffer>, Float32Array<ArrayBuffer>] = [new Float32Array(length), new Float32Array(length)];
+  const smoothing = 0.25 + 0.7 * clamp01(brightness);
+  // The decay reaches -60 dB at the end of the buffer.
+  const decay = 6.9 / seconds;
+  for (const [index, data] of channels.entries()) {
+    let smoothed = 0;
+    for (let i = 0; i < length; i++) {
+      const t = i / sampleRate;
+      smoothed += smoothing * ((random() * 2 - 1) - smoothed);
+      data[i] = smoothed * Math.exp(-decay * t) * 0.5;
+    }
+    // First reflections: the nearest walls, a few milliseconds apart and different in each ear.
+    for (let k = 0; k < 7; k++) {
+      const at = Math.floor(sampleRate * (0.004 + 0.0052 * k * (1 + 0.6 * seconds) + index * 0.0011 * (k + 1)));
+      if (at < length) data[at] = (data[at] ?? 0) + (k % 2 === 0 ? 0.6 : -0.5) / (k + 1.4);
+    }
+  }
+  return channels;
+}
+
+/** The wind bed outdoors (0 to 1) for where the listener stands: full in the open, a dull rumour
+ * through a house's walls, nothing underground or in the Facility. */
+export function windLevel(outdoorMap: boolean, space: 'outdoor' | 'room' | 'hall' | 'underground'): { readonly gain: number; readonly cutoff: number } {
+  if (!outdoorMap || space === 'underground' || space === 'hall') return { gain: 0, cutoff: 300 };
+  return space === 'room' ? { gain: 0.3, cutoff: 320 } : { gain: 1, cutoff: 700 };
+}
+
 /** The outdoor layers disappear as the listener settles underground. */
 export function outdoorAmbienceGain(undergroundAmount: number): number {
   return 1 - clamp01(undergroundAmount);

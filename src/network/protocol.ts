@@ -7,6 +7,7 @@
 import { KOTH_POINTS_TO_WIN, type GooseExplosionDifficulty, type MatchMap, type MatchWeather } from '../core/config.ts';
 import type { GameMode } from '../core/gameModes.ts';
 import { isGrenadeKind, type GrenadeKind } from '../combat/grenades/grenadeTuning.ts';
+import { GLASS_SYNC_MAX_ENTRIES, isValidGlassHit } from '../world/glass/glassPane.ts';
 
 /** Stable small identity for up to MULTIPLAYER_MAX_PLAYERS players in one room - slot 0 is always
  * the host, slots 1-3 are assigned to guests in join order by the host (see HostRoster.ts) and are
@@ -220,6 +221,31 @@ export interface LampSyncMessage {
   type: 'lampSync';
   senderSlot: PlayerSlot;
   lamps: number[];
+}
+
+/** Relayed like lampDestroyed: `senderSlot` hit a pane of glass in a Valley house window
+ * (docs/glass.md). `pane` is the pane's id (house key and window, world/glass/glassPane.ts); `u` and
+ * `v` are where on the pane, in metres from its centre; `power` is what the hit costs it (a round 1
+ * to 3, a blade or a blast the pane's whole strength); `side` is the way the force travelled (1 from
+ * inside out, -1 from outside in), for the shards. Receivers apply the same hit, so the pane cracks
+ * or breaks the same way for everyone. Older builds drop the unknown type. */
+export interface GlassHitMessage {
+  type: 'glassHit';
+  senderSlot: PlayerSlot;
+  pane: number;
+  u: number;
+  v: number;
+  power: number;
+  side: 1 | -1;
+}
+
+/** Relayed like lampSync: `senderSlot`'s whole set of hit panes (id, damage, broken, holes),
+ * re-broadcast so a client that was loading when a glassHit went past, or joined late, catches up
+ * (network/glassSync.ts). Receivers keep the more damaged state of each pane, quietly. */
+export interface GlassSyncMessage {
+  type: 'glassSync';
+  senderSlot: PlayerSlot;
+  panes: { id: number; d: number; b: boolean; h: number[] }[];
 }
 
 /** Guest -> host only, never relayed: this guest pressed interact on a Facility door or breaker
@@ -883,6 +909,8 @@ export type NetworkMessage =
   | FireEventMessage
   | LampDestroyedMessage
   | LampSyncMessage
+  | GlassHitMessage
+  | GlassSyncMessage
   | WorldInteractMessage
   | WorldObjectStateMessage
   | GrenadeThrownMessage
@@ -952,6 +980,8 @@ const MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'fireEvent',
   'lampDestroyed',
   'lampSync',
+  'glassHit',
+  'glassSync',
   'worldInteract',
   'worldObjectState',
   'grenadeThrown',
@@ -1109,6 +1139,10 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
       return areCoords(value.x, value.y, value.z) && isFiniteNumber(value.yaw) && isFiniteNumber(value.pitch)
         && isFiniteNumber(value.health) && (value.health as number) >= 0 && (value.health as number) <= DAMAGE_EVENT_MAX_AMOUNT
         && isOptionalFinite(value.t) && isOptionalId(value.w) && isOptionalId(value.k);
+    case 'glassHit':
+      return Number.isSafeInteger(value.pane) && (value.pane as number) >= 0 && isValidGlassHit(value.u, value.v, value.power, value.side);
+    case 'glassSync':
+      return Array.isArray(value.panes) && value.panes.length <= GLASS_SYNC_MAX_ENTRIES;
     case 'fireEvent':
       return areCoords(value.originX, value.originY, value.originZ, value.endX, value.endY, value.endZ) && isOptionalFinite(value.t);
     case 'footstepEvent':

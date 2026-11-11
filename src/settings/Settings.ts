@@ -7,6 +7,9 @@ const STORAGE_KEY = 'fps-game-settings-v1';
 interface StoredSettings {
   masterVolume: number;
   musicVolume: number;
+  effectsVolume: number;
+  nightAudio: boolean;
+  spatialAudio: boolean;
   mouseSensitivity: number;
   controllerSensitivity: number;
   controllerInvertY: boolean;
@@ -21,6 +24,10 @@ function defaults(): StoredSettings {
   return {
     masterVolume: 0.5,
     musicVolume: 0.6,
+    effectsVolume: 1,
+    nightAudio: false,
+    // HRTF: the only way front, back and height are audible. Off falls back to plain panning.
+    spatialAudio: true,
     mouseSensitivity: 1,
     controllerSensitivity: 1,
     controllerInvertY: false,
@@ -73,6 +80,10 @@ function loadFromStorage(): StoredSettings {
     return {
       masterVolume: typeof parsed.masterVolume === 'number' ? parsed.masterVolume : base.masterVolume,
       musicVolume: typeof parsed.musicVolume === 'number' ? Math.max(0, Math.min(1, parsed.musicVolume)) : base.musicVolume,
+      effectsVolume: typeof parsed.effectsVolume === 'number' && Number.isFinite(parsed.effectsVolume)
+        ? Math.max(0, Math.min(1, parsed.effectsVolume)) : base.effectsVolume,
+      nightAudio: typeof parsed.nightAudio === 'boolean' ? parsed.nightAudio : base.nightAudio,
+      spatialAudio: typeof parsed.spatialAudio === 'boolean' ? parsed.spatialAudio : base.spatialAudio,
       mouseSensitivity: typeof parsed.mouseSensitivity === 'number' ? parsed.mouseSensitivity : base.mouseSensitivity,
       controllerSensitivity: typeof parsed.controllerSensitivity === 'number' && Number.isFinite(parsed.controllerSensitivity)
         ? Math.max(0.3, Math.min(3, parsed.controllerSensitivity)) : base.controllerSensitivity,
@@ -134,6 +145,21 @@ export const Settings = {
     state.musicVolume = Math.max(0, Math.min(1, value));
     persist();
   },
+
+  /** Everything that is not music (docs/sound.md), under the master volume. */
+  getEffectsVolume(): number {
+    return state.effectsVolume;
+  },
+  setEffectsVolume(value: number): void {
+    state.effectsVolume = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+    persist();
+  },
+  /** Night mode: loud and quiet pulled together, for playing at low volume. */
+  getNightAudio(): boolean { return state.nightAudio; },
+  setNightAudio(value: boolean): void { state.nightAudio = value; persist(); },
+  /** 3D audio over headphones (HRTF). Off uses plain left and right panning. */
+  getSpatialAudio(): boolean { return state.spatialAudio; },
+  setSpatialAudio(value: boolean): void { state.spatialAudio = value; persist(); },
 
   getMouseSensitivity(): number {
     return state.mouseSensitivity;

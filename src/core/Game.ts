@@ -130,7 +130,6 @@ import {
   WORLD_EDGE_RAMP_START,
   ZONE_EDGE_MARGIN,
 } from './config.ts';
-import { computeStereoPan, enemyGunshotVolume, lampBreakVolume, undergroundMuffleFactor } from './positionalAudio.ts';
 import type {} from './gameDebugApi.ts';
 import {
   ENEMY_RANGED_TRACER_COLOR,
@@ -186,6 +185,12 @@ import { MISSION_EXPLANATION, MODE_EXPLANATIONS, SHOWDOWN_EXPLANATION } from './
 import { equippedGrenade, loadStoredLoadout } from './loadout.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
 import { Settings } from '../settings/Settings.ts';
+import { probeOcclusion } from '../world/soundProbe.ts';
+import { poseFromQuaternion, type Vec3Like } from '../audio/spatial.ts';
+import type { ListenerSpace } from '../audio/occlusion.ts';
+import type { Surface } from '../audio/surfaces.ts';
+import { BREAK_POWER, hitPower } from '../world/glass/glassPane.ts';
+import { GlassSyncTracker } from '../network/glassSync.ts';
 import { GRAPHICS_QUALITY_PRESETS, type GraphicsQualityPreset } from '../settings/graphicsQuality.ts';
 import type { MultiplayerMatchStartParams, MultiplayerSession } from '../network/MultiplayerSession.ts';
 import { DAMAGE_EVENT_MAX_AMOUNT, HOST_SLOT, helloSupportsMap, type PlayerSlot } from '../network/protocol.ts';
@@ -345,6 +350,17 @@ interface ScoreState {
   value: number;
 }
 
+/** A frag breaks the windows within this many metres, an exploding goose within this many (docs/glass.md). */
+const FRAG_GLASS_RADIUS = 7;
+const GOOSE_GLASS_RADIUS = 6;
+/** A bullet passing within this many metres of the head is heard going by, when it was fired from
+ * farther than the second distance. An impact this close to the head is not voiced apart from it. */
+const WHIZZ_RADIUS = 3;
+const WHIZZ_MIN_SHOOTER_DISTANCE = 8;
+const WHIZZ_SKIP_IMPACT_WITHIN = 1.2;
+/** Bullet impacts voiced in one simulation tick: a shotgun's pellets all land in the same one. */
+const MAX_IMPACT_SOUNDS_PER_TICK = 3;
+
 export class Game {
   private readonly loop: Loop;
   private lastActiveWeaponIndex: number;
@@ -464,6 +480,15 @@ export class Game {
   private connectionPollAccumulator = 0;
   /** When this client re-broadcasts its dead Facility lamps (see network/lampSync.ts). */
   private readonly lampSync = new LampSyncTracker();
+  /** When this client re-broadcasts its hit window panes (see network/glassSync.ts). */
+  private readonly glassSync = new GlassSyncTracker();
+  /** The sound listener (the camera) and scratch vectors for a bullet passing by. */
+  private readonly listenerPosition = new THREE.Vector3();
+  private readonly listenerQuaternion = new THREE.Quaternion();
+  private readonly whizzScratch = new THREE.Vector3();
+  private readonly whizzPoint = new THREE.Vector3();
+  private impactSoundTick = -1;
+  private impactSoundsThisTick = 0;
   /** Bumped by every add and remove of an opponent's slot: an add whose model load finishes after a
    * newer add or a removal for that slot (a playerLeft during the load) is dropped, not shown. */
   private readonly opponentGenerations = new Map<PlayerSlot, number>();
@@ -629,6 +654,12 @@ export class Game {
     this.showdown = this.director && matchConfig.directorMode ? new ShowdownState(this.director, DIRECTOR_OPTIONS) : null;
     hud.setObjective(this.showdown ? 'SHOWDOWN' : this.director ? 'DIRECTOR' : matchConfig.hordeMode ? 'GOOSE HORDE' : 'ELIMINATION', matchConfig.hordeMode ? 'Survive twelve waves' : this.showdown ? 'Five acts, then the finale' : this.director ? 'Survive the waves' : facility ? 'Clear the facility' : 'Clear the valley');
     hud.compass.setSunDirection(renderer.currentLook.sunDirection);
+    // Every positioned sound asks once, as it starts, what lies between it and the listener
+    // (docs/sound.md): walls and ground from physics, intact window panes from the glass.
+    const glass = buildings?.houses.glass;
+    sound.setWorldProbe((listener, source) => probeOcclusion(physics.world, listener, source,
+      glass ? { glassBetween: (from, to) => glass.intactBetween(from, to) } : undefined));
+    buildings?.houses.setGlassReflections(GRAPHICS_QUALITY_PRESETS[Settings.getGraphicsQuality()].postProcessing);
     this.loop = new Loop(this.update, this.render);
     document.addEventListener('keydown', this.onDebugKeyDown);
     this.installDebugApi();
@@ -692,15 +723,116 @@ export class Game {
       !this.facility && isUnderground(at.x, at.y, at.z));
   }
 
+  /** Where the listener stands, for the reverb every sound rings in and the wind (docs/sound.md). */
+  private listenerSpace(): ListenerSpace {
+    if (this.facility) return 'hall';
+    const at = this.player.position;
+    if (isBelowGround(at.x, at.y, at.z)) return 'underground';
+    return this.buildings?.houses.nav.isInside(at.x, at.z) ? 'room' : 'outdoor';
+  }
+
+  /** What a foot lands on at a body's position `at` (its centre): the Facility's concrete, a lab's
+   * steel deck, the shards under a broken window, a house's boards, or the valley's earth. */
+  private stepSurfaceAt(at: Vec3Like): Surface {
+    if (this.facility) return 'concrete';
+    if (isBelowGround(at.x, at.y, at.z)) return 'metal';
+    const houses = this.buildings?.houses;
+    if (!houses) return 'earth';
+    if (houses.glass.debrisUnderfoot(at.x, at.y - PLAYER_HEIGHT / 2, at.z)) return 'glass';
+    return houses.nav.isInside(at.x, at.z) ? 'wood' : 'earth';
+  }
+
+  /** What a bullet struck at `point`. Colliders carry no material, so it is read from where the
+   * point is: a body, the Facility or a lab, the ground itself, a house's wall, or (everything
+   * else that stands in the valley: trees, towers, crates) wood. */
+  private impactSurfaceAt(point: Vec3Like, isEntityHit: boolean): Surface {
+    if (isEntityHit) return 'flesh';
+    if (this.facility) return 'concrete';
+    if (isBelowGround(point.x, point.y, point.z)) return 'metal';
+    if (point.y - sampleHeight(point.x, point.z) < 0.2) return 'earth';
+    return this.buildings?.isPointInsideBuilding(point.x, point.z, 0.4) ? 'concrete' : 'wood';
+  }
+
+  /** The sound of a bullet landing at `point`. A shotgun's pellets land in one tick: only the first
+   * few are voiced. */
+  private impactSound(point: Vec3Like, isEntityHit: boolean): void {
+    if (this.impactSoundTick !== this.tickCount) {
+      this.impactSoundTick = this.tickCount;
+      this.impactSoundsThisTick = 0;
+    }
+    if (this.impactSoundsThisTick++ >= MAX_IMPACT_SOUNDS_PER_TICK) return;
+    this.sound.playImpact(this.impactSurfaceAt(point, isEntityHit), point);
+  }
+
+  /** Someone else's shot went from `origin` to `end` (an enemy's miss, another player's round): it
+   * is heard landing, and heard going by when its path comes close to the listener's head. */
+  private shotPassed(origin: THREE.Vector3, end: THREE.Vector3): void {
+    const ear = this.renderer.camera.getWorldPosition(this.listenerPosition);
+    if (end.distanceTo(ear) > WHIZZ_SKIP_IMPACT_WITHIN) this.impactSound(end, false);
+    const path = this.whizzScratch.subVectors(end, origin);
+    const lengthSq = path.lengthSq();
+    if (lengthSq < 1 || origin.distanceTo(ear) < WHIZZ_MIN_SHOOTER_DISTANCE) return;
+    const along = this.whizzPoint.subVectors(ear, origin).dot(path) / lengthSq;
+    // Before the muzzle or stopped short of the listener: nothing went by.
+    if (along <= 0.02 || along >= 0.98) return;
+    const nearest = this.whizzPoint.copy(origin).addScaledVector(path, along);
+    if (nearest.distanceTo(ear) <= WHIZZ_RADIUS) this.sound.playBulletWhizz(nearest);
+  }
+
+  /** Every intact pane on a ray takes the hit (docs/glass.md): this player's round or blade, or an
+   * enemy's round on the client that runs the enemies. The round itself passes through and carries
+   * on to its physics hit unchanged. */
+  private shootGlass(origin: Vec3Like, direction: Vec3Like, distance: number, power: number): void {
+    const glass = this.buildings?.houses.glass;
+    if (!glass) return;
+    for (const hit of glass.rayHits(origin, direction, distance)) this.hitGlass(hit.pane.id, hit.u, hit.v, power, hit.side, true);
+  }
+
+  /** A hit on a pane: it cracks or breaks for this client, with its sound where it stands.
+   * `broadcast` for a hit this client decided (the others then apply the same glassHit). */
+  private hitGlass(id: number, u: number, v: number, power: number, side: 1 | -1, broadcast: boolean): void {
+    const houses = this.buildings?.houses;
+    if (!houses) return;
+    const outcome = houses.glass.hit(id, u, v, power, side);
+    if (outcome === 'none') return;
+    const pane = houses.glass.pane(id);
+    if (pane) {
+      if (outcome === 'broke') this.sound.playGlassBreak(pane);
+      else this.sound.playGlassHit({ x: pane.x + pane.ux * u, y: pane.y + v, z: pane.z + pane.uz * u });
+    }
+    if (broadcast && this.multiplayer) {
+      this.multiplayer.session.connection.send({ type: 'glassHit', senderSlot: this.multiplayer.session.ownSlot, pane: id, u, v, power, side });
+    }
+  }
+
+  /** A blast at `position` breaks every intact pane within `radius`, blown away from the blast. */
+  private breakGlassNear(position: Vec3Like, radius: number, broadcast: boolean): void {
+    const glass = this.buildings?.houses.glass;
+    if (!glass) return;
+    for (const pane of glass.intactNear(position, radius)) {
+      const outside = (position.x - pane.x) * pane.nx + (position.z - pane.z) * pane.nz > 0;
+      this.hitGlass(pane.id, 0, 0, BREAK_POWER, outside ? -1 : 1, broadcast);
+    }
+  }
+
+  private sendGlassSync(): void {
+    const glass = this.buildings?.houses.glass;
+    if (glass && this.multiplayer) this.multiplayer.session.connection.send({ type: 'glassSync', senderSlot: this.multiplayer.session.ownSlot, panes: glass.snapshot().map((entry) => ({ ...entry, h: [...entry.h] })) });
+  }
+
   /** A player's own ranged pellet (docs/facility-map.md, section 11): a live lamp nearer than the
-   * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. */
-  private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number): void {
+   * pellet's physics hit is shot out. The pellet itself carries on to that hit unchanged. On the
+   * Valley the same ray, and a blade's (`melee`), also strikes the windows' glass (docs/glass.md). */
+  private handleHitscanRay(origin: THREE.Vector3, direction: THREE.Vector3, distance: number, melee = false): void {
     if (!this.facility) {
       // A Valley house's ceiling lamp (docs/enterable-buildings.md), synced like a Facility lamp.
-      const lamp = this.buildings?.houses.shootRay(origin, direction, distance);
+      const lamp = melee ? null : this.buildings?.houses.shootRay(origin, direction, distance);
       if (lamp) this.houseLampBroken(lamp.id, lamp, true);
+      const definition = WEAPON_DEFINITIONS[this.weaponManager.activeWeaponId];
+      this.shootGlass(origin, direction, distance, melee ? BREAK_POWER : hitPower(definition?.damage ?? 0));
       return;
     }
+    if (melee) return;
     const lamp = this.facility.world.rayHitLamp(origin, direction, distance);
     if (lamp >= 0) this.destroyFacilityLamp(lamp, true);
   }
@@ -712,9 +844,7 @@ export class Game {
     const position = this.facility?.world.killLamp(lamp);
     if (!this.facility || !position) return false;
     this.facility.lampBreak.spawn(position);
-    const at = new THREE.Vector3(position.x, position.y, position.z);
-    const volume = lampBreakVolume(at.distanceTo(this.player.position));
-    if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, at));
+    this.sound.playLampBreak(position);
     if (broadcast && this.multiplayer) {
       this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp });
     }
@@ -733,10 +863,7 @@ export class Game {
   /** A house lamp just broke (`at` where it hangs, null when not streamed in): its sound, and for
    * this player's own shot the lampDestroyed send. */
   private houseLampBroken(id: number, at: { x: number; y: number; z: number } | null, broadcast: boolean): void {
-    if (at) {
-      const position = new THREE.Vector3(at.x, at.y, at.z), volume = lampBreakVolume(position.distanceTo(this.player.position));
-      if (volume > 0) this.sound.playLampBreak(volume, computeStereoPan(this.player.position, this.player.facingYaw, position));
-    }
+    if (at) this.sound.playLampBreak(at);
     if (broadcast && this.multiplayer) {
       this.multiplayer.session.connection.send({ type: 'lampDestroyed', senderSlot: this.multiplayer.session.ownSlot, lamp: id });
     }
@@ -764,6 +891,8 @@ export class Game {
     this.facilityInteraction?.opponentInMatch(slot);
     const lamps = this.lampSync.opponentSnapshot(slot, this.deadLampIds);
     if (lamps) this.sendLampSync(lamps);
+    const glass = this.buildings?.houses.glass;
+    if (glass && this.glassSync.opponentSnapshot(slot, glass.revision)) this.sendGlassSync();
   }
 
   private sendLampSync(lamps: number[]): void {
@@ -1267,8 +1396,8 @@ export class Game {
           hud.compass.addContact(bearing);
         }
       },
-      onFootstep: () => {
-        sound.playFootstep();
+      onFootstep: (sprinting) => {
+        sound.playFootstep(game.stepSurfaceAt(player.position), sprinting ? 'run' : 'walk');
         // Per user request: other players should hear each other's footsteps, not just gunfire -
         // the receiving end positions/attenuates it the same way opponent gunshots already are
         // (see the 'footstepEvent' case below). `player` isn't assigned in this outer scope until
@@ -1330,6 +1459,7 @@ export class Game {
         scopeOverlay,
         (point, isEntityHit) => {
           impactMarkers.spawn(point, isEntityHit);
+          game.impactSound(point, isEntityHit);
           // Once per tick: this fires per pellet, so a shotgun blast stacked up to 8 hit sounds.
           if (isEntityHit && game.lastHitConfirmTick !== game.tickCount) {
             game.lastHitConfirmTick = game.tickCount;
@@ -1359,7 +1489,7 @@ export class Game {
           });
         },
         (origin, weaponId) => {
-          sound.playKnifeSwing(1, 0, weaponId);
+          sound.playKnifeSwing(weaponId);
           multiplayer?.connection.send({
             type: 'fireEvent',
             senderSlot: multiplayer.ownSlot,
@@ -1374,7 +1504,10 @@ export class Game {
         },
         (weaponId) => {
           input.vibrate(WEAPON_DEFINITIONS[weaponId]?.automatic ? 'automatic' : 'fire');
-          if (WEAPON_DEFINITIONS[weaponId]?.kind !== 'melee') sound.playGunshot(weaponId);
+          if (WEAPON_DEFINITIONS[weaponId]?.kind !== 'melee') {
+            sound.playGunshot(weaponId);
+            sound.playCasing(game.stepSurfaceAt(player.position));
+          }
         },
         (weaponId) => sound.playReloadClick(weaponId),
         (distance) => longShotCallout.show(distance),
@@ -1418,7 +1551,7 @@ export class Game {
         damageOverrides,
         reserveAmmo,
         // Facility lamps are not physics colliders: each ranged pellet's ray is tested against them.
-        (origin, direction, distance) => game.handleHitscanRay(origin, direction, distance),
+        (origin, direction, distance, melee) => game.handleHitscanRay(origin, direction, distance, melee),
         // Read fresh on every build, so a skin equipped mid-match shows from the next respawn.
         loadStoredSkins(),
         loadStoredAttachments(),
@@ -1440,36 +1573,28 @@ export class Game {
         onRangedShotFired: (origin, end, hitPlayer) => {
           tracers.spawn(origin, end, ENEMY_RANGED_TRACER_COLOR);
           impactMarkers.spawn(end, hitPlayer);
-          // Attenuated by the shooter's distance from the player - a shot from 30 units away
-          // shouldn't sound identical to one at point-blank (see ENEMY_GUNSHOT_* in config.ts) -
-          // and panned by direction too (per user request: positional audio should work the same
-          // in single-player against enemies as it does against a multiplayer opponent).
-          sound.playGunshot(
-            'enemy-rifle',
-            enemyGunshotVolume(origin.distanceTo(player.position)) * undergroundMuffleFactor(
-              isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(origin.x, origin.y, origin.z)),
-            computeStereoPan(player.position, player.facingYaw, origin),
-          );
+          // Placed where the enemy stands: the engine works out distance, direction and what
+          // lies between (docs/sound.md). A miss that passes close is heard going by.
+          sound.playGunshot('enemy-rifle', origin);
+          if (!hitPlayer) game.shotPassed(origin, end);
+          // An enemy's round holes a window on its way, as a player's does (docs/glass.md).
+          const reach = origin.distanceTo(end);
+          if (reach > 0.01) game.shootGlass(origin, end.clone().sub(origin).divideScalar(reach), reach, 1);
         },
+        onFootstep: (position, running) => sound.playFootstep(game.stepSurfaceAt(position), running ? 'run' : 'walk', position, true),
+        onMeleeSwing: (origin) => sound.playMeleeSwing(origin),
         // Enemy AI v2 step 5: the squad's voiced callout for this tick, and visual cues - both
         // attenuated and panned like enemy gunshots, so they read as coming from that enemy.
         onCallout: (event) => {
           if (event.kind === 'glint' || event.kind === 'staggered') return;
           const origin = new THREE.Vector3(event.x, event.y, event.z);
-          sound.playCallout(
-            event.kind,
-            enemyGunshotVolume(origin.distanceTo(player.position)),
-            computeStereoPan(player.position, player.facingYaw, origin),
-          );
+          sound.playCallout(event.kind, origin);
         },
         onCue: (event) => {
           if (event.kind !== 'glint') return;
           const origin = new THREE.Vector3(event.x, event.y, event.z);
           glintMarkers.spawn(origin, ENEMY_GLINT_LEAD_TIME);
-          sound.playGlint(
-            enemyGunshotVolume(origin.distanceTo(player.position)),
-            computeStereoPan(player.position, player.facingYaw, origin),
-          );
+          sound.playGlint(origin);
         },
       },
       // Enemies may not pick a spot inside a house or a watch tower - the same check spawns use.
@@ -1503,14 +1628,8 @@ export class Game {
       onExplosion: (position, radius) => {
         if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
         explosionEffect.spawn(position, radius);
-        // Same distance-attenuation/stereo-pan convention as enemy/opponent gunshots (see
-        // enemyGunshotVolume/computeStereoPan below) - a goose exploding across the map shouldn't
-        // sound identical to one at point-blank.
-        sound.playExplosion(
-          enemyGunshotVolume(position.distanceTo(player.position)) * undergroundMuffleFactor(
-            isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(position.x, position.y, position.z)),
-          computeStereoPan(player.position, player.facingYaw, position),
-        );
+        sound.playExplosion(position);
+        game.breakGlassNear(position, GOOSE_GLASS_RADIUS, false);
       },
       onNetworkSpawn:
         multiplayer?.role === 'host' ? (id, x, y, z) => multiplayer.connection.send({ type: 'gooseSpawned', id, x, y, z }) : undefined,
@@ -1570,11 +1689,8 @@ export class Game {
               if (position.distanceTo(player.position) <= 10) input.vibrate('explosion');
               explosionEffect.spawn(position, stats.blastRadius);
               const distance = position.distanceTo(player.position);
-              sound.playExplosion(
-                enemyGunshotVolume(distance) * undergroundMuffleFactor(
-                  isBelowGround(player.position.x, player.position.y, player.position.z), isBelowGround(position.x, position.y, position.z)),
-                computeStereoPan(player.position, player.facingYaw, position),
-              );
+              sound.playExplosion(position);
+              game.breakGlassNear(position, GOOSE_GLASS_RADIUS, false);
               // Every client independently checks its OWN player against the blast (self-
               // authoritative over own health, same trust model as every other explosion in this
               // project) - this callback fires identically whether the local client decided the
@@ -1788,6 +1904,7 @@ export class Game {
       (value) => sound.setMasterVolume(value),
       (quality) => gameRef.current?.applyGraphicsQuality(GRAPHICS_QUALITY_PRESETS[quality]),
       (value) => gameRef.current?.applyFov(value),
+      () => sound.applySettings(),
     );
     const perfOverlay = new PerfOverlay(hudRoot);
 
@@ -1997,6 +2114,15 @@ export class Game {
           if (lamp && !facility.world.isLampDead(i) && position.distanceTo(new THREE.Vector3(lamp.x, lamp.y, lamp.z)) <= radius) game.destroyFacilityLamp(i, true);
         }
       },
+      glass: buildings ? {
+        sweep: (from, to, radius) => {
+          const hit = buildings.houses.glass.sweep(from, to, radius);
+          // The pane's normal on the side the grenade came from.
+          return hit && { fraction: hit.at, normal: { x: -hit.pane.nx * hit.side, y: 0, z: -hit.pane.nz * hit.side }, pane: hit.pane.id, u: hit.u, v: hit.v, side: hit.side };
+        },
+        knock: (contact) => game.hitGlass(contact.pane, contact.u, contact.v, 1, contact.side, true),
+        blast: (position) => game.breakGlassNear(position, FRAG_GLASS_RADIUS, true),
+      } : undefined,
     });
     game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot, sound });
     game.laserDot = new LaserDot(renderer.scene);
@@ -2023,6 +2149,8 @@ export class Game {
         scene: renderer.scene,
         player,
         sound,
+        stepSurfaceAt: (position) => game.stepSurfaceAt(position),
+        shotPassed: (origin, end) => game.shotPassed(origin, end),
         tracers,
         muzzleFlash,
         explosionEffect,
@@ -2067,6 +2195,10 @@ export class Game {
         onOpponentLeftRoom: () => game.onOpponentLeftRoom?.(),
         destroyLamp: (lamp) => void (game.facility ? game.destroyFacilityLamp(lamp, false) : game.destroyHouseLamp(lamp, false)),
         syncLamps: (lamps) => game.syncFacilityLamps(lamps),
+        glassHit: (pane, u, v, power, side) => {
+          if (game.buildings?.houses.isPaneId(pane)) game.hitGlass(pane, u, v, power, side, false);
+        },
+        syncGlass: (panes) => game.buildings?.houses.syncGlass(panes),
         opponentInMatch: (slot) => game.noteOpponentInMatch(slot),
         noteSnapshotApplied: (slot, receivedAt) => game.matchTelemetry.recordSnapshot(slot, receivedAt),
         // Getter: assigned right after construction, before any message can arrive.
@@ -2478,6 +2610,7 @@ export class Game {
    * a fresh one at the new size the next time the shadow pass runs. */
   private applyGraphicsQuality(quality: GraphicsQualityPreset): void {
     this.renderer.applyQuality(quality);
+    this.buildings?.houses.setGlassReflections(quality.postProcessing);
     // On the Facility the fill follows the probe every frame (updateFacilityLight) and the sun is off.
     if (!this.facility) this.fillLight.intensity = quality.environmentLighting ? 0 : this.renderer.currentLook.hemiIntensity;
     this.sun.castShadow = quality.shadowsEnabled && !this.facility;
@@ -3484,6 +3617,7 @@ export class Game {
       undergroundAmount: isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z) ? this.undergroundAmount : 0,
       reactorDistance: this.reactorDistance(),
       outdoor: !this.facility,
+      space: this.listenerSpace(),
       healthRatio: this.player.currentHealth / this.player.maxHealth,
       director: this.director ? { phase: this.director.phase, intensity: this.director.intensity } : null,
       active: this.input.isEngaged && !this.player.isDead && !this.missionWon && !this.deathScreenVisible,
@@ -3557,6 +3691,8 @@ export class Game {
     if (this.facility || this.buildings) {
       const lamps = this.lampSync.update(dt, this.deadLampIds);
       if (lamps) this.sendLampSync(lamps);
+      const glass = this.buildings?.houses.glass;
+      if (glass && this.glassSync.update(dt, glass.revision)) this.sendGlassSync();
     }
 
     // Win condition: first to killLimit ends the match. Checked here rather than where each score
@@ -3862,11 +3998,9 @@ export class Game {
 
     this.explosionEffect.spawn(position, radius);
     if (position.distanceTo(this.player.position) <= 10) this.input.vibrate('explosion');
-    this.sound.playExplosion(
-      enemyGunshotVolume(position.distanceTo(this.player.position)) * undergroundMuffleFactor(
-        isBelowGround(this.player.position.x, this.player.position.y, this.player.position.z), isBelowGround(position.x, position.y, position.z)),
-      computeStereoPan(this.player.position, this.player.facingYaw, position),
-    );
+    this.sound.playExplosion(position);
+    // The thrower's client resolves this explosion, so it decides the windows too.
+    this.breakGlassNear(position, GOOSE_GLASS_RADIUS, true);
 
     const selfDistance = position.distanceTo(this.player.position);
     const selfDamage = computeExplosionDamage(selfDistance, radius, maxDamage);
@@ -4060,6 +4194,7 @@ export class Game {
       // liveness and clock (restartOpponentForRejoin), and its catch-ups (lamps, doors, grenades) again.
       restartOpponentForRejoin(existing, performance.now());
       this.lampSync.forget(slot);
+      this.glassSync.forget(slot);
       this.facilityInteraction?.forget(slot);
       this.grenades?.forgetOpponent(slot);
       return;
@@ -4119,6 +4254,7 @@ export class Game {
     this.kingOfTheHillController?.playerDown(slot, opponent.remotePlayer.position);
     // A rejoin on this slot gets this client's dead lamps again on its first snapshot.
     this.lampSync.forget(slot);
+    this.glassSync.forget(slot);
     this.facilityInteraction?.forget(slot);
     this.grenades?.forgetOpponent(slot);
     opponent.remotePlayer.dispose(this.renderer.scene);
@@ -4297,6 +4433,9 @@ export class Game {
     // prev/current bookkeeping or e2e position-reporting changes.
     this.player.interpolateCamera(alpha);
     this.grenades?.applyCameraShake(this.renderer.camera, now / 1000);
+    // The ears are where the eyes are: every positioned sound is heard from the camera.
+    this.sound.setListener(poseFromQuaternion(
+      this.renderer.camera.getWorldPosition(this.listenerPosition), this.renderer.camera.getWorldQuaternion(this.listenerQuaternion)));
     this.renderer.camera.getWorldDirection(this.hudForward);
     const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
     // Test-only: with the clock held (holdTime) the per-frame effects advance by stepTime alone,
