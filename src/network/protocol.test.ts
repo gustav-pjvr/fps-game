@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MATCH_MAPS } from '../core/config.ts';
-import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
+import { RELAYABLE_MESSAGE_TYPES, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import {
   CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
   type MatchStartMessage, type WelcomeMessage,
@@ -345,5 +345,45 @@ describe('self-reported numbers and hello fields', () => {
     expect(ok({ type: 'modeExplanationReady', slot: 'everyone' })).toBe(false);
     expect(ok({ type: 'hordePlayerEliminated', slot: 9 })).toBe(false);
     expect(ok({ type: 'playerReady', slot: -1, ready: true })).toBe(false);
+  });
+});
+
+describe('glass messages (docs/glass.md)', () => {
+  const hit = { type: 'glassHit', senderSlot: 1, pane: 42, u: 0.2, v: -0.3, power: 2, side: 1 };
+  const sync = { type: 'glassSync', senderSlot: 1, panes: [{ id: 42, d: 3, b: false, h: [0.1, 0.2] }, { id: 43, d: 6, b: true, h: [] }] };
+
+  it('accepts a well-formed glassHit and glassSync, after a trip through JSON', () => {
+    expect(isNetworkMessage(JSON.parse(JSON.stringify(hit)))).toBe(true);
+    expect(isNetworkMessage(JSON.parse(JSON.stringify({ ...hit, side: -1, power: 6 })))).toBe(true);
+    expect(isNetworkMessage(JSON.parse(JSON.stringify(sync)))).toBe(true);
+    expect(isNetworkMessage({ ...sync, panes: [] })).toBe(true);
+  });
+
+  it('rejects a glassHit with NaN or huge u or v, a bad power, a bad side or a bad pane', () => {
+    for (const bad of [
+      { u: NaN }, { v: NaN }, { u: Infinity }, { u: 1e9 }, { v: -1e9 }, { u: '0.2' }, { u: undefined },
+      { power: 0 }, { power: 7 }, { power: 1.5 }, { power: -1 }, { power: '2' },
+      { side: 2 }, { side: 0 }, { side: '1' },
+      { pane: -1 }, { pane: 1.5 }, { pane: NaN }, { pane: '42' }, { pane: 2 ** 60 }, { pane: undefined },
+    ]) {
+      expect(isNetworkMessage({ ...hit, ...bad }), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('rejects a glassHit with no sender slot or an invalid one', () => {
+    expect(isNetworkMessage({ ...hit, senderSlot: undefined })).toBe(false);
+    expect(isNetworkMessage({ ...hit, senderSlot: 9 })).toBe(false);
+  });
+
+  it('rejects a glassSync whose panes is not an array, or is far too long', () => {
+    for (const panes of [undefined, null, 'x', 5, {}, { length: 1 }]) {
+      expect(isNetworkMessage({ ...sync, panes }), String(panes)).toBe(false);
+    }
+    expect(isNetworkMessage({ ...sync, panes: Array.from({ length: 2049 }, () => ({ id: 1, d: 1, b: false, h: [] })) })).toBe(false);
+  });
+
+  it('is relayed by the host', () => {
+    expect(RELAYABLE_MESSAGE_TYPES.has('glassHit')).toBe(true);
+    expect(RELAYABLE_MESSAGE_TYPES.has('glassSync')).toBe(true);
   });
 });

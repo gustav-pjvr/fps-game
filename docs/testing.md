@@ -31,6 +31,8 @@ Add `--dry` to see the plan without running it, and `--base <ref>` to compare wi
 | facility | `facility.spec.ts`, `facility-doors.spec.ts`, `facility-modes.spec.ts`, `multiplayer-facility.spec.ts`, `pickups.spec.ts`, `solo-weather.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
 | pickups | `pickups.spec.ts` | `src/pickups/` |
 | houses | `houses.spec.ts` | `src/world/houses/`, `src/world/doors/`, the house plan on the minimap |
+| glass | `glass.spec.ts`, `multiplayer-glass.spec.ts` | `src/world/glass/`, `src/network/glassSync.ts` (and nothing else: these files do not pick `mp`) |
+| sound | `soundlab.spec.ts` | `src/audio/`, `src/world/soundProbe.ts`, `src/soundlab/`, `soundlab.html`. The page spec proves layout, accessibility and that a sound lands on its side; `node scripts/soundRender.mjs` measures every sound (`docs/sound.md`) |
 | grenades | `grenades.spec.ts` | `src/combat/grenades/`, the grenade arm, the danger marker, the flash white-out and deafness, `Game.ts` |
 | mp | seven specs: `multiplayer`, `multiplayer-underground`, `-match`, `-combat`, `-moving-target`, `-matchend`, `-pause-damage` (`multiplayer-facility` is in facility, `multiplayer-four` in mp4) | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
 | skins | `skins.spec.ts` | weapon models and clips (`src/weapons/models/`, `animation/`), `viewModel.ts`, `core/skins.ts`, `core/attachments.ts`, the Workbench and its preview. Equips every skin on every gun and saves a screenshot of each aimed view. |

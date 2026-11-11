@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { HOUSE_LIGHT_POOL } from './HouseLights.ts';
 import { HOUSE_LAYOUTS, houseToWorld } from './houseLayout.ts';
+import { layoutPanes, paneId } from '../glass/glassPane.ts';
 import { HOUSE_CELL_REACH, houseKey, houseObjectId, isHouseInWorld, type HouseRef } from './valleyHouseIds.ts';
 import { FRONT_DOOR_SLOT, ValleyHouses, type HousePlacement } from './ValleyHouses.ts';
 
@@ -244,5 +245,84 @@ describe('Valley house lamps', () => {
     expect(isHouseInWorld({ gx: HOUSE_CELL_REACH + 1, gz: 0, index: 0 })).toBe(false);
     expect(houses.isLampId(houseObjectId(houseKey(PLACEMENTS[2]!.ref), 0))).toBe(true);
     expect(lookups).toHaveLength(1);
+  });
+});
+
+describe('Valley house glass', () => {
+  beforeAll(async () => {
+    await RAPIER.init();
+  });
+
+  const paneOf = (p: HousePlacement, index: number) => paneId(houseKey(p.ref), index);
+
+  it('stream in one pane per window of the design, and out again', () => {
+    const { houses, place } = setup();
+    expect(houses.glass.streamedCount).toBe(0);
+    place(0);
+    expect(houses.glass.streamedCount).toBe(layoutPanes(HOUSE_LAYOUTS[0]!).length);
+    place(1);
+    expect(houses.glass.streamedCount).toBe(layoutPanes(HOUSE_LAYOUTS[0]!).length + layoutPanes(HOUSE_LAYOUTS[1]!).length);
+    houses.houseRemoved('house-0');
+    expect(houses.glass.streamedCount).toBe(layoutPanes(HOUSE_LAYOUTS[1]!).length);
+    houses.houseRemoved('house-1');
+    expect(houses.glass.streamedCount).toBe(0);
+  });
+
+  it('place a pane\'s world rectangle at its house', () => {
+    const { houses, place } = setup();
+    place(0);
+    const spec = layoutPanes(HOUSE_LAYOUTS[0]!)[0]!;
+    const world = houses.glass.pane(paneOf(PLACEMENTS[0]!, 0))!;
+    const expected = houseToWorld(spec.x, spec.y, spec.z, PLACEMENTS[0]!.x, PLACEMENTS[0]!.groundY, PLACEMENTS[0]!.z, PLACEMENTS[0]!.rotationY);
+    expect(world.x).toBeCloseTo(expected.x, 9);
+    expect(world.y).toBeCloseTo(expected.y, 9);
+    expect(world.z).toBeCloseTo(expected.z, 9);
+  });
+
+  it('know a real window of a real house as a pane id, and nothing else', () => {
+    const { houses } = setup();
+    // Known whether or not the house is streamed in.
+    for (const p of PLACEMENTS) {
+      const count = layoutPanes(HOUSE_LAYOUTS[p.design]!).length;
+      for (let index = 0; index < count; index++) expect(houses.isPaneId(paneOf(p, index))).toBe(true);
+      expect(houses.isPaneId(paneOf(p, count))).toBe(false);
+    }
+    expect(houses.isPaneId(123456789)).toBe(false);
+    expect(houses.isPaneId(-1)).toBe(false);
+    expect(houses.isPaneId(1.5)).toBe(false);
+    expect(houses.isPaneId(NaN)).toBe(false);
+    expect(houses.isPaneId(paneId(houseKey({ gx: 5, gz: 5, index: 0 }), 0))).toBe(false);
+  });
+
+  it('keep a hit pane as hit across the house streaming out and back in', () => {
+    const { houses, place } = setup();
+    place(0);
+    const id = paneOf(PLACEMENTS[0]!, 1);
+    expect(houses.glass.hit(id, 0.1, 0.2, 2, 1)).toBe('cracked');
+    expect(houses.glass.hit(paneOf(PLACEMENTS[0]!, 2), 0, 0, 6, -1)).toBe('broke');
+    houses.houseRemoved('house-0');
+    expect(houses.glass.pane(id)).toBeNull();
+    expect(houses.glass.stateOf(id).damage).toBe(2);
+    place(0);
+    expect(houses.glass.pane(id)).not.toBeNull();
+    expect(houses.glass.stateOf(id)).toMatchObject({ damage: 2, broken: false });
+    expect(houses.glass.stateOf(id).holes).toHaveLength(2);
+    expect(houses.glass.stateOf(paneOf(PLACEMENTS[0]!, 2)).broken).toBe(true);
+    expect(houses.glass.stateOf(paneOf(PLACEMENTS[0]!, 0)).damage).toBe(0);
+  });
+
+  it('adopt a peer\'s glass list, refusing panes that are not real windows', () => {
+    const host = setup(), guest = setup();
+    host.place(0); guest.place(0);
+    const good = paneOf(PLACEMENTS[0]!, 0);
+    host.houses.glass.hit(good, 0, 0, 3, 1);
+    const wire = JSON.parse(JSON.stringify(host.houses.glass.snapshot()));
+    guest.houses.syncGlass([...wire, { id: 123456789, d: 6, b: true, h: [] }, { id: paneOf(PLACEMENTS[0]!, 15), d: 6, b: true, h: [] }]);
+    expect(guest.houses.glass.stateOf(good).damage).toBe(3);
+    expect(guest.houses.glass.stateOf(123456789).damage).toBe(0);
+    expect(guest.houses.glass.snapshot()).toHaveLength(1);
+    guest.houses.syncGlass('not a list');
+    guest.houses.syncGlass(null);
+    expect(guest.houses.glass.snapshot()).toHaveLength(1);
   });
 });

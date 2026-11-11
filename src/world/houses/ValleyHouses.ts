@@ -8,6 +8,13 @@ import { HouseNavigator } from './HouseNavigator.ts';
 import { parseHouseLampList } from '../../network/lampSync.ts';
 import { houseKey, houseObjectId, isHouseInWorld, parseHouseObjectId, type HouseRef } from './valleyHouseIds.ts';
 import { ValleyDoors } from './ValleyDoors.ts';
+import { GlassStore } from '../glass/GlassStore.ts';
+import { GlassView } from '../glass/GlassView.ts';
+import { layoutPanes, paneId, paneToWorld, parsePaneId, parseGlassSync, type PaneSpec } from '../glass/glassPane.ts';
+import { houseFromKey } from './valleyHouseIds.ts';
+
+/** Each design's windows, worked out once (the layouts are constants). */
+const DESIGN_PANES: readonly (readonly PaneSpec[])[] = HOUSE_DESIGNS.map((design) => layoutPanes(design.layout));
 
 /** Interiors (furniture, partitions, the stair) are hidden past this distance from the camera. */
 export const INTERIOR_DRAW_DISTANCE = 70;
@@ -33,6 +40,7 @@ interface LoadedHouse {
   readonly interior: THREE.Object3D;
   readonly lampIds: number[];
   readonly doorId: number;
+  readonly paneIds: number[];
 }
 
 /** The front door's slot in a house's object ids (world/houses/valleyHouseIds.ts). */
@@ -47,6 +55,9 @@ export const FRONT_DOOR_SLOT = 0;
 export class ValleyHouses {
   readonly doors: ValleyDoors;
   readonly lights: HouseLights;
+  /** The glass in the windows (docs/glass.md): every pane's state for the whole match. */
+  readonly glass = new GlassStore();
+  private readonly glassView: GlassView;
   /** The streamed-in houses' walk grids for the enemies (HouseNavigator.ts). */
   readonly nav = new HouseNavigator();
   private readonly loaded = new Map<string, LoadedHouse>();
@@ -61,6 +72,32 @@ export class ValleyHouses {
     this.houseAt = (ref) => (isHouseInWorld(ref) ? houseAt(ref) : null);
     this.doors = new ValleyDoors(scene, world, (id) => this.doorPlane(id));
     this.lights = new HouseLights(scene, lampsOn);
+    this.glassView = new GlassView(scene, true);
+    this.glass.setListener(this.glassView.onPane);
+  }
+
+  /** Whether `id` names a real window of a real house in this world (ids may come from the network). */
+  isPaneId(id: number): boolean {
+    const parsed = parsePaneId(id);
+    const ref = parsed && houseFromKey(parsed.houseKey);
+    const placement = ref ? this.houseAt(ref) : null;
+    return !!placement && parsed!.index < (DESIGN_PANES[placement.design]?.length ?? 0);
+  }
+
+  /** Another player's whole set of hit panes (glassSync): each real pane takes the more damaged
+   * of the two states, quietly. */
+  syncGlass(value: unknown): void {
+    this.glass.merge(parseGlassSync(value, (id) => this.isPaneId(id)));
+  }
+
+  /** What the glass view draws right now (tests and the performance report). */
+  glassCounts(): { panes: number; airborne: number; lying: number } {
+    return this.glassView.counts();
+  }
+
+  /** Low draws flat glass; Medium and High add the sky's reflection. */
+  setGlassReflections(on: boolean): void {
+    this.glassView.setReflections(on);
   }
 
   /** A house door's plane in the world, or null when `id` names no house door. */
@@ -85,7 +122,10 @@ export class ValleyHouses {
       this.lights.addLamp(id, at.x, at.y, at.z);
       return id;
     });
-    this.loaded.set(name, { placement, key, interior, lampIds, doorId });
+    const panes = (DESIGN_PANES[placement.design] ?? []).map((spec) =>
+      paneToWorld(spec, paneId(key, spec.index), placement.x, placement.groundY, placement.z, placement.rotationY));
+    this.glass.addPanes(panes);
+    this.loaded.set(name, { placement, key, interior, lampIds, doorId, paneIds: panes.map((pane) => pane.id) });
     this.nav.add(name, placement);
   }
 
@@ -94,6 +134,7 @@ export class ValleyHouses {
     if (!house) return;
     this.doors.removeDoor(house.doorId);
     for (const id of house.lampIds) this.lights.removeLamp(id);
+    this.glass.removePanes(house.paneIds);
     this.loaded.delete(name);
     this.nav.remove(name);
   }
@@ -107,6 +148,7 @@ export class ValleyHouses {
       house.interior.visible = dx * dx + dz * dz < far;
     }
     this.lights.update(dt, this.cameraPosition);
+    this.glassView.update(dt);
   }
 
   /** Whether the lamp of the house room a body with its feet at feetY stands in at (x, z) is lit
@@ -183,6 +225,8 @@ export class ValleyHouses {
   dispose(): void {
     this.doors.dispose();
     this.lights.dispose();
+    this.glass.setListener(null);
+    this.glassView.dispose();
     this.loaded.clear();
     this.nav.clear();
   }

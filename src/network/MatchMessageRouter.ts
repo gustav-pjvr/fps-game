@@ -1,5 +1,5 @@
 import { torchAvailable, torchOnByDefault } from '../render/Flashlight.ts';
-import { isBelowGround, isUnderground } from '../world/underground.ts';
+import { isUnderground } from '../world/underground.ts';
 import * as THREE from 'three';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { ThrownGoose } from '../entities/ThrownGoose.ts';
@@ -16,7 +16,7 @@ import type { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import type { KillFeed } from '../ui/killFeed.ts';
 import type { GooseAnnouncement } from '../ui/gooseAnnouncement.ts';
 import type { SoundEngine } from '../audio/SoundEngine.ts';
-import { computeStereoPan, enemyGunshotVolume, knifeSwingVolume, multiplayerGunshotVolume, undergroundMuffleFactor } from '../core/positionalAudio.ts';
+import type { Surface } from '../audio/surfaces.ts';
 import { applyMatchDeath } from '../core/multiplayerScoring.ts';
 import type { KingOfTheHillController } from '../core/modeControllers/KingOfTheHillController.ts';
 import type { SquadController } from '../core/modeControllers/SquadController.ts';
@@ -39,6 +39,8 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'fireEvent',
   'lampDestroyed',
   'lampSync',
+  'glassHit',
+  'glassSync',
   'grenadeThrown',
   'grenadeDetonated',
   'damageEvent',
@@ -77,6 +79,10 @@ export interface MatchMessageContext {
   readonly scene: THREE.Scene;
   readonly player: Player;
   readonly sound: SoundEngine;
+  /** What a foot lands on at a world position (earth, a house floor, the Facility's concrete). */
+  readonly stepSurfaceAt: (position: THREE.Vector3) => Surface;
+  /** Another player's shot went from `origin` to `end`: a bullet passing close is heard. */
+  readonly shotPassed: (origin: THREE.Vector3, end: THREE.Vector3) => void;
   readonly tracers: Tracers;
   readonly muzzleFlash: MuzzleFlash;
   readonly explosionEffect: ExplosionEffect;
@@ -129,6 +135,10 @@ export interface MatchMessageContext {
   /** Facility only (a no-op elsewhere): another player's whole dead-lamp set (lampSync); kills any
    * listed lamp still lit, quietly. Validates the list itself. */
   syncLamps(lamps: unknown): void;
+  /** Valley only (a no-op elsewhere): another player's hit on a window pane (docs/glass.md). */
+  glassHit(pane: number, u: number, v: number, power: number, side: 1 | -1): void;
+  /** Valley only: another player's whole set of hit panes (glassSync). Validates the list itself. */
+  syncGlass(panes: unknown): void;
   /** A playerSnapshot from this slot arrived (they are in the match and listening), the cue to send
    * them this client's dead lamps and (host) the doors the first time, on the Facility and on the
    * Valley alike (see network/lampSync.ts). */
@@ -240,17 +250,14 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       // with real positioning) here too.
       const origin = new THREE.Vector3(message.originX, message.originY, message.originZ);
       const end = new THREE.Vector3(message.endX, message.endY, message.endZ);
-      const distance = origin.distanceTo(ctx.player.position);
-      const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
       if (WEAPON_DEFINITIONS[message.weaponId]?.kind === 'melee') {
-        const volume = knifeSwingVolume(distance);
-        if (volume > 0) ctx.sound.playKnifeSwing(volume, pan, message.weaponId);
+        ctx.sound.playKnifeSwing(message.weaponId, origin);
         break;
       }
       ctx.tracers.spawn(origin, end);
       ctx.muzzleFlash.spawn(origin, false);
-      ctx.sound.playGunshot(message.weaponId, multiplayerGunshotVolume(distance) * undergroundMuffleFactor(
-        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(origin.x, origin.y, origin.z)), pan);
+      ctx.sound.playGunshot(message.weaponId, origin);
+      ctx.shotPassed(origin, end);
       break;
     }
     case 'lampDestroyed':
@@ -259,6 +266,13 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       break;
     case 'lampSync':
       ctx.syncLamps(message.lamps);
+      break;
+    case 'glassHit':
+      // Self-reported like lampDestroyed: the one who hit the pane already changed it locally.
+      ctx.glassHit(message.pane, message.u, message.v, message.power, message.side);
+      break;
+    case 'glassSync':
+      ctx.syncGlass(message.panes);
       break;
     case 'worldInteract':
       // Guest -> host only, never relayed: the transport slot is the guest who pressed interact.
@@ -381,10 +395,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
     }
     case 'footstepEvent': {
       const origin = new THREE.Vector3(message.x, message.y, message.z);
-      const distance = origin.distanceTo(ctx.player.position);
-      const pan = computeStereoPan(ctx.player.position, ctx.player.facingYaw, origin);
-      ctx.sound.playFootstep(multiplayerGunshotVolume(distance) * undergroundMuffleFactor(
-        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(origin.x, origin.y, origin.z)), pan);
+      ctx.sound.playFootstep(ctx.stepSurfaceAt(origin), 'run', origin);
       break;
     }
     case 'goosePickedUp':
@@ -415,8 +426,7 @@ export function routeMatchMessage(ctx: MatchMessageContext, message: NetworkMess
       const position = new THREE.Vector3(message.x, message.y, message.z);
       const explosionRadius = message.source === 'gooseLauncher' ? GOOSE_LAUNCHER_EXPLOSION_RADIUS : GOOSE_TOSS_EXPLOSION_RADIUS;
       ctx.explosionEffect.spawn(position, explosionRadius);
-      ctx.sound.playExplosion(enemyGunshotVolume(position.distanceTo(ctx.player.position)) * undergroundMuffleFactor(
-        isBelowGround(ctx.player.position.x, ctx.player.position.y, ctx.player.position.z), isBelowGround(position.x, position.y, position.z)), computeStereoPan(ctx.player.position, ctx.player.facingYaw, position));
+      ctx.sound.playExplosion(position);
       const thrown = ctx.thrownGeese.get(message.id);
       if (thrown) {
         thrown.dispose(ctx.scene);

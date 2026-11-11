@@ -179,7 +179,7 @@ export class WeaponManager {
      * definitions.ts's WeaponDefinition.isProjectile) - currently only the Goose Launcher. */
     private readonly onProjectileFire: (origin: THREE.Vector3, muzzleWorld: THREE.Vector3, direction: THREE.Vector3) => void,
     /** Every ranged hitscan pellet's ray, with the distance to its physics hit (or its range). */
-    private readonly onHitscanRay: ((origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void) | undefined,
+    private readonly onHitscanRay: ((origin: THREE.Vector3, direction: THREE.Vector3, distance: number, melee?: boolean) => void) | undefined,
     /** The player's skin per weapon id (core/skins.ts); a weapon with no entry wears the default. */
     private readonly skins: Readonly<Record<string, SkinId>>,
     /** What the player fitted to each gun (core/attachments.ts); a gun with no entry is bare. */
@@ -215,8 +215,9 @@ export class WeaponManager {
     initialReserveAmmo?: Readonly<Record<string, number>>,
     /** Per ranged hitscan pellet: its origin, unit direction and the distance to its physics hit
      * or, on a miss, its range. Lets the Facility test the ray against its lamps
-     * (docs/facility-map.md, section 11). The blades and the Goose Launcher never call it. */
-    onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
+     * (docs/facility-map.md, section 11). A blade's strike rays call it too, with `melee` set, so a
+     * window's glass (no collider) can be struck (docs/glass.md). The Goose Launcher never calls it. */
+    onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number, melee?: boolean) => void,
     /** The skin each weapon wears, by weapon id (core/skins.ts). */
     skins: Readonly<Record<string, SkinId>> = {},
     /** What is fitted to each gun, by weapon id (core/attachments.ts). */
@@ -879,6 +880,8 @@ export class WeaponManager {
       const angle = attack.rays === 1 ? 0 : (step / steps) * attack.spread;
       const direction = scratchForward.clone().applyAxisAngle(scratchUp, angle);
       const hit = castHitscan(this.physics, origin, direction, attack.range, excludeCollider);
+      // Things that are not physics colliders (a window's glass) are struck along the same ray.
+      this.onHitscanRay?.(origin, direction, hit ? hit.distance : attack.range, true);
       if (!hit) continue;
       const target = this.physics.getEntity(hit.colliderHandle);
       if (isDamageable(target)) {

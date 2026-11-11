@@ -33,7 +33,8 @@ import {
 
 export interface PlayerSoundHooks {
   onDamaged: (sourcePosition?: THREE.Vector3) => void;
-  onFootstep: () => void;
+  /** `sprinting` while the sprint is held: a run lands harder than a walk. */
+  onFootstep: (sprinting: boolean) => void;
 }
 
 export class Player implements Entity {
@@ -321,7 +322,7 @@ export class Player implements Entity {
       this.footstepAccumulator += horizontalMoveDistance;
       if (this.footstepAccumulator >= FOOTSTEP_DISTANCE) {
         this.footstepAccumulator -= FOOTSTEP_DISTANCE;
-        this.sounds.onFootstep();
+        this.sounds.onFootstep(this.sprintAllowed && input.isActionActive('sprint'));
       }
     }
 

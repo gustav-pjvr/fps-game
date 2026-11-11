@@ -234,7 +234,7 @@ below names its file. Architecture notes for each area are in `docs/architecture
 | `src/core/valleyFallRecovery.ts` | The pure fall check (section 9.5) |
 | `src/core/mission/missionState.ts`, `src/core/modeControllers/KingOfTheHillController.ts`, `src/entities/enemies/director/pacingDirector.ts` | Mode rules (section 9.6) |
 | `src/pickups/valleyPickupInputs.ts`, `pickupPlacement.ts`, `pickupConfig.ts`, `PickupSystem.ts`, `createMatchPickups.ts` | Lab pickup sites and the height checked claim (section 9.7) |
-| `src/audio/ambience.ts`, `src/audio/SoundEngine.ts`, `src/core/positionalAudio.ts`, `src/network/MatchMessageRouter.ts` | Reactor hum, darker echo, and the muffle across the surface boundary (section 9.8) |
+| `src/audio/ambience.ts`, `src/audio/SoundEngine.ts`, `src/world/soundProbe.ts` | Reactor hum, darker echo, and the muffle across the surface boundary (section 9.8; since the sound rebuild the ground occludes like any wall, `docs/sound.md`) |
 | `src/ui/minimap.ts` | A player who is below ground is a hollow ring (section 9.8) |
 | `src/core/gameDebugApi.ts` | `getUndergroundDebug()` and `setTowerDoor(index, open)` for the specs |
 | `e2e/underground.spec.ts`, `e2e/multiplayer-underground.spec.ts`, `scripts/e2eGroups.mjs` | Browser specs, in the `world` and `mp` groups (`docs/testing.md`) |
@@ -352,9 +352,11 @@ cannot take it. Solo walk-over keeps its 1.6 m vertical reach.
 - **Reactor hum.** Two sine tones at 48 and 50 Hz plus low-passed noise, built on first need
   (`buildReactorHum`). `reactorHumGain(distance)` is full inside 4 m and fades smoothly to silence at
   22 m from the nearest reactor core of the lab the player is in. It follows the music volume setting.
-- **Muffle.** `undergroundMuffleFactor(listenerBelowGround, sourceBelowGround)` is 0.35 when the two
-  are on different sides of the surface, else 1. It scales enemy and remote gunshots, remote
-  footsteps, goose and horde explosions, thrown goose blasts and frag and flash grenade sounds.
+- **Muffle.** Since the sound rebuild (`docs/sound.md`) there is no separate rule for the surface:
+  every positioned sound asks what lies between it and the listener, and the ground is the
+  heaviest thing there is (0.08 of the level, nothing above 380 Hz). A stair shaft's cut zone is
+  open to sound the way it is open to shots. (Before, `undergroundMuffleFactor` scaled a fixed list
+  of sounds by 0.35.)
 - **Minimap.** `Minimap.update` takes `MinimapPlayerDot` entries (`x`, `z`, `underground`) and a
   `localUnderground` flag. Below ground a dot is a ring with the same colour and footprint
   (`minimapDotStyle`), and the local player gets a ring at the centre while the forward wedge stays,

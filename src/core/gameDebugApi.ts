@@ -245,6 +245,28 @@ export interface GameDebugApi {
   };
   /** Like setValleyDoor, for the tower at `index`. */
   setTowerDoor(index: number, open: boolean): boolean;
+  /** The windows' glass (docs/glass.md), null off the Valley: how many panes are streamed in, the
+   * store's revision, what the view draws, and every streamed-in pane within `radius` metres of the
+   * player (all of them when omitted) with its place, size and state. */
+  getGlassDebug(radius?: number): {
+    streamed: number; revision: number; drawn: { panes: number; airborne: number; lying: number };
+    panes: { id: number; x: number; y: number; z: number; ux: number; uz: number; nx: number; nz: number; halfWidth: number; halfHeight: number; damage: number; broken: boolean; holes: number[] }[];
+  } | null;
+  /** Test-only: hits pane `id` at (u, v) with `power` exactly like this player's own round (state,
+   * look, sound and, in multiplayer, the glassHit send). False when there is no such pane or it is
+   * already broken. */
+  hitGlass(id: number, u: number, v: number, power: number): boolean;
+  /** Test-only, Valley only: unloads the terrain chunk holding (x, z) with everything streamed with
+   * it (its houses, their doors, lamps and glass); the game loads it again within a few ticks. False
+   * when that chunk is not loaded. */
+  restreamChunkAt(x: number, z: number): boolean;
+  /** The sound engine's counters (docs/sound.md): voices opened, skipped as inaudible or over the
+   * cap, the most alive at once, the occlusion probe's ray casts, and where the listener stands. */
+  getSoundDebug(): {
+    voices: { opened: number; inaudible: number; overCap: number; peakLive: number };
+    probe: { probes: number; casts: number; clear: number; bent: number; blocked: number };
+    space: string;
+  };
   /** The houses' lamps: how many are streamed in, lit and shot out, and the light pool. */
   getHouseLights(): { lamps: number; lit: number; dead: number; lights: { x: number; y: number; z: number; on: boolean }[] } | null;
   /** Test-only: shoots out lamp `index` exactly like a hit (light, effect, sound and, in multiplayer,
