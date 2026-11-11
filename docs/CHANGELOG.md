@@ -33,6 +33,10 @@ The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/ars
   movement and a long burst open it up. A burst climbs for its first rounds, then settles and weaves
   from side to side in a pattern that can be learned, and each kick is sized to its cartridge and
   the weight behind it. Shotgun patterns are tighter and barely change when aimed. `docs/gun-handling.md`.
+- **Hand and weapon animation fixes.** The inspect (G) no longer swings a forearm across the screen:
+  the gun rolls onto its side, then tips muzzle-up, with both hands on it. A knife slash keeps the
+  forearm coming from the corner. Sprinting carries the weapon low and to the side where it swung
+  across the view. A weapon being put away no longer keeps its sprint tilt.
 - **Blades have two attacks.** A click and an aimed click are different strikes with their own
   damage, reach, speed and swing; a strike hits each target once (the knife no longer kills in one
   clean hit).

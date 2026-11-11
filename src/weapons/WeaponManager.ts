@@ -680,6 +680,10 @@ export class WeaponManager {
     // Bob and sway fade out while aiming so the sight stays steady on the centre.
     const handMotion = 1 - ADS_MOTION_DAMPING * this.aimAmount;
 
+    // The hands' own lag behind the look, every tick: a weapon being put away keeps no tilt from
+    // the sprint it was drawn out of.
+    slot.viewModel.rotation.set(this.swayPitch * handMotion, this.swayYaw * handMotion, 0);
+
     if (this.switching) {
       // Holster drop: y slides from the pose above (switchProgress 0, so a switch's first and last
       // frames meet the normal pose exactly) to the fixed holster height below the frame
@@ -690,29 +694,26 @@ export class WeaponManager {
         this.switchProgress,
       );
     } else {
-      slot.viewModel.rotation.x = this.swayPitch * handMotion;
-      slot.viewModel.rotation.y = this.swayYaw * handMotion;
-
       // Same shared phase the camera bob uses (see Player.movementBobPhase) - the weapon and the
       // camera bob together rather than independently, matching the doc's framing of one phase
       // driving both.
       slot.viewModel.position.y +=
         Math.sin(player.movementBobPhase) * WEAPON_BOB_AMPLITUDE * player.movementBobStrength * handMotion;
 
-      // Sprint tuck, after the Opus 5.5 viewmodel pose (reference/model-test/opus-5.5/game.js,
-      // renderViewmodel): the gun swings across the body while sprinting.
+      // Sprint carry: the weapon comes down and across the body a little, muzzle to the left and
+      // canted, with both hands still on it. A harder swing (it was 0.55 rad of yaw) put the gun
+      // across the middle of the view and left the support hand hanging in mid-screen.
       const sprinting = this.aimAmount < 0.05 && input.isActionActive('sprint') && player.movementBobStrength > 0.5;
       this.sprintPose = THREE.MathUtils.damp(this.sprintPose, sprinting ? 1 : 0, SPRINT_POSE_DAMP, dt);
       const sp = this.sprintPose;
-      slot.viewModel.position.x += 0.02 * sp;
-      slot.viewModel.position.y -= 0.04 * sp;
-      slot.viewModel.rotation.x -= 0.25 * sp;
-      slot.viewModel.rotation.y += 0.55 * sp;
-      slot.viewModel.rotation.z = 0.15 * sp;
+      slot.viewModel.position.x += 0.015 * sp;
+      slot.viewModel.position.y -= 0.055 * sp;
+      slot.viewModel.rotation.x -= 0.1 * sp;
+      slot.viewModel.rotation.y += 0.22 * sp;
+      slot.viewModel.rotation.z = 0.2 * sp;
     }
 
     if (isMelee) {
-      if (this.switching) slot.viewModel.rotation.set(0, 0, 0);
       const pose = meleePose(this.meleeProgress, this.meleeVariant);
       slot.viewModel.position.x += pose.px;
       slot.viewModel.position.y += pose.py;

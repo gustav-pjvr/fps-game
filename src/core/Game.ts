@@ -840,6 +840,8 @@ export class Game {
         };
       },
       getCameraFov: () => this.renderer.camera.fov,
+      holdTime: (held: boolean) => this.loop.setHeld(held),
+      stepTime: (seconds: number) => this.loop.step(seconds),
       getShotLog: () => this.weaponManager.recentShots.map((shot) => ({ ...shot })),
       getCameraChildrenDebug: () =>
         this.renderer.camera.children.map((child) => ({

@@ -114,8 +114,19 @@ export function defaultMagazineReload(): Clip {
 }
 
 /** The skin's whole-gun turn during an inspect: the standard look-over, the gilded slow showcase,
- * and the pulse flick (models/skins.ts picks one). Times in seconds. */
+ * and the pulse flick (models/skins.ts picks one). Times in seconds.
+ *
+ * Both hands stay on the weapon and turn with it, so every pose here keeps the forearms coming up
+ * from below the frame: the gun rolls to the left (its side to the eye), then tips muzzle-up with
+ * a little of that roll left. It never rolls the other way and never spins: either swings a forearm
+ * across the screen, cut end and all (judged from frame captures, scripts/viewShots.mjs). */
 export type InspectStyle = 'standard' | 'showcase' | 'flick';
+
+/** The gun on its side, close to the eye; and tipped up to look along its top. */
+const INSPECT_SIDE = { p: [-0.09, 0.045, -0.05], r: [0.12, -0.55, -0.8] } as const;
+const INSPECT_SIDE_CLOSE = { p: [-0.09, 0.05, -0.06], r: [0.16, -0.62, -0.92] } as const;
+const INSPECT_TOP = { p: [-0.05, 0.02, -0.05], r: [0.42, -0.12, -0.3] } as const;
+const INSPECT_TOP_CLOSE = { p: [-0.05, 0.03, -0.06], r: [0.5, -0.16, -0.36] } as const;
 
 export function inspectTurn(style: InspectStyle): Clip {
   if (style === 'showcase') {
@@ -124,10 +135,10 @@ export function inspectTurn(style: InspectStyle): Clip {
       tracks: {
         [GUN_TRACK]: [
           { t: 0 },
-          { t: 0.7, p: [-0.1, 0.05, -0.06], r: [0.1, -0.5, -0.75] },
-          { t: 1.9, p: [-0.1, 0.05, -0.06], r: [0.16, -0.62, -0.95] },
-          { t: 2.6, p: [-0.13, 0.04, -0.04], r: [0.1, 0.55, 0.85] },
-          { t: 3.6, p: [-0.13, 0.04, -0.04], r: [0.04, 0.42, 0.7] },
+          { t: 0.8, ...INSPECT_SIDE },
+          { t: 2.0, ...INSPECT_SIDE_CLOSE },
+          { t: 2.7, ...INSPECT_TOP },
+          { t: 3.6, ...INSPECT_TOP_CLOSE },
           { t: 4.2, p: [0, 0, 0], r: [0, 0, 0] },
         ],
       },
@@ -139,10 +150,12 @@ export function inspectTurn(style: InspectStyle): Clip {
       tracks: {
         [GUN_TRACK]: [
           { t: 0 },
-          { t: 0.25, p: [-0.06, 0.03, -0.03], r: [0.25, -0.2, -0.4] },
-          { t: 0.75, p: [-0.08, 0.05, -0.05], r: [0.2, -0.25, -Math.PI * 2 - 0.5], ease: 'smooth' },
-          { t: 1.6, p: [-0.1, 0.04, -0.05], r: [0.12, -0.5, -Math.PI * 2 - 0.8] },
-          { t: 2.4, p: [0, 0, 0], r: [0, 0, -Math.PI * 2] },
+          // A quick snap up, then over onto its side and held: two beats where the others take three.
+          { t: 0.22, ...INSPECT_TOP, ease: 'out' },
+          { t: 0.5, ...INSPECT_TOP_CLOSE },
+          { t: 0.8, ...INSPECT_SIDE, ease: 'smooth' },
+          { t: 1.8, ...INSPECT_SIDE_CLOSE },
+          { t: 2.4, p: [0, 0, 0], r: [0, 0, 0] },
         ],
       },
     };
@@ -152,10 +165,10 @@ export function inspectTurn(style: InspectStyle): Clip {
     tracks: {
       [GUN_TRACK]: [
         { t: 0 },
-        { t: 0.55, p: [-0.09, 0.045, -0.05], r: [0.12, -0.55, -0.8] },
-        { t: 1.4, p: [-0.09, 0.045, -0.05], r: [0.15, -0.6, -0.88] },
-        { t: 1.95, p: [-0.12, 0.03, -0.04], r: [0.06, 0.4, 0.6] },
-        { t: 2.5, p: [-0.12, 0.03, -0.04], r: [0.04, 0.36, 0.55] },
+        { t: 0.55, ...INSPECT_SIDE },
+        { t: 1.4, ...INSPECT_SIDE_CLOSE },
+        { t: 1.95, ...INSPECT_TOP },
+        { t: 2.5, ...INSPECT_TOP_CLOSE },
         { t: 3, p: [0, 0, 0], r: [0, 0, 0] },
       ],
     },

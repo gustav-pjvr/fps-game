@@ -35,7 +35,9 @@ function mirrored(swing: Swing): Swing {
   return { ...swing, windup: flip(swing.windup), strike: flip(swing.strike) };
 }
 
-const SLASH: Swing = { windup: pose(0.12, 0.04, 0.08, -0.25, -0.35, -0.5), strike: pose(-0.32, -0.06, -0.12, 0.3, 0.65, 1.1), windupEnd: 0.15, strikeEnd: 0.5 };
+// The hand crosses the view with the forearm still coming up from the corner: a strike that rolls
+// past about half a radian lays the forearm flat across the bottom of the screen.
+const SLASH: Swing = { windup: pose(0.12, 0.04, 0.06, -0.2, -0.3, -0.3), strike: pose(-0.3, -0.05, -0.12, 0.25, 0.5, 0.55), windupEnd: 0.15, strikeEnd: 0.5 };
 const DIAGONAL_CHOP: Swing = { windup: pose(0.1, 0.15, 0.08, 0.7, -0.1, -0.4), strike: pose(-0.22, -0.15, -0.16, -0.6, 0.3, 0.55), windupEnd: 0.32, strikeEnd: 0.58 };
 const HOOK: Swing = { windup: pose(0.08, 0.02, 0.04, 0, -0.3, -0.3), strike: pose(-0.2, -0.02, -0.14, 0.1, 0.7, 0.6), windupEnd: 0.18, strikeEnd: 0.5 };
 const JAB: Swing = { windup: pose(0, 0, 0.08), strike: pose(-0.05, 0.02, -0.3, 0.06), windupEnd: 0.2, strikeEnd: 0.48 };
@@ -51,7 +53,7 @@ const SWINGS: Readonly<Record<Exclude<MeleePoseId, 'flurry'>, Swing>> = {
   hookRight: HOOK,
   hookLeft: mirrored(HOOK),
   uppercut: { windup: pose(-0.04, -0.1, 0.06, -0.5), strike: pose(-0.08, 0.13, -0.16, 0.7), windupEnd: 0.2, strikeEnd: 0.52 },
-  backhand: { windup: pose(-0.18, 0.02, 0.02, 0, 0.6, 0.5), strike: pose(0.2, 0, -0.14, 0, -0.7, -0.7), windupEnd: 0.3, strikeEnd: 0.6 },
+  backhand: { windup: pose(-0.18, 0.02, 0.02, 0, 0.5, 0.35), strike: pose(0.2, 0, -0.14, 0, -0.55, -0.45), windupEnd: 0.3, strikeEnd: 0.6 },
   lunge: { windup: pose(0, -0.02, 0.16, -0.15), strike: pose(-0.08, 0.03, -0.42, 0.1), windupEnd: 0.25, strikeEnd: 0.5 },
   jab: JAB,
 };

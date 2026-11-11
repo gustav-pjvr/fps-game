@@ -8,6 +8,9 @@ export class Loop {
   private lastTime = 0;
   private rafHandle = 0;
   private running = false;
+  /** Test-only (window.__gameDebug.holdTime): while held, frames draw but the game does not
+   * advance, except by `step`. Never set by gameplay code. */
+  private held = false;
 
   constructor(
     private readonly update: UpdateFn,
@@ -26,12 +29,26 @@ export class Loop {
     cancelAnimationFrame(this.rafHandle);
   }
 
+  /** Test-only: stops (or restarts) the game's clock while the frames keep drawing. */
+  setHeld(held: boolean): void {
+    this.held = held;
+    this.accumulator = 0;
+  }
+
+  /** Test-only: advances a held game by `seconds` (whole fixed steps) and draws it, so a frame
+   * capture can photograph an animation at exact moments however slow the machine is. */
+  step(seconds: number): void {
+    const steps = Math.max(0, Math.round(seconds / FIXED_TIMESTEP));
+    for (let i = 0; i < steps; i++) this.update(FIXED_TIMESTEP);
+    this.render(0);
+  }
+
   private readonly tick = (now: number): void => {
     if (!this.running) return;
 
     const frameTime = Math.min((now - this.lastTime) / 1000, MAX_FRAME_TIME);
     this.lastTime = now;
-    this.accumulator += frameTime;
+    if (!this.held) this.accumulator += frameTime;
 
     while (this.accumulator >= FIXED_TIMESTEP) {
       this.update(FIXED_TIMESTEP);
