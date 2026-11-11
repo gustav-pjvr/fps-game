@@ -253,6 +253,15 @@ export const PLAYER_MOVE_SPEED = 5;
 export const SPRINT_MULTIPLIER = 1.6;
 export const JUMP_SPEED = 6.5;
 export const RECOIL_DECAY = 8;
+/** How fast the kick settles while a burst is still going (per second, as a share of what is left):
+ * slow enough that an automatic's shots stack into a climb the player has to pull down. */
+export const RECOIL_DECAY_FIRING = 2.4;
+/** Seconds after a shot that count as "still firing" for the slower settle above. */
+export const RECOIL_HOLD_SECONDS = 0.16;
+/** The most a burst can lift and turn the view (radians): a long spray stops climbing here rather
+ * than pointing at the sky. */
+export const RECOIL_MAX_CLIMB = 0.3;
+export const RECOIL_MAX_SIDE = 0.12;
 export const FOOTSTEP_DISTANCE = 2.2;
 /** How fast an explosion knockback velocity bleeds off, same exponential-decay shape as
  * RECOIL_DECAY above (Player has no dynamic-body physics to lean on for a real impulse response -

@@ -16,6 +16,20 @@ import { castHitscan } from '../combat/hitscan.ts';
 import { GRENADE_THROW_ANIMATION_SECONDS } from '../combat/grenades/grenadeTuning.ts';
 import { isDamageable, type Damageable } from '../combat/damage.ts';
 import { applySpreadCone } from '../combat/spread.ts';
+import { recoilForShot, spreadForShot, SprayState } from './gunHandling.ts';
+
+/** What one shot's handling came to (docs/gun-handling.md): its place in the burst, how far the
+ * weapon was aimed, the cone it was drawn from and the kick it gave. */
+export interface ShotRecord {
+  readonly weaponId: string;
+  readonly shotIndex: number;
+  readonly aim: number;
+  readonly spread: number;
+  readonly bloom: number;
+  readonly kick: number;
+  readonly side: number;
+}
+const SHOT_LOG_LENGTH = 64;
 import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import type { InputManager } from '../input/InputManager.ts';
 import type { Action } from '../input/actions.ts';
@@ -88,6 +102,12 @@ export class WeaponManager {
   private readonly slots: WeaponSlot[];
   private activeIndex = 0;
   private aimAmount = 0;
+  /** The burst the gun in hand is in: its shot count and the bloom it has built (gunHandling.ts). */
+  private readonly spray = new SprayState();
+  /** The cone this trigger pull's rounds are drawn from, set by fireShot for firePellet. */
+  private shotSpread = 0;
+  /** The last shots fired, newest last, for the browser tests (gameDebugApi getShotLog). */
+  private readonly shotLog: ShotRecord[] = [];
 
   /** 0 = fully drawn, 1 = fully holstered (mid-switch). */
   private switchProgress = 0;
@@ -457,6 +477,7 @@ export class WeaponManager {
   update(dt: number, input: InputManager, player: Player): void {
     const slot = this.active;
     slot.weapon.update(dt);
+    if (slot.weapon.definition.spread) this.spray.update(dt, slot.weapon.definition.spread);
     slot.fireClock = Math.min(IDLE_FIRE_CLOCK, slot.fireClock + dt);
     if (this.inspectTime >= 0) this.inspectTime += dt;
     this.throwLowerTime = Math.max(0, this.throwLowerTime - dt);
@@ -616,6 +637,7 @@ export class WeaponManager {
         this.pendingIndex = null;
         this.active.viewModel.visible = true;
         this.aimAmount = 0;
+        this.spray.reset();
         this.startMeleeDraw();
       }
     } else {
@@ -858,11 +880,21 @@ export class WeaponManager {
   }
 
   /** One trigger pull of a gun: independent hit rays and one visual shot. */
+  /** Test hook: the last shots' handling, oldest first. */
+  get recentShots(): readonly ShotRecord[] {
+    return this.shotLog;
+  }
+
   private fireShot(player: Player): void {
     const slot = this.active;
-    const { pelletCount, recoilKick, recoilSide, isProjectile, id } = slot.weapon.definition;
+    const { pelletCount, recoilKick, recoilSide, isProjectile, id, spread, recoil, spreadRadians, adsSpreadMultiplier } = slot.weapon.definition;
     slot.fireClock = 0;
     this.inspectTime = -1;
+    // Where this pull's rounds may go: the gun's own error when aimed, the hip's and the feet's
+    // when not, plus what the burst so far has shaken loose (docs/gun-handling.md).
+    this.shotSpread = spread
+      ? spreadForShot(spread, this.aimAmount, this.spray.bloom, player.movementBobStrength)
+      : THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
 
     // camera has no parent, so .position IS the world position - avoids reading a stale
     // matrixWorld (only refreshed during render(), which runs after this fires each tick).
@@ -891,16 +923,24 @@ export class WeaponManager {
 
     this.onFire(id);
     this.onMuzzleFlash(muzzleWorld, id);
-    player.addRecoil(recoilKick, (Math.random() * 2 - 1) * (recoilSide ?? 0));
+    if (recoil && spread) {
+      // The kick follows the burst: full climb for its first rounds, then a smaller one that weaves.
+      const kick = recoilForShot(recoil, this.spray.shotIndex, this.aimAmount, Math.random() * 2 - 1);
+      player.addRecoil(kick.kick, kick.side);
+      this.shotLog.push({ weaponId: id, shotIndex: this.spray.shotIndex, aim: this.aimAmount, spread: this.shotSpread, bloom: this.spray.bloom, kick: kick.kick, side: kick.side });
+      if (this.shotLog.length > SHOT_LOG_LENGTH) this.shotLog.shift();
+      this.spray.shot(spread);
+    } else {
+      player.addRecoil(recoilKick, (Math.random() * 2 - 1) * (recoilSide ?? 0));
+    }
   }
 
   private firePellet(origin: THREE.Vector3, tracerStart: THREE.Vector3, excludeCollider: RAPIER.Collider): void {
     const { weapon } = this.active;
-    const { spreadRadians, adsSpreadMultiplier, falloff } = weapon.definition;
-    const effectiveSpread = THREE.MathUtils.lerp(spreadRadians, spreadRadians * adsSpreadMultiplier, this.aimAmount);
+    const { falloff } = weapon.definition;
 
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    applySpreadCone(direction, effectiveSpread);
+    applySpreadCone(direction, this.shotSpread);
 
     // camera.position sits inside the player's own capsule (EYE_OFFSET is well within its
     // radius/height), so without excluding it every shot immediately self-hit at distance 0.

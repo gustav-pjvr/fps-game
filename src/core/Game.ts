@@ -840,6 +840,7 @@ export class Game {
         };
       },
       getCameraFov: () => this.renderer.camera.fov,
+      getShotLog: () => this.weaponManager.recentShots.map((shot) => ({ ...shot })),
       getCameraChildrenDebug: () =>
         this.renderer.camera.children.map((child) => ({
           type: child.type,

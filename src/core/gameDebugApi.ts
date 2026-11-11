@@ -21,6 +21,10 @@ export interface GameDebugApi {
   getLiveEntityArchetypes(): (string | undefined)[];
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
   getCameraFov(): number;
+  /** The last shots fired (at most 64, oldest first) and what their handling came to: the weapon,
+   * the shot's place in its burst, how far it was aimed (0 hip to 1), the cone it was drawn from and
+   * the bloom in it (radians), and the kick it gave the view (docs/gun-handling.md). */
+  getShotLog(): { weaponId: string; shotIndex: number; aim: number; spread: number; bloom: number; kick: number; side: number }[];
   getCameraChildrenDebug(): unknown[];
   getWorldSeed(): number;
   /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */

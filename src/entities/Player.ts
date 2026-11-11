@@ -21,6 +21,10 @@ import {
   PLAYER_MOVE_SPEED,
   PLAYER_RADIUS,
   RECOIL_DECAY,
+  RECOIL_DECAY_FIRING,
+  RECOIL_HOLD_SECONDS,
+  RECOIL_MAX_CLIMB,
+  RECOIL_MAX_SIDE,
   SPRINT_MULTIPLIER,
   WORLD_EDGE_PUSH_SPEED,
   WORLD_HARD_CLAMP_RADIUS,
@@ -43,6 +47,8 @@ export class Player implements Entity {
   private pitch = 0;
   private recoilPitch = 0;
   private recoilYaw = 0;
+  /** Seconds since the last shot during which the recoil settles slowly (a burst is going). */
+  private recoilHold = 0;
   private mobility = 1;
   private sprintAllowed = true;
   private verticalVelocity = 0;
@@ -110,8 +116,12 @@ export class Player implements Entity {
     this.applyLook(input);
     this.applyMovement(dt, input);
     if (this.shieldSeconds > 0) this.shieldSeconds -= dt;
-    this.recoilPitch *= Math.max(0, 1 - RECOIL_DECAY * dt);
-    this.recoilYaw *= Math.max(0, 1 - RECOIL_DECAY * dt);
+    // While a burst is going the sights come back slowly, so its shots stack into a climb; once the
+    // firing stops they settle at the usual rate.
+    const recoilDecay = this.recoilHold > 0 ? RECOIL_DECAY_FIRING : RECOIL_DECAY;
+    if (this.recoilHold > 0) this.recoilHold -= dt;
+    this.recoilPitch *= Math.max(0, 1 - recoilDecay * dt);
+    this.recoilYaw *= Math.max(0, 1 - recoilDecay * dt);
     this.knockbackVelocity.multiplyScalar(Math.max(0, 1 - KNOCKBACK_DECAY_PER_SECOND * dt));
     if (this.knockbackVelocity.lengthSq() < 0.0001) this.knockbackVelocity.set(0, 0, 0);
   }
@@ -130,8 +140,9 @@ export class Player implements Entity {
   /** Temporary camera kick that decays back to the player's held aim over time: `kick` upward,
    * `side` to the left (positive) or right. */
   addRecoil(kick: number, side = 0): void {
-    this.recoilPitch += kick;
-    this.recoilYaw += side;
+    this.recoilPitch = Math.min(RECOIL_MAX_CLIMB, this.recoilPitch + kick);
+    this.recoilYaw = Math.max(-RECOIL_MAX_SIDE, Math.min(RECOIL_MAX_SIDE, this.recoilYaw + side));
+    this.recoilHold = RECOIL_HOLD_SECONDS;
   }
 
   /** Walking and sprinting speed as a fraction of normal: the held weapon's weight
@@ -204,6 +215,8 @@ export class Player implements Entity {
     this.health = PLAYER_HEALTH;
     this.verticalVelocity = 0;
     this.recoilPitch = 0;
+    this.recoilYaw = 0;
+    this.recoilHold = 0;
     this.bobPhase = 0;
     this.bobStrength = 0;
     this.knockbackVelocity.set(0, 0, 0);

@@ -1,5 +1,6 @@
 import { CAMERA_FOV } from '../core/config.ts';
 import type { MeleePoseId } from './meleeSwing.ts';
+import { MOA, type GunRecoil, type GunSpread } from './gunHandling.ts';
 
 /** Which loadout slot a weapon fills (ui/menu/LoadoutScreen.ts). 'special' is a mid-match reward
  * (the Goose Launcher): shown for reference, never equipped. A weapon with no category (the empty
@@ -49,14 +50,20 @@ export interface WeaponDefinition {
    * special-casing, since Infinity - 1 === Infinity in JS. */
   readonly magazineSize: number;
   readonly reloadTime: number;
+  /** The hip-fire cone's half-angle in radians (a blade's fan). For a gun, the same as `spread.hip`. */
   readonly spreadRadians: number;
-  /** Upward camera kick per shot, in radians. */
+  /** Upward camera kick per shot, in radians. For a gun, the same as `recoil.kick`. */
   readonly recoilKick: number;
-  /** Largest sideways camera kick per shot, in radians; each shot takes a random share of it. */
+  /** Largest sideways camera kick per shot, in radians. For a gun, the same as `recoil.side`. */
   readonly recoilSide?: number;
+  /** A gun's scatter by how it is held and fired, and how its bursts kick (weapons/gunHandling.ts,
+   * docs/gun-handling.md). Every hitscan gun has both; the blades, the empty hands and the launcher
+   * (which throws a goose, not a round) have neither. */
+  readonly spread?: GunSpread;
+  readonly recoil?: GunRecoil;
   /** Camera FOV while fully aimed down sights (lower = more zoom). */
   readonly adsFov: number;
-  /** Spread while fully aimed, as a fraction of hip-fire spread. */
+  /** Spread while fully aimed, as a fraction of hip-fire spread. For a gun, `spread.aimed / spread.hip`. */
   readonly adsSpreadMultiplier: number;
   /** Full-screen scope overlay at full ADS (sniper-style) vs. a plain FOV zoom (pistol/rifle-style). */
   readonly hasScope: boolean;
@@ -105,11 +112,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 5,
     magazineSize: 15,
     reloadTime: 1.3,
-    spreadRadians: 0.011,
-    recoilKick: 0.016,
+    spreadRadians: 0.012,
+    recoilKick: 0.014,
     recoilSide: 0.004,
     adsFov: 55,
-    adsSpreadMultiplier: 0.35,
+    adsSpreadMultiplier: 0.097,
+    // 9 mm in the hand: a light, snappy kick; rapid shots open the group.
+    spread: { aimed: 4 * MOA, hip: 0.012, moving: 0.004, bloomPerShot: 0.0015, bloomMax: 0.006 },
+    recoil: { kick: 0.014, side: 0.004, climbShots: 3, sustain: 0.8, drift: 0.15, aimed: 0.85 },
     hasScope: false,
     automatic: false,
     pelletCount: 1,
@@ -129,11 +139,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 2.6,
     magazineSize: 30,
     reloadTime: 1.7,
-    spreadRadians: 0.014,
-    recoilKick: 0.012,
-    recoilSide: 0.004,
+    spreadRadians: 0.016,
+    recoilKick: 0.0065,
+    recoilSide: 0.003,
     adsFov: 50,
-    adsSpreadMultiplier: 0.45,
+    adsSpreadMultiplier: 0.0545,
+    // 9 mm from the shoulder in three round bursts: every round of a burst climbs.
+    spread: { aimed: 3 * MOA, hip: 0.016, moving: 0.006, bloomPerShot: 0.0008, bloomMax: 0.004 },
+    recoil: { kick: 0.0065, side: 0.003, climbShots: 3, sustain: 1, drift: 0.2, aimed: 0.8 },
     hasScope: false,
     automatic: false,
     pelletCount: 1,
@@ -152,11 +165,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 1.8,
     magazineSize: 6,
     reloadTime: 2.6,
-    spreadRadians: 0.008,
-    recoilKick: 0.05,
-    recoilSide: 0.01,
+    spreadRadians: 0.014,
+    recoilKick: 0.055,
+    recoilSide: 0.012,
     adsFov: 50,
-    adsSpreadMultiplier: 0.3,
+    adsSpreadMultiplier: 0.0623,
+    // A magnum in the hand: the hardest flip of any sidearm, one aimed shot at a time.
+    spread: { aimed: 3 * MOA, hip: 0.014, moving: 0.005, bloomPerShot: 0.003, bloomMax: 0.008 },
+    recoil: { kick: 0.055, side: 0.012, climbShots: 1, sustain: 1, drift: 0.3, aimed: 0.9 },
     hasScope: false,
     automatic: false,
     pelletCount: 1,
@@ -173,11 +189,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 15,
     magazineSize: 20,
     reloadTime: 1.5,
-    spreadRadians: 0.03,
-    recoilKick: 0.011,
-    recoilSide: 0.008,
+    spreadRadians: 0.02,
+    recoilKick: 0.012,
+    recoilSide: 0.009,
     adsFov: 58,
-    adsSpreadMultiplier: 0.6,
+    adsSpreadMultiplier: 0.0873,
+    // Full automatic with no stock: it climbs and wanders more than any other gun.
+    spread: { aimed: 6 * MOA, hip: 0.02, moving: 0.006, bloomPerShot: 0.0016, bloomMax: 0.014 },
+    recoil: { kick: 0.012, side: 0.009, climbShots: 6, sustain: 0.6, drift: 0.4, aimed: 0.85 },
     hasScope: false,
     automatic: true,
     pelletCount: 1,
@@ -195,11 +214,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 3,
     magazineSize: 2,
     reloadTime: 2.1,
-    spreadRadians: 0.11,
-    recoilKick: 0.06,
-    recoilSide: 0.012,
+    spreadRadians: 0.045,
+    recoilKick: 0.075,
+    recoilSide: 0.02,
     adsFov: 62,
-    adsSpreadMultiplier: 0.8,
+    adsSpreadMultiplier: 0.7556,
+    // A short open barrel throws a wide pattern, and a light gun takes the whole kick.
+    spread: { aimed: 0.034, hip: 0.045, moving: 0.004, bloomPerShot: 0, bloomMax: 0 },
+    recoil: { kick: 0.075, side: 0.02, climbShots: 1, sustain: 1, drift: 0, aimed: 0.95 },
     hasScope: false,
     automatic: false,
     pelletCount: 10,
@@ -219,11 +241,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 10,
     magazineSize: 30,
     reloadTime: 2.0,
-    spreadRadians: 0.018,
-    recoilKick: 0.009,
-    recoilSide: 0.004,
+    spreadRadians: 0.022,
+    recoilKick: 0.0085,
+    recoilSide: 0.0035,
     adsFov: 45,
-    adsSpreadMultiplier: 0.4,
+    adsSpreadMultiplier: 0.0264,
+    // An intermediate cartridge: a service rifle holds about 4 MOA, climbs for seven rounds, then settles.
+    spread: { aimed: 2 * MOA, hip: 0.022, moving: 0.01, bloomPerShot: 0.0008, bloomMax: 0.006 },
+    recoil: { kick: 0.0085, side: 0.0035, climbShots: 7, sustain: 0.35, drift: 0.25, aimed: 0.8 },
     hasScope: false,
     automatic: true,
     pelletCount: 1,
@@ -239,11 +264,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 14,
     magazineSize: 32,
     reloadTime: 1.6,
-    spreadRadians: 0.02,
-    recoilKick: 0.007,
-    recoilSide: 0.005,
+    spreadRadians: 0.018,
+    recoilKick: 0.0055,
+    recoilSide: 0.0045,
     adsFov: 52,
-    adsSpreadMultiplier: 0.55,
+    adsSpreadMultiplier: 0.0646,
+    // A pistol cartridge in a shouldered gun: little climb, more sideways chatter.
+    spread: { aimed: 4 * MOA, hip: 0.018, moving: 0.006, bloomPerShot: 0.0007, bloomMax: 0.007 },
+    recoil: { kick: 0.0055, side: 0.0045, climbShots: 5, sustain: 0.45, drift: -0.2, aimed: 0.8 },
     hasScope: false,
     automatic: true,
     pelletCount: 1,
@@ -261,11 +289,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 6.5,
     magazineSize: 25,
     reloadTime: 2.3,
-    spreadRadians: 0.022,
-    recoilKick: 0.018,
-    recoilSide: 0.007,
+    spreadRadians: 0.028,
+    recoilKick: 0.019,
+    recoilSide: 0.008,
     adsFov: 42,
-    adsSpreadMultiplier: 0.35,
+    adsSpreadMultiplier: 0.0156,
+    // A full power cartridge: about three times the recoil energy of the VR-4, hard to hold on automatic.
+    spread: { aimed: 1.5 * MOA, hip: 0.028, moving: 0.012, bloomPerShot: 0.0016, bloomMax: 0.009 },
+    recoil: { kick: 0.019, side: 0.008, climbShots: 4, sustain: 0.55, drift: 0.35, aimed: 0.8 },
     hasScope: false,
     automatic: true,
     pelletCount: 1,
@@ -283,11 +314,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 9,
     magazineSize: 80,
     reloadTime: 4.4,
-    spreadRadians: 0.03,
-    recoilKick: 0.011,
-    recoilSide: 0.006,
+    spreadRadians: 0.04,
+    recoilKick: 0.0075,
+    recoilSide: 0.005,
     adsFov: 48,
-    adsSpreadMultiplier: 0.45,
+    adsSpreadMultiplier: 0.0291,
+    // Its weight soaks the kick: slow to settle, then steadier than any rifle; poor from the hip and on the move.
+    spread: { aimed: 4 * MOA, hip: 0.04, moving: 0.02, bloomPerShot: 0.0006, bloomMax: 0.005 },
+    recoil: { kick: 0.0075, side: 0.005, climbShots: 10, sustain: 0.25, drift: 0.15, aimed: 0.7 },
     hasScope: false,
     automatic: true,
     pelletCount: 1,
@@ -305,11 +339,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 3.3,
     magazineSize: 12,
     reloadTime: 2.2,
-    spreadRadians: 0.02,
-    recoilKick: 0.03,
+    spreadRadians: 0.035,
+    recoilKick: 0.022,
     recoilSide: 0.006,
     adsFov: 26,
-    adsSpreadMultiplier: 0.05,
+    adsSpreadMultiplier: 0.0062,
+    // A full power cartridge fired one aimed round at a time: precise, and wasted from the hip.
+    spread: { aimed: 0.75 * MOA, hip: 0.035, moving: 0.015, bloomPerShot: 0.0025, bloomMax: 0.006 },
+    recoil: { kick: 0.022, side: 0.006, climbShots: 2, sustain: 0.8, drift: 0.2, aimed: 0.8 },
     hasScope: true,
     automatic: false,
     pelletCount: 1,
@@ -328,11 +365,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 1.2,
     magazineSize: 6,
     reloadTime: 2.2,
-    spreadRadians: 0.08,
-    recoilKick: 0.04,
-    recoilSide: 0.008,
+    spreadRadians: 0.03,
+    recoilKick: 0.05,
+    recoilSide: 0.012,
     adsFov: 60,
-    adsSpreadMultiplier: 0.7,
+    adsSpreadMultiplier: 0.6667,
+    // Buckshot from an open barrel spreads about 8 inches at 10 yards; the pattern belongs to the gun, aimed or not.
+    spread: { aimed: 0.02, hip: 0.03, moving: 0.004, bloomPerShot: 0, bloomMax: 0 },
+    recoil: { kick: 0.05, side: 0.012, climbShots: 1, sustain: 1, drift: 0, aimed: 0.9 },
     hasScope: false,
     automatic: false,
     pelletCount: 8,
@@ -349,11 +389,14 @@ export const WEAPON_DEFINITIONS: Record<string, WeaponDefinition> = {
     fireRate: 0.8,
     magazineSize: 5,
     reloadTime: 2.4,
-    spreadRadians: 0.02,
-    recoilKick: 0.05,
-    recoilSide: 0.004,
+    spreadRadians: 0.06,
+    recoilKick: 0.06,
+    recoilSide: 0.006,
     adsFov: 15,
-    adsSpreadMultiplier: 0.02,
+    adsSpreadMultiplier: 0.0012,
+    // Half a minute of angle through the scope, a heavy magnum kick, and no accuracy without the scope.
+    spread: { aimed: 0.25 * MOA, hip: 0.06, moving: 0.03, bloomPerShot: 0, bloomMax: 0 },
+    recoil: { kick: 0.06, side: 0.006, climbShots: 1, sustain: 1, drift: 0.1, aimed: 0.85 },
     hasScope: true,
     automatic: false,
     pelletCount: 1,
