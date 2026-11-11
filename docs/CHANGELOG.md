@@ -35,6 +35,10 @@ The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/ars
   other players do not see them yet. The Skins screen is replaced by the Workbench, one page per
   weapon: the weapon large and turned with the mouse, skins and attachments as two sections under
   it, the rack, in-hand, sights and inspect views over it, and no scrollbars (docs/attachments.md).
+- **Reloads keep each hand on its own side.** On the assault rifle, the battle rifle and the
+  machine gun the left hand used to pass through the gun to reach a handle on the top or the right.
+  The rifle's left hand now slaps the bolt catch on the left of the receiver; the other two are
+  racked by the right hand while the left holds the handguard (docs/arsenal-modelling.md).
 - **Grenades rebuilt.** A throw is an overarm lob that carries properly; a grenade bounces a few
   times, each lower, then rolls and stops, rolls down a slope and off an edge, and flies the same
   at any frame rate. A frag kills in the open out to about 3.5 m and wounds to 9 m; cover now

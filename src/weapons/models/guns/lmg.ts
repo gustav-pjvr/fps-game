@@ -118,7 +118,8 @@ export function buildLmg(b: GunBuilder): void {
       tracks: {
         gun: [
           { t: 0 }, { t: 0.08, p: [0.01, -0.03, 0], r: [0.14, 0.12, 0.4] }, { t: 0.74, p: [0.01, -0.03, 0], r: [0.14, 0.12, 0.4] },
-          { t: 0.82, p: [0, -0.01, 0], r: [0.05, 0, 0.3] }, { t: 0.93, p: [0, -0.01, 0.004], r: [0.05, 0, 0.3] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] },
+          // Upright again, turned a touch to show its right side while the right hand racks it.
+          { t: 0.82, p: [0, -0.01, 0], r: [0.05, 0, -0.1] }, { t: 0.95, p: [0, -0.01, 0.004], r: [0.05, 0, -0.1] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] },
         ],
         // Cover up, box off, new box on with its belt laid in the tray, cover slapped shut.
         cover: [{ t: 0.1 }, { t: 0.17, r: [-1, 0, 0], ease: 'out' }, { t: 0.66, r: [-1, 0, 0] }, { t: 0.72, r: [0, 0, 0], ease: 'in' }],
@@ -129,10 +130,15 @@ export function buildLmg(b: GunBuilder): void {
           { t: 0 }, { t: 0.1, p: [0.02, 0.1, -0.3] }, { t: 0.17, p: [0.02, 0.17, -0.24], ease: 'out' },
           { t: 0.2, p: [-0.02, -0.06, -0.17] }, { t: 0.3, p: [-0.06, -0.36, -0.19], ease: 'in' }, { t: 0.4, p: [-0.06, -0.36, -0.19] },
           { t: 0.52, p: [-0.02, -0.06, -0.17], ease: 'out' }, { t: 0.58, p: [-0.01, 0.07, -0.17] }, { t: 0.63, p: [-0.01, 0.07, -0.17] },
-          { t: 0.66, p: [0.02, 0.17, -0.24] }, { t: 0.72, p: [0.02, 0.1, -0.3], ease: 'in' }, { t: 0.76, p: [0.02, 0.1, -0.3] },
-          { t: 0.84, p: [0.085, 0.02, -0.17] }, { t: 0.9, p: [0.085, 0.02, -0.29], ease: 'out' }, { t: 1, p: [0, 0, 0] },
+          { t: 0.66, p: [0.02, 0.17, -0.24] }, { t: 0.72, p: [0.02, 0.1, -0.3], ease: 'in' }, { t: 0.75, p: [0.02, 0.1, -0.3] },
+          // Back under the handguard to hold the gun: it never reaches across to the right side.
+          { t: 0.84, p: [0, 0, 0] },
         ],
-        // The gun is rolled over and the charging handle is run back and home.
+        // The charging handle is on the right, so the right hand leaves the grip and runs it back
+        // and home.
+        'arm-trigger': [
+          { t: 0.74 }, { t: 0.84, p: [0.035, 0.087, 0.214] }, { t: 0.9, p: [0.035, 0.087, 0.094], ease: 'out' }, { t: 0.95, p: [0.035, 0.087, 0.2] }, { t: 1, p: [0, 0, 0] },
+        ],
         bolt: [{ t: 0.84 }, { t: 0.9, p: [0, 0, -0.12], ease: 'out' }, { t: 0.95, p: [0, 0, 0], ease: 'in' }],
       },
     },

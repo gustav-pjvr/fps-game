@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { VIEW_MODEL_FOV } from '../../core/config.ts';
-import { addClip, GUN_TRACK, inspectTurn, zeroOffset, type Clip, type PartOffset } from '../../weapons/animation/clips.ts';
+import { addClip, defaultMagazineReload, GUN_TRACK, inspectTurn, zeroOffset, type Clip, type PartOffset } from '../../weapons/animation/clips.ts';
 import { PartAnimator } from '../../weapons/animation/PartAnimator.ts';
 import { setTorchLensLit, type AttachmentId } from '../../weapons/models/attachments.ts';
 import { updateSkinAnimations } from '../../weapons/models/skinMaterials.ts';
@@ -43,6 +43,9 @@ export class WeaponPreview {
   /** The weapon's own part moves during an inspect (first-person views only). */
   private ownInspect: Clip | undefined;
   private aimRetract: Readonly<Record<string, number>> = {};
+  /** The weapon's reload, and how far through it the first-person views are posed (null: not). */
+  private reloadClip: Clip | undefined;
+  private reloadAt: number | null = null;
   /** The held view's character: its mixer and the weapon in its hand. Built on first use. */
   private character: { model: THREE.Object3D; mixer: THREE.AnimationMixer; held: HeldWeapon } | null = null;
   private characterLoading = false;
@@ -140,6 +143,7 @@ export class WeaponPreview {
         const viewModel = buildWeaponViewModel(weaponId, skinId, attachments);
         this.animator = new PartAnimator(viewModel.parts, viewModel.model);
         this.ownInspect = viewModel.animations.inspect;
+        this.reloadClip = viewModel.animations.reload ?? (viewModel.parts.has('magazine') ? defaultMagazineReload() : undefined);
         this.aimRetract = viewModel.aimRetract;
         this.aimPosition.copy(viewModel.adsPosition);
         this.camera.add(viewModel.group);
@@ -308,6 +312,13 @@ export class WeaponPreview {
     this.inspectTime = 0;
   }
 
+  /** Poses the in-hand view `progress` (0 to 1) of the way through the weapon's reload, for judging
+   * it frame by frame (the weapon lab); null goes back to the rest pose. */
+  poseReload(progress: number | null): void {
+    this.reloadAt = progress;
+    this.render();
+  }
+
   /** Stops the turntable at a fixed angle, for screenshots that must match between runs. */
   freeze(spin = REST_YAW, pitch = 0, zoom = 1): void {
     this.frozen = true;
@@ -337,6 +348,7 @@ export class WeaponPreview {
       addClip(offsets, this.ownInspect, this.inspectTime);
       if (this.inspectTime >= turn.duration) this.inspectTime = -1;
     }
+    if (this.reloadAt !== null && this.view === 'hip' && this.reloadClip) addClip(offsets, this.reloadClip, this.reloadAt * this.reloadClip.duration);
     if (this.view === 'aim') {
       offsets.delete(GUN_TRACK);
       for (const [part, distance] of Object.entries(this.aimRetract)) {

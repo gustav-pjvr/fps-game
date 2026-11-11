@@ -56,6 +56,21 @@ How a weapon's 3D model is written (v5.0.0). Read this with the two reference mo
    moves while the skin turns the gun. Every track must name a real part.
 8. **Fictional.** No real maker, model name, trademark or logo, in the model or in comments.
 
+## Reloads: each hand stays on its own side
+
+The gun is never held in the left hand, and no hand may pass through the gun to reach a part.
+
+- **Magazine:** the gun rolls with its top to the right, which brings the magazine well round to
+  the support (left) hand.
+- **A part on the left or underneath** (the SMGs' handles, the rifle's bolt catch, the shotgun's
+  loading port): the support hand works it, coming up the left side.
+- **A part on the right** (the bolt or charging handle of the battle rifle, the machine gun, the
+  marksman rifle and the sniper rifle): the right hand leaves the grip and works it, while the
+  support hand goes back under the handguard to hold the gun. The gun turns a touch to show its
+  right side.
+- Check a reload frame by frame in the weapon lab: `weaponlab.html?w=<id>&view=hip&cross=0&reload=0.8`
+  poses it that far through (0 to 1).
+
 ## Judging it by eye
 
 Numbers passing is not the bar: it has to look like a real firearm or blade of its kind. With the dev

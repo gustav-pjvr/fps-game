@@ -112,7 +112,8 @@ export function buildBattleRifle(b: GunBuilder): void {
       tracks: {
         gun: [
           { t: 0 }, { t: 0.12, p: [0.01, -0.02, 0], r: [0.2, 0.1, 0.35] }, { t: 0.64, p: [0.01, -0.02, 0], r: [0.2, 0.1, 0.35] },
-          { t: 0.76, p: [0, -0.01, 0], r: [0.08, 0, 0.5] }, { t: 0.92, p: [0, -0.01, 0.004], r: [0.08, 0, 0.5] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] },
+          // Upright again, turned a touch to show its right side while the right hand racks it.
+          { t: 0.76, p: [0, -0.01, 0], r: [0.06, 0, -0.12] }, { t: 0.92, p: [0, -0.01, 0.004], r: [0.06, 0, -0.12] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] },
         ],
         // The magazine rocks forward about its front lug, drops, and the fresh one rocks back in.
         magazine: [
@@ -122,9 +123,13 @@ export function buildBattleRifle(b: GunBuilder): void {
         'arm-support': [
           { t: 0 }, { t: 0.14, p: [0.02, -0.11, -0.1] }, { t: 0.21, p: [0.02, -0.1, -0.03] }, { t: 0.3, p: [0.02, -0.34, 0.02], ease: 'in' },
           { t: 0.42, p: [0.02, -0.34, 0.02] }, { t: 0.54, p: [0.02, -0.1, -0.03], ease: 'out' }, { t: 0.62, p: [0.02, -0.11, -0.1] },
-          { t: 0.7, p: [0.02, -0.11, -0.1] }, { t: 0.8, p: [0.075, -0.012, -0.13] }, { t: 0.87, p: [0.075, -0.012, -0.2], ease: 'out' }, { t: 1, p: [0, 0, 0] },
+          // Back under the handguard to hold the rifle: it never reaches across to the right side.
+          { t: 0.68, p: [0.02, -0.11, -0.1] }, { t: 0.78, p: [0, 0, 0] },
         ],
-        // The gun is rolled over and the charging handle is pulled with the support hand.
+        // The charging handle is on the right, so the right hand leaves the grip and racks it.
+        'arm-trigger': [
+          { t: 0.66 }, { t: 0.8, p: [0.035, 0.092, 0.172] }, { t: 0.87, p: [0.035, 0.092, 0.104], ease: 'out' }, { t: 0.92, p: [0.035, 0.092, 0.16] }, { t: 1, p: [0, 0, 0] },
+        ],
         bolt: [{ t: 0.8 }, { t: 0.87, p: [0, 0, -0.068], ease: 'out' }, { t: 0.92, p: [0, 0, 0], ease: 'in' }],
       },
     },

@@ -103,7 +103,9 @@ export function buildRifle(b: GunBuilder): void {
       tracks: {
         gun: [
           { t: 0 }, { t: 0.12, p: [0.01, -0.02, 0], r: [0.18, 0.1, 0.35] }, { t: 0.66, p: [0.01, -0.02, 0], r: [0.18, 0.1, 0.35] },
-          { t: 0.8, p: [0, -0.008, 0], r: [0.06, 0, -0.12] }, { t: 0.9, p: [0, -0.008, 0.006], r: [0.06, 0, -0.12] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] },
+          // Still rolled a little, its left side to the shooter, for the slap on the bolt catch.
+          { t: 0.8, p: [0, -0.008, 0], r: [0.06, 0.03, 0.2] }, { t: 0.87, p: [0.005, -0.008, 0], r: [0.06, 0.03, 0.24] },
+          { t: 0.92, p: [0, -0.008, 0.004], r: [0.06, 0.03, 0.2] }, { t: 1, p: [0, 0, 0], r: [0, 0, 0] },
         ],
         magazine: [
           { t: 0.14 }, { t: 0.26, p: [0, -0.24, 0.01], r: [0.2, 0, 0], ease: 'in' }, { t: 0.42, p: [0, -0.24, 0.01], r: [0.2, 0, 0] },
@@ -111,11 +113,15 @@ export function buildRifle(b: GunBuilder): void {
         ],
         'arm-support': [
           { t: 0 }, { t: 0.14, p: [0.02, -0.07, -0.2] }, { t: 0.26, p: [0.02, -0.29, -0.19], ease: 'in' }, { t: 0.42, p: [0.02, -0.29, -0.19] },
-          { t: 0.6, p: [0.02, -0.07, -0.2], ease: 'out' }, { t: 0.7, p: [0.02, -0.07, -0.2] }, { t: 0.82, p: [0.04, 0.03, -0.25] },
-          { t: 0.9, p: [0.04, 0.03, -0.25] }, { t: 1, p: [0, 0, 0] },
+          { t: 0.6, p: [0.02, -0.07, -0.2], ease: 'out' }, { t: 0.68, p: [0.02, -0.07, -0.2] },
+          // The support hand never crosses the gun: it comes out to the left of the receiver and
+          // slaps the bolt catch there (the hand used to pass through the rail to reach the
+          // charging handle on top).
+          { t: 0.8, p: [-0.085, -0.005, -0.25] }, { t: 0.86, p: [-0.05, 0, -0.25], ease: 'in' }, { t: 0.91, p: [-0.075, -0.005, -0.24] },
+          { t: 1, p: [0, 0, 0] },
         ],
-        charging: [{ t: 0.82 }, { t: 0.88, p: [0, 0, -0.05], ease: 'out' }, { t: 0.94, p: [0, 0, 0], ease: 'in' }],
-        bolt: [{ t: 0.82 }, { t: 0.88, p: [0, 0, -0.056], ease: 'out' }, { t: 0.94, p: [0, 0, 0], ease: 'in' }],
+        // Locked open on the empty magazine; the catch lets it run home on the fresh one.
+        bolt: [{ t: 0.04 }, { t: 0.1, p: [0, 0, -0.056], ease: 'out' }, { t: 0.86, p: [0, 0, -0.056] }, { t: 0.9, p: [0, 0, 0], ease: 'in' }],
       },
     },
   };

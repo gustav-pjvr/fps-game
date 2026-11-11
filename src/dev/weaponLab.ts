@@ -17,6 +17,8 @@ preview.resize();
 const asked = params.get('a') ?? '';
 const attachments = asked === 'all' ? allowedAttachments(weaponId) : asked.split(',').filter(isAttachmentId);
 preview.show(weaponId, skinId, view, attachments);
+// &reload=0.4 poses the in-hand view that far through the reload.
+if (params.has('reload')) preview.poseReload(Number(params.get('reload')));
 if (params.has('spin')) preview.freeze(Number(params.get('spin')), Number(params.get('pitch') ?? 0), Number(params.get('zoom') ?? 1));
 else preview.start();
 if (view === 'display' || view === 'held' || params.get('cross') === '0') document.getElementById('cross')!.style.display = 'none';
