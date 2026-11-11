@@ -46,9 +46,12 @@ import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavig
 import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityFloorPoints, facilityGoosePlacement, facilityHordeSite } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
+import { loadStoredAttachments } from './attachments.ts';
 import { loadStoredSkins } from './skins.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
+import { LaserDot } from '../combat/LaserDot.ts';
 import { MuzzleFlash } from '../combat/MuzzleFlash.ts';
+import { setTorchLensLit } from '../weapons/models/attachments.ts';
 import { Tracers } from '../combat/Tracers.ts';
 import { ExplosionEffect } from '../combat/ExplosionEffect.ts';
 import { Hud } from '../ui/hud.ts';
@@ -429,6 +432,9 @@ export class Game {
   private hudRoot: HTMLElement | null = null;
   private readonly hudForward = new THREE.Vector3();
   private secondsSinceShot = Infinity;
+  /** The laser sight's dot, made with the match (see updateLaser). */
+  private laserDot: LaserDot | null = null;
+  private readonly laserForward = new THREE.Vector3();
   private readonly playerVisibility = { value: 1, torchOn: false, eye: new THREE.Vector3(), aim: new THREE.Vector3() };
   private loadoutScreenLoading = false;
   private disposed = false;
@@ -785,11 +791,28 @@ export class Game {
     this.fillLight.intensity = look.hemiIntensity * peak;
   }
 
+  /** The laser sight's dot (docs/attachments.md): on whatever the camera's forward meets, while the
+   * gun in hand carries a laser. One ray a frame, and none without the attachment. */
+  private updateLaser(): void {
+    const { laserDot } = this;
+    if (!laserDot) return;
+    if (!this.weaponManager.laserOn || this.player.isDead) {
+      laserDot.update(this.renderer.camera, null);
+      return;
+    }
+    const camera = this.renderer.camera;
+    camera.getWorldDirection(this.laserForward);
+    const hit = castHitscan(this.physics, camera.position, this.laserForward, laserDot.range, this.player.ownCollider);
+    laserDot.update(camera, hit ? hit.distance : null);
+  }
+
   /** The match's torches, after the camera's interpolation:
    * the player's own from the front of the gun or from the shoulder, and one
    * pooled light per opponent, dark while their torch is off or they are dead. */
   private updateTorches(): void {
     const { torch, remoteTorches } = this;
+    // The lens of a fitted weapon torch glows only while the torch is on.
+    setTorchLensLit(torch?.isOn ?? false);
     if (!torch) return;
     if (torch.isOn && !this.torchAvailableAt(this.player.position)) torch.setOn(false);
     torch.update(this.renderer.camera, this.weaponManager.torchOnGun);
@@ -1389,6 +1412,7 @@ export class Game {
         (origin, direction, distance) => game.handleHitscanRay(origin, direction, distance),
         // Read fresh on every build, so a skin equipped mid-match shows from the next respawn.
         loadStoredSkins(),
+        loadStoredAttachments(),
       );
     const weaponManager = await buildWeaponManager(loadout.weaponIds, loadout.damageOverrides, initialReserveAmmo);
 
@@ -1966,6 +1990,7 @@ export class Game {
       },
     });
     game.grenadeEffects = new GrenadeEffects({ system: game.grenades, camera: renderer.camera, scene: renderer.scene, hud, hudRoot, sound });
+    game.laserDot = new LaserDot(renderer.scene);
 
     // Seed this match's running scoreboard from whatever a late join/rejoin was handed (empty for
     // a normal fresh match start - see MultiplayerSession.initialScoreboard's own comment).
@@ -2279,6 +2304,7 @@ export class Game {
     this.grenadeEffects?.dispose();
     this.grenades?.dispose();
     this.glintMarkers.dispose();
+    this.laserDot?.dispose();
     this.gooseManager.dispose();
     this.kingOfTheHillController?.dispose();
     this.hordeGooseManager?.dispose();
@@ -4277,6 +4303,7 @@ export class Game {
       this.updateUndergroundLight(hudDt);
     }
     this.updateTorches();
+    this.updateLaser();
     const renderStart = this.perfLogger.mark();
     this.renderer.render();
     this.grenadeEffects?.afterRender(this.renderer.webgl.domElement);

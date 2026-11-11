@@ -2,7 +2,7 @@ import { LobbyScene } from '../lobby/LobbyScene.ts';
 import { MainMenu } from '../ui/menu/MainMenu.ts';
 import { SettingsPanel } from '../ui/menu/SettingsPanel.ts';
 import { LoadoutScreen } from '../ui/menu/LoadoutScreen.ts';
-import { SkinsScreen } from '../ui/menu/SkinsScreen.ts';
+import { WorkbenchScreen } from '../ui/menu/WorkbenchScreen.ts';
 import { PlaySetupModal, type MatchSetupConfig } from '../ui/menu/PlaySetupModal.ts';
 import { LoadingScreen } from '../ui/menu/LoadingScreen.ts';
 import { MultiplayerMenu } from '../ui/menu/MultiplayerMenu.ts';
@@ -29,7 +29,7 @@ export class App {
   // Assigned in create() before enterLobby() shows the menu that can open it - LoadoutScreen's
   // creation is async (it renders each weapon's preview thumbnail), unlike the other lobby panels.
   private loadoutScreen!: LoadoutScreen;
-  private readonly skinsScreen: SkinsScreen;
+  private readonly skinsScreen: WorkbenchScreen;
   private readonly loadingScreen: LoadingScreen;
   private playSetupModal: PlaySetupModal | null = null;
   private readonly multiplayerMenu: MultiplayerMenu;
@@ -54,8 +54,8 @@ export class App {
       onLoadout: () => this.loadoutScreen.show(),
       onSkins: () => this.skinsScreen.show(),
     });
-    // Closing Skins returns to whatever opened it: the Loadout page then shows the new looks.
-    this.skinsScreen = new SkinsScreen(overlayRoot, () => {
+    // Closing the Workbench returns to whatever opened it: the Loadout page then shows the new looks.
+    this.skinsScreen = new WorkbenchScreen(overlayRoot, () => {
       this.skinsScreen.hide();
       this.loadoutScreen.refreshSkins();
     });

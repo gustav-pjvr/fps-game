@@ -37,7 +37,8 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 | [enemy-ai-v2.md](enemy-ai-v2.md) | The enemy AI as built (step by step) |
 | [arsenal.md](arsenal.md) | The v5.0.0 arsenal: all 19 weapons and their numbers, models, clips, sounds, the aim rule |
 | [gun-handling.md](gun-handling.md) | Spread and recoil by the kind of gun: the model, every gun's numbers, what is sourced and what is estimated |
-| [skins.md](skins.md) | The six skins, storage, the Skins screen, the aim proof |
+| [skins.md](skins.md) | The six skins, storage, the aim proof |
+| [attachments.md](attachments.md) | Laser and torch, which guns take them, the Workbench page |
 | [arsenal-modelling.md](arsenal-modelling.md) | How to write a weapon model with the kit |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |
 | [visual-overhaul.md](visual-overhaul.md), [visual-overhaul-ui.md](visual-overhaul-ui.md) | The v4.0 look, HUD and menu reskin |

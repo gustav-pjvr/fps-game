@@ -82,7 +82,7 @@ export class MainMenu {
     multiplayerButton.addEventListener('click', callbacks.onMultiplayer);
     const loadoutButton = createButton('LOADOUT');
     loadoutButton.addEventListener('click', callbacks.onLoadout);
-    const skinsButton = createButton('SKINS');
+    const skinsButton = createButton('WORKBENCH');
     skinsButton.addEventListener('click', callbacks.onSkins);
     const settingsButton = createButton('SETTINGS');
     settingsButton.addEventListener('click', callbacks.onSettings);

@@ -12,8 +12,14 @@ const SKIN_IDS = ['service', 'ranger', 'whiteout', 'ember', 'gilded', 'pulse'] a
 
 async function openSkins(page: Page): Promise<void> {
   await page.goto('/');
-  await page.getByRole('button', { name: 'SKINS', exact: true }).click();
+  await page.getByRole('button', { name: 'WORKBENCH', exact: true }).click();
   await expect(page.getByTestId('skins-screen')).toBeVisible();
+}
+
+/** Picks a weapon from the Workbench's weapon list, which is a sheet opened from the header. */
+async function pickWeapon(page: Page, weaponId: string): Promise<void> {
+  await page.getByTestId('workbench-weapons').click();
+  await page.getByTestId(`skins-weapon-${weaponId}`).click();
 }
 
 async function weaponIds(page: Page): Promise<string[]> {
@@ -40,7 +46,7 @@ test('every weapon in every skin aims with its sight on the true aim point', asy
 
   const report: string[] = [];
   for (const weaponId of ids) {
-    await page.getByTestId(`skins-weapon-${weaponId}`).click();
+    await pickWeapon(page, weaponId);
     // A blade is never aimed: its sights view is switched off and it is shown in hand instead.
     const aims = await page.getByTestId('skins-view-aim').isEnabled();
     for (const skinId of SKIN_IDS) {
@@ -64,9 +70,9 @@ test('every weapon in every skin aims with its sight on the true aim point', asy
 test('a skin is equipped per weapon, survives a reload and is worn in the match', async ({ page }) => {
   test.setTimeout(240000);
   await openSkins(page);
-  await page.getByTestId('skins-weapon-rifle').click();
+  await pickWeapon(page, 'rifle');
   await page.getByTestId('skins-skin-pulse').click();
-  await page.getByTestId('skins-weapon-pistol').click();
+  await pickWeapon(page, 'pistol');
   await page.getByTestId('skins-skin-gilded').click();
   await expect(page.getByTestId('skins-weapon-rifle')).toContainText('Pulse');
   await expect(page.getByTestId('skins-weapon-pistol')).toContainText('Gilded Goose');
@@ -76,7 +82,7 @@ test('a skin is equipped per weapon, survives a reload and is worn in the match'
   await openSkins(page);
   await expect(page.getByTestId('skins-weapon-rifle')).toContainText('Pulse');
   await expect(page.getByTestId('skins-weapon-pistol')).toContainText('Gilded Goose');
-  await page.getByTestId('skins-weapon-rifle').click();
+  await pickWeapon(page, 'rifle');
   await expect(page.getByTestId('skins-skin-pulse')).toHaveAttribute('aria-pressed', 'true');
 
   // Escape closes the page and gives the keyboard back to the main menu.
@@ -100,4 +106,52 @@ test('a skin is equipped per weapon, survives a reload and is worn in the match'
   await page.keyboard.press('Digit2');
   await page.waitForFunction(() => window.__gameDebug?.getHeldWeapon().weaponId === 'pistol', undefined, { timeout: 20000 });
   expect(await page.evaluate(() => window.__gameDebug?.getHeldWeapon().skinId)).toBe('gilded');
+});
+
+test('attachments fit only the guns that take them, swap on one rail and survive a reload', async ({ page }) => {
+  test.setTimeout(240000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+  await openSkins(page);
+  const canvas = page.getByTestId('skins-preview');
+
+  // The rifle takes both: each card is a toggle, and the preview is rebuilt with the unit on.
+  await pickWeapon(page, 'rifle');
+  await page.getByTestId('workbench-tab-attachments').click();
+  await page.getByTestId('workbench-attachment-torch').click();
+  await page.getByTestId('workbench-attachment-laser').click();
+  await expect(page.getByTestId('workbench-attachment-laser')).toHaveAttribute('aria-pressed', 'true');
+  await expect(canvas).toHaveAttribute('data-fitted', 'laser+torch');
+  await expect(page.getByTestId('workbench-meta')).toContainText('Laser sight, Weapon torch');
+
+  // The rack turns under the mouse without an error.
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 160, box.y + box.height / 2 + 40, { steps: 6 });
+  await page.mouse.up();
+
+  // The sniper rifle takes none, and says so; the shotgun is offered the torch alone.
+  await pickWeapon(page, 'sniper');
+  await expect(page.getByTestId('workbench-no-attachments')).toBeVisible();
+  await expect(page.getByTestId('workbench-attachment-laser')).toHaveCount(0);
+  await pickWeapon(page, 'shotgun');
+  await expect(page.getByTestId('workbench-attachment-torch')).toBeVisible();
+  await expect(page.getByTestId('workbench-attachment-laser')).toHaveCount(0);
+
+  // One rail on the pistol: the second unit takes the first one off.
+  await pickWeapon(page, 'pistol');
+  await page.getByTestId('workbench-attachment-laser').click();
+  await page.getByTestId('workbench-attachment-torch').click();
+  await expect(page.getByTestId('workbench-attachment-laser')).toHaveAttribute('aria-pressed', 'false');
+  await expect(canvas).toHaveAttribute('data-fitted', 'torch');
+
+  // Saved at once: a reload keeps the fit, and the Loadout names it.
+  await openSkins(page);
+  await pickWeapon(page, 'rifle');
+  await expect(canvas).toHaveAttribute('data-fitted', 'laser+torch');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'LOADOUT', exact: true }).click();
+  await expect(page.getByTestId('loadout-skin')).toContainText('laser sight, weapon torch');
+  expect(errors).toEqual([]);
 });

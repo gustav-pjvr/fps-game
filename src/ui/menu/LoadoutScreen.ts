@@ -2,7 +2,9 @@ import { AMBER, SURFACE, SURFACE_RAISED, INK_FAINT, LABEL_CSS, MONO_FONT } from 
 import { WEAPON_DEFINITIONS, weaponIdsIn, type WeaponDefinition } from '../../weapons/definitions.ts';
 import { createWeaponModel } from '../../weapons/models/weaponModels.ts';
 import { SKINS, type SkinId } from '../../weapons/models/skins.ts';
+import { fittedAttachments, loadStoredAttachments } from '../../core/attachments.ts';
 import { equippedSkin, loadStoredSkins } from '../../core/skins.ts';
+import { ATTACHMENTS } from '../../weapons/models/attachments.ts';
 import {
   createButton,
   createEyebrow,
@@ -402,7 +404,7 @@ export class LoadoutScreen {
     detailsDescription.style.cssText = `font-family:${BODY_FONT}; font-size:0.8rem; line-height:1.4; color:${STEEL};`;
     const detailsStats = document.createElement('div');
     detailsStats.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:2px; font-size:0.72rem; opacity:0.8; font-variant-numeric:tabular-nums;';
-    // The skin the weapon in view wears, and the way to the Skins page for it (lobby only).
+    // The skin the weapon in view wears, and the way to its Workbench page (lobby only).
     const skinRow = document.createElement('div');
     skinRow.dataset.testid = 'loadout-skin';
     skinRow.style.cssText = `display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; padding-top:10px; border-top:1px solid ${HAIRLINE};`;
@@ -410,10 +412,10 @@ export class LoadoutScreen {
     skinLabel.style.cssText = 'display:flex; flex-direction:column; gap:3px; min-width:0;';
     const skinName = document.createElement('span');
     skinName.style.cssText = `font-family:${BODY_FONT}; font-size:0.85rem; font-weight:600; color:${TEXT};`;
-    skinLabel.append(createEyebrow('Skin'), skinName);
+    skinLabel.append(createEyebrow('Skin and fit'), skinName);
     skinRow.appendChild(skinLabel);
     if (onOpenSkins) {
-      const change = createButton('Change');
+      const change = createButton('Edit weapon');
       change.dataset.testid = 'loadout-change-skin';
       change.style.padding = '9px 14px';
       change.addEventListener('click', () => {
@@ -573,7 +575,9 @@ export class LoadoutScreen {
     name.style.color = weaponCategory === 'special' ? REWARD_GOLD : TEXT;
     description.textContent = weapon.description;
     stats.replaceChildren(...weaponStats(weapon));
-    skinName.textContent = SKINS[equippedSkin(this.skins, weapon.id)].name;
+    // Read here rather than kept: the row is redrawn whenever the Workbench closes.
+    const fitted = fittedAttachments(loadStoredAttachments(), weapon.id).map((id) => ATTACHMENTS[id].name.toLowerCase());
+    skinName.textContent = [SKINS[equippedSkin(this.skins, weapon.id)].name, ...fitted].join(', ');
     LoadoutScreen.setDetailsStatus(
       status,
       weaponCategory === 'special' ? 'reward' : equippedWeaponId(this.loadout, weaponCategory) === weapon.id ? 'equipped' : null,

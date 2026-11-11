@@ -28,6 +28,13 @@ The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/ars
 - **Handling that tells them apart.** Damage falls off with distance, recoil kicks up and to a side,
   heavy weapons aim more slowly and slow the player a little. Each weapon has its own reload and
   inspect animation (inspect with G, or D-pad down).
+- **Attachments and the Workbench.** A laser sight and a weapon torch, each one designed unit that
+  looks the same under every skin, fit only the guns with a rail or a bare barrel for them (nine of
+  the thirteen; the pistol carries one at a time). The laser puts a red dot where the gun points;
+  the torch moves the player's light from the shoulder to the gun. Neither changes handling, and
+  other players do not see them yet. The Skins screen is replaced by the Workbench, one page per
+  weapon: the weapon large and turned with the mouse, skins and attachments as two sections under
+  it, the rack, in-hand, sights and inspect views over it, and no scrollbars (docs/attachments.md).
 - **Spread and recoil by the kind of gun.** Aimed and still, a gun shoots as straight as the real
   thing (half a minute of angle for the sniper rifle, about four for the assault rifle); the hip,
   movement and a long burst open it up. A burst climbs for its first rounds, then settles and weaves

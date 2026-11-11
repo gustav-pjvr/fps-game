@@ -11,6 +11,7 @@ import { addClip, defaultMagazineReload, GUN_TRACK, inspectTurn, zeroOffset, typ
 import { PartAnimator } from './animation/PartAnimator.ts';
 import { buildWeaponViewModel } from './models/weaponModels.ts';
 import { SKIN_GLOW_INTENSITY } from './models/skinMaterials.ts';
+import type { AttachmentId } from './models/attachments.ts';
 import { DEFAULT_SKIN, SKINS, type SkinId } from './models/skins.ts';
 import { castHitscan } from '../combat/hitscan.ts';
 import { GRENADE_THROW_ANIMATION_SECONDS } from '../combat/grenades/grenadeTuning.ts';
@@ -181,6 +182,8 @@ export class WeaponManager {
     private readonly onHitscanRay: ((origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void) | undefined,
     /** The player's skin per weapon id (core/skins.ts); a weapon with no entry wears the default. */
     private readonly skins: Readonly<Record<string, SkinId>>,
+    /** What the player fitted to each gun (core/attachments.ts); a gun with no entry is bare. */
+    private readonly attachments: Readonly<Record<string, readonly AttachmentId[]>>,
   ) {
     this.slots = slots;
     const first = this.slots[0];
@@ -216,11 +219,13 @@ export class WeaponManager {
     onHitscanRay?: (origin: THREE.Vector3, direction: THREE.Vector3, distance: number) => void,
     /** The skin each weapon wears, by weapon id (core/skins.ts). */
     skins: Readonly<Record<string, SkinId>> = {},
+    /** What is fitted to each gun, by weapon id (core/attachments.ts). */
+    attachments: Readonly<Record<string, readonly AttachmentId[]>> = {},
   ): Promise<WeaponManager> {
     if (definitionIds.length === 0) throw new Error('WeaponManager needs at least one weapon definition');
 
     const slots = await Promise.all(
-      definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id], initialReserveAmmo?.[id], skins[id] ?? DEFAULT_SKIN)),
+      definitionIds.map((id) => WeaponManager.buildSlot(camera, id, damageOverrides?.[id], initialReserveAmmo?.[id], skins[id] ?? DEFAULT_SKIN, attachments[id])),
     );
 
     return new WeaponManager(
@@ -238,6 +243,7 @@ export class WeaponManager {
       onProjectileFire,
       onHitscanRay,
       skins,
+      attachments,
     );
   }
 
@@ -249,11 +255,12 @@ export class WeaponManager {
     damageOverride: number | undefined,
     initialReserveAmmo: number | undefined,
     skinId: SkinId,
+    attachments: readonly AttachmentId[] = [],
   ): Promise<WeaponSlot> {
     const definition = WEAPON_DEFINITIONS[id];
     if (!definition) throw new Error(`Unknown weapon definition: ${id}`);
 
-    const { group, ...model } = buildWeaponViewModel(id, skinId);
+    const { group, ...model } = buildWeaponViewModel(id, skinId, attachments);
     group.visible = false;
     camera.add(group);
     const reloads = definition.kind === 'ranged' && !definition.disableReload;
@@ -277,7 +284,7 @@ export class WeaponManager {
   async replaceActiveWeapon(definitionId: string): Promise<void> {
     const index = this.activeIndex;
     const oldSlot = this.slots[index];
-    const newSlot = await WeaponManager.buildSlot(this.camera, definitionId, undefined, undefined, this.skins[definitionId] ?? DEFAULT_SKIN);
+    const newSlot = await WeaponManager.buildSlot(this.camera, definitionId, undefined, undefined, this.skins[definitionId] ?? DEFAULT_SKIN, this.attachments[definitionId]);
     if (oldSlot) {
       this.camera.remove(oldSlot.viewModel);
     }
@@ -401,10 +408,16 @@ export class WeaponManager {
     return this.inspectTime >= 0;
   }
 
-  /** True while a gun is in hand: the torch then shines from its front (docs/facility-map.md,
-   * section 7), and from the shoulder for the blades and empty hands. */
+  /** True while the gun in hand carries the weapon torch (docs/attachments.md): the player's torch
+   * then shines from its front, and from the shoulder otherwise. */
   get torchOnGun(): boolean {
-    return this.active.weapon.definition.kind === 'ranged';
+    return this.active.attachments.includes('torch');
+  }
+
+  /** True while the gun in hand carries a laser sight and is up: not mid-switch, and not replaced
+   * by the scope picture. */
+  get laserOn(): boolean {
+    return this.active.attachments.includes('laser') && this.active.viewModel.visible && !this.switching;
   }
 
   get weaponDescription(): string {

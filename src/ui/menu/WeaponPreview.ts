@@ -3,6 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { VIEW_MODEL_FOV } from '../../core/config.ts';
 import { addClip, GUN_TRACK, inspectTurn, zeroOffset, type Clip, type PartOffset } from '../../weapons/animation/clips.ts';
 import { PartAnimator } from '../../weapons/animation/PartAnimator.ts';
+import { setTorchLensLit, type AttachmentId } from '../../weapons/models/attachments.ts';
 import { updateSkinAnimations } from '../../weapons/models/skinMaterials.ts';
 import { SKINS, type SkinId } from '../../weapons/models/skins.ts';
 import { buildWeaponViewModel, createWeaponModel } from '../../weapons/models/weaponModels.ts';
@@ -17,7 +18,17 @@ import { HeldWeapon } from '../../entities/heldWeapon.ts';
  * player character, as other players see it. */
 export type PreviewView = 'display' | 'hip' | 'aim' | 'held';
 
-const DISPLAY_SPIN = 0.45;
+const DISPLAY_SPIN = 0.3;
+/** The angle the rack view opens on, and the limits of the hand's turn and zoom. */
+const REST_YAW = 1.15;
+const REST_PITCH = 0.12;
+const PITCH_LIMIT = 1.25;
+const ZOOM_MIN = 0.7;
+const ZOOM_MAX = 2.6;
+/** Radians a pixel of drag turns the weapon. */
+const DRAG_TURN = 0.0085;
+/** After a drag the weapon rests this long before it starts turning by itself again. */
+const IDLE_BEFORE_SPIN = 5;
 
 /** Draws one weapon in one skin on a canvas of its own: the Skins screen's preview and the aimed
  * view the aim-point screenshots are taken from (docs/skins.md). It owns a small WebGL context,
@@ -38,6 +49,17 @@ export class WeaponPreview {
   private view: PreviewView = 'display';
   private skinId: SkinId = 'service';
   private weaponId = '';
+  private attachmentKey = '';
+  /** The rack view under the hand: tilt, zoom, the glide left over from a drag, the turn being
+   * eased to (turnTo), and how long since the player last touched it. */
+  private pitch = REST_PITCH;
+  private zoom = 1;
+  private spinVelocity = 0;
+  private pitchVelocity = 0;
+  private target: { yaw: number; pitch: number } | null = null;
+  private idle = 0;
+  private held = false;
+  private autoSpin = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   private aimPosition = new THREE.Vector3();
   private frame = 0;
   private running = false;
@@ -46,7 +68,7 @@ export class WeaponPreview {
   /** Seconds into an inspect, or -1 when none is playing. */
   private inspectTime = -1;
   /** Spin of the turntable; held still for a screenshot with `freeze`. */
-  private spin = 1.15;
+  private spin = REST_YAW;
   private frozen = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -70,10 +92,18 @@ export class WeaponPreview {
     this.scene.add(this.camera);
   }
 
-  /** Shows `weaponId` in `skinId`. Rebuilds the model only when either changes. */
-  show(weaponId: string, skinId: SkinId, view: PreviewView): void {
-    const changed = weaponId !== this.weaponId || skinId !== this.skinId || view !== this.view;
+  /** Shows `weaponId` in `skinId` with `attachments` fitted. Rebuilds the model only when one of
+   * them or the view changes. */
+  show(weaponId: string, skinId: SkinId, view: PreviewView, attachments: readonly AttachmentId[] = []): void {
+    const attachmentKey = attachments.join('+');
+    const changed = weaponId !== this.weaponId || skinId !== this.skinId || view !== this.view || attachmentKey !== this.attachmentKey;
+    // A different weapon starts square to the eye and at full size again; a new skin or a fitted
+    // unit keeps the angle the player was looking from.
+    if (weaponId !== this.weaponId) this.resetOrbit(false);
     this.view = view;
+    this.attachmentKey = attachmentKey;
+    // The menus show a fitted torch lit.
+    setTorchLensLit(true);
     if (view === 'held') {
       this.weaponId = weaponId;
       this.skinId = skinId;
@@ -87,7 +117,7 @@ export class WeaponPreview {
       this.camera.clear();
       this.inspectTime = -1;
       if (view === 'display') {
-        const model = createWeaponModel(weaponId, skinId, { raw: true });
+        const model = createWeaponModel(weaponId, skinId, { raw: true, attachments });
         this.animator = new PartAnimator(model.parts, null);
         this.ownInspect = undefined;
         // Centre the model on its own bounds so every weapon turns about its middle.
@@ -101,7 +131,7 @@ export class WeaponPreview {
         pivot.scale.setScalar(1 / Math.max(size.x, size.z, size.y * 2.1));
         this.holder.add(pivot);
       } else {
-        const viewModel = buildWeaponViewModel(weaponId, skinId);
+        const viewModel = buildWeaponViewModel(weaponId, skinId, attachments);
         this.animator = new PartAnimator(viewModel.parts, viewModel.model);
         this.ownInspect = viewModel.animations.inspect;
         this.aimRetract = viewModel.aimRetract;
@@ -121,9 +151,14 @@ export class WeaponPreview {
       this.holder.rotation.set(0, this.spin, 0);
     } else if (this.view === 'display') {
       this.camera.fov = 30;
-      this.camera.position.set(0, 0.12, 1.5);
+      // Far enough back that the weapon's length takes about seven tenths of the picture's
+      // width, and its height never more than two thirds of the picture's: a wide stage comes
+      // closer, a phone's tall one steps back.
+      const distance = Math.max(1.38 / this.camera.aspect, 0.68) / 0.536 / this.zoom;
+      this.camera.position.set(0, 0.08 * distance, distance);
       this.camera.lookAt(0, 0, 0);
-      this.holder.rotation.set(0, this.spin, 0);
+      // Turned about its own upright, then tipped toward or away from the eye.
+      this.holder.rotation.set(this.pitch, this.spin, 0, 'XYZ');
     } else {
       this.camera.fov = VIEW_MODEL_FOV;
       this.camera.position.set(0, 0, 0);
@@ -177,15 +212,91 @@ export class WeaponPreview {
     return Math.hypot(centre.x * width / 2, centre.y * height / 2);
   }
 
+  /** A drag on the rack view: `dx`, `dy` in CSS pixels. The weapon follows the hand and keeps a
+   * little of the last move as glide once it lets go. */
+  orbit(dx: number, dy: number): void {
+    if (this.view !== 'display') return;
+    this.target = null;
+    this.idle = 0;
+    this.spin += dx * DRAG_TURN;
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dy * DRAG_TURN));
+    this.spinVelocity = dx * DRAG_TURN * 60;
+    this.pitchVelocity = dy * DRAG_TURN * 60;
+    this.pose();
+    this.render();
+  }
+
+  /** True while a pointer holds the weapon: it neither glides nor turns by itself. */
+  setHeld(held: boolean): void {
+    this.held = held;
+    this.idle = 0;
+    if (held) this.spinVelocity = this.pitchVelocity = 0;
+  }
+
+  /** Zooms the rack view by `factor` (above 1 comes closer). */
+  zoomBy(factor: number): void {
+    if (this.view !== 'display') return;
+    this.idle = 0;
+    this.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, this.zoom * factor));
+    this.pose();
+    this.render();
+  }
+
+  /** Eases the rack view round to `yaw` and `pitch` (the short way), for showing a fitted unit. */
+  turnTo(yaw: number, pitch: number): void {
+    const turns = Math.round((this.spin - yaw) / (Math.PI * 2));
+    this.target = { yaw: yaw + turns * Math.PI * 2, pitch };
+    this.spinVelocity = this.pitchVelocity = 0;
+    this.idle = 0;
+  }
+
+  /** Back to the opening angle and size. `ease` glides there; otherwise it is set at once. */
+  resetOrbit(ease = true): void {
+    this.zoom = 1;
+    this.spinVelocity = this.pitchVelocity = 0;
+    this.idle = 0;
+    if (ease) {
+      this.turnTo(REST_YAW, REST_PITCH);
+    } else {
+      this.target = null;
+      this.spin = REST_YAW;
+      this.pitch = REST_PITCH;
+    }
+    this.pose();
+  }
+
+  /** One frame of the rack view's own motion: the eased turn, the glide after a drag, and the slow
+   * turn it falls back to when left alone. */
+  private stepOrbit(dt: number): void {
+    if (this.held) return;
+    if (this.target) {
+      const blend = 1 - Math.exp(-dt * 7);
+      this.spin += (this.target.yaw - this.spin) * blend;
+      this.pitch += (this.target.pitch - this.pitch) * blend;
+      if (Math.abs(this.target.yaw - this.spin) < 0.002 && Math.abs(this.target.pitch - this.pitch) < 0.002) this.target = null;
+      return;
+    }
+    const decay = Math.exp(-dt * 4.5);
+    this.spinVelocity *= decay;
+    this.pitchVelocity *= decay;
+    this.spin += this.spinVelocity * dt;
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + this.pitchVelocity * dt));
+    this.idle += dt;
+    if (this.autoSpin && this.idle > IDLE_BEFORE_SPIN) this.spin += dt * DISPLAY_SPIN * Math.min(1, (this.idle - IDLE_BEFORE_SPIN) / 1.5);
+  }
+
   /** Plays the weapon's inspect (its own part moves plus the skin's turn) in the hip view. */
   inspect(): void {
     this.inspectTime = 0;
   }
 
   /** Stops the turntable at a fixed angle, for screenshots that must match between runs. */
-  freeze(spin = 1.15): void {
+  freeze(spin = REST_YAW, pitch = 0, zoom = 1): void {
     this.frozen = true;
+    this.target = null;
     this.spin = spin;
+    this.pitch = pitch;
+    this.zoom = zoom;
     this.pose();
     this.render();
   }
@@ -231,9 +342,12 @@ export class WeaponPreview {
       this.clock += dt;
       if (this.inspectTime >= 0) this.inspectTime += dt;
       if (this.view === 'held') this.character?.mixer.update(dt);
-      if ((this.view === 'display' || this.view === 'held') && !this.frozen) {
+      if (this.view === 'held' && !this.frozen) {
         this.spin += dt * DISPLAY_SPIN;
         this.holder.rotation.y = this.spin;
+      } else if (this.view === 'display' && !this.frozen) {
+        this.stepOrbit(dt);
+        this.pose();
       }
       this.render();
       this.frame = requestAnimationFrame(tick);

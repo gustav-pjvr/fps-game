@@ -1,6 +1,6 @@
 // Screenshots of the lobby menu screens at desktop and phone width, for judging a UI change by
 // eye. Needs `npm run dev -- --port <port> --strictPort` running in this checkout.
-//   node scripts/menuShots.mjs --port 5191 --out C:/tmp/shots --screen SKINS,LOADOUT
+//   node scripts/menuShots.mjs --port 5191 --out C:/tmp/shots --screen WORKBENCH,LOADOUT
 // --click "testid,testid" clicks those data-testid elements in order after the screen opens.
 import { chromium } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
@@ -11,7 +11,7 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, word, i, al
 }, []));
 const port = args.port ?? '5173';
 const out = args.out ?? 'test-results/menu-shots';
-const screens = (args.screen ?? 'SKINS').split(',');
+const screens = (args.screen ?? 'WORKBENCH').split(',');
 const clicks = args.click ? args.click.split(',') : [];
 const sizes = [['desktop', 1440, 900], ['phone', 390, 844]];
 mkdirSync(out, { recursive: true });

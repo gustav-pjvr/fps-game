@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ADS_SIGHT_DISTANCE } from '../core/config.ts';
 import type { WeaponAnimations } from './animation/clips.ts';
+import type { AttachmentId } from './models/attachments.ts';
 import type { SkinId } from './models/skins.ts';
 
 export const WEAPON_HIP_POSITION = new THREE.Vector3(0.25, -0.22, -0.5);
@@ -32,6 +33,8 @@ export interface WeaponViewModel {
   /** Parts that slide back out of view as the weapon is aimed: metres at full aim, by part name. */
   aimRetract: Readonly<Record<string, number>>;
   skinId: SkinId;
+  /** What is fitted to this copy (models/attachments.ts): only what the gun can take. */
+  attachments: readonly AttachmentId[];
   /** A scope overlay replaces the model at full aim. */
   scoped: boolean;
 }

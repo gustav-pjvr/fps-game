@@ -21,7 +21,7 @@ const SCREENS: { name: string; open: string | null }[] = [
   { name: 'match setup', open: 'PLAY' },
   { name: 'multiplayer', open: 'MULTIPLAYER' },
   { name: 'loadout', open: 'LOADOUT' },
-  { name: 'skins', open: 'SKINS' },
+  { name: 'workbench', open: 'WORKBENCH' },
   { name: 'settings', open: 'SETTINGS' },
 ];
 
@@ -47,6 +47,8 @@ async function overflowing(page: Page): Promise<string[]> {
       if (rect.width === 0 || rect.height === 0) continue;
       const style = getComputedStyle(el);
       if (style.visibility === 'hidden' || style.display === 'none') continue;
+      // A row that scrolls sideways (the Workbench's cards) holds items past the edge by design.
+      if (el.closest('.wb-rail')) continue;
       if (rect.left < -1 || rect.right > width + 1) out.push(`${el.tagName} "${(el.textContent ?? '').trim().slice(0, 40)}" spans ${Math.round(rect.left)} to ${Math.round(rect.right)} of ${width}`);
     }
     return out;

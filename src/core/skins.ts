@@ -7,7 +7,7 @@ const STORAGE_KEY = 'fps-game-skins';
  * default skin, so the stored object only holds what the player changed. */
 export type EquippedSkins = Readonly<Record<string, SkinId>>;
 
-/** Whatever the player last equipped on the Skins screen (ui/menu/SkinsScreen.ts), kept across
+/** Whatever the player last equipped on the Workbench (ui/menu/WorkbenchScreen.ts), kept across
  * sessions the same way the loadout is (core/loadout.ts). Anything malformed, any unknown weapon
  * and any unknown skin is dropped rather than trusted. */
 export function loadStoredSkins(): EquippedSkins {

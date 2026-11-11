@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { adsPositionForSight, WEAPON_ADS_POSITION, WEAPON_HIP_POSITION, type WeaponViewModel } from '../viewModel.ts';
+import { addAttachments, sanitizeAttachments, type AttachmentId } from './attachments.ts';
 import { ARM_PART_PREFIX, BODY, GunBuilder, type WeaponBlueprint } from './kit/GunBuilder.ts';
 import { toThree } from './kit/geometry.ts';
 import { WEAPON_MODEL_BUILDERS } from './registry.ts';
@@ -40,8 +41,9 @@ export interface WeaponModel {
 /** One copy of a weapon in a skin. `arms` adds the shooter's hands and forearms (the first-person
  * view); thumbnails, the Skins preview and other players' copies leave them out. `raw` leaves the
  * model at its own origin and real size, without the first-person tuning (for a copy placed in the
- * world or in a hand). */
-export function createWeaponModel(id: string, skinId: SkinId = DEFAULT_SKIN, options: { arms?: boolean; raw?: boolean } = {}): WeaponModel {
+ * world or in a hand). `attachments` fits those the gun can take (models/attachments.ts): they
+ * ride the body, so they turn with the gun, and keep their own materials under every skin. */
+export function createWeaponModel(id: string, skinId: SkinId = DEFAULT_SKIN, options: { arms?: boolean; raw?: boolean; attachments?: readonly AttachmentId[] } = {}): WeaponModel {
   const blueprint = getWeaponBlueprint(id, skinId);
   const materials = getSkinMaterials(skinId);
   const arms = options.arms ?? false;
@@ -84,6 +86,7 @@ export function createWeaponModel(id: string, skinId: SkinId = DEFAULT_SKIN, opt
     if (entry.slot === 'glass') mesh.renderOrder = 2;
     parent.add(mesh);
   }
+  if (options.attachments?.length) addAttachments(parts.get(BODY)!, id, options.attachments);
   return { root, parts, glowMaterials: glow ? [glow] : [], blueprint, skinId };
 }
 
@@ -93,7 +96,7 @@ function inHolder(blueprint: WeaponBlueprint, point: readonly [number, number, n
 }
 
 /** The first-person view model: the weapon with the shooter's arms, in a group at the hip pose. */
-export function buildWeaponViewModel(id: string, skinId: SkinId = DEFAULT_SKIN): WeaponViewModel {
+export function buildWeaponViewModel(id: string, skinId: SkinId = DEFAULT_SKIN, attachments: readonly AttachmentId[] = []): WeaponViewModel {
   const group = new THREE.Group();
   group.name = `weapon-${id}`;
   group.position.copy(WEAPON_HIP_POSITION);
@@ -108,10 +111,12 @@ export function buildWeaponViewModel(id: string, skinId: SkinId = DEFAULT_SKIN):
       animations: {},
       aimRetract: {},
       skinId,
+      attachments: [],
       scoped: false,
     };
   }
-  const model = createWeaponModel(id, skinId, { arms: true });
+  const fitted = sanitizeAttachments(id, attachments);
+  const model = createWeaponModel(id, skinId, { arms: true, attachments: fitted });
   group.add(model.root);
   const { blueprint } = model;
   return {
@@ -126,6 +131,7 @@ export function buildWeaponViewModel(id: string, skinId: SkinId = DEFAULT_SKIN):
     animations: blueprint.animations,
     aimRetract: blueprint.aimRetract,
     skinId,
+    attachments: fitted,
     scoped: blueprint.scoped,
   };
 }

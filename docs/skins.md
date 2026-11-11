@@ -4,7 +4,7 @@ Six looks that exist for every weapon, equipped per weapon, kept in the browser,
 players. A skin may change colour, material, shape and animation; it may never break aiming.
 
 - The skins: `src/weapons/models/skins.ts`. Their materials: `skinMaterials.ts` beside it.
-- Storage: `src/core/skins.ts`. The screen: `src/ui/menu/SkinsScreen.ts`, `WeaponPreview.ts`.
+- Storage: `src/core/skins.ts`. The screen: the Workbench, `src/ui/menu/WorkbenchScreen.ts`, with `WeaponPreview.ts` (docs/attachments.md).
 - The weapons and the kit a skin's shape changes go through: `docs/arsenal.md`.
 
 ## The six
@@ -55,18 +55,16 @@ shows Service.
 
 ## The Skins screen
 
-Main menu, SKINS (also the Skin row's Change button on the Loadout). Weapons on the left as side-on
-pictures in the skin each wears, the chosen weapon large in the middle, the six skins as cards on
-the right (swatches, what the skin changes, a corner mark on the equipped one). Clicking a card
-equips it at once. The preview has three views, because the point of the screen is to show that a
-skin still aims true before it is worn: **On the rack** (the weapon alone, turning slowly), **In
-hand** (the first-person hip view), **Down the sights** (aimed, with the crosshair). An Inspect button plays
-the skin's inspect. On a phone the screen is one column: preview, a strip of weapons to swipe, the
-cards.
+Skins are now a section of the Workbench (main menu, WORKBENCH, or Edit weapon on the Loadout):
+docs/attachments.md describes the page. The six skins are a row of cards under the weapon
+(swatches, what the skin changes, a corner mark on the equipped one). Clicking a card equips it at
+once. The preview has three views, because the point is to show that a skin still aims true before
+it is worn: **Rack** (the weapon alone, turned with the mouse), **In hand** (the first-person hip
+view), **Sights** (aimed, with the crosshair). Inspect plays the skin's inspect.
 
 Test ids: `skins-screen`, `skins-weapon-<id>`, `skins-skin-<id>`, `skins-view-<view>`,
 `skins-preview` (`data-shown`, `data-sight-offset`), `skins-inspect`; on the Loadout `loadout-skin`
-and `loadout-change-skin`.
+and `loadout-change-skin`. The weapon buttons are in the All weapons sheet (`workbench-weapons` opens it).
 
 ## Adding a skin
 

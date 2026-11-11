@@ -74,7 +74,7 @@ export const RULES = [
   { match: /^src\/(network|lobby)\/|^src\/entities\/RemotePlayer\.ts$|^src\/core\/(multiplayer\w*|modeControllers\/.*|gameModes)\.ts$|^src\/ui\/menu\/(CreateRoomScreen|JoinRoomScreen|MultiplayerMenu)\.ts$|^src\/ui\/matchEndScreen\.ts$/, groups: ['mp'] },
   { match: /^src\/core\/mission\/|^src\/world\/UplinkBeacons\.ts$|^src\/ui\/(worldMarkers|deathScreen)\.ts$/, groups: ['mission'] },
   // Weapon models, skins and what draws them in the menus: the aim-point screenshots.
-  { match: /^src\/weapons\/(models|animation)\/|^src\/weapons\/viewModel\.ts$|^src\/core\/skins\.ts$|^src\/ui\/menu\/(SkinsScreen|WeaponPreview)\.ts$/, groups: ['skins'] },
+  { match: /^src\/weapons\/(models|animation)\/|^src\/weapons\/viewModel\.ts$|^src\/core\/skins\.ts$|^src\/core\/attachments\.ts$|^src\/ui\/menu\/(WorkbenchScreen|WeaponPreview)\.ts$/, groups: ['skins'] },
   // The mode specs' own shared steps, and the modes' rules and presenters.
   { match: /^e2e\/coop\.ts$/, groups: ['modes'], stop: true },
   { match: /^src\/core\/modeControllers\/(hillState|KingOfTheHillController|reviveRules|SquadController)\.ts$|^src\/entities\/HillView\.ts$|^src\/ui\/kothHud\.ts$/, groups: ['modes'] },
