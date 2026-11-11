@@ -786,15 +786,13 @@ export class Game {
   }
 
   /** The match's torches, after the camera's interpolation:
-   * the player's own on the gun (its body on the active ranged view model) or the shoulder, and one
+   * the player's own from the front of the gun or from the shoulder, and one
    * pooled light per opponent, dark while their torch is off or they are dead. */
   private updateTorches(): void {
     const { torch, remoteTorches } = this;
     if (!torch) return;
     if (torch.isOn && !this.torchAvailableAt(this.player.position)) torch.setOn(false);
-    const mount = this.weaponManager.torchMount;
-    torch.mountBody(mount);
-    torch.update(this.renderer.camera, mount !== null);
+    torch.update(this.renderer.camera, this.weaponManager.torchOnGun);
     if (!remoteTorches) return;
     const sources = this.multiplayer
       ? Array.from(this.multiplayer.opponents.values(), (opponent) => ({
@@ -855,6 +853,29 @@ export class Game {
             scale: { x: gc.scale.x, y: gc.scale.y, z: gc.scale.z },
           })),
         })),
+      getNearEyeObjects: (radius = 3) => {
+        const camera = this.renderer.camera;
+        const found: { path: string; kind: string; cam: number[]; screen: number[]; size: number[] }[] = [];
+        const box = new THREE.Box3();
+        const centre = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        const round = (v: THREE.Vector3): number[] => [v.x, v.y, v.z].map((n) => Math.round(n * 1000) / 1000);
+        this.renderer.scene.traverseVisible((object) => {
+          const drawn = object as THREE.Mesh;
+          if (!drawn.geometry && !(object as THREE.Sprite).isSprite) return;
+          box.setFromObject(object);
+          if (box.isEmpty()) return;
+          box.getCenter(centre);
+          box.getSize(size);
+          const sizeOut = round(size);
+          const inCamera = camera.worldToLocal(centre.clone());
+          if (inCamera.length() > radius) return;
+          const path: string[] = [];
+          for (let node: THREE.Object3D | null = object; node && node !== this.renderer.scene; node = node.parent) path.unshift(node.name || node.type);
+          found.push({ path: path.join('/'), kind: object.type, cam: round(inCamera), screen: round(centre.project(camera)), size: sizeOut });
+        });
+        return found;
+      },
       getWorldSeed: () => getWorldSeed(),
       // Queued, not applied immediately, so debug damage takes the exact same within-tick path enemy
       // damage takes (death handling itself copes with either, see deathHandled).

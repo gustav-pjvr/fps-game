@@ -37,6 +37,10 @@ The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/ars
   the gun rolls onto its side, then tips muzzle-up, with both hands on it. A knife slash keeps the
   forearm coming from the corner. Sprinting carries the weapon low and to the side where it swung
   across the view. A weapon being put away no longer keeps its sprint tilt.
+- **The stray piece beside the guns is gone.** Every gun carried the old torch body (a plain dark
+  cylinder with a lens) on its outer group, so it stayed still while the gun turned in a reload or
+  an inspect. It is removed; the torch light is unchanged. A unit test now fails if any weapon
+  model has a piece floating free of it (`floatingGeometry.test.ts`).
 - **Blades have two attacks.** A click and an aimed click are different strikes with their own
   damage, reach, speed and swing; a strike hits each target once (the knife no longer kills in one
   clean hit).

@@ -30,6 +30,9 @@ export interface GameDebugApi {
    * the bloom in it (radians), and the kick it gave the view (docs/gun-handling.md). */
   getShotLog(): { weaponId: string; shotIndex: number; aim: number; spread: number; bloom: number; kick: number; side: number }[];
   getCameraChildrenDebug(): unknown[];
+  /** Every drawn object within `radius` metres of the eye: its path of names, where its centre
+   * is in the camera's space and on screen (-1 to 1), and its size. For finding a stray piece. */
+  getNearEyeObjects(radius?: number): { path: string; kind: string; cam: number[]; screen: number[]; size: number[] }[];
   getWorldSeed(): number;
   /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */
   damagePlayer(amount: number): void;

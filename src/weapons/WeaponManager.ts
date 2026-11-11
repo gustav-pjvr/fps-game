@@ -401,11 +401,10 @@ export class WeaponManager {
     return this.inspectTime >= 0;
   }
 
-  /** Where the Facility's torch body hangs (docs/facility-map.md, section 7): the active view model
-   * and its muzzle for a ranged weapon, null for the blades and empty hands, which carry none. */
-  get torchMount(): { viewModel: THREE.Object3D; muzzle: THREE.Vector3 } | null {
-    const slot = this.active;
-    return slot.weapon.definition.kind === 'ranged' ? { viewModel: slot.viewModel, muzzle: slot.muzzleLocalOffset } : null;
+  /** True while a gun is in hand: the torch then shines from its front (docs/facility-map.md,
+   * section 7), and from the shoulder for the blades and empty hands. */
+  get torchOnGun(): boolean {
+    return this.active.weapon.definition.kind === 'ranged';
   }
 
   get weaponDescription(): string {
