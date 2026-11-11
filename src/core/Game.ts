@@ -1166,6 +1166,7 @@ export class Game {
         this.hitGlass(id, u, v, power, -1, true);
         return true;
       },
+      restreamChunkAt: (x, z) => this.chunkManager?.debugRestream(x, z) ?? false,
       getSoundDebug: () => ({ voices: { ...this.sound.stats }, probe: { ...probeStats }, space: this.listenerSpace() }),
       getHouseLights: () => this.buildings?.houses.lights.debug() ?? null,
       shootLamp: (index) => (this.facility ? this.destroyFacilityLamp(index, true) : this.destroyHouseLamp(index, true)),

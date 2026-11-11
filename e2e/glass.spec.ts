@@ -14,7 +14,7 @@ const paneNow = async (page: Page, id: number): Promise<Pane | undefined> => (aw
 
 /** A solo Valley match, the player invulnerable, standing outside a ground-floor window with a
  * clear line through it: returns the pane and where the player stands. */
-async function standAtWindow(page: Page, distance: number): Promise<{ pane: Pane; stand: { x: number; y: number; z: number } }> {
+async function standAtWindow(page: Page, distance: number): Promise<{ pane: Pane; stand: { x: number; y: number; z: number }; house: { x: number; z: number } }> {
   await page.goto('/');
   await waitForGameReady(page);
   await lockPointer(page);
@@ -28,13 +28,13 @@ async function standAtWindow(page: Page, distance: number): Promise<{ pane: Pane
   const candidates = all
     .map((pane) => {
       const house = houses.slice().sort((a, b) => Math.hypot(a.x - pane.x, a.z - pane.z) - Math.hypot(b.x - pane.x, b.z - pane.z))[0]!;
-      return { pane, ground: house.y };
+      return { pane, ground: house.y, house: { x: house.x, z: house.z } };
     })
     .filter(({ pane, ground }) => pane.y - ground < 2.4)
     .sort((a, b) => Math.hypot(a.pane.x - player.x, a.pane.z - player.z) - Math.hypot(b.pane.x - player.x, b.pane.z - player.z));
   expect(candidates.length).toBeGreaterThan(0);
 
-  for (const { pane, ground } of candidates.slice(0, 8)) {
+  for (const { pane, ground, house } of candidates.slice(0, 8)) {
     const stand = { x: pane.x + pane.nx * distance, y: ground + 1.2, z: pane.z + pane.nz * distance };
     await page.evaluate(({ x, y, z }) => window.__gameDebug!.teleport(x, y, z), stand);
     await page.waitForTimeout(700);
@@ -44,7 +44,7 @@ async function standAtWindow(page: Page, distance: number): Promise<{ pane: Pane
     const ray = await page.evaluate(() => window.__gameDebug!.raycastForward());
     // Standing where intended, and nothing solid between the eye and the far side of the pane.
     const placed = Math.hypot(at.x - stand.x, at.z - stand.z) < 0.6;
-    if (placed && (!ray.hit || (ray.distance ?? 0) > distance + 0.3)) return { pane, stand };
+    if (placed && (!ray.hit || (ray.distance ?? 0) > distance + 0.3)) return { pane, stand, house };
   }
   throw new Error('no window with a clear line to it was found near the spawn');
 }
@@ -61,7 +61,7 @@ test('a shot holes a window where it struck, more shots break it, and it stays b
   test.setTimeout(300000);
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(String(error)));
-  const { pane, stand } = await standAtWindow(page, 3.5);
+  const { pane, house } = await standAtWindow(page, 3.5);
   await equipPistol(page);
   expect((await paneNow(page, pane.id))?.damage).toBe(0);
   const voicesBefore = (await page.evaluate(() => window.__gameDebug!.getSoundDebug())).voices.opened;
@@ -85,12 +85,21 @@ test('a shot holes a window where it struck, more shots break it, and it stays b
   expect(broken.holes).toHaveLength(0);
   expect((await glass(page)).drawn.lying).toBeGreaterThan(0);
 
-  // The house streams out (the pane leaves the world) and back: the window is still open.
-  const away = Math.hypot(pane.x, pane.z) > 170 ? { x: pane.x * 0.2, z: pane.z * 0.2 } : { x: pane.x + (pane.x >= 0 ? -1 : 1) * 170, z: pane.z };
-  await page.evaluate(({ x, y, z }) => window.__gameDebug!.teleport(x, y, z), { x: away.x, y: stand.y + 40, z: away.z });
-  await expect.poll(async () => (await paneNow(page, pane.id)) === undefined, { timeout: 90000 }).toBe(true);
-  await page.evaluate(({ x, y, z }) => window.__gameDebug!.teleport(x, y, z), stand);
-  await expect.poll(async () => (await paneNow(page, pane.id))?.broken, { timeout: 90000 }).toBe(true);
+  // The house streams out and back in (its chunk unloaded and loaded again through the real
+  // streaming path; the world is too small for that to happen by walking): the window is still open.
+  const before = (await glass(page)).streamed;
+  const gone = await page.evaluate(({ at, id }) => {
+    const debug = window.__gameDebug!;
+    const unloaded = debug.restreamChunkAt(at.x, at.z);
+    // Read in the same turn, before a tick can load the chunk again.
+    const now = debug.getGlassDebug()!;
+    return { unloaded, streamed: now.streamed, stillThere: now.panes.some((pane) => pane.id === id) };
+  }, { at: house, id: pane.id });
+  expect(gone.unloaded).toBe(true);
+  expect(gone.stillThere, 'the pane left the world with its house').toBe(false);
+  expect(gone.streamed).toBeLessThan(before);
+  await expect.poll(async () => (await glass(page)).streamed, { timeout: 60000 }).toBe(before);
+  await expect.poll(async () => (await paneNow(page, pane.id))?.broken, { timeout: 60000 }).toBe(true);
   expect((await glass(page)).drawn.lying).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });

@@ -256,6 +256,10 @@ export interface GameDebugApi {
    * look, sound and, in multiplayer, the glassHit send). False when there is no such pane or it is
    * already broken. */
   hitGlass(id: number, u: number, v: number, power: number): boolean;
+  /** Test-only, Valley only: unloads the terrain chunk holding (x, z) with everything streamed with
+   * it (its houses, their doors, lamps and glass); the game loads it again within a few ticks. False
+   * when that chunk is not loaded. */
+  restreamChunkAt(x: number, z: number): boolean;
   /** The sound engine's counters (docs/sound.md): voices opened, skipped as inaudible or over the
    * cap, the most alive at once, the occlusion probe's ray casts, and where the listener stands. */
   getSoundDebug(): {
