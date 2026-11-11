@@ -99,7 +99,7 @@ All messages are one discriminated union, `NetworkMessage` in `src/network/proto
 | Co-op layer | `reviveEvent`, `ping` | Self-reported and relayed: a finished revive of a fallen teammate (only the target acts on it), and a marker for the sender's own side (docs/coop.md). |
 | Bonus goose | `bonusGooseSpawned`, `bonusGooseSnapshot`, `bonusGooseHitEvent`, `bonusGooseKilled` | Host-authoritative. The guest reports its hit; the host credits the killer. |
 | Grenades | `grenadeThrown`, `grenadeDetonated` | Thrower-authoritative, relayed. Frag damage travels as `damageEvent` with `weaponId: 'frag'`. |
-| World objects | `worldInteract`, `worldObjectState`, `lampDestroyed`, `lampSync` | Doors and breakers are host-authoritative (guest asks, host checks reach and broadcasts the whole state). The Valley's watch tower doors ride the same two messages (see "Underground" in section 4). Lamps are self-reported and relayed. |
+| World objects | `worldInteract`, `worldObjectState`, `lampDestroyed`, `lampSync`, `glassHit`, `glassSync` | Doors and breakers are host-authoritative (guest asks, host checks reach and broadcasts the whole state). The Valley's watch tower doors ride the same two messages (see "Underground" in section 4). Lamps are self-reported and relayed. The windows' glass follows the lamps: a hit is self-reported and relayed (`glassHit`), and each client re-broadcasts its whole set of hit panes (`glassSync`), which is also how a late joiner is told (`docs/glass.md`). |
 | Pickups | `pickupClaim`, `pickupTaken`, `pickupRespawned`, `pickupSyncRequest`, `pickupState` | Host-authoritative, never relayed (`src/pickups/PickupSystem.ts`, `docs/pickups.md`). |
 | Direct links | `meshHello`, `meshStatus`, `linkQuality` | Connection layer only. `meshStatus` is consumed in `PeerConnection` and never routed. |
 | Briefing | `modeExplanationReady` | Self-reported, relayed; every client dismisses the briefing when all slots are ready. |
@@ -286,16 +286,14 @@ Details that are easy to miss:
   (`RemoteMotion`) extrapolates from recent speed, capped at `MAX_LEAD_SECONDS` (0.12 s) and stopped after
   `STALE_MS` (250 ms). A snapshot that jumps further than `MAX_PREDICT_SPEED` allows, or the first one after a death,
   snaps with `teleportTo`. `setTorch` shows the Facility torch lens; `setLeadSeconds` takes the ping-based lead.
-- **Positional audio** (`src/core/positionalAudio.ts`): `computeStereoPan` (horizontal only) and distance falloff
-  functions (`multiplayerGunshotVolume`, `knifeSwingVolume`, `lampBreakVolume`, `facilityObjectVolume`,
-  `grenadeBounceVolume`) driven by constants in `config.ts` (`MULTIPLAYER_GUNSHOT_*`, `KNIFE_SWING_*`,
-  `FACILITY_OBJECT_*`). Remote gunshots never go fully silent. The router's `fireEvent` and `footstepEvent` cases
-  call them with the listener's `facingYaw`.
-- **Muffled sound across the surface.** `undergroundMuffleFactor(listenerBelowGround, sourceBelowGround)` in
-  `positionalAudio.ts` is 0.35 when one side is below ground and the other is not, else 1. The router multiplies it
-  into remote `fireEvent` shots, `footstepEvent` and `gooseThrowExploded` blasts, and `Game` and `GrenadeSystem` do the
-  same for enemy shots, goose and horde blasts and frag and flash grenades. Two players in the same lab hear each other
-  at full volume; one in the lab and one outside hear 35 percent of it.
+- **Positional audio** (`docs/sound.md`): the router's `fireEvent`, `footstepEvent` and `gooseThrowExploded` cases
+  pass the source's world position to the sound engine, which works out loudness, direction and what lies between.
+  Remote gunshots never go fully silent. A remote shot is also heard landing and, when its path passes within 3 m of
+  the listener's head, going by (`shotPassed`). A remote footstep's surface is read at its position on the receiving
+  side (`stepSurfaceAt`).
+- **Muffled sound across the surface.** No special case: the ground between a source and the listener occludes like
+  any wall, only more (`src/world/soundProbe.ts`). Two players in the same lab hear each other clearly; one in the lab
+  and one outside hear a dull thud.
 - **HUD and minimap.** `src/ui/multiplayerHud.ts` (rows from the roster, scoreboard, ping) and `src/ui/minimap.ts`
   (one dot per opponent, pickups, King of the Hill marker). `Minimap.update` takes `MinimapPlayerDot`s
   (`{ x, z, underground }`, kept in a reused map by `Game.updateMultiplayer`): a player below ground is a hollow ring
@@ -321,7 +319,7 @@ Details that are easy to miss:
 | Give a late joiner more state | Add a part to `MatchSyncSource` and `buildMatchSync` (`matchSync.ts`), fill it in `sendFullSync` (router), and keep every message an ordinary idempotent type the joiner already handles. |
 | Change a mode's weapons or grenades | `FIXED_LOADOUTS`, `GUN_GAME_POOL`, `UNRESTRICTED_GAME_MODES`, `GRENADES_ENABLED` in `gameModes.ts`; custom loadout storage in `src/core/loadout.ts`. |
 | Change TURN or ICE setup | `DEFAULT_ICE_SERVERS`, `buildIceServers` in `PeerConnection.ts`; `functions/api/turn-credentials.ts`; the env vars live in the Cloudflare Pages project. |
-| Change audio falloff | `positionalAudio.ts` and the matching constants in `config.ts`. For the surface boundary, `undergroundMuffleFactor` there; every new world sound that should be muffled multiplies it into its volume, as the `fireEvent` case does. |
+| Change audio falloff | `LOUDNESS` in `src/audio/spatial.ts` (how each kind of sound carries) and `src/audio/occlusion.ts` (what a wall, a pane or the ground does). A new world sound only passes its position: distance, walls and the surface boundary apply by themselves. |
 | Add a rule that changes below ground (a mode or a pickup) | Use `isBelowGround` (`world/underground.ts`), keep the rule in the pure controller or state class and pass the flag in (`KingOfTheHillController`, `MissionInput.underground`, `DirectorSignals.allPlayersUnderground`). A host check on a guest's claim must compare height as well as x and z, as `PickupSystem.handleMessage` does. |
 | Add another world object that shares the Valley door messages | Give it an id range above `TOWER_DOOR_BASE + WATCH_TOWER_COUNT` in `valleyHouseIds.ts` with its own `fooIndexFromId`, resolve it in `ValleyDoors.plane`, and make `state.has` reject every other id. The wire bounds in `protocol.ts` do not know about ranges. |
 | Change the Goose Horde waves | `HORDE_WAVE_TABLE` in `config.ts`, the goose kinds and the scaling in `entities/hordeRules.ts`; `HordeGooseManager` (docs/goose-horde.md). |

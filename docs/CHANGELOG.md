@@ -10,6 +10,40 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
+## v5.1.0 (preview only, not released)
+
+On the branch `feature/sound-and-glass`, deployed to a preview and not to the live game. As built:
+`docs/sound.md`, `docs/glass.md`. Handover: `docs/sound-glass-handover.md`.
+
+**Sound, rebuilt**
+
+- **Sounds have a place.** Every sound in the world is heard from where it is: left, right, in front,
+  behind, above, below. 3D audio for headphones (HRTF) is on by default, with a setting to turn it off.
+- **Loud and soft mean something.** Each kind of sound carries its own distance: a gunshot is heard
+  across the valley, a footstep for thirty metres. Far sounds are duller and arrive late, and a
+  distant shot is mostly its echo.
+- **Buildings matter.** A wall between you and a sound makes it quiet and muffled, more for more
+  walls; a window muffles less; an open door or a broken window lets it through. Inside a house
+  sounds ring in the room, the wind drops, and the outside is dull.
+- **A mix that holds.** Weapons, movement, the world, voices and the interface each have a level, a
+  limiter keeps a firefight from clipping, and a near explosion pulls the rest down for a moment.
+- **Every sound redone or kept on purpose,** and new ones: enemy footsteps and melee, bullets
+  striking earth, wood, metal, concrete and glass, bullets passing close, casings, footsteps by
+  surface and pace, wind. Every gun has its own report.
+- **Settings:** Effects Volume, 3D Audio, Night Mode (evens out loud and quiet).
+- **A sound test page** (`/soundlab.html`, linked from Settings, Audio): every sound, from anywhere.
+
+**Glass windows**
+
+- **Every window of a Valley house has glass.** A round leaves a hole where it struck with cracks
+  running from it; enough rounds break the pane (six from a pistol, two from a sniper, one shotgun
+  blast), and a blade, a frag or an exploding goose breaks it at once. The shards fly, fall and lie
+  on the sill and the floor, and the window is open.
+- **Glass in play:** bullets pass through and hole it, an intact pane stops a thrown grenade and
+  muffles sound, and broken glass crunches underfoot.
+- **The same for every player,** including one who joins late, and a house keeps its windows as
+  they were left.
+
 ## v5.0.0 (current)
 
 Released to the live game on 2026-11-11.

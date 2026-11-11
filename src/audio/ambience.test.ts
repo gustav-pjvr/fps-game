@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../utils/rng.ts';
-import { HEARTBEAT_THRESHOLD, heartbeatFor, musicMix, outdoorAmbienceGain, reactorHumGain, reverbSendFor, undergroundReverbScale, roomImpulse, valleyImpulse, windLevel } from './ambience.ts';
+import { HEARTBEAT_THRESHOLD, heartbeatFor, musicMix, reactorHumGain, undergroundReverbScale, roomImpulse, valleyImpulse, windLevel } from './ambience.ts';
 
 describe('musicMix', () => {
   it('keeps only a dark pad in the quiet phase', () => {
@@ -85,24 +85,8 @@ describe('valleyImpulse', () => {
   });
 });
 
-describe('reverbSendFor', () => {
-  it('sends distant sounds to the reverb more than close ones', () => {
-    expect(reverbSendFor(0.2, 0.2)).toBeGreaterThan(reverbSendFor(1, 0.2));
-    expect(reverbSendFor(1, 0.2)).toBeCloseTo(0.2);
-    expect(reverbSendFor(0, 0.9)).toBe(1);
-  });
-});
-
 describe('underground ambience', () => {
-  it('fades the outdoor wind and valley layers with the eased underground amount', () => {
-    expect(outdoorAmbienceGain(0)).toBe(1);
-    expect(outdoorAmbienceGain(0.5)).toBe(0.5);
-    expect(outdoorAmbienceGain(1)).toBe(0);
-    expect(outdoorAmbienceGain(-1)).toBe(1);
-    expect(outdoorAmbienceGain(2)).toBe(0);
-  });
-
-  it('scales the existing reverb send up as the outdoor layers fade', () => {
+  it('scales the hall reverb up as the listener settles underground', () => {
     expect(undergroundReverbScale(0)).toBe(1);
     expect(undergroundReverbScale(0.5)).toBeCloseTo(1.3);
     expect(undergroundReverbScale(1)).toBeCloseTo(1.6);

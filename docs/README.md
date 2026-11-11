@@ -20,6 +20,8 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 |---|---|
 | [facility-map.md](facility-map.md) | The indoor Facility map: layout, lighting, torch, lamps, doors and breakers (sections 12 and 13), modes |
 | [enterable-buildings.md](enterable-buildings.md) | Enterable Valley houses |
+| [glass.md](glass.md) | The glass in the Valley houses' windows: holes, cracks, breaking, what it does to the game, sync |
+| [sound.md](sound.md) | The spatial sound engine: loudness, direction, walls and windows, the mix, every sound, the sound test page |
 | [underground-lab.md](underground-lab.md) | The underground lab under each watch tower (v4.7.0): the door, the old room, the stairs, the lab, cut zones, light, rules per mode; design in sections 1 to 8, as built in section 9 |
 | [grenades.md](grenades.md) | Frag and flash grenades |
 | [pickups.md](pickups.md) | Health, ammo and grenade pickups |
@@ -41,7 +43,10 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 | [attachments.md](attachments.md) | Laser and torch, which guns take them, the Workbench page |
 | [release-v5-brief.md](release-v5-brief.md) | Brief for the session that merges and deploys v5.0.0 |
 | [fable-working-notes.md](fable-working-notes.md) | How to work on this repo with Gustav and on this machine: what the v5.0.0 session learnt |
-| [sound-and-glass-brief.md](sound-and-glass-brief.md) | Brief for the next Fable session: sound redesign and breakable glass windows |
+| [sound-and-glass-brief.md](sound-and-glass-brief.md) | Brief for the sound redesign and breakable glass windows |
+| [sound-glass-handover.md](sound-glass-handover.md) | Handover of that work: what was built, how to try it, evidence, what is not verified, the defaults taken |
+| [sound-glass-decisions.md](sound-glass-decisions.md) | Its decision log |
+| [sound-glass-progress.md](sound-glass-progress.md) | Its working log |
 | [arsenal-modelling.md](arsenal-modelling.md) | How to write a weapon model with the kit |
 | [weapons-combat.md](weapons-combat.md) | Weapon view models, hotbar, long-shot callout, tree canopy collision |
 | [visual-overhaul.md](visual-overhaul.md), [visual-overhaul-ui.md](visual-overhaul-ui.md) | The v4.0 look, HUD and menu reskin |

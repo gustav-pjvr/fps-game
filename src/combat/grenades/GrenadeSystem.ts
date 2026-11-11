@@ -7,7 +7,6 @@ import type { InputManager } from '../../input/InputManager.ts';
 import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage, PlayerSlot } from '../../network/protocol.ts';
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
-import { GRENADE_BOUNCE_LOUD_SPEED } from '../../core/positionalAudio.ts';
 import { GRAVITY, PLAYER_HEIGHT } from '../../core/config.ts';
 import { FlashBlindness, flashSeconds, flashStrength } from './flashStrength.ts';
 import { predictArc, stepGrenade, type ArcPrediction, type FlightParams, type GrenadeBody, type Sweep, type Vec3 } from './grenadeFlight.ts';
@@ -244,6 +243,9 @@ const WORLD_MODEL_SCALE = 1.35;
 /** Bounce clinks: none for a contact slower than this (m/s, a grenade rolling or settling), and at
  * most one per grenade per CLINK_INTERVAL seconds. */
 const CLINK_MIN_SPEED = 1.2;
+/** An impact at this speed (m/s) or faster clinks at full strength; slower ones in proportion. How
+ * far the clink carries is the sound engine's business (docs/sound.md). */
+const GRENADE_BOUNCE_LOUD_SPEED = 9;
 const CLINK_INTERVAL = 0.09;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 const UP = new THREE.Vector3(0, 1, 0);

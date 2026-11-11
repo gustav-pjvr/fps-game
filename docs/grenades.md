@@ -127,7 +127,7 @@ Visual and audio constants, beside the code that uses them:
 | `SPIN_RATE` | 14 rad/s, halved per bounce | tumble in flight; rolling turns it at speed over radius, `GrenadeSystem.ts` |
 | `WORLD_MODEL_SCALE` | 1.35 | live grenades drawn bigger than life, `GrenadeSystem.ts` |
 | `CLINK_MIN_SPEED` / `CLINK_INTERVAL` | 1.2 m/s / 0.09 s | bounce clinks: none slower, at most one per grenade per interval |
-| `GRENADE_BOUNCE_FULL_VOLUME_RANGE` / `_AUDIBLE_RANGE` / `_LOUD_SPEED` | 3 m / 28 m / 9 m/s | clink volume, `positionalAudio.ts` |
+| `GRENADE_BOUNCE_LOUD_SPEED` | 9 m/s | an impact this fast clinks at full strength, `GrenadeSystem.ts`; how far it carries is the sound engine's (`docs/sound.md`) |
 | `ARC_DOT_SPACING` / `ARC_DOT_START` | 0.32 m / 0.7 m | arc preview dots, `GrenadeArcPreview.ts` |
 | `DEAF_CUTOFF_OPEN` / `DEAF_CUTOFF_CLOSED` | 20 kHz / 380 Hz | master low-pass at no flash / full blindness |
 | `RING_FREQUENCY` / `RING_PEAK_GAIN` | 3300 Hz / 0.07 | the ring, times the master volume |
@@ -210,8 +210,7 @@ Visual and audio constants, beside the code that uses them:
   light added, no scorch in the air, bits never pass through the surface; and in
   `GrenadeSystem.test.ts` the surface probe, the reused light, the hidden own copy and no co-op
   knockback), `src/weapons/grenadeThrowPose.test.ts`,
-  `src/ui/grenadeDangerMarkers.test.ts`, `src/ui/flashOverlay.test.ts`, `src/audio/flashDeafness.test.ts`,
-  `src/core/positionalAudio.test.ts`.
+  `src/ui/grenadeDangerMarkers.test.ts`, `src/ui/flashOverlay.test.ts`, `src/audio/flashDeafness.test.ts`.
 - E2E: group `grenades` (`e2e/grenades.spec.ts`, solo): the loadout is seeded in localStorage
   (`fps-game-loadout`) before the page loads. A frag carrier's frag kills the enemy beside it and
   spends one; a flash carrier's flash blinds a player facing it and leaves one turned away from a far

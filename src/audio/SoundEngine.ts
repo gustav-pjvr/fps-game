@@ -2,7 +2,7 @@ import { Settings } from '../settings/Settings.ts';
 import { BLADE_SWINGS, DEFAULT_BLADE_SWING, DEFAULT_GUN_SOUND, GUN_SOUNDS, reloadSteps, type ReloadStep } from './weaponSounds.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { DEAF_CUTOFF_OPEN, flashDeafness, RING_FREQUENCY } from './flashDeafness.ts';
-import { heartbeatFor, MUSIC_SILENT, musicMix, reactorHumGain, roomImpulse, valleyImpulse, windLevel, type MusicMix, type PacingPhase } from './ambience.ts';
+import { heartbeatFor, MUSIC_SILENT, musicMix, reactorHumGain, roomImpulse, undergroundReverbScale, valleyImpulse, windLevel, type MusicMix, type PacingPhase } from './ambience.ts';
 import { CLEAR, type ListenerSpace, type Occlusion } from './occlusion.ts';
 import {
   airCutoff, arrivalDelay, distanceGain, LOUDNESS, REAR_CUTOFF, REAR_CUTOFF_HRTF, rearShadowCutoff, relativeToListener, reverbSendAt,
@@ -1006,7 +1006,7 @@ export class SoundEngine {
     this.space = state.space;
     // Underground the hall's return is longer on the ear and darker: the lab's own feel.
     const buried = Math.max(0, Math.min(1, state.undergroundAmount));
-    this.reverbs.hall.back.gain.setTargetAtTime(1 + 0.6 * buried, now, 0.1);
+    this.reverbs.hall.back.gain.setTargetAtTime(undergroundReverbScale(buried), now, 0.1);
     this.reverbs.hall.filter.frequency.setTargetAtTime(9000 - 6500 * buried, now, 0.1);
 
     const wind = windLevel(state.outdoor, state.space);

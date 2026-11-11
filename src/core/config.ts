@@ -661,38 +661,6 @@ export const ENEMY_DIRECTOR_SPAWN_MIN_SPACING = 3;
  * edge of the screen either. */
 export const ENEMY_DIRECTOR_SPAWN_VIEW_MARGIN_DEG = 15;
 export const ENEMY_RANGED_TRACER_COLOR = 0xff5a3c;
-/** Distance attenuation for enemy gunshot audio: full volume inside FULL_VOLUME_RANGE, then a
- * linear fade down to MIN_VOLUME at AUDIBLE_RANGE (never fully silent - an inaudible shot that
- * still damages would read as unfair, the opposite of what the tracer/Phase C fairness work is
- * for). Uniform full-volume gunshots undermined that same readability goal from the other
- * direction: a shot from 30 units sounded identical to one at point-blank. No HRTF/panning -
- * plain gain scaling, which is the cheap 90% of the effect. */
-export const ENEMY_GUNSHOT_FULL_VOLUME_RANGE = 10;
-export const ENEMY_GUNSHOT_AUDIBLE_RANGE = 60;
-export const ENEMY_GUNSHOT_MIN_VOLUME = 0.15;
-
-/** Same falloff shape as the ENEMY_GUNSHOT_* trio above, but deliberately separate constants for
- * multiplayer opponent gunshots specifically (see Game.ts's multiplayerGunshotVolume) - per user
- * report, the enemy full-volume inner radius (10 units) is tiny next to real PvP engagement
- * distances (MULTIPLAYER_SPAWN_RADIUS=35, so baseline spawn separation alone is often 35-70
- * units), so most real close-quarters PvP fights already sat in the linear falloff zone and read
- * as "too soft" even at what a player would call close range. Widening the ENEMY_* constants in
- * place would fix this but also change single-player enemy/goose-explosion audio, which nobody
- * asked for - hence a second, independent set instead of touching the shared one. */
-export const MULTIPLAYER_GUNSHOT_FULL_VOLUME_RANGE = 25;
-export const MULTIPLAYER_GUNSHOT_AUDIBLE_RANGE = 90;
-export const MULTIPLAYER_GUNSHOT_MIN_VOLUME = 0.15;
-
-/** An opponent's knife swing is a short, quiet sound: full volume within 5 m, silent beyond 15 m
- * (the gunshot curve made it audible map-wide). */
-export const KNIFE_SWING_FULL_VOLUME_RANGE = 5;
-export const KNIFE_SWING_AUDIBLE_RANGE = 15;
-/** A Facility lamp breaking: full volume as near as a gunshot is, fading to silence at 40 m. */
-export const LAMP_BREAK_AUDIBLE_RANGE = 40;
-/** Facility doors sliding and breakers thrown: full volume within 8 m, silent beyond 30 m. */
-export const FACILITY_OBJECT_FULL_VOLUME_RANGE = 8;
-export const FACILITY_OBJECT_AUDIBLE_RANGE = 30;
-
 /**
  * Goal-directed patrol (enemy AI overhaul, Phase A - replaces the old tight-radius "wander," which
  * picked random points within only 6 units of spawn every 3s and read as running in small circles
