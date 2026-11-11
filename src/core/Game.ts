@@ -432,6 +432,9 @@ export class Game {
   private hudRoot: HTMLElement | null = null;
   private readonly hudForward = new THREE.Vector3();
   private secondsSinceShot = Infinity;
+  /** Test-only clock hold (gameDebugApi holdTime, stepTime): see render. */
+  private debugClockHeld = false;
+  private debugClockStep = 0;
   /** The laser sight's dot, made with the match (see updateLaser). */
   private laserDot: LaserDot | null = null;
   private readonly laserForward = new THREE.Vector3();
@@ -861,8 +864,14 @@ export class Game {
         };
       },
       getCameraFov: () => this.renderer.camera.fov,
-      holdTime: (held: boolean) => this.loop.setHeld(held),
-      stepTime: (seconds: number) => this.loop.step(seconds),
+      holdTime: (held: boolean) => {
+        this.debugClockHeld = held;
+        this.loop.setHeld(held);
+      },
+      stepTime: (seconds: number) => {
+        this.debugClockStep += seconds;
+        this.loop.step(seconds);
+      },
       getShotLog: () => this.weaponManager.recentShots.map((shot) => ({ ...shot })),
       getCameraChildrenDebug: () =>
         this.renderer.camera.children.map((child) => ({
@@ -4290,7 +4299,10 @@ export class Game {
     this.grenades?.applyCameraShake(this.renderer.camera, now / 1000);
     this.renderer.camera.getWorldDirection(this.hudForward);
     const heading = bearingDeg(this.hudForward.x, this.hudForward.z);
-    const hudDt = Math.max(0, frameMs / 1000);
+    // Test-only: with the clock held (holdTime) the per-frame effects advance by stepTime alone,
+    // so a frame capture photographs an explosion at exact moments.
+    const hudDt = this.debugClockHeld ? this.debugClockStep : Math.max(0, frameMs / 1000);
+    this.debugClockStep = 0;
     this.hud.compass.setSunDirection(this.renderer.currentLook.sunDirection);
     this.hud.update(hudDt, -heading * Math.PI / 180);
     this.damageArcs.update(hudDt, heading);

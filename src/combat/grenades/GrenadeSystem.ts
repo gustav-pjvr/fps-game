@@ -7,12 +7,11 @@ import type { InputManager } from '../../input/InputManager.ts';
 import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { DamageEventMessage, GrenadeDetonatedMessage, GrenadeThrownMessage, PlayerSlot } from '../../network/protocol.ts';
 import type { GrenadeMessageReceiver } from '../../network/MatchMessageRouter.ts';
-import { computeKnockbackStrength } from '../explosion.ts';
 import { computeStereoPan, enemyGunshotVolume, grenadeBounceVolume, undergroundMuffleFactor } from '../../core/positionalAudio.ts';
-import { GRAVITY } from '../../core/config.ts';
+import { GRAVITY, PLAYER_HEIGHT } from '../../core/config.ts';
 import { FlashBlindness, flashSeconds, flashStrength } from './flashStrength.ts';
 import { predictArc, stepGrenade, type ArcPrediction, type FlightParams, type GrenadeBody, type Sweep, type Vec3 } from './grenadeFlight.ts';
-import { blastReaches, CameraShake, flashCosAngle, yawViewDirection } from './grenadeBlast.ts';
+import { blastDistance, blastExposure, CameraShake, flashCosAngle, yawViewDirection, type BlastBody } from './grenadeBlast.ts';
 import { GrenadeHand } from './grenadeHand.ts';
 import { buildGrenadeModel } from './grenadeModels.ts';
 import {
@@ -22,12 +21,11 @@ import {
   FLASH_LIGHT_RANGE,
   FLASH_LIGHT_SECONDS,
   FLASH_PLAYER_MAX_SECONDS,
-  FRAG_KNOCKBACK_STRENGTH,
   FRAG_LAMP_RADIUS,
   FRAG_LIGHT_INTENSITY,
   FRAG_LIGHT_RANGE,
   FRAG_LIGHT_SECONDS,
-  FRAG_RADIUS,
+  fragKnockback,
   fragShakeAmplitude,
   GRENADE_FRICTION,
   GRENADE_FUSE,
@@ -36,7 +34,10 @@ import {
   GRENADE_RADIUS,
   GRENADE_REST_SPEED,
   GRENADE_RESTITUTION,
+  GRENADE_ROLLING_RESISTANCE,
+  GRENADE_SOFT_IMPACT_SPEED,
   GRENADE_THROW_ANIMATION_SECONDS,
+  GRENADE_THROW_LOFT,
   GRENADE_THROW_SPEED,
   type GrenadeKind,
 } from './grenadeTuning.ts';
@@ -75,10 +76,11 @@ export interface GrenadeNetwork {
 
 /** The single-player enemies' side (EntityManager). */
 export interface GrenadeTargets {
+  /** `damageFor` gives the damage a body takes: its centre, its height, the entity (so the cover
+   * rays count its own colliders as reaching it) and a body to leave out of those rays. */
   applyBlast(
     position: THREE.Vector3,
-    damageAt: (distance: number) => number,
-    reaches: (center: THREE.Vector3, entity: object, exclude?: RAPIER.RigidBody) => boolean,
+    damageFor: (center: THREE.Vector3, height: number, entity: object, exclude?: RAPIER.RigidBody) => number,
   ): void;
   applyFlash(judge: (eye: THREE.Vector3, yaw: number, entity: object, exclude?: RAPIER.RigidBody) => number): number;
   notifyGunshot(origin: THREE.Vector3, weaponId?: string): void;
@@ -260,13 +262,17 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
   private readonly lastPlayerPosition = new THREE.Vector3();
   private hasLastPlayerPosition = false;
   private readonly playerVelocity = new THREE.Vector3();
+  private readonly rollAxis = new THREE.Vector3();
+  private readonly loftAxis = new THREE.Vector3();
 
   constructor(private readonly options: GrenadeSystemOptions) {
     this.hand = new GrenadeHand(options.kind, options.enabled);
     this.params = {
       gravity: GRAVITY,
       restitution: GRENADE_RESTITUTION,
+      softImpactSpeed: GRENADE_SOFT_IMPACT_SPEED,
       friction: GRENADE_FRICTION,
+      rollingResistance: GRENADE_ROLLING_RESISTANCE,
       restSpeed: GRENADE_REST_SPEED,
       radius: GRENADE_RADIUS,
       floor: options.floor,
@@ -297,14 +303,14 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
         grenade.hiddenFor -= dt;
         grenade.mesh.visible = grenade.hiddenFor <= 0;
       }
-      if (step.impactSpeed > 0) grenade.spinRate *= 0.5;
+      for (let bounce = 0; bounce < step.bounces; bounce++) grenade.spinRate *= 0.5;
       if (step.impactSpeed >= CLINK_MIN_SPEED && this.clock - grenade.lastClinkAt >= CLINK_INTERVAL) {
         grenade.lastClinkAt = this.clock;
         const { distance, pan } = this.hearing(grenade.mesh.position);
         const volume = grenadeBounceVolume(distance, step.impactSpeed);
         if (volume > 0.01) this.options.sound.playGrenadeBounce(volume, pan);
       }
-      if (!grenade.body.resting) grenade.mesh.rotateOnWorldAxis(grenade.spinAxis, grenade.spinRate * dt);
+      this.turnModel(grenade, dt);
       grenade.fuseLeft -= dt;
       if (grenade.own && grenade.fuseLeft <= 0) {
         this.detonateOwn(grenade.id, grenade.kind, grenade.mesh.position.clone());
@@ -314,6 +320,24 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       }
     }
 
+  }
+
+  /** Turns a grenade's model: tumbling end over end in the air, and on the ground rolling without
+   * slipping, about the axis across its motion at its speed over its radius. */
+  private turnModel(grenade: LiveGrenade, dt: number): void {
+    const { body, mesh } = grenade;
+    if (body.resting) return;
+    if (body.rolling && body.groundNormal) {
+      const v = body.velocity;
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed < 1e-3) return;
+      const n = body.groundNormal;
+      this.rollAxis.set(n.y * v.z - n.z * v.y, n.z * v.x - n.x * v.z, n.x * v.y - n.y * v.x);
+      if (this.rollAxis.lengthSq() < 1e-9) return;
+      mesh.rotateOnWorldAxis(this.rollAxis.normalize(), (speed / GRENADE_RADIUS) * dt);
+      return;
+    }
+    mesh.rotateOnWorldAxis(grenade.spinAxis, grenade.spinRate * dt);
   }
 
   /** Decays the camera shake, the white-out (and so the muffle and ring) and the blast light. Game
@@ -602,6 +626,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       : this.options.camera.getWorldDirection(new THREE.Vector3());
     if (aim.lengthSq() < 1e-9) aim.set(0, 0, -1);
     aim.normalize();
+    // The overarm lob: the throw leaves the hand a little above the line of aim, tipped up about
+    // the axis across the aim (none straight up or down, where there is no such axis).
+    const across = this.loftAxis.crossVectors(aim, UP);
+    if (across.lengthSq() > 1e-6) aim.applyAxisAngle(across.normalize(), GRENADE_THROW_LOFT);
     const velocity = aim.multiplyScalar(GRENADE_THROW_SPEED).add(this.playerVelocity);
     return { origin: this.handPosition(), velocity };
   }
@@ -715,32 +743,40 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     // The local player: damage only from its own frag (others' arrives as damageEvent); knockback
     // from any frag, since each client moves its own player, except a teammate's in co-op.
     if (!player.isDead && (own || this.options.friendlyFire !== false)) {
-      const center = player.position;
-      const distance = center.distanceTo(blast);
-      if (distance < FRAG_RADIUS && blastReaches(blast, center, (from, to) => this.rayClear(from, to, player))) {
+      const body = { center: player.position, height: PLAYER_HEIGHT };
+      const distance = blastDistance(blast, body);
+      const exposure = blastExposure(blast, body, (from, to) => this.rayClear(from, to, player));
+      if (exposure > 0) {
         if (own) {
-          const damage = computeFragDamage(distance);
+          const damage = computeFragDamage(distance) * exposure;
           if (damage > 0) player.takeDamage(damage, position);
         }
-        const knockback = computeKnockbackStrength(distance, FRAG_RADIUS, FRAG_KNOCKBACK_STRENGTH);
-        if (knockback > 0) player.applyKnockback(center.clone().sub(blast), knockback);
+        const knockback = fragKnockback(distance) * exposure;
+        if (knockback > 0) player.applyKnockback(player.position.clone().sub(blast), knockback);
       }
     }
     if (!own) return;
 
-    targets.applyBlast(blast, computeFragDamage, (center, entity, exclude) =>
-      blastReaches(blast, center, (from, to) => this.rayClear(from, to, entity, exclude)),
-    );
+    targets.applyBlast(blast, (center, height, entity, exclude) => this.fragDamageTo(blast, { center, height }, entity, exclude));
     if (network && this.options.friendlyFire !== false) {
       for (const opponent of network.opponents()) {
         if (opponent.isDead || this.options.isTeammate?.(opponent.slot)) continue;
-        const amount = computeFragDamage(opponent.position.distanceTo(blast));
-        if (amount <= 0 || !blastReaches(blast, opponent.position, (from, to) => this.rayClear(from, to, opponent.entity))) continue;
+        const amount = this.fragDamageTo(blast, { center: opponent.position, height: PLAYER_HEIGHT }, opponent.entity);
+        if (amount <= 0) continue;
         network.send({ type: 'damageEvent', senderSlot: network.ownSlot, targetSlot: opponent.slot, amount, weaponId: 'frag' });
       }
     }
     this.options.shootLampsNear(position, FRAG_LAMP_RADIUS);
     targets.notifyGunshot(position, 'frag');
+  }
+
+  /** What a frag at `blast` does to one body: the damage for its distance (to the nearest point of
+   * the body), times how much of the body the blast can see past cover. The cover rays are only
+   * cast for a body in range. */
+  private fragDamageTo(blast: THREE.Vector3, body: BlastBody, entity: object, exclude?: RAPIER.RigidBody): number {
+    const open = computeFragDamage(blastDistance(blast, body));
+    if (open <= 0) return 0;
+    return open * blastExposure(blast, body, (from, to) => this.rayClear(from, to, entity, exclude));
   }
 
   private goOffFlash(blast: THREE.Vector3, own: boolean): void {

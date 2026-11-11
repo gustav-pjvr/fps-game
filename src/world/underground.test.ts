@@ -118,7 +118,7 @@ describe('underground terrain cuts', () => {
   it('passes height to every grenade floor callback and rests and predicts on the underground box', async () => {
     const { physics } = await undergroundWorld();
     const floor = vi.fn((x: number, y: number, z: number) => floorBelow(physics.world, x, y, z));
-    const params: FlightParams = { gravity: -9.81, restitution: 0, friction: 0, restSpeed: 0.5, radius: 0.1, floor };
+    const params: FlightParams = { gravity: -9.81, restitution: 0, softImpactSpeed: 5, friction: 0, rollingResistance: 0.2, restSpeed: 0.5, radius: 0.1, floor };
     const body = { position: { x: 4, y: -4.85, z: 0 }, velocity: { x: 0, y: -1, z: 0 }, resting: false };
     stepGrenade(body, 0.05, () => null, params);
     expect(floor.mock.results[0]?.value).toBeCloseTo(-5);

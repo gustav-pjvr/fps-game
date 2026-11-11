@@ -619,14 +619,13 @@ export class HordeGooseManager {
   /** A frag (combat/grenades): every live goose it reaches takes a hit, through the same path a
    * bullet does (HordeGoose.takeDamage: the host or single-player applies it, a guest reports it). */
   applyBlast(
-    position: THREE.Vector3,
-    damageAt: (distance: number) => number,
-    reaches: (center: THREE.Vector3, entity: object) => boolean,
+    _position: THREE.Vector3,
+    damageFor: (center: THREE.Vector3, height: number, entity: object) => number,
   ): void {
     for (const goose of this.geese.values()) {
       if (goose.isDead) continue;
-      const amount = damageAt(goose.position.distanceTo(position));
-      if (amount > 0 && reaches(goose.position, goose)) goose.takeDamage(amount, -1);
+      const amount = damageFor(goose.position, goose.height, goose);
+      if (amount > 0) goose.takeDamage(amount, -1);
     }
   }
 

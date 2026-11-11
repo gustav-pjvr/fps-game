@@ -35,6 +35,13 @@ The rebuild of the modes, the arsenal and skins, 2026-11-10. As built: `docs/ars
   other players do not see them yet. The Skins screen is replaced by the Workbench, one page per
   weapon: the weapon large and turned with the mouse, skins and attachments as two sections under
   it, the rack, in-hand, sights and inspect views over it, and no scrollbars (docs/attachments.md).
+- **Grenades rebuilt.** A throw is an overarm lob that carries properly; a grenade bounces a few
+  times, each lower, then rolls and stops, rolls down a slope and off an edge, and flies the same
+  at any frame rate. A frag kills in the open out to about 3.5 m and wounds to 9 m; cover now
+  takes its share (legs, chest and head are judged separately) instead of all or nothing, and the
+  distance is to the nearest part of the body. The explosion is a flash, a dirt fountain, a dust
+  ring along the ground, fragments, clods and a smoke column that hangs for some five seconds
+  (docs/grenades.md).
 - **Spread and recoil by the kind of gun.** Aimed and still, a gun shoots as straight as the real
   thing (half a minute of angle for the sniper rifle, about four for the assault rifle); the hip,
   movement and a long burst open it up. A burst climbs for its first rounds, then settles and weaves

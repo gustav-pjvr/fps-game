@@ -219,6 +219,11 @@ export class HordeGoose implements Entity, Damageable {
     return this.reachedTarget;
   }
 
+  /** Its full height at its scale, for a blast judging how much of it shows. */
+  get height(): number {
+    return this.halfHeight * 2;
+  }
+
   get position(): THREE.Vector3 {
     return this.mesh.position;
   }
