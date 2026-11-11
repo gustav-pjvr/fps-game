@@ -59,7 +59,7 @@ describe('e2e spec selection', () => {
   it('an unnamed src file falls back to the core specs (the full smoke spec, which covers the quick tests, and gun handling)', () => {
     const selection = groupsForFiles(['src/utils/rng.ts']);
     expect(selection.groups).toEqual(['core']);
-    expect(playwrightRuns(selection)).toEqual([{ files: ['e2e/smoke.spec.ts', 'e2e/gun-handling.spec.ts'] }]);
+    expect(playwrightRuns(selection)).toEqual([{ files: ['e2e/gun-handling.spec.ts', 'e2e/smoke.spec.ts'] }]);
   });
 
   it('a render change runs only the quick tests; perf is never chosen by a change', () => {
