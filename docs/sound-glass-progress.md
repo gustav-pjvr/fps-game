@@ -25,3 +25,5 @@ Working log for `docs/sound-and-glass-brief.md`. Newest at the bottom.
 - The old positional audio module and constants removed. Docs, changelog, version 5.1.0.
 - Performance against `master` on the real GPU: level.
 - Pushed; preview at https://sound-glass.hunter-n-goose.pages.dev.
+- Gustav played the preview and approved it ("All the sound build is good"). Changelog set to
+  v5.1.0 (current); release brief written for the main session (`release-v5-1-brief.md`).

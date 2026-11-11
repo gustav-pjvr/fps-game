@@ -7,8 +7,8 @@ reason and what Gustav could overrule. The as-built docs are `docs/sound.md` and
 
 1. **Base is `master`.** `master` contains `src/ui/menu/WorkbenchScreen.ts`, so v5.0.0 is released.
    Branch `feature/sound-and-glass`, worktree `../fps-game-sound`.
-2. **Version 5.1.0 on the branch,** marked "preview only, not released" in the changelog. Reason: the
-   preview shows a version that tells it apart from the live 5.0.0. Overrule: any number at release.
+2. **Version 5.1.0.** A feature release: minor. Gustav approved the preview on 2026-11-11 and asked
+   for the release, so the changelog entry is headed "(current)".
 
 ## Sound
 

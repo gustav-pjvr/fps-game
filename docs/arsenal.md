@@ -108,9 +108,11 @@ per attack.
 
 ## Sounds
 
-Synthesised per weapon in the browser (`audio/weaponSounds.ts`): a gunshot is layered noise bursts
-and a low thump shaped per weapon, a reload is that weapon's steps placed at their moments in its
-reload time, a blade has its own swing. The eight sampled mp3 files of v4.x were removed.
+Synthesised per weapon in the browser (`audio/weaponSounds.ts`): since v5.1.0 a gunshot is five
+layers shaped per weapon (snap, crack, a bark band that tells one gun from another, thump, tail), a
+reload is that weapon's steps placed at their moments in its reload time, a blade has its own
+swing. Other players' and enemies' shots are placed in the world and muffled by walls
+(`docs/sound.md`). The eight sampled mp3 files of v4.x were removed.
 
 ## What other players see
 

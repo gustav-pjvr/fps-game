@@ -10,10 +10,12 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v5.1.0 (preview only, not released)
+## v5.1.0 (current)
 
-On the branch `feature/sound-and-glass`, deployed to a preview and not to the live game. As built:
-`docs/sound.md`, `docs/glass.md`. Handover: `docs/sound-glass-handover.md`.
+Released to the live game on 2026-11-11.
+
+Spatial sound and glass windows, built on `feature/sound-and-glass`. As built: `docs/sound.md`,
+`docs/glass.md`. Handover: `docs/sound-glass-handover.md`.
 
 **Sound, rebuilt**
 
@@ -44,7 +46,7 @@ On the branch `feature/sound-and-glass`, deployed to a preview and not to the li
 - **The same for every player,** including one who joins late, and a house keeps its windows as
   they were left.
 
-## v5.0.0 (current)
+## v5.0.0
 
 Released to the live game on 2026-11-11.
 

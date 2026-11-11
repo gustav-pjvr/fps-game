@@ -1,6 +1,6 @@
 # Documentation index
 
-Current version 5.0.0. Where a document and the code disagree, the code is right; fix the document.
+Current version 5.1.0. Where a document and the code disagree, the code is right; fix the document.
 
 ## Start here
 
@@ -42,6 +42,7 @@ Current version 5.0.0. Where a document and the code disagree, the code is right
 | [skins.md](skins.md) | The six skins, storage, the aim proof |
 | [attachments.md](attachments.md) | Laser and torch, which guns take them, the Workbench page |
 | [release-v5-brief.md](release-v5-brief.md) | Brief for the session that merges and deploys v5.0.0 |
+| [release-v5-1-brief.md](release-v5-1-brief.md) | Brief for the session that merges and deploys v5.1.0 (sound and glass) |
 | [fable-working-notes.md](fable-working-notes.md) | How to work on this repo with Gustav and on this machine: what the v5.0.0 session learnt |
 | [sound-and-glass-brief.md](sound-and-glass-brief.md) | Brief for the sound redesign and breakable glass windows |
 | [sound-glass-handover.md](sound-glass-handover.md) | Handover of that work: what was built, how to try it, evidence, what is not verified, the defaults taken |

@@ -5,6 +5,9 @@ Written 2026-11-11 by the session that carried out `docs/sound-and-glass-brief.m
 the branch. Nothing was pushed to `master`, merged or deployed to production; no branch or worktree
 was deleted; `server/`, `ServerTransport` and `feature/server-relay` were not touched.
 
+**Approved.** Gustav played the preview on 2026-11-11 and said "All the sound build is good", then
+asked for the release. The main session releases it from `docs/release-v5-1-brief.md`.
+
 Preview: https://sound-glass.hunter-n-goose.pages.dev (the sound test page is
 https://sound-glass.hunter-n-goose.pages.dev/soundlab). The live game is unchanged at 5.0.0.
 
@@ -128,7 +131,8 @@ under one point leaving a free hole, and a stale night-mode expectation.
 
 ## What is not verified
 
-- **How anything sounds.** Nobody on the build side can hear. The measurements prove levels,
+- **How anything sounds, by the build side.** Gustav has since listened and approved it; this is
+  what the build could not judge. Nobody on the build side can hear. The measurements prove levels,
   left and right, distance, dullness, arrival and that front, behind, above and below produce
   different signals. They do not prove a rifle sounds like a rifle, that the mix is pleasant, that
   HRTF reads as "behind" to your ears (generic ear models do not work for everyone), that the house
