@@ -79,7 +79,7 @@ function ensureWorkbenchStyleInjected(): void {
     '.wb-main { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; position: relative; }' +
     `.wb-stage { position: relative; flex: 1; min-height: 220px; border: 1px solid ${HAIRLINE}; border-radius: 2px; overflow: hidden;` +
     `  background: radial-gradient(ellipse at 50% 62%, rgba(111, 240, 220, 0.1), transparent 62%), linear-gradient(180deg, rgba(7, 24, 27, 0.2), rgba(7, 24, 27, 0.85)); }` +
-    '.wb-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline-offset: -3px; }' +
+    '.wb-canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; outline-offset: -3px; }' +
     '.wb-canvas[data-view="display"] { cursor: grab; touch-action: pan-y; }' +
     '.wb-canvas[data-view="display"][data-held="true"] { cursor: grabbing; }' +
     '.wb-views { position: absolute; left: 14px; top: 14px; display: flex; gap: 6px; flex-wrap: wrap; max-width: calc(100% - 28px); }' +
@@ -91,7 +91,7 @@ function ensureWorkbenchStyleInjected(): void {
     `.wb-seg[aria-checked="true"], .wb-seg[aria-selected="true"] { color: ${TEXT}; border-color: ${ACCENT}; box-shadow: inset 0 -2px 0 ${ACCENT}; }` +
     '.wb-seg:disabled { opacity: 0.4; cursor: default; }' +
     `.wb-seg small { margin-left: 8px; font-family: ${MONO_FONT}; font-weight: 400; letter-spacing: 0; color: ${STEEL}; }` +
-    `.wb-hint { position: absolute; left: 16px; bottom: 14px; right: 150px; font-size: 0.76rem; line-height: 1.4; color: ${STEEL}; pointer-events: none; }` +
+    `.wb-hint { position: absolute; left: 14px; bottom: 12px; max-width: calc(100% - 170px); box-sizing: border-box; padding: 6px 10px; border-radius: 2px; background: rgba(7, 21, 24, 0.82); font-size: 0.76rem; line-height: 1.4; color: ${TEXT}; pointer-events: none; }` +
     '.wb-reset { position: absolute; right: 14px; bottom: 12px; }' +
     '.wb-cross { position: absolute; left: 50%; top: 50%; width: 21px; height: 21px; margin: -10.5px 0 0 -10.5px; pointer-events: none; }' +
     ".wb-cross::before, .wb-cross::after { content: ''; position: absolute; background: rgba(233, 239, 233, 0.9); }" +
@@ -103,7 +103,7 @@ function ensureWorkbenchStyleInjected(): void {
     '.wb-tabs { display: flex; gap: 6px; }' +
     '.wb-steps { display: flex; gap: 6px; }' +
     '.wb-rail-wrap { position: relative; min-width: 0; }' +
-    '.wb-rail { display: flex; gap: 10px; min-height: 196px; overflow-x: auto; scroll-snap-type: x proximity; scroll-behavior: smooth; padding: 2px; margin: -2px; }' +
+    '.wb-rail { display: flex; gap: 10px; min-height: 206px; overflow-x: auto; scroll-snap-type: x proximity; scroll-behavior: smooth; padding: 2px; margin: -2px; }' +
     // The fade that says there is more, only on the side that has more.
     ".wb-rail-wrap::before, .wb-rail-wrap::after { content: ''; position: absolute; top: 0; bottom: 0; width: 44px; pointer-events: none; opacity: 0; transition: opacity 150ms ease-out; z-index: 1; }" +
     `.wb-rail-wrap::before { left: -2px; background: linear-gradient(90deg, ${BG_VOID}, transparent); }` +
@@ -136,7 +136,10 @@ function ensureWorkbenchStyleInjected(): void {
     `  position: absolute; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 4; display: none; flex-direction: column; gap: 16px; box-sizing: border-box;` +
     `  padding: 18px 20px; overflow-y: auto; background: rgba(6, 20, 23, 0.96); border: 1px solid ${HAIRLINE}; border-radius: 2px; backdrop-filter: blur(10px); }` +
     '.wb-sheet[data-open="true"] { display: flex; }' +
-    `.wb-sheet-head { position: sticky; top: -18px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -18px -20px 0; padding: 14px 20px 10px; background: rgba(6, 20, 23, 0.98); }` +
+    '.wb-scrim { position: absolute; inset: 0; z-index: 3; display: none; background: rgba(3, 10, 12, 0.62); }' +
+    '.wb-scrim[data-open="true"] { display: block; }' +
+    `.wb-note { font-size: 0.76rem; line-height: 1.4; color: ${STEEL}; min-height: 1.1em; }` +
+    `.wb-sheet-head { position: sticky; top: -18px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -18px -20px 0; padding: 14px 20px 10px; background: #061417; }` +
     '.wb-sheet-group { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px; }' +
     '.wb-sheet-group > :first-child { grid-column: 1 / -1; padding: 0 12px 4px; }' +
     '.wb-weapon {' +
@@ -157,8 +160,11 @@ function ensureWorkbenchStyleInjected(): void {
     '  .wb-stage { flex: none; height: 46vh; min-height: 250px; }' +
     '  .wb-views { left: 8px; top: 8px; gap: 4px; max-width: calc(100% - 16px); }' +
     '  .wb-seg { padding: 9px 9px; letter-spacing: 0.06em; }' +
-    '  .wb-hint { left: 10px; bottom: 10px; right: 10px; }' +
-    '  .wb-reset { display: none; }' +
+    '  .wb-hint { left: 8px; bottom: 8px; max-width: calc(100% - 16px); }' +
+    '  .wb-hint[data-with-reset="true"] { max-width: calc(100% - 130px); }' +
+    '  .wb-reset { right: 8px; bottom: 8px; }' +
+    '  .wb-seg, .wb-weapon { min-height: 44px; }' +
+    '  .wb-icon { width: 44px; height: 44px; }' +
     '  .wb-rail { min-height: 0; }' +
     '  .wb-card { flex: 0 0 78%; }' +
     '  .wb-unit { flex: 0 0 88%; }' +
@@ -213,9 +219,13 @@ export class WorkbenchScreen {
   private readonly scope = new ModalScope();
   private readonly onKeyDown: (event: KeyboardEvent) => void;
   private readonly onResize = (): void => {
+    this.layoutCanvas();
     this.preview?.resize();
     this.updateRailEdges();
   };
+  private readonly stage: HTMLElement;
+  private readonly scrim: HTMLDivElement;
+  private readonly note: HTMLDivElement;
   /** Built on show and dropped on hide: it holds a WebGL context, and a page may only keep a few. */
   private preview: WeaponPreview | null = null;
   private skins: EquippedSkins = {};
@@ -270,6 +280,7 @@ export class WorkbenchScreen {
     // --- Stage: the weapon, the views over one corner, the hint and the reset under it ---
     const main = element('div', 'wb-main');
     const stage = element('section', 'wb-stage');
+    this.stage = stage;
     stage.setAttribute('aria-label', 'Preview');
     this.canvas = element('canvas', 'wb-canvas');
     this.canvas.dataset.testid = 'skins-preview';
@@ -355,7 +366,9 @@ export class WorkbenchScreen {
       this.rail.scrollBy({ left: event.deltaY, behavior: 'auto' });
     }, { passive: false });
     this.railWrap.appendChild(this.rail);
-    dock.append(dockHead, this.railWrap);
+    this.note = element('div', 'wb-note');
+    this.note.dataset.testid = 'workbench-note';
+    dock.append(dockHead, this.railWrap, this.note);
 
     for (const skinId of SKIN_IDS) this.skinCards.set(skinId, this.buildSkinCard(skinId));
 
@@ -365,7 +378,7 @@ export class WorkbenchScreen {
     this.sheet.setAttribute('aria-label', 'Weapons');
     // Its own way out, always in view: on a phone the sheet covers the whole page.
     const sheetHead = element('div', 'wb-sheet-head');
-    const sheetClose = element('button', 'wb-seg', 'Back');
+    const sheetClose = element('button', 'wb-seg', 'Close list');
     sheetClose.type = 'button';
     sheetClose.dataset.testid = 'workbench-weapons-close';
     sheetClose.addEventListener('click', () => {
@@ -398,7 +411,10 @@ export class WorkbenchScreen {
       this.sheet.appendChild(group);
     }
 
-    main.append(stage, dock, this.sheet);
+    // Behind the sheet: dims the page and closes the list on a click.
+    this.scrim = element('div', 'wb-scrim');
+    this.scrim.addEventListener('click', () => this.setSheetOpen(false));
+    main.append(stage, dock, this.scrim, this.sheet);
     this.overlay.append(head, main);
     root.appendChild(this.overlay);
 
@@ -429,7 +445,7 @@ export class WorkbenchScreen {
     this.overlay.style.display = 'flex';
     this.setSheetOpen(false);
     // First, so the page can be used and closed even if the preview could not be built.
-    this.scope.enter(this.overlay, this.closeButton);
+    this.scope.enter(this.overlay, this.weaponsButton);
     // A preview frees its WebGL context when the page closes, and a canvas whose context was lost
     // cannot be given a new one: every opening after the first gets a fresh canvas. Reusing the old
     // one threw here, and the page opened dead the second time.
@@ -497,13 +513,32 @@ export class WorkbenchScreen {
       if (this.view !== 'display' || !this.preview) return;
       const turn: Record<string, [number, number]> = { ArrowLeft: [-24, 0], ArrowRight: [24, 0], ArrowUp: [0, -18], ArrowDown: [0, 18] };
       const step = turn[event.key];
-      if (step) this.preview.orbit(step[0], step[1]);
+      if (step) this.preview.orbit(step[0], step[1], false);
       else if (event.key === '+' || event.key === '=') this.preview.zoomBy(1.15);
       else if (event.key === '-') this.preview.zoomBy(1 / 1.15);
       else if (event.key === 'Home') this.preview.resetOrbit();
       else return;
       event.preventDefault();
     });
+  }
+
+  /** The rack view fills the stage. The first-person views are at most the match's 16:9 picture, centred:
+   * on a stage wider than that the gun would otherwise shrink to a speck in the middle of a
+   * panorama no player ever sees. */
+  private layoutCanvas(): void {
+    const style = this.canvas.style;
+    const width = this.stage.clientWidth, height = this.stage.clientHeight;
+    if (this.canvas.dataset.view === 'display' || width === 0 || height === 0) {
+      style.left = style.top = '0';
+      style.width = style.height = '100%';
+      return;
+    }
+    // Never wider than 16:9; a stage narrower than that (a phone) is used whole.
+    const w = Math.min(width, (height * 16) / 9);
+    style.width = `${w}px`;
+    style.height = '100%';
+    style.left = `${(width - w) / 2}px`;
+    style.top = '0';
   }
 
   private buildSkinCard(skinId: SkinId): HTMLButtonElement {
@@ -545,6 +580,7 @@ export class WorkbenchScreen {
 
   private setSheetOpen(open: boolean): void {
     this.sheet.dataset.open = String(open);
+    this.scrim.dataset.open = String(open);
     this.weaponsButton.setAttribute('aria-expanded', String(open));
     if (open) this.weaponButtons.get(this.weaponId)?.button.focus();
   }
@@ -623,13 +659,11 @@ export class WorkbenchScreen {
           element('span', 'wb-card-text', `The ${name} has no rail or bare barrel for a laser or a torch.`),
         );
         this.rail.appendChild(empty);
-      } else if (WEAPON_MOUNTS[this.weaponId]?.exclusive) {
-        const note = element('div', 'wb-empty');
-        note.style.cssText = 'flex:0 1 260px;';
-        note.append(element('span', 'wb-card-name', 'One rail'), element('span', 'wb-card-text', 'It carries one unit at a time: fitting one takes the other off.'));
-        this.rail.appendChild(note);
       }
     }
+    this.note.textContent = this.section === 'attachments' && WEAPON_MOUNTS[this.weaponId]?.exclusive
+      ? 'One rail: it carries one unit at a time, so fitting one takes the other off.'
+      : '';
     this.rail.scrollLeft = 0;
   }
 
@@ -663,7 +697,7 @@ export class WorkbenchScreen {
     for (const [section, { button, count }] of this.tabs) {
       button.setAttribute('aria-selected', String(section === this.section));
       button.tabIndex = section === this.section ? 0 : -1;
-      count.textContent = section === 'skins' ? String(SKIN_IDS.length) : `${fitted.length}/${allowed.length}`;
+      count.textContent = section === 'skins' ? String(SKIN_IDS.length) : allowed.length > 0 ? `${fitted.length}/${allowed.length}` : 'none';
     }
 
     this.buildRail();
@@ -677,9 +711,12 @@ export class WorkbenchScreen {
 
     this.cross.style.display = view === 'display' ? 'none' : 'block';
     this.resetButton.style.display = view === 'display' ? '' : 'none';
+    this.hint.dataset.withReset = String(view === 'display');
     this.hint.textContent = view === 'aim' && definition.hasScope ? 'In a match the scope picture takes over at full aim.'
       : view === 'display' && window.matchMedia('(pointer: coarse)').matches ? 'Drag sideways to turn it.' : viewEntry.hint;
     this.canvas.dataset.view = view;
+    this.layoutCanvas();
+    this.preview?.resize();
     this.canvas.setAttribute('aria-label',
       `${definition.name} in the ${SKINS[skinId].name} skin${fitted.length > 0 ? ` with ${fit.toLowerCase()}` : ''}, ${viewEntry.label.toLowerCase()}`);
 

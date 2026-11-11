@@ -68,14 +68,17 @@ Main menu, WORKBENCH, or Edit weapon on the Loadout page (it opens on the weapon
 replaced the Skins screen: one page per weapon.
 
 - **Header:** the weapon's name with previous and next arrows, a line naming its category, skin and
-  fit, All weapons (a sheet listing every weapon by category with the skin it wears) and Close.
+  fit, All weapons (a sheet over a dimmed page listing every weapon by category with the skin it
+  wears; Close list, a click outside or Escape shuts it) and Close.
 - **Stage:** the weapon, large. On the rack it turns under the hand: drag to turn and tilt, wheel to
   zoom, double-click or Reset view to go back; arrow keys, plus, minus and Home do the same from the
   keyboard. Left alone for five seconds it turns slowly (never under reduced motion). The views sit
-  over the top left corner: **Rack**, **In hand**, **Sights**, and **Inspect**.
+  over the top left corner: **Rack**, **In hand**, **Sights**, and **Inspect**. On the rack the
+  camera steps back as the weapon is tipped on end, so it never runs off the stage; the
+  first-person views are drawn at most 16:9 wide, centred, as a match frames them.
 - **Dock:** two sections as tabs. **Skins** is a row of the six looks; **Attachments** is a card
-  per unit the gun can take (a toggle: Fit, Fitted), a note on a one-rail gun, or a line saying
-  nothing fits. Fitting a unit on the rack turns the weapon to show it going on. Every choice is
+  per unit the gun can take (a toggle: Fit, Fitted), a note under the row on a one-rail gun, or a
+  line saying nothing fits. Fitting a unit on the rack turns the weapon to show it going on. Every choice is
   saved at once.
 - **No scrollbars:** the card row, the weapon sheet and the phone page scroll without a bar. The
   row fades at the side that has more, has step arrows, and takes the mouse wheel.

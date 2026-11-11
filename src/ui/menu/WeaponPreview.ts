@@ -60,6 +60,9 @@ export class WeaponPreview {
   private idle = 0;
   private held = false;
   private autoSpin = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** The rack model's half sizes after its fit scale, and the camera distance being eased to. */
+  private readonly displayHalf = new THREE.Vector3(0.5, 0.2, 0.05);
+  private fitDistance = 0;
   private aimPosition = new THREE.Vector3();
   private frame = 0;
   private running = false;
@@ -128,8 +131,11 @@ export class WeaponPreview {
         const pivot = new THREE.Group();
         pivot.add(model.root);
         // Fit the longest side to the width of the picture, or a tall weapon to its height.
-        pivot.scale.setScalar(1 / Math.max(size.x, size.z, size.y * 2.1));
+        const scale = 1 / Math.max(size.x, size.z, size.y * 2.1);
+        pivot.scale.setScalar(scale);
         this.holder.add(pivot);
+        this.displayHalf.copy(size).multiplyScalar(scale / 2);
+        this.fitDistance = 0;
       } else {
         const viewModel = buildWeaponViewModel(weaponId, skinId, attachments);
         this.animator = new PartAnimator(viewModel.parts, viewModel.model);
@@ -154,11 +160,22 @@ export class WeaponPreview {
       // Far enough back that the weapon's length takes about seven tenths of the picture's
       // width, and its height never more than two thirds of the picture's: a wide stage comes
       // closer, a phone's tall one steps back.
-      const distance = Math.max(1.38 / this.camera.aspect, 0.68) / 0.536 / this.zoom;
-      this.camera.position.set(0, 0.08 * distance, distance);
-      this.camera.lookAt(0, 0, 0);
       // Turned about its own upright, then tipped toward or away from the eye.
       this.holder.rotation.set(this.pitch, this.spin, 0, 'XYZ');
+      // How wide and how tall the turned weapon is on screen (its box's half sizes along the
+      // screen's axes), and the distance at which that takes seven tenths of the picture's width
+      // and no more than three quarters of its height: tipped up on end it steps back instead of
+      // running off the stage. Eased, so the camera never jumps as the weapon turns.
+      this.holder.updateMatrix();
+      const e = this.holder.matrix.elements, h = this.displayHalf;
+      const across = Math.abs(e[0]!) * h.x + Math.abs(e[4]!) * h.y + Math.abs(e[8]!) * h.z;
+      const up = Math.abs(e[1]!) * h.x + Math.abs(e[5]!) * h.y + Math.abs(e[9]!) * h.z;
+      const tan = Math.tan((30 * Math.PI) / 360);
+      const wanted = Math.max(across / (0.7 * tan * this.camera.aspect), up / (0.75 * tan), 0.9);
+      this.fitDistance = this.fitDistance === 0 || this.frozen ? wanted : this.fitDistance + (wanted - this.fitDistance) * 0.18;
+      const distance = this.fitDistance / this.zoom;
+      this.camera.position.set(0, 0.08 * distance, distance);
+      this.camera.lookAt(0, 0, 0);
     } else {
       this.camera.fov = VIEW_MODEL_FOV;
       this.camera.position.set(0, 0, 0);
@@ -212,16 +229,17 @@ export class WeaponPreview {
     return Math.hypot(centre.x * width / 2, centre.y * height / 2);
   }
 
-  /** A drag on the rack view: `dx`, `dy` in CSS pixels. The weapon follows the hand and keeps a
-   * little of the last move as glide once it lets go. */
-  orbit(dx: number, dy: number): void {
+  /** A drag on the rack view: `dx`, `dy` in CSS pixels. The weapon follows the hand and, with
+   * `glide`, keeps a little of the last move once it lets go (a key press turns it by its step
+   * and no more). */
+  orbit(dx: number, dy: number, glide = true): void {
     if (this.view !== 'display') return;
     this.target = null;
     this.idle = 0;
     this.spin += dx * DRAG_TURN;
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dy * DRAG_TURN));
-    this.spinVelocity = dx * DRAG_TURN * 60;
-    this.pitchVelocity = dy * DRAG_TURN * 60;
+    this.spinVelocity = glide ? dx * DRAG_TURN * 60 : 0;
+    this.pitchVelocity = glide ? dy * DRAG_TURN * 60 : 0;
     this.pose();
     this.render();
   }
