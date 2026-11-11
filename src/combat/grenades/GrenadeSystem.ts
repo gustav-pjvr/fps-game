@@ -292,6 +292,8 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
 
   /** The sweep of the grenade being stepped touched a window's glass: its bounce rings as glass. */
   private struckGlass: GlassContact | null = null;
+  /** How far into its surface the hardest contact of the step being simulated was moving. */
+  private hardestApproach = 0;
 
   constructor(private readonly options: GrenadeSystemOptions) {
     this.hand = new GrenadeHand(options.kind, options.enabled);
@@ -326,6 +328,7 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
 
     for (const grenade of Array.from(this.live.values())) {
       this.struckGlass = null;
+      this.hardestApproach = 0;
       const step = stepGrenade(grenade.body, dt, grenade.own ? this.sweep : this.remoteSweep, this.params);
       grenade.mesh.position.set(grenade.body.position.x, grenade.body.position.y, grenade.body.position.z);
       if (grenade.hiddenFor > 0) {
@@ -959,12 +962,10 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
     // A window's glass is no collider: an intact pane nearer than the physics hit stops the ball.
     const pane = this.options.glass?.sweep(from, { x: from.x + displacement.x, y: from.y + displacement.y, z: from.z + displacement.z }, GRENADE_RADIUS);
     if (pane && (!hit || pane.fraction <= hit.time_of_impact)) {
-      this.struckGlass = pane;
+      this.noteContact(displacement, pane.normal, pane);
       return pane;
     }
     if (!hit) return null;
-    // The step's latest contact is this solid, not glass: its bounce must not ring or knock a pane.
-    this.struckGlass = null;
     // normal1 is the ball's own outward normal at the contact (the ball is never rotated, so local
     // is world): the surface's normal is its opposite.
     const n = hit.normal1;
@@ -974,6 +975,18 @@ export class GrenadeSystem implements GrenadeMessageReceiver {
       const d = Math.sqrt(displacement.x ** 2 + displacement.y ** 2 + displacement.z ** 2) || 1;
       return { fraction: hit.time_of_impact, normal: { x: -displacement.x / d, y: -displacement.y / d, z: -displacement.z / d } };
     }
-    return { fraction: hit.time_of_impact, normal: { x: -n.x / length, y: -n.y / length, z: -n.z / length } };
+    const normal = { x: -n.x / length, y: -n.y / length, z: -n.z / length };
+    this.noteContact(displacement, normal, null);
+    return { fraction: hit.time_of_impact, normal };
+  }
+
+  /** A step makes many sweeps (sub-steps, bounces, the rolling ground probe) and reports one impact
+   * speed: the hardest. The bounce's sound and the knock on a pane belong to that same contact, so
+   * the contact moving hardest into its surface decides whether the step struck glass. */
+  private noteContact(displacement: Vec3, normal: Vec3, glass: GlassContact | null): void {
+    const approach = -(displacement.x * normal.x + displacement.y * normal.y + displacement.z * normal.z);
+    if (approach <= this.hardestApproach) return;
+    this.hardestApproach = approach;
+    this.struckGlass = glass;
   }
 }
