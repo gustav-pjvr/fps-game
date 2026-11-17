@@ -10,7 +10,23 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v5.2.0 (current)
+## v5.3.0 (current)
+
+Rejoin, and the game server built in (switched off until it is hosted), 2026-11-17. As built:
+`docs/server-relay-design.md` (section 13.1 is the build status), `server/deploy/README.md`.
+
+- **Rejoin.** A guest whose match ends because the connection dropped gets a "Rejoin Room CODE" button on
+  the end screen, and the Multiplayer menu shows "Rejoin CODE" for 90 seconds (the host's reservation),
+  returning to the same slot and score. Works for today's peer-to-peer games.
+- **The game server (relay), built but off.** A small Node server in `server/` can carry multiplayer
+  instead of the host's browser: rooms, codes, slots, routing, rate limits, an access code for invited
+  players, and a 30-second resume when a connection drops. Independent security audit done and its
+  findings fixed. The live build has no server address yet, so every server control stays hidden and
+  play is peer-to-peer exactly as before. Going live is setting the address and deploying, once the
+  Oracle server exists.
+- **Access code field** on the Multiplayer and Join Room screens (only shown when a server is set).
+
+## v5.2.0
 
 Smoother multiplayer, visible attachments, error reporting, 2026-11-17. As built: `docs/multiplayer.md`,
 `docs/attachments.md`, `docs/architecture/core.md` section 7.
