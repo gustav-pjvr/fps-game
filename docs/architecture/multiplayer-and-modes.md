@@ -77,8 +77,8 @@ Without them a guest's snapshot reaches another guest in two hops through the ho
 `PeerConnection.connectionQuality` reads `RTCPeerConnection.getStats` (`readConnectionQuality` in
 `src/network/connectionStats.ts`) every `MULTIPLAYER_CONNECTION_POLL_INTERVAL` (2 s, from
 `Game.updateMultiplayer`). The host shares its measured round trips as `linkQuality`; a guest adds them to
-reach a guest it has no direct link to (`combineRelayedQuality`). The result drives the HUD ping and each
-`RemotePlayer`'s lead time (`setLeadSeconds`).
+reach a guest it has no direct link to (`combineRelayedQuality`). The result drives
+the HUD ping (remote motion no longer uses it, see below).
 
 ## 2. Messages
 
@@ -282,10 +282,13 @@ Details that are easy to miss:
 
 - **RemotePlayer** (`src/entities/RemotePlayer.ts`) is a character model with a head and a body collider that is never
   simulated locally. It implements `Damageable`, but `takeDamage` only calls `onHit`, which `Game.addMultiplayerOpponent`
-  wires to send `damageEvent`. `applySnapshot` damps toward the latest position; `src/entities/remoteMotion.ts`
-  (`RemoteMotion`) extrapolates from recent speed, capped at `MAX_LEAD_SECONDS` (0.12 s) and stopped after
-  `STALE_MS` (250 ms). A snapshot that jumps further than `MAX_PREDICT_SPEED` allows, or the first one after a death,
-  snaps with `teleportTo`. `setTorch` shows the Facility torch lens; `setLeadSeconds` takes the ping-based lead.
+  wires to send `damageEvent`. `applySnapshot` feeds `src/entities/remoteMotion.ts`
+  (`RemoteMotion`), a buffered interpolator: it draws the player at `now - delay` (delay about the p90 of recent arrival
+  gaps plus 20 ms, clamped to 50..150 ms, changed at most 5% of real time), interpolating between buffered snapshots, and
+  past the newest one extrapolates for at most 100 ms, then holds; each dry spell over 100 ms counts one render stall
+  (`renderStalls`, reported as `renderStallsPerMin` in the match-end beacon). A snapshot that jumps further than
+  `MAX_PREDICT_SPEED` allows, or the first one after a death, snaps with `teleportTo`. `RemotePlayer.update` adds only a
+  light damp. `setTorch` shows the Facility torch lens. Details: `docs/multiplayer.md`, "Smooth remote motion".
 - **Positional audio** (`docs/sound.md`): the router's `fireEvent`, `footstepEvent` and `gooseThrowExploded` cases
   pass the source's world position to the sound engine, which works out loudness, direction and what lies between.
   Remote gunshots never go fully silent. A remote shot is also heard landing and, when its path passes within 3 m of

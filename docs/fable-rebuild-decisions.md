@@ -344,6 +344,11 @@ pistol has one rail, so it carries one unit at a time.
 
 ## D33. Attachments are not sent to other players (deferred, 2026-11-11)
 
+> **Built 2026-11-17 (`feature/attachments-visible`).** The snapshot now carries an optional `a`
+> field (the held gun's fitted attachment ids joined by commas, absent when bare, at most 48
+> characters), so other players see the fit. An older build ignores it and an unknown id is dropped on
+> receipt. The text below is the original deferral, kept for the history.
+
 The snapshot carries the held weapon and its skin. Adding the fit would change the snapshot format,
 which the relay branch also reads. Other players therefore see a bare gun.
 

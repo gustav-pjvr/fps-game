@@ -77,16 +77,19 @@ describe('routeMatchMessage, 3 to 4 players', () => {
       remotePlayer: { applySnapshot: vi.fn(), setLookPitch: vi.fn(), setTorch: vi.fn(), setHeldWeapon },
     });
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, w: 'revolver', k: 'gilded' }, 2);
-    expect(setHeldWeapon).toHaveBeenLastCalledWith('revolver', 'gilded');
+    expect(setHeldWeapon).toHaveBeenLastCalledWith('revolver', 'gilded', undefined);
     // An older build names neither: the player is drawn empty-handed.
     route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
-    expect(setHeldWeapon).toHaveBeenLastCalledWith(undefined, undefined);
+    expect(setHeldWeapon).toHaveBeenLastCalledWith(undefined, undefined, undefined);
+    // The fitted attachments ride along as the wire string.
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, w: 'rifle', k: 'service', a: 'laser,torch' }, 2);
+    expect(setHeldWeapon).toHaveBeenLastCalledWith('rifle', 'service', 'laser,torch');
   });
 
   it('the host relays through relay(), which skips directly linked guest pairs', () => {
     const ctx = makeContext({ role: 'host', ownSlot: 0 });
-    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100 }, 2);
-    expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'playerSnapshot' }), 2);
+    route(ctx, { type: 'playerSnapshot', senderSlot: 2, x: 1, y: 2, z: 3, yaw: 0, pitch: 0, health: 100, a: 'laser' }, 2);
+    expect(ctx.multiplayer.session.connection.relay).toHaveBeenCalledWith(expect.objectContaining({ type: 'playerSnapshot', a: 'laser' }), 2);
   });
 
   it('a guest takes the King of the Hill state from its host, and the host ignores one sent to it', () => {

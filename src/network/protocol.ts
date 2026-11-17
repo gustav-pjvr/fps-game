@@ -180,6 +180,11 @@ export interface PlayerSnapshotMessage {
    * sends neither and is drawn empty-handed; an id this build does not know is ignored. */
   w?: string;
   k?: string;
+  /** The attachments fitted to that weapon: attachment ids joined by commas ("laser,torch"), at most
+   * NETWORK_MAX_ATTACHMENTS_LENGTH characters. Absent when the gun is bare, and from an older build.
+   * The receiver keeps only the ids it knows and the gun can take (core/attachments.ts), so an id
+   * from a newer build is ignored, never an error. */
+  a?: string;
 }
 
 /** Sent by the shooter on every shot - purely cosmetic (tracer/muzzle flash/positional gunshot
@@ -1102,6 +1107,8 @@ export const DAMAGE_EVENT_MAX_AMOUNT = 1000;
 /** Longest weapon or skin id a message may carry.
  * The longest real one is 13 characters. */
 export const NETWORK_MAX_ID_LENGTH = 24;
+/** Longest attachments field a snapshot may carry: every attachment id joined by commas is 11. */
+export const NETWORK_MAX_ATTACHMENTS_LENGTH = 48;
 /** Highest score a kothScoreTick may report: the win, plus the few ticks a carrier may send before
  * the host's matchEnded reaches it. */
 export const KOTH_SCORE_TICK_MAX = KOTH_POINTS_TO_WIN + 10;
@@ -1138,7 +1145,8 @@ function hasValidGameplayFields(value: Record<string, unknown>): boolean {
     case 'playerSnapshot':
       return areCoords(value.x, value.y, value.z) && isFiniteNumber(value.yaw) && isFiniteNumber(value.pitch)
         && isFiniteNumber(value.health) && (value.health as number) >= 0 && (value.health as number) <= DAMAGE_EVENT_MAX_AMOUNT
-        && isOptionalFinite(value.t) && isOptionalId(value.w) && isOptionalId(value.k);
+        && isOptionalFinite(value.t) && isOptionalId(value.w) && isOptionalId(value.k)
+        && (value.a === undefined || isShortString(value.a, NETWORK_MAX_ATTACHMENTS_LENGTH));
     case 'glassHit':
       return Number.isSafeInteger(value.pane) && (value.pane as number) >= 0 && isValidGlassHit(value.u, value.v, value.power, value.side);
     case 'glassSync':

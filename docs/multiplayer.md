@@ -73,10 +73,10 @@ combat (that's phase 3).
 - **`RemotePlayer.ts`** (new) - the opponent, never simulated locally. A capsule placeholder sized
   to match the local player's own collision capsule (a real character model is later polish, not
   required to prove sync). No Rapier collider yet - hit detection is phase 3's problem, no reason to
-  guess at that shape now. Visual position/rotation *damps* toward the latest received snapshot
-  (`THREE.MathUtils.damp`) rather than interpolating between two buffered, timestamped snapshots -
-  a deliberate v1 simplification (documented in the class itself) that reads smoothly enough at an
-  18Hz send rate without the extra bookkeeping true interpolation would need.
+  guess at that shape now. Visual position/rotation first *damped* toward the latest received snapshot
+  (a v1 simplification at an 18Hz send rate); since the smooth-remote change the position is
+  interpolated from a buffer of timestamped snapshots instead (see "Smooth remote motion" at the end of
+  this file), with only a very light damp on top.
 - **`Minimap.ts`** (new, `src/ui/`) - the opponent-position radar (MULTIPLAYER_PLAN.md §4b), a
   `Hud`-sibling widget matching the existing one-class-per-widget convention. World-oriented
   (north/-Z always "up"), reusing the exact snapshot data already flowing for movement sync - no
@@ -713,3 +713,30 @@ Four pages at about 2 FPS each make it the slowest spec (budgets of 15 and 12 mi
 joining and starting four players took 2.5 to 5 minutes here, depending on what else the laptop was
 running). It runs on its own: `E2E_PORT=5181 npx playwright test
 e2e/multiplayer-four.spec.ts`.
+
+## Smooth remote motion (buffered interpolation)
+
+Real two-player matches showed a snapshot gap p95 of 83 to 103 ms (the sender aims for 30 Hz), a ping p95 of 160 to 200 ms and
+7 to 34 stalls per minute (a gap over 150 ms between applied snapshots). Dead reckoning (extrapolate from the latest sample,
+lead capped at 0.12 s, stop after 250 ms) overshot or stopped during an uneven gap and then jumped. It is replaced by a
+buffered interpolator in `src/entities/remoteMotion.ts` (`RemoteMotion`, same `push`, `stop`, `reset`, `predict`):
+
+- **Buffer.** The last 16 samples (x, y, z, sender time `sentAtMs`, receive time). Sender time is mapped to local time with
+  an offset equal to the minimum of `receivedAt - sentAt` over the last 90 samples, so jitter (always positive) does not move
+  it; the offset follows that minimum at most 5% of the sender time elapsed per sample, so sample times never bunch together.
+  Without `sentAtMs` the receive time is used. A sample not newer than the newest one is dropped.
+- **Render time** is `now - delay`, interpolated linearly between the two samples around it. The delay is about the p90 of
+  the last 32 arrival gaps plus 20 ms, clamped to 50..150 ms, and moves at most 5% of real time (the render clock runs 5%
+  fast or slow at worst). It starts at 100 ms.
+- **Past the newest sample** it extrapolates from the last two samples (horizontal only, never height) for at most
+  `MAX_EXTRAPOLATION_MS` (100 ms), then holds. Holding more than `STALL_HOLD_MS` (100 ms) past the newest sample counts one
+  *render stall* (`renderStalls`, once per dry spell).
+- **Teleports** (`TELEPORT_MIN_DISTANCE`, `MAX_PREDICT_SPEED`) clear the buffer and snap. `stop()` (death) holds the last real
+  position and counts no stall.
+- `RemotePlayer.update()` follows the interpolated point with a rate 60 damp (about 17 ms of lag; 40 vertically); yaw and
+  pitch damping are unchanged. `setLeadSeconds` and its ping-fed caller in `Game` are gone.
+- **Sender.** `Game` now subtracts `PLAYER_SNAPSHOT_SEND_INTERVAL` from `snapshotAccumulator` instead of zeroing it (capped at
+  one interval, so a long frame sends once, not a burst), which keeps send times even at low frame rates.
+- **Telemetry.** The match-end beacon gains an optional `renderStallsPerMin` (all opponents' render stalls, including those
+  who left, per minute of match time), clamped like the other optional numbers in `functions/api/telemetry.ts`. Compare it
+  with `stallsPerMin` (network gaps) to see how much of a gap the buffer hid.

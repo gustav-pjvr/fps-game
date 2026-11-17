@@ -1,5 +1,7 @@
 import * as THREE from 'three';
+import { decodeAttachments } from '../core/attachments.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
+import type { AttachmentId } from '../weapons/models/attachments.ts';
 import { resolveSkinId, type SkinId } from '../weapons/models/skins.ts';
 import { createWeaponModel, hasWeaponModel } from '../weapons/models/weaponModels.ts';
 
@@ -32,6 +34,7 @@ export class HeldWeapon {
   private readonly holder = new THREE.Group();
   private weaponId: string | null = null;
   private skinId: SkinId | null = null;
+  private attachmentKey = '';
 
   /** `character` is the skinned model from instantiateCharacter (entities/characterModels.ts). */
   constructor(character: THREE.Object3D) {
@@ -52,16 +55,20 @@ export class HeldWeapon {
   }
 
   /** Shows `weaponId` in `skinId`. Anything unknown (an older or newer build's weapon, empty
-   * hands) shows nothing; an unknown skin shows the default. Cheap when nothing changed. */
-  set(weaponId: string | undefined, skinId?: string): void {
+   * hands) shows nothing; an unknown skin shows the default. `attachments` is the snapshot's wire
+   * form (core/attachments.ts): only what the gun can take is fitted. Cheap when nothing changed. */
+  set(weaponId: string | undefined, skinId?: string, attachments?: string): void {
     const id = weaponId !== undefined && hasWeaponModel(weaponId) ? weaponId : null;
     const skin = id === null ? null : resolveSkinId(skinId);
-    if (id === this.weaponId && skin === this.skinId) return;
+    const fitted: AttachmentId[] = id === null ? [] : decodeAttachments(id, attachments);
+    const key = fitted.join(',');
+    if (id === this.weaponId && skin === this.skinId && key === this.attachmentKey) return;
     this.weaponId = id;
     this.skinId = skin;
+    this.attachmentKey = key;
     this.holder.clear();
     if (id === null || skin === null || !this.hand) return;
-    const model = createWeaponModel(id, skin, { raw: true });
+    const model = createWeaponModel(id, skin, { raw: true, attachments: fitted });
     const grip = gripFor(id);
     model.root.position.set(...grip.position);
     model.root.rotation.set(...grip.rotation);
@@ -77,6 +84,10 @@ export class HeldWeapon {
 
   get shownSkinId(): SkinId | null {
     return this.skinId;
+  }
+
+  get shownAttachments(): readonly AttachmentId[] {
+    return this.attachmentKey === '' ? [] : (this.attachmentKey.split(',') as AttachmentId[]);
   }
 
   dispose(): void {

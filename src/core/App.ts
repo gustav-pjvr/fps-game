@@ -101,6 +101,13 @@ export class App {
     return app;
   }
 
+  /** Where the player is, for the anonymous error reporter (see errorReporter.ts): the menus, a solo
+   * match or a multiplayer one. */
+  get reportingWhere(): 'menu' | 'solo' | 'multiplayer' {
+    if (this.currentMultiplayerSession) return 'multiplayer';
+    return this.currentGame ? 'solo' : 'menu';
+  }
+
   private async enterLobby(): Promise<void> {
     this.lobby = await LobbyScene.create(this.lobbyContainer);
     this.lobby.start();

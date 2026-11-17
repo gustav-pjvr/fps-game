@@ -10,7 +10,22 @@ history. **Scheme (semver-ish):**
 Grouped by release-worthy chunks of work, not one entry per commit - see `git log` for the full,
 granular history if you need it.
 
-## v5.1.0 (current)
+## v5.2.0 (current)
+
+Smoother multiplayer, visible attachments, error reporting, 2026-11-17. As built: `docs/multiplayer.md`,
+`docs/attachments.md`, `docs/architecture/core.md` section 7.
+
+- **Other players move smoothly.** Match telemetry showed position updates arriving in uneven gaps (95th
+  percentile 83 to 103 ms) and 7 to 34 freezes a minute. Other players are now drawn a moment in the past
+  (50 to 150 ms, adapting to the connection) and move between real updates, guessing ahead for at most
+  100 ms only when updates stop. Position updates also go out at an even rate when the frame rate dips.
+- **Attachments show on other players' guns,** like skins already did.
+- **Anonymous error reporting.** Crashes, browser errors, lost graphics and freezes over a second are sent
+  to the game's own store (kept 30 days): no name, no room code. Dev builds report nothing.
+- **New telemetry number:** visible freezes of other players per minute, the measure for the smoothing.
+- `scripts/telemetry-report.mjs` summarises matches, connection quality and errors.
+
+## v5.1.0
 
 Released to the live game on 2026-11-11.
 

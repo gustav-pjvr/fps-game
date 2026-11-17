@@ -231,7 +231,7 @@ the new weapon models under a real match's worth of other players.
   written down (decision D29: the host simulates every enemy, guests mirror them, enemy damage rides
   the existing `damageEvent`). None of it is built.
 - **The full Playwright suite** (see Evidence).
-- **Attachments on other players:** the snapshot carries the skin but not the fit, so everyone else sees a bare gun.
+- **Attachments on other players:** built 2026-11-17 on `feature/attachments-visible` (snapshot field `a`, see D33); before that everyone else saw a bare gun.
 - **`server/`, `ServerTransport`, the relay and `feature/server-relay`** were not touched, as required.
 
 ## Known issues

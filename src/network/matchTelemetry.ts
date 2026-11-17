@@ -128,11 +128,21 @@ export interface MatchTelemetryExtras {
   pingP95?: number;
   snapshotGapP95?: number;
   stallsPerMin?: number;
+  /** Times an opponent's avatar had to hold because its snapshot buffer ran dry (see
+   * entities/remoteMotion.ts), summed over opponents, per minute of match time. */
+  renderStallsPerMin?: number;
   joinMs?: number;
 }
 
-export function buildMultiplayerTelemetryExtras(stats: MatchTelemetryStats, players: number, joinMs: number | null | undefined): MatchTelemetryExtras {
+/** Render stalls per minute of match time, two decimals; 0 when there was no match time. */
+export function renderStallsPerMinute(totalStalls: number, matchDurationMs: number): number {
+  const minutes = matchDurationMs / 60000;
+  return minutes > 0 && Number.isFinite(minutes) && Number.isFinite(totalStalls) ? Math.round((totalStalls / minutes) * 100) / 100 : 0;
+}
+
+export function buildMultiplayerTelemetryExtras(stats: MatchTelemetryStats, players: number, joinMs: number | null | undefined, renderStallsPerMin?: number): MatchTelemetryExtras {
   const extras: MatchTelemetryExtras = { transport: 'p2p', players, stallsPerMin: stats.stallsPerMin };
+  if (renderStallsPerMin !== undefined && Number.isFinite(renderStallsPerMin)) extras.renderStallsPerMin = renderStallsPerMin;
   if (stats.pingP50 !== undefined) extras.pingP50 = stats.pingP50;
   if (stats.pingP95 !== undefined) extras.pingP95 = stats.pingP95;
   if (stats.snapshotGapP95 !== undefined) extras.snapshotGapP95 = stats.snapshotGapP95;
