@@ -19,7 +19,7 @@ const baseURL = `http://localhost:${port}`;
 // (not a secret: it binds to 127.0.0.1 and lives for one run), and the browsers told to use it.
 const transport = process.env.E2E_TRANSPORT === 'server' ? 'server' : 'p2p';
 const relayPort = port + 1000;
-const relayAccessCode = `e2e-local-${relayPort}`;
+const relayAccessCode = `e2e-local-relay-${relayPort}`;
 const relayStorage = transport === 'server'
   ? [
     { name: 'fps-game-relay-access-code', value: relayAccessCode },

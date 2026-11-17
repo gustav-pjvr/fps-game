@@ -6,7 +6,7 @@ import { chromium } from '@playwright/test';
 
 const PORT = 5199;
 const RELAY = 6199;
-const CODE = 'qa-local-only';
+const CODE = 'qa-local-only-relay-check';
 const BASE = `http://localhost:${PORT}`;
 const children = [];
 const results = [];
