@@ -17,6 +17,7 @@ const hostOnly: NetworkMessage[] = [
   { type: 'matchEnded', winnerSlot: 1, scoreboard: [{ slot: 1, score: 10 }] },
   { type: 'rosterSync', roster: [] },
   { type: 'goldenGooseState', carrierSlot: 1, x: 0, y: 0, z: 0 },
+  { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] },
   { type: 'linkQuality', links: [] },
   { type: 'pickupTaken', id: 1, slot: 1, respawnIn: 30 },
   { type: 'pickupState', available: '11' },

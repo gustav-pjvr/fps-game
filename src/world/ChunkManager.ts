@@ -91,6 +91,17 @@ export class ChunkManager {
     this.unloadFarChunks(centerCx, centerCz);
   }
 
+  /** Test-only: unloads the chunk holding (x, z) through the real unload path; the next update
+   * loads it again. Today's world is smaller than the unload radius, so nothing streams out in play:
+   * this is how a browser test sees a house leave and come back. False when it is not loaded. */
+  debugRestream(x: number, z: number): boolean {
+    const key = chunkKey(Math.floor(x / TERRAIN_CHUNK_SIZE), Math.floor(z / TERRAIN_CHUNK_SIZE));
+    const entry = this.loaded.get(key);
+    if (!entry) return false;
+    this.unloadChunk(key, entry);
+    return true;
+  }
+
   private loadNearestMissing(centerCx: number, centerCz: number): void {
     const missing: { cx: number; cz: number; distSq: number }[] = [];
 

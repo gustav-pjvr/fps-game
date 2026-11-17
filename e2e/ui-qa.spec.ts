@@ -21,6 +21,7 @@ const SCREENS: { name: string; open: string | null }[] = [
   { name: 'match setup', open: 'PLAY' },
   { name: 'multiplayer', open: 'MULTIPLAYER' },
   { name: 'loadout', open: 'LOADOUT' },
+  { name: 'workbench', open: 'WORKBENCH' },
   { name: 'settings', open: 'SETTINGS' },
 ];
 
@@ -46,6 +47,8 @@ async function overflowing(page: Page): Promise<string[]> {
       if (rect.width === 0 || rect.height === 0) continue;
       const style = getComputedStyle(el);
       if (style.visibility === 'hidden' || style.display === 'none') continue;
+      // A row that scrolls sideways (the Workbench's cards) holds items past the edge by design.
+      if (el.closest('.wb-rail')) continue;
       if (rect.left < -1 || rect.right > width + 1) out.push(`${el.tagName} "${(el.textContent ?? '').trim().slice(0, 40)}" spans ${Math.round(rect.left)} to ${Math.round(rect.right)} of ${width}`);
     }
     return out;
@@ -77,7 +80,7 @@ for (const vp of VIEWPORTS) {
   });
 }
 
-test('F01-H1 a keyboard alone opens match setup, picks the Uplink mission and cancels', async ({ page }) => {
+test('F01-H1 a keyboard alone opens match setup, picks Operation Uplink and cancels', async ({ page }) => {
   test.setTimeout(120000);
   const problems = watch(page);
   await page.goto('/');
@@ -91,7 +94,7 @@ test('F01-H1 a keyboard alone opens match setup, picks the Uplink mission and ca
   expect(await play.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe('none');
   await page.keyboard.press('Enter');
 
-  const mission = page.getByRole('radio', { name: /Uplink mission/ });
+  const mission = page.getByRole('radio', { name: /Operation Uplink/ });
   await expect(mission).toBeVisible();
   await mission.focus();
   await page.keyboard.press('Space');

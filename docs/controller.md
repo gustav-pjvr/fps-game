@@ -19,7 +19,7 @@ behaviour is in `gamepadFocus.ts` (section 5).
 | 1 | B / Circle | `interact` (default key E) | Back (section 5) |
 | 2 | X / Square | `reload` | none |
 | 3 | Y / Triangle | `weaponNext` | none |
-| 4 | LB / L1 | unbound | none |
+| 4 | LB / L1 | `ping`: mark the point under the crosshair for your side (docs/coop.md) | none |
 | 5 | RB / R1 | `grenade`: hold to cook, release to throw | none |
 | 6 | LT / L2 | `aim` (held) | none |
 | 7 | RT / R2 | `fire` (held, so automatics keep firing) | none |
@@ -28,7 +28,7 @@ behaviour is in `gamepadFocus.ts` (section 5).
 | 10 | L3 | Sprint, latched (below). Not in `GAMEPAD_ACTIONS`. | none |
 | 11 | R3 | unbound | none |
 | 12 | D-pad up | `flashlight` (the torch) | Focus up |
-| 13 | D-pad down | unbound | Focus down |
+| 13 | D-pad down | `inspect`: look the weapon in hand over | Focus down |
 | 14 | D-pad left | `weaponPrev` | Focus left, or lower a select or slider |
 | 15 | D-pad right | `weaponNext` | Focus right, or raise a select or slider |
 | Axes 0, 1 | Left stick | Move | Focus (past 0.45) |

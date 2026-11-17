@@ -59,9 +59,10 @@ Practicalities:
   generous and a timeout is usually a budget problem, not a hang: read the trace's step times first.
 - Run **one Playwright chain at a time per checkout**. A second checkout or worktree sets its own
   port: `E2E_PORT=5181 npm run test:e2e:group -- mp`.
-- Long chains (more than a few minutes) run from a snapshot copy under `C:\tmp` (robocopy without
-  `node_modules`, `.git`, `dist`, `test-results`; junction `node_modules`), so editing the real tree
-  does not hot-reload the page under test.
+- Long chains (more than a few minutes) run from a snapshot copy under `C:\tmp`, so editing the real
+  tree does not hot-reload the page under test: `bash scripts/dev/snap-head.sh` copies the committed
+  tree and junctions `node_modules` (commit first; uncommitted work is not in the copy).
+- Practical habits, capture tools and traps on this machine: [fable-working-notes.md](fable-working-notes.md).
 - Slow world tests (for example `ZoneMap.test.ts`) can time out on a loaded machine; rerun alone
   before treating a failure as real.
 - Real GPU checks (a screenshot in Chrome against `npm run dev`) catch what software rendering

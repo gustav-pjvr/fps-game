@@ -91,11 +91,6 @@ export interface ActiveMultiplayer {
    * as playerDied.killerWeaponId so every client applies Gun Game's launcher-only winning kill the
    * same way. Undefined when the sender did not say. */
   lastDamageSourceWeaponId?: string;
-  /** Goose Horde co-op only (per explicit user request): this client's own count of respawns
-   * already used, out of HORDE_MAX_RESPAWNS - self-authoritative, same trust model as everything
-   * else this client alone decides about itself. Once it reaches HORDE_MAX_RESPAWNS, the next
-   * death permanently eliminates this player instead of auto-respawning (see updateMultiplayer). */
-  hordeRespawnsUsed: number;
   /** Every slot known to be permanently eliminated (respawns exhausted) - includes this client's
    * own slot once it's out. Populated by the self-reported 'hordePlayerEliminated' broadcast, so
    * every client converges on the same set without host adjudication. When this covers every

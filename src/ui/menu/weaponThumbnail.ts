@@ -1,9 +1,13 @@
-import { INK } from '../theme.ts';
+import { ACCENT, INK } from '../theme.ts';
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 // CSS pixels (the renderer multiplies by the device pixel ratio, up to 2): at least as large as the
 // biggest Loadout tile, so a tile never upscales its thumbnail.
 const THUMBNAIL_SIZE = 192;
+/** A weapon tile is a landscape: its picture is drawn side-on at this size (CSS pixels). */
+const WIDE_WIDTH = 320;
+const WIDE_HEIGHT = 200;
 
 /** Every thumbnail rendered so far this session, keyed by weapon id. A weapon's model never
  * changes at runtime, so the lobby's LoadoutScreen (App.ts) and every per-match one (Game.ts builds
@@ -18,6 +22,8 @@ const thumbnailCache = new Map<string, string>();
  * which pushed repeated lobby/match cycles toward Chrome's ~16 live-context cap, past which the
  * browser silently kills the oldest context and a canvas goes blank. */
 let sharedRenderer: THREE.WebGLRenderer | null = null;
+/** Something for the weapons' metal to reflect, built with the shared renderer and freed with it. */
+let sharedEnvironment: THREE.Texture | null = null;
 
 /** The cached thumbnail for `weaponId`, or null if it hasn't been rendered yet this session - lets
  * a caller skip loading the model at all when there's nothing left to render. */
@@ -36,7 +42,8 @@ export function getCachedWeaponThumbnail(weaponId: string): string | null {
  * viewModel.ts's createProceduralMeleeViewModel) and needs the exact same thumbnail treatment for
  * its procedurally-built mesh.
  */
-export function renderWeaponThumbnail(weaponId: string, source: THREE.Object3D): string {
+export function renderWeaponThumbnail(weaponId: string, source: THREE.Object3D, options: { wide?: boolean } = {}): string {
+  const wide = options.wide ?? false;
   const model = source.clone(true);
 
   // Center the model at the origin and scale it to fill the frame, regardless of each weapon
@@ -52,19 +59,35 @@ export function renderWeaponThumbnail(weaponId: string, source: THREE.Object3D):
   const targetSize = 1.4;
   model.scale.multiplyScalar(targetSize / largestDimension);
 
+  const renderer = getSharedRenderer();
   const scene = new THREE.Scene();
   scene.add(model);
-  scene.add(new THREE.AmbientLight(INK, 0.7));
-  const key = new THREE.DirectionalLight(INK, 1.1);
-  key.position.set(1.5, 2, 2);
-  scene.add(key);
-
-  const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
-  camera.position.set(1.4, 0.9, 1.6);
+  const camera = new THREE.PerspectiveCamera(35, wide ? WIDE_WIDTH / WIDE_HEIGHT : 1, 0.1, 100);
+  if (wide) {
+    // A weapon: side-on from its left, a little above and behind, lit to lift dark steel off the
+    // dark tile, with a room to reflect.
+    renderer.setSize(WIDE_WIDTH, WIDE_HEIGHT);
+    scene.environment = sharedEnvironment;
+    scene.environmentIntensity = 0.5;
+    scene.add(new THREE.HemisphereLight(0xcfe8e4, 0x1a2426, 0.9));
+    const key = new THREE.DirectionalLight(0xfff4e2, 2.4);
+    key.position.set(-1.6, 2.2, 1.4);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(ACCENT, 0.9);
+    rim.position.set(1.4, 0.8, -1.6);
+    scene.add(rim);
+    camera.position.set(-2.3, 0.5, 0.8);
+  } else {
+    renderer.setSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+    scene.add(new THREE.AmbientLight(INK, 0.7));
+    const key = new THREE.DirectionalLight(INK, 1.1);
+    key.position.set(1.5, 2, 2);
+    scene.add(key);
+    camera.position.set(1.4, 0.9, 1.6);
+  }
   camera.lookAt(0, 0, 0);
   fitCameraToModel(camera, model);
 
-  const renderer = getSharedRenderer();
   renderer.render(scene, camera);
   // Read back in the same task as the render (autoClear wipes the previous thumbnail first), so no
   // preserveDrawingBuffer is needed - same as when every thumbnail had its own renderer.
@@ -112,8 +135,11 @@ function fitCameraToModel(camera: THREE.PerspectiveCamera, model: THREE.Object3D
 function getSharedRenderer(): THREE.WebGLRenderer {
   if (!sharedRenderer) {
     sharedRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    sharedRenderer.setSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     sharedRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    sharedRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    const pmrem = new THREE.PMREMGenerator(sharedRenderer);
+    sharedEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
   }
   return sharedRenderer;
 }
@@ -130,6 +156,8 @@ function getSharedRenderer(): THREE.WebGLRenderer {
  * needs during a match. */
 export function releaseThumbnailRenderer(): void {
   if (!sharedRenderer) return;
+  sharedEnvironment?.dispose();
+  sharedEnvironment = null;
   sharedRenderer.forceContextLoss();
   sharedRenderer.dispose();
   sharedRenderer = null;

@@ -1,0 +1,149 @@
+# Fable rebuild: progress log
+
+A fresh session starts here, then reads `docs/fable-rebuild-brief.md` and
+`docs/fable-rebuild-decisions.md`. Worktree: `../fps-game-fable`, branch `feature/fable-rebuild`,
+base `master` at v4.7.1 (`30e49e9`). `node_modules` is a junction to the main checkout.
+
+## Phases
+
+| # | Phase | State |
+|---|---|---|
+| 0 | Setup: worktree, logs, baseline checks, baseline performance | done |
+| 1 | Arsenal: kit, 20 weapon definitions, handling, clips, sounds, models | done: all 19 models built (15 main session, mp5/smg/machinePistol and sniper/dmr/battleRifle/lmg by two Fable agents) |
+| 2 | Skins: six families, storage, snapshot fields, remote held weapon, aim-point test | done (unit); e2e spec written, not yet run |
+| 3 | Menus: Loadout rework, Skins screen with aimed preview, screenshots spec | done; three bugs found and fixed by the browser specs (Skins opened from the Loadout was inert; the phone weapon strip ran off screen; Skins opened dead the second time), then the independent review's eight S2 defects fixed; the UI guard passes 14 of 14 |
+| 4 | Shared co-op layer: pings, down and revive, squad rows, kills on the scoreboard | done (unit); proven in the browser by the horde spec |
+| 5 | King of the Hill rebuild | done: unit tests and both browser tests pass (two players with a late joiner; four players in teams) |
+| 6 | Goose Horde rebuild (solo and co-op) | done: solo, two players (three tests: revive and next wave, late join, rejoin) and four players all pass in the browser |
+| 7 | Uplink operation rebuild (solo) | done by Fable agent 3, verified and committed; `mission.spec.ts` 2 of 2 and the Facility modes 2 of 2 from the committed tree |
+| 8 | Director Showdown rebuild (solo) | done: `director.spec.ts` 6 of 6 (three for Showdown) |
+| 9 | Co-op enemies, then co-op Uplink and Showdown | postponed by Gustav (D30); the design is D29; nothing built |
+| 10 | New specs, full suite, performance after, docs, changelog, version | done except the full suite, skipped on Gustav's instruction (D28): the affected groups were run one at a time |
+| 11 | Preview deploy, handover report | done: https://fable-rebuild.hunter-n-goose.pages.dev, `docs/fable-rebuild-handover.md` |
+
+## Done so far
+
+- 2026-11-10: worktree and junction created. Docs read. Three read-only Haiku surveys.
+- Baseline on the untouched tree: typecheck clean; unit 1434 of 1435 (one load flake, passes alone).
+- Baseline performance (v4.7.1, `e2e/perf-log.spec.ts`, 20 enemies). Headed runs use the real GPU:
+
+  | Run | fps at spawn | fps in the fight | ai ms/tick | physics ms/tick |
+  |---|---|---|---|---|
+  | Medium, headed (real GPU) | 52.8 | 58.7 | 1.31 | 3.11 |
+  | Low, headed (real GPU) | 59.6 | 59.9 | 1.52 | 3.87 |
+  | Medium, headless (SwiftShader) | 1.40 | 2.04 | 0.98 | 1.95 |
+  | Low, headless (SwiftShader) | 1.39 | 2.87 | 0.92 | 1.65 |
+
+  Logs: `C:\tmp\fable-logs\perf-base-*.log`. Snapshot of the old tree: `C:\tmp\fable-base` (port 5190).
+  `PERF_GRAPHICS=low` selects the tier; add `--headed` for the real GPU.
+- Weapon kit (`src/weapons/models/kit/`), six skins (`skins.ts`, `skinMaterials.ts`), part clips
+  (`src/weapons/animation/`), `weaponModels.ts`, the all-weapons aim test (`weaponModels.test.ts`).
+- 20 definitions with falloff, recoil, weight and blade attack tables; `WeaponManager` rewritten on
+  clips, skins, inspect (G) and blade attacks; new inputs `inspect` and `ping`.
+- Sounds synthesised per weapon (`audio/weaponSounds.ts`); the 8 mp3 samples removed.
+- Held weapon and skin shown to other players: snapshot fields `w` and `k`, `entities/heldWeapon.ts`.
+- Skins screen (`ui/menu/SkinsScreen.ts`, `WeaponPreview.ts`), Loadout rework, `e2e/skins.spec.ts`,
+  e2e group `skins`.
+- Dev tools: `weaponlab.html` + `scripts/weaponShots.mjs` (models), `scripts/menuShots.mjs` (menus).
+- Models done: rifle, pistol, knife, revolver, shotgun, sawnOff, gooseLauncher, karambit, machete,
+  tanto, hatchet, spike (main session); mp5, smg, machinePistol (Fable agent 1).
+  Fable agent 2: sniper, dmr, battleRifle, lmg (verified by the model tests and by eye, committed).
+- King of the Hill rebuilt (`core/modeControllers/hillState.ts`, `KingOfTheHillController.ts`,
+  `entities/HillView.ts`, `ui/kothHud.ts`), `docs/king-of-the-hill.md`, `e2e/koth.spec.ts`.
+- The co-op layer (`core/modeControllers/reviveRules.ts`, `SquadController.ts`, `ui/downedOverlay.ts`,
+  a tag on the squad's health rows, `Player.revive` with a shield), `docs/coop.md`.
+- Goose Horde rebuilt (`entities/hordeRules.ts`, `HordeGooseManager.ts`, `HordeGoose.ts`,
+  `AmmoDropManager.dropFor`, `ui/hordeHud.ts`, the solo end screen through `DeathScreen.showResult`),
+  `docs/goose-horde.md`, `e2e/horde.spec.ts`. The old `HordeWaveIndicator` file is unused now.
+- Operation Uplink (Fable agent 3): `core/mission/missionState.ts`, `missionGrade.ts`, `missionText.ts`,
+  `world/missionSites.ts`, `world/UplinkBeacons.ts`, the Warden (`enemies/archetypes.ts`,
+  `archetypeLook.ts`), `docs/uplink.md`, `e2e/mission.spec.ts`. The Warden's hit shape grows with its
+  model (`characterHitbox.ts` `scaledHitShape`), added by the main session after the agent's report.
+- Showdown: `enemies/director/showdown.ts`, `ui/showdownHud.ts`, `Game.onShowdownEvent` and its
+  neighbours, `docs/showdown.md`, three tests added to `e2e/director.spec.ts`.
+- e2e helpers for the mode specs: `e2e/coop.ts` (rooms, late join, rejoin with a token, briefing skip).
+
+## Working notes
+
+- Dev server for the worktree: `npx vite --port 5191 --strictPort` (background task of this session).
+- Long Playwright runs: `bash /c/tmp/fable-logs/snap-head.sh` puts the committed tree (HEAD) in
+  `C:\tmp\fable-e2e`, then run there with `E2E_PORT=5192`. (`snap.sh` mirrors the working tree instead:
+  not while an agent is editing the checkout.)
+- Edits to CRLF files: the Edit tool, or `C:\tmp\fable-logs\ed.py` (keeps line endings).
+- Commit as `git -c user.email=gustavpjvr@gmail.com commit`. Never push to master, never deploy to
+  production.
+
+## Last checks
+
+| Check | Result |
+|---|---|
+| typecheck | clean (2026-11-10, after Goose Horde) |
+| unit | 1867 of 1867 pass (146 files), 2026-11-10 after Goose Horde |
+| e2e quick (4 smoke tests) from the snapshot | 4 passed, with the new weapon manager |
+| e2e `koth.spec.ts` | 2 of 2 pass: two players and a late joiner (6.4 min), four players two against two (10.4 min). Two earlier failures were the test's own (the briefing button reads "Skip (0/2)" in a room; the hill moved under a slow run), fixed with `skipBriefing` and `holdKothHill` |
+| e2e `horde.spec.ts` | solo passes (7.3 min); four players pass (8.5 min); co-op with two players failed once at the revive check (the next wave stood the guest up first), `holdHordeWave` added, rerun owed |
+| `showdown.test.ts` | 12 of 12 |
+| e2e ui guard on the Skins screen | passes at phone and desktop (after the two fixes above) |
+| e2e `skins.spec.ts` | 2 of 2: every weapon in every skin aimed (all offsets 0.00 px); equip, reload, worn in a match |
+| e2e `director.spec.ts`, `mission.spec.ts`, `facility-modes.spec.ts` | 6 of 6, 2 of 2, 2 of 2 |
+| e2e `horde.spec.ts` two players | 3 of 3 after the test was split into three of two browsers each |
+| e2e core (`smoke.spec.ts`) | 11 of 16; five overrun their own time budgets, and so do three of the same four on the v4.7.1 copy: the machine, not the rebuild; rerun on a quiet machine before release |
+| performance (perf-log, real GPU) | Medium 58.0 to 59.5 fps in the fight, render 7.95 to 7.12 ms; Low 60.0 to 60.0 fps, render 2.58 to 2.19 ms: equal or better (handover has the table) |
+| preview deploy | https://fable-rebuild.hunter-n-goose.pages.dev checked: v5.0.0, Skins, three solo modes start, no errors |
+| unit, full | 1911 of 1912 on a quieter machine; the one failure (`structureMaterials.test.ts`, a 60 s texture test the rebuild did not touch) passes alone |
+| e2e full | not yet run on this branch |
+
+## Next (for whoever picks this up)
+
+The rebuild's run ended on 2026-11-10 with the handover written. What is left is Gustav's to decide:
+
+1. Play the preview and judge it (`docs/fable-rebuild-handover.md`, "What to try first").
+2. Before a release: rerun the core smoke group and the full Playwright suite on a quiet machine
+   (neither was judged here: see the handover's Evidence).
+3. Merge `feature/fable-rebuild` into `master` and deploy: Gustav's call, never done by the run.
+4. Co-op for Operation Uplink and Showdown, from decision D29, when it is wanted.
+5. `feature/server-relay` needs a routing class for each new message type (the table below).
+6. The polish the UI review left open (the handover lists it).
+
+Testing on this machine: keep browser runs small. One spec at a time, at most two browsers per test
+where the feature allows it, from `bash /c/tmp/fable-logs/snap-head.sh` (a copy of the committed
+tree). A run with three or four software-rendered pages takes minutes per step and starves the host
+page until its own silence rule drops the other players.
+
+## New network message types (for the relay routing table)
+
+The held weapon and skin ride two optional fields of `playerSnapshot` (`w`, `k`). New types so far:
+
+| Type | Sent by | Class for the relay's `routing.ts` |
+|---|---|---|
+| `kothState` | host, to everyone and in a late joiner's sync | host broadcast |
+| `kothCrownClaim` | guest, to the host only | guest to host |
+| `hordeState` | host, to everyone and in a late joiner's sync | host broadcast |
+| `reviveEvent` | any player, relayed to everyone | relayed, self-reported (`senderSlot`) |
+| `ping` | any player, relayed to everyone | relayed, self-reported (`senderSlot`) |
+
+Existing types with new optional fields: `hordeGooseSpawned` (`flavor` now also `brute` or `boss`,
+optional `boss`), `hordeGooseHitEvent` (`damage`), `hordeGooseExploded` (`stomp`).
+`hordePlayerEliminated` keeps its shape and now means "this slot is down". Retired but still in the
+protocol: `goldenGoosePickedUp`, `goldenGooseDropped`, `goldenGooseState`, `kothScoreTick`; `hordeReset`
+is no longer sent in a room.
+
+## Open issues
+
+- The S5's round receiver top reads as only slightly rounded; wraps on upright magazines are blocky
+  (kit: `wrapBox` runs along the barrel only). Cosmetic.
+- The battle rifle's aimed view shows more of the receiver below the sight than the reference rifle
+  (its rear sight sits far forward); the LMG's rear sight is chunky at the hip. Both pass the aim test.
+- The architecture docs still describe King of the Hill and Goose Horde as first built.
+
+## 2026-11-11: follow-ups
+
+- Gun handling by kind of gun (`gun-handling.md`); animation fixes (inspect, slash, sprint carry).
+- Stray torch body removed; `floatingGeometry.test.ts` added; debug hook `getNearEyeObjects`.
+- Attachments (`attachments.ts`, `core/attachments.ts`, `LaserDot.ts`) and the Workbench
+  (`WorkbenchScreen.ts`; `SkinsScreen.ts` deleted). Independent review, three defects fixed.
+- Grenades rebuilt: `grenadeFlight.ts`, `grenadeBlast.ts`, `grenadeTuning.ts`, `FragExplosion.ts`.
+- Reload clips of the rifle, battle rifle and machine gun: each hand on its own side.
+- Test tooling: `holdTime` and `stepTime` also step the per-frame effects; the weapon lab takes
+  `a=` (attachments), `pitch=`, `zoom=` and `reload=`.
+- Release brief for the main session: `release-v5-brief.md`.

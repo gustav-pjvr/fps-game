@@ -55,6 +55,26 @@ describe('ModalScope', () => {
     expect(doc.activeElement).toBe(button);
   });
 
+  it('nests: an overlay opened from inside another works while open and is inert again when it closes', () => {
+    // The Loadout page (pause, here) opens first and makes the Skins page (overlay) inert with the rest.
+    const { pause, hud, overlay, close } = setup();
+    const outer = new ModalScope();
+    outer.enter(pause as unknown as HTMLElement, null);
+    expect(overlay.inert && hud.inert).toBe(true);
+
+    const inner = new ModalScope();
+    inner.enter(overlay as unknown as HTMLElement, close as unknown as HTMLElement);
+    // The page on top can be used; the one under it cannot.
+    expect(overlay.inert).toBe(false);
+    expect(pause.inert).toBe(true);
+
+    inner.leave();
+    expect(overlay.inert).toBe(true);
+    expect(pause.inert).toBe(false);
+    outer.leave();
+    expect(overlay.inert || hud.inert || pause.inert).toBe(false);
+  });
+
   it('does not refocus an element that has been removed', () => {
     const { doc, overlay, button, close } = setup();
     const scope = new ModalScope();

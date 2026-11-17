@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import { ADS_SIGHT_DISTANCE } from '../core/config.ts';
+import type { WeaponAnimations } from './animation/clips.ts';
+import type { AttachmentId } from './models/attachments.ts';
+import type { SkinId } from './models/skins.ts';
 
 export const WEAPON_HIP_POSITION = new THREE.Vector3(0.25, -0.22, -0.5);
-/** Aim pose for a model without a sight (the knife and empty hands, which never aim anyway). */
+/** Aim pose for a model without a sight (the blades and empty hands, which never aim anyway). */
 export const WEAPON_ADS_POSITION = new THREE.Vector3(0, -0.14, -0.35);
 
 /** The view-model position (camera space) that puts `sight`, a point in the view model's outer
@@ -16,10 +19,22 @@ export interface WeaponViewModel {
   group: THREE.Group;
   /** Barrel tip in the outer group's space, including the model's tuning transform. */
   muzzleLocalOffset: THREE.Vector3;
-  /** Camera-space position at full aim: lines the model's sight-dot up with the screen centre
+  /** Camera-space position at full aim: lines the model's aim point up with the screen centre
    * (adsPositionForSight), or WEAPON_ADS_POSITION for a model without one. */
   adsPosition: THREE.Vector3;
+  /** The ammo witness light of this copy (empty for a weapon without one). */
   glowMaterials: THREE.MeshStandardMaterial[];
-  magazine: THREE.Object3D | null;
-  magazineRestPosition: THREE.Vector3;
+  /** The model inside the group (scaled and offset by its tuning): what the `gun` animation track
+   * moves. Null for empty hands. */
+  model: THREE.Object3D | null;
+  /** Moving parts by name, for the part animator (animation/PartAnimator.ts). */
+  parts: Map<string, THREE.Object3D>;
+  animations: WeaponAnimations;
+  /** Parts that slide back out of view as the weapon is aimed: metres at full aim, by part name. */
+  aimRetract: Readonly<Record<string, number>>;
+  skinId: SkinId;
+  /** What is fitted to this copy (models/attachments.ts): only what the gun can take. */
+  attachments: readonly AttachmentId[];
+  /** A scope overlay replaces the model at full aim. */
+  scoped: boolean;
 }

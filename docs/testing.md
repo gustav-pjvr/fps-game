@@ -24,15 +24,19 @@ Add `--dry` to see the plan without running it, and `--base <ref>` to compare wi
 |---|---|---|
 | quick | `@quick` tests in `smoke.spec.ts` | enemies, hitboxes, UI, world, render, audio, settings, public assets |
 | core | `smoke.spec.ts` | weapons, combat, input, the player, `Game.ts`, `App.ts`, `config.ts`, any src file no rule names |
-| ai | `enemy-ai.spec.ts`, `director.spec.ts` | enemies, `EntityManager.ts`, targets, hitboxes, character models, `config.ts` |
+| ai | `enemy-ai.spec.ts`, `director.spec.ts` (the director and Showdown) | enemies, `EntityManager.ts`, targets, hitboxes, character models, `config.ts`, the Showdown panel |
 | mission | `mission.spec.ts` | `core/mission/`, uplink beacons, world markers, the death screen, `Game.ts` |
 | ui | `ui-qa.spec.ts` | `src/ui/`, `index.html`, `App.ts` |
 | world | `world-bounds.spec.ts`, `underground.spec.ts` | `src/world/`; `underground.ts`, `towerUnderground.ts`, `labInterior.ts` and `undergroundLights.ts` pick only this group (not `quick`) |
 | facility | `facility.spec.ts`, `facility-doors.spec.ts`, `facility-modes.spec.ts`, `multiplayer-facility.spec.ts`, `pickups.spec.ts`, `solo-weather.spec.ts` | `src/world/facility/`, the torch, the minimap, `Game.ts` |
 | pickups | `pickups.spec.ts` | `src/pickups/` |
 | houses | `houses.spec.ts` | `src/world/houses/`, `src/world/doors/`, the house plan on the minimap |
+| glass | `glass.spec.ts`, `multiplayer-glass.spec.ts` | `src/world/glass/`, `src/network/glassSync.ts` (and nothing else: these files do not pick `mp`) |
+| sound | `soundlab.spec.ts` | `src/audio/`, `src/world/soundProbe.ts`, `src/soundlab/`, `soundlab.html`. The page spec proves layout, accessibility and that a sound lands on its side; `node scripts/soundRender.mjs` measures every sound (`docs/sound.md`) |
 | grenades | `grenades.spec.ts` | `src/combat/grenades/`, the grenade arm, the danger marker, the flash white-out and deafness, `Game.ts` |
 | mp | seven specs: `multiplayer`, `multiplayer-underground`, `-match`, `-combat`, `-moving-target`, `-matchend`, `-pause-damage` (`multiplayer-facility` is in facility, `multiplayer-four` in mp4) | network, lobby, remote players, game modes, room screens, the match end screen, hitboxes, `App.ts` |
+| skins | `skins.spec.ts` | weapon models and clips (`src/weapons/models/`, `animation/`), `viewModel.ts`, `core/skins.ts`, `core/attachments.ts`, the Workbench and its preview. Equips every skin on every gun and saves a screenshot of each aimed view. |
+| modes | `koth.spec.ts`, `horde.spec.ts` | the rebuilt modes' rules and presenters (`hillState`, `KingOfTheHillController`, `reviveRules`, `SquadController`, the horde files, their panels) and `e2e/coop.ts`. Each test opens two to four browser contexts over real WebRTC (a late join and a rejoin among them) and takes 6 to 20 minutes on software rendering. |
 | mp4 | `multiplayer-four.spec.ts` | the 3 to 4 player network files (`GuestMesh`, `directLinks`, `matchSync`, `HostRoster`, `PeerConnection`, `MatchMessageRouter`); not part of mp, and in the full suite |
 | perf | `perf-log.spec.ts`, `performance-check.spec.ts` | never by a change: measurements, run by name before a release or after render work |
 

@@ -72,10 +72,12 @@ export class Weapon {
     }
   }
 
-  tryFire(): boolean {
+  /** `cooldown` is the wait before the next shot; a blade passes the attack's own (its two attacks
+   * recover at different speeds), a gun uses its fire rate. */
+  tryFire(cooldown = 1 / this.definition.fireRate): boolean {
     if (this.reloading || this.cooldown > 0 || this.ammoInMagazine <= 0) return false;
     this.ammoInMagazine--;
-    this.cooldown = 1 / this.definition.fireRate;
+    this.cooldown = cooldown;
     return true;
   }
 

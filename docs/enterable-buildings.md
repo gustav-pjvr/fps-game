@@ -1,5 +1,9 @@
 # Enterable Valley buildings (v4.4.0, section 9 of docs/squad-arsenal-night.md)
 
+Since v5.1.0 every window opening holds a pane of glass that takes holes, cracks and breaks, and
+walls and windows muffle sound: `docs/glass.md`, `docs/sound.md`. The openings themselves are
+unchanged.
+
 ## Part 1, as built (branch feature/houses)
 
 - **Shared door module** (`world/doors/`): `doorGeometry.ts` (pure: `DoorPlane` with an optional floor `y`, pick box, ray test, walk crossing, body in doorway, distance), `SlidingDoorView.ts` (two steel leaves, status lamps, a collider enabled only while shut) and `interactiveObjects.ts` (`InteractiveWorldObjects`, the world side `core/facilityInteraction.ts` drives). The Facility's `FacilityObjects` uses them unchanged in behaviour; `facilityDoors.ts` re-exports the moved helpers.

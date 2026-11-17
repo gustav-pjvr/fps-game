@@ -177,8 +177,9 @@ relaying, the `acceptsInMatch` gate, also runs on every client in `routeMatchMes
 ### 3.3 Shared module, and keeping Three.js and the DOM out of the server
 
 The server imports, at runtime: `src/network/protocol.ts`, `senderAuthority.ts`, `routing.ts` (new),
-`serverEnvelope.ts` (new), `HostRoster.ts`, and through them `src/core/config.ts`, `src/core/version.ts` and
-`src/combat/grenades/grenadeTuning.ts`. Verified: `config.ts` imports only `version.ts`; `grenadeTuning.ts`
+`serverEnvelope.ts` (new), `HostRoster.ts`, `glassWire.ts` (since v5.2.0: the glass message checks, kept apart
+from the world code in `world/glass/glassPane.ts`), and through them `src/core/config.ts`, `src/core/version.ts`
+and `src/combat/grenades/grenadeTuning.ts`. Verified: `config.ts` imports only `version.ts`; `grenadeTuning.ts`
 imports only `config.ts`; `protocol.ts` imports `GameMode` from `gameModes.ts` as a type only (erased);
 `HostRoster.ts` imports `config.ts` and `protocol.ts`. None imports Three.js, Rapier or the DOM, and none
 uses `window`, `document` or `import.meta`.

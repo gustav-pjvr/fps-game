@@ -71,10 +71,24 @@ export class PacingDirector {
   private undergroundSeconds = 0;
 
   constructor(
-    private readonly options: DirectorOptions,
+    private options: DirectorOptions,
     private readonly rng: () => number,
   ) {
     this.waveTimer = options.waveInterval;
+  }
+
+  /** New numbers from now on (Showdown gives each act its own cap, wave size and mix). The phase,
+   * the intensity and the wave timer carry on as they are. */
+  retune(options: DirectorOptions): void {
+    this.options = options;
+  }
+
+  /** Ends a build-up that has gone on long enough without the player's own fight bringing the peak
+   * (Showdown: an act must end). No effect in any other phase. */
+  forcePeak(): void {
+    if (this.phaseValue !== 'buildUp') return;
+    this.intensityValue = Math.max(this.intensityValue, this.options.peakThreshold);
+    this.enter('peak', this.roll(this.options.peakMin, this.options.peakMax));
   }
 
   get intensity(): number {

@@ -4,7 +4,7 @@ import { isNetworkMessage } from './protocol.ts';
 
 const empty: MatchSyncSource = {
   roster: null,
-  goldenGoose: null,
+  koth: null,
   geese: [],
   horde: null,
   ammoDrops: [],
@@ -24,7 +24,7 @@ describe('buildMatchSync', () => {
     const messages = buildMatchSync({
       ...empty,
       roster: [{ slot: 0, username: 'Host' }, { slot: 3, username: 'Dee', peerId: 'p3' }],
-      goldenGoose: { carrierSlot: 2, position: { x: 1, y: 2, z: 3 } },
+      koth: { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] },
       geese: [{ id: 'g1', x: 1, y: 0, z: 2 }],
       bonusGeese: [{ id: 'b1', x: 5, y: 0, z: 6 }],
       thrownGeese: [
@@ -33,9 +33,9 @@ describe('buildMatchSync', () => {
       ],
       verdict: { winnerSlot: 1, scoreboard: [{ slot: 1, score: 10 }] },
     });
-    expect(messages.map((m) => m.type)).toEqual(['rosterSync', 'scoreboardSync', 'goldenGooseState', 'gooseSpawned', 'bonusGooseSpawned', 'gooseThrown', 'matchEnded']);
+    expect(messages.map((m) => m.type)).toEqual(['rosterSync', 'scoreboardSync', 'kothState', 'gooseSpawned', 'bonusGooseSpawned', 'gooseThrown', 'matchEnded']);
     for (const message of messages) expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
-    expect(messages[2]).toEqual({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 });
+    expect(messages[2]).toMatchObject({ type: 'kothState', crown: 1, hill: [0, 0] });
     expect(messages[3]).toEqual({ type: 'gooseSpawned', id: 'g1', x: 1, y: 0, z: 2, killerSlot: null });
     expect(messages[5]).toEqual({
       type: 'gooseThrown',
@@ -78,21 +78,25 @@ describe('buildMatchSync', () => {
     expect(isNetworkMessage({ type: 'scoreboardSync', scores: [entry, entry, entry, entry, entry] })).toBe(false);
   });
 
-  it('carries the Horde wave, eliminated set, result, flock and ammo crates', () => {
+  it('carries the Horde wave, fallen set, result, state, flock and supply crates', () => {
+    const state = { wave: 6, phase: 'active' as const, nextIn: 0, left: 9, meter: 3, need: 18, boss: { id: 'mother' as const, hp: 900, max: 2250 }, kills: [{ slot: 0 as const, kills: 31 }] };
     const messages = buildMatchSync({
       ...empty,
-      horde: { wave: 4, eliminated: new Set([0, 2]), result: 'wiped', geese: [{ id: 'h1', x: 0, y: 3, z: 0, flavor: 'flyer' }] },
+      horde: { wave: 6, eliminated: new Set([0, 2]), result: 'wiped', state, geese: [{ id: 'h1', x: 0, y: 3, z: 0, flavor: 'boss', boss: 'mother' }] },
       ammoDrops: [{ id: 'a1', x: 7, y: 0, z: 8 }],
     });
+    // The state comes before the flock: a boss is built with the health its state names.
     expect(messages).toEqual([
-      { type: 'hordeSyncState', wave: 4, eliminated: [0, 2], result: 'wiped' },
-      { type: 'hordeGooseSpawned', id: 'h1', x: 0, y: 3, z: 0, flavor: 'flyer' },
+      { type: 'hordeSyncState', wave: 6, eliminated: [0, 2], result: 'wiped' },
+      { type: 'hordeState', ...state },
+      { type: 'hordeGooseSpawned', id: 'h1', x: 0, y: 3, z: 0, flavor: 'boss', boss: 'mother' },
       { type: 'hordeAmmoDropSpawned', id: 'a1', x: 7, y: 0, z: 8 },
     ]);
+    for (const message of messages) expect(isNetworkMessage(JSON.parse(JSON.stringify(message)))).toBe(true);
   });
 
   it('leaves the Horde result out while the run is still going', () => {
-    const [state] = buildMatchSync({ ...empty, horde: { wave: 1, eliminated: [], result: undefined, geese: [] } });
+    const [state] = buildMatchSync({ ...empty, horde: { wave: 1, eliminated: [], result: undefined, state: null, geese: [] } });
     expect(state).toEqual({ type: 'hordeSyncState', wave: 1, eliminated: [] });
   });
 });

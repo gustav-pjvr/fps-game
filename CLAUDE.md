@@ -1,7 +1,7 @@
 # Hunter 'n Goose
 
 A browser first-person shooter (TypeScript, Three.js, Rapier, PeerJS, Vite) deployed to Cloudflare
-Pages at hunter-n-goose.pages.dev. Current version 4.7.0. The owner is Gustav; address them as Gustav.
+Pages at hunter-n-goose.pages.dev. Current version 5.2.0. The owner is Gustav; address them as Gustav.
 
 ## Read first
 
@@ -31,8 +31,5 @@ code disagree, the code is right; fix the doc.
 
 ## Agents
 
-Gustav's global rules (`~/.claude/CLAUDE.md`) load in every session and are binding here: the model routing
-table, a task tag on every agent description, the exact line "Do not spawn any subagents. Do all of this work
-yourself, directly." in every agent prompt, an independent Opus audit plus one re-check for complex or
-security-sensitive code, the vault sync at the end of work, and a short routing note closing each substantial
-reply. Parallel feature work uses one git worktree per feature (see `docs/workflow.md`).
+Gustav's global rules (`~/.claude/CLAUDE.md`) load in every session and are binding here. They are not restated
+in this file, so the two can never disagree. Parallel feature work uses one git worktree per feature (see `docs/workflow.md`).

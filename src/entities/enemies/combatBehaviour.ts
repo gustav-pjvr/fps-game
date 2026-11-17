@@ -495,6 +495,7 @@ export class CombatBehaviour {
   private updateMelee(player: Player, current: EnemyPosition, hasLineOfSight: boolean): void {
     if (this.attackCooldown > 0 || player.isDead || !hasLineOfSight) return;
     this.attackCooldown = ENEMY_ATTACK_INTERVAL;
+    this.hooks.onMeleeSwing?.(headOf(current));
     swingMelee(this.physics, headOf(current), player, this.body.archetype.meleeDamage, this.body.excludeRigidBody);
   }
 }

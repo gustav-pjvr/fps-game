@@ -113,8 +113,9 @@ test('a flash carrier throws a flash that whites out a player facing it, and not
   await startSolo(page, 'flash');
   const aim = await forward(page);
 
-  // Lobbed a few metres ahead and watched: strongly blinded.
-  const facing = await flashAndWatch(page, { x: aim.x, y: -0.3, z: aim.z }, true);
+  // Thrown at the ground a few metres ahead and watched: strongly blinded. (A flatter throw now
+  // carries 15 m and more, over the brow of the spawn's slope and out of sight.)
+  const facing = await flashAndWatch(page, { x: aim.x, y: -0.9, z: aim.z }, true);
   expect(facing).toBeGreaterThan(0.5);
 
   // Let the white-out clear (hold up to 3.5 s, fade up to 1.2 s of game time).

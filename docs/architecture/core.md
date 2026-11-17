@@ -255,25 +255,29 @@ Its Loadout button exists only for `modeUsesCustomLoadout` modes; a change appli
 
 ## 5. Audio
 
+The sound engine was rebuilt as a spatial engine for the sound and glass work; `docs/sound.md` is the as-built doc
+and this is the short version.
+
 | Piece | File | Lifetime |
 |---|---|---|
-| `SoundEngine` | `src/audio/SoundEngine.ts` | One per match. `SoundEngine.create()` in `Game.create` makes an `AudioContext` and loads weapon samples; `Game.dispose` calls `sound.dispose()` (closes the context). |
+| `SoundEngine` | `src/audio/SoundEngine.ts` | One per match. `SoundEngine.create()` in `Game.create` makes an `AudioContext`; `Game.dispose` calls `sound.dispose()` (closes the context). The sound test page builds one on an `OfflineAudioContext` to measure sounds. |
 | `LobbyMusic` | `src/audio/LobbyMusic.ts` | One per `App`, built on `HTMLAudioElement`, not Web Audio. Started in `enterLobby`, faded out when a match starts. |
-| Pure helpers | `ambience.ts`, `flashDeafness.ts`, `lobbyPlaylist.ts`, `weaponSounds.ts`; `src/core/positionalAudio.ts` | Unit-tested. Positional helpers give `volumeScale` and `pan` for `playGunshot`, `playExplosion` and friends. |
+| Pure rules | `spatial.ts`, `occlusion.ts`, `mix.ts`, `ambience.ts`, `flashDeafness.ts`, `lobbyPlaylist.ts`, `weaponSounds.ts` | Unit-tested. Loudness by distance, the air's low-pass, arrival delay, direction, what a wall or a pane does, bus levels and dynamics, reverb impulses. |
+| The world's answer | `src/world/soundProbe.ts` | Ray casts (at most 10 per sound, at spawn) telling the engine what lies between a source and the listener. |
 
-`SoundEngine` is mostly synthesised (`tone`, `noiseBurst`, `sweep`). The only recorded effects are the shots and reloads of
-`pistol`, `rifle`, `shotgun` and `sniper` in `WEAPON_SOUND_PATHS` (`src/audio/weaponSounds.ts`); `playGunshot` falls back to
-synthesis when a buffer is missing (the MP5 gets the generic burst). A reverb send, a master gain and a flash-grenade low-pass
-sit on the master bus. `updateAmbience` runs every tick: combat music follows the director phase, a heartbeat starts at low
-health, and the Facility's looping track (`startBedMusic`, `BED_LEVEL`) replaces the synthesised music.
+Every effect is synthesized; there are no samples. A sound is one event whose layers play into one voice: a gain
+(distance and walls), a low-pass (air, walls, the rear), a `PannerNode` (HRTF by default) and a send to the reverb of
+the space the listener stands in (the valley, a house's room, the Facility's hall). **Callers pass a world position,
+never a volume or a pan**; the player's own sounds pass none. `Game.render` gives the engine the camera as the listener
+every frame, and `Game` installs the probe (`setWorldProbe`). Voices feed buses (weapons, movement, world, voices, blast,
+interface), then an effects level, a limiter and a soft clipper; a near blast ducks the rest. Music joins after the
+limiter.
 
-Underground (`AmbienceInputs` in `SoundEngine.ts`, helpers in `ambience.ts`): `Game` passes `undergroundAmount` only
-while the player is below ground (`isBelowGround`), plus `reactorDistance`. `updateAmbience` raises the reverb send by
-`undergroundReverbScale` (up to 1.6) and closes the reverb's low-pass from 14,000 Hz toward 1,800 Hz, a darker echo. A
-reactor hum (48 and 50 Hz sines plus low-passed noise, built on first need) follows `reactorHumGain(distance)`: full
-within 4 m of the lab's nearest reactor core, silent from 22 m, scaled by the music volume. Sounds that cross the
-surface are muffled by `undergroundMuffleFactor` in `src/core/positionalAudio.ts` (0.35 when the listener and the source
-are on different sides, else 1), applied to enemy and remote gunshots, remote footsteps, goose and grenade blasts.
+`updateAmbience` runs every tick: it sets the listener's space (`Game.listenerSpace`), runs the wind (full outdoors,
+dull in a house, absent underground and in the Facility), the reactor hum near a lab's core (`reactorHumGain`), the
+combat music from the director's phase, the Facility's looping track (`startBedMusic`) and the low-health heartbeat.
+A sound on the other side of the ground is occluded by the ground like any wall: the old flat underground multiplier
+is gone.
 
 Music files are `public/assets/music/<slug>.mp3`. They are gitignored (the licence forbids redistributing them and the repo is
 public; `.gitignore` keeps only the folder's `README.md`), so they exist only in a working folder and on the deployed site.
@@ -345,9 +349,23 @@ favours unheard tracks and keeps its state in `localStorage` (`hunter-n-goose.lo
 - `functions/api/telemetry.ts` (`onRequestPost`) accepts the beacon from `Game.sendMatchTelemetry` (`mode`, `waveOrKills`,
   `durationMs`, `version`), stores it only if a KV namespace `MATCH_TELEMETRY` is bound, and always answers 204. Since v4.7.1 a
   multiplayer match also sends optional connection numbers (`transport`, `players`, `pingP50`, `pingP95`, `snapshotGapP95`,
-  `stallsPerMin`, `joinMs` for a guest), summarised by `src/network/matchTelemetry.ts`; a malformed one is dropped on its own.
+  `stallsPerMin`, `renderStallsPerMin`, `joinMs` for a guest), summarised by `src/network/matchTelemetry.ts`; a malformed one is dropped on its own.
   `MATCH_TELEMETRY` is bound to the Pages project (production and preview) since 2026-11-05. It is the before-and-after
   baseline for the relay server (`docs/server-relay-design.md`).
+- `functions/api/errors.ts` (`onRequestPost`) takes anonymous crash and freeze reports from `src/core/errorReporter.ts`, installed
+  once in `src/main.ts` before the App is created (it does nothing when `import.meta.env.DEV`). A batch is a JSON array (or
+  `{ reports }`) of up to 10 reports, body at most 16 KB (a bigger one is dropped whole); each report is `kind`
+  (`error` | `rejection` | `freeze` | `webgl`), `message` (300), `stack` (2000, optional), `version` (32), `where` (40: `menu` |
+  `solo` | `multiplayer`, from `App.reportingWhere`), `graphics` (16, the preset), `ua` (40, family and major version such as
+  `Chrome 142`, derived on the client, never the raw user agent) and, for a freeze, `freezeMs` (clamped 0 to 60000). A malformed
+  report is dropped on its own. Each is stored in `MATCH_TELEMETRY` as `error:<ms>:<uuid>` with a 30 day `expirationTtl`, only if
+  bound, and the answer is always 204. Client side: `window` `error` and `unhandledrejection`, `webglcontextlost` (a capture
+  listener on the document, ignoring the canvas `Renderer.dispose` removes on purpose), and a freeze is a gap of more than 1 s
+  between animation frames with the page visible throughout (its own rAF chain, so the menus are covered too). URLs lose their
+  query and fragment; the same kind and message counts once per session; at most 20 reports per session, sent in batches at most
+  every 10 s and on `pagehide` (sendBeacon, else keepalive fetch). The game state comes in through a getter, so the reporter
+  imports no game module. Read the data with `node scripts/telemetry-report.mjs [--days 7]` (namespace id from `--namespace-id` or
+  `MATCH_TELEMETRY_NAMESPACE_ID`): matches by mode and version, multiplayer medians, errors grouped by kind, message and version.
 
 `npm run deploy` builds locally and uploads `dist/`, so what ships is the working folder, music included. Live site:
 `hunter-n-goose.pages.dev` (`README.md`).
@@ -363,7 +381,7 @@ favours unheard tracks and keeps its state in `localStorage` (`hunter-n-goose.lo
 | Add a rebindable action | `src/input/actions.ts` (`Action`, `DEFAULT_KEY_BINDINGS`, `REBINDABLE_ACTIONS`, `ACTION_LABELS`), `src/input/GamepadInput.ts` (`GAMEPAD_ACTIONS`), consume with `input.consumeJustPressed` in `Game.update` | The `flashlight` action. |
 | Add a menu screen | New class in `src/ui/menu/` using `menuStyles.ts`; build it in the `App` constructor and wire show and hide through callbacks | `src/ui/menu/MultiplayerMenu.ts`; add `ModalScope` if it opens over another overlay. |
 | Add a main-menu or pause-menu button | `src/ui/menu/MainMenu.ts` and `App`; `src/ui/menu/PauseMenu.ts` and its construction in `Game.create` | The `onLoadout` callback in both. |
-| Add a sound effect | A `playX` method in `src/audio/SoundEngine.ts`, called where the event happens (pass `volumeScale` and `pan` from `src/core/positionalAudio.ts` for world sounds) | `playTorchClick`, `playPickup`. A recorded sample needs a loader like `loadWeaponSoundBuffers`. |
+| Add a sound effect | A `playX` method in `src/audio/SoundEngine.ts`, called where the event happens with the source's world position (none for the player's own sound); add it to `src/audio/soundCatalog.ts` so the sound test page and the measurements cover it | `playTorchClick`, `playPickup`. A recorded sample needs a loader like `loadWeaponSoundBuffers`. |
 | Add lobby music | `public/assets/music/<slug>.mp3`, the slug in `LOBBY_TRACK_IDS` (`src/audio/lobbyPlaylist.ts`), `docs/music.md` | Existing slugs; the files are gitignored. |
 | Change a Valley constant | `src/core/config.ts` (`TERRAIN_*`, `VEGETATION_*`, `FLAT_ZONE_*`, `TOWN_*`, `WORLD_SIZE_CHUNKS`) | Read the constant's comment first: world size is tied to boundary and ramp values. Background: `docs/world-generation.md`. |
 | Change the Facility | `src/world/facility/facilityLayout.ts` (generator), `FacilityBuilder.ts`, `facilityModes.ts`; `FACILITY_*` in `src/core/config.ts` | `docs/facility-map.md`; tests in `src/world/facility/*.test.ts`. |

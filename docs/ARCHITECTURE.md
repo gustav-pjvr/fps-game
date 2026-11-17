@@ -46,8 +46,9 @@ the HUD reads the result.
 3. **Multiplayer is player against player.** Enemy AI and the Director and Uplink modes exist only in solo.
 4. **The UI is hand-built DOM and canvas.** HUD and menus are TypeScript classes writing styles directly; there is
    no React and no CSS framework. Controller navigation of menus is a layer on top (`src/ui/gamepadFocus.ts`).
-5. **Sound is mostly synthesized.** `SoundEngine` (one per match) builds gunshots, footsteps, explosions and the
-   combat music from oscillators and noise; only the weapon sounds and the two recorded music uses are files.
+5. **Sound is synthesized and spatial.** `SoundEngine` (one per match) builds every effect from oscillators and
+   noise and places it in the world: callers pass a position, and the engine works out loudness, direction and
+   what lies between (`docs/sound.md`). Only the two recorded music uses are files.
 6. **Tests drive the real game.** Playwright specs talk to a debug API the match installs (`window.__gameDebug`,
    `src/core/gameDebugApi.ts`), so the e2e suite is part of the contract of `Game`.
 
@@ -67,7 +68,9 @@ the HUD reads the result.
 | `src/input/` | Keyboard, mouse and gamepad, actions and bindings | core.md section 4, controller.md |
 | `src/settings/` | Persisted settings and graphics presets | core.md section 4 |
 | `src/ui/` | HUD, menus (`ui/menu`), minimap, match-end screen, gamepad focus | core.md section 4, ui-lobby.md |
-| `src/audio/` | Sound engine, ambience, lobby music, weapon sounds | core.md section 5, music.md |
+| `src/audio/` | Sound engine, loudness and occlusion rules, the mix, ambience, lobby music, weapon sounds | sound.md, core.md section 5, music.md |
+| `src/world/glass/` | The glass in the house windows: state, geometry, drawing | glass.md |
+| `src/soundlab/` | The sound test page (`soundlab.html`) | sound.md |
 | `src/lobby/` | The pre-match lobby scene | core.md section 1 |
 | `src/utils/`, `src/types/` | Seeded RNG and helpers; type shims | |
 | `e2e/`, `scripts/` | Playwright specs, the group runner | testing.md |

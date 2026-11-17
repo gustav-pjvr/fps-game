@@ -5,6 +5,7 @@ import {
   STALL_GAP_MS,
   buildMultiplayerTelemetryExtras,
   percentile,
+  renderStallsPerMinute,
 } from './matchTelemetry.ts';
 
 describe('percentile', () => {
@@ -137,6 +138,19 @@ describe('buildMultiplayerTelemetryExtras', () => {
     acc.recordSnapshot(1, 200);
     const extras = buildMultiplayerTelemetryExtras(acc.summary(60000), 3, 812.4, transport);
     expect(extras).toEqual({ transport, players: 3, pingP50: 40, pingP95: 40, snapshotGapP95: 200, stallsPerMin: 1, joinMs: 812 });
+  });
+
+  it('adds the render stalls per minute when given, and leaves them out when not', () => {
+    const acc = new MatchTelemetryAccumulator();
+    expect(buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, 'p2p', 1.5)).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0, renderStallsPerMin: 1.5 });
+    expect(buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, 'p2p', Number.NaN)).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0 });
+  });
+
+  it('renderStallsPerMinute is stalls over match minutes, 0 without match time', () => {
+    expect(renderStallsPerMinute(3, 120000)).toBe(1.5);
+    expect(renderStallsPerMinute(1, 90000)).toBe(0.67);
+    expect(renderStallsPerMinute(5, 0)).toBe(0);
+    expect(renderStallsPerMinute(Number.NaN, 60000)).toBe(0);
   });
 
   it('leaves out what is unknown', () => {

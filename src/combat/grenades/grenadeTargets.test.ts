@@ -18,11 +18,10 @@ describe('grenade blast targets', () => {
     const geese = { applyBlast: vi.fn() };
     const combined = withBlastTargets(targets as unknown as GrenadeTargets, geese);
     const position = new THREE.Vector3(1, 0, 2);
-    const damageAt = (): number => 50;
-    const reaches = (): boolean => true;
-    combined.applyBlast(position, damageAt, reaches);
-    expect(targets.applyBlast).toHaveBeenCalledWith(position, damageAt, reaches);
-    expect(geese.applyBlast).toHaveBeenCalledWith(position, damageAt, reaches);
+    const damageFor = (): number => 50;
+    combined.applyBlast(position, damageFor);
+    expect(targets.applyBlast).toHaveBeenCalledWith(position, damageFor);
+    expect(geese.applyBlast).toHaveBeenCalledWith(position, damageFor);
     expect(combined.applyFlash(() => 1)).toBe(2);
     combined.notifyGunshot(position, 'frag');
     expect(targets.notifyGunshot).toHaveBeenCalledWith(position, 'frag');

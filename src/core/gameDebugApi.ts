@@ -21,7 +21,18 @@ export interface GameDebugApi {
   getLiveEntityArchetypes(): (string | undefined)[];
   raycastForward(): { hit: boolean; isEntity?: boolean; distance?: number; point?: { x: number; y: number; z: number } };
   getCameraFov(): number;
+  /** Test-only, for frame captures (scripts/viewShots.mjs): stops the game's clock while frames
+   * keep drawing, and steps a held game on by `seconds`. */
+  holdTime(held: boolean): void;
+  stepTime(seconds: number): void;
+  /** The last shots fired (at most 64, oldest first) and what their handling came to: the weapon,
+   * the shot's place in its burst, how far it was aimed (0 hip to 1), the cone it was drawn from and
+   * the bloom in it (radians), and the kick it gave the view (docs/gun-handling.md). */
+  getShotLog(): { weaponId: string; shotIndex: number; aim: number; spread: number; bloom: number; kick: number; side: number }[];
   getCameraChildrenDebug(): unknown[];
+  /** Every drawn object within `radius` metres of the eye: its path of names, where its centre
+   * is in the camera's space and on screen (-1 to 1), and its size. For finding a stray piece. */
+  getNearEyeObjects(radius?: number): { path: string; kind: string; cam: number[]; screen: number[]; size: number[] }[];
   getWorldSeed(): number;
   /** Test-only: applies real damage through Player.takeDamage (the same path enemy shots use). */
   damagePlayer(amount: number): void;
@@ -110,10 +121,67 @@ export interface GameDebugApi {
       onScreen: boolean;
     }[];
   } | null;
-  /** The Uplink mission's state (docs/visual-overhaul.md, phase 4), null outside a mission match. */
-  getMissionDebug(): (MissionView & { won: boolean; kills: number; damageTaken: number }) | null;
-  /** Goose Horde, null in every other mode: the current wave and every live horde goose. */
-  getHordeDebug(): { wave: number; geese: { x: number; y: number; z: number; flavor: string }[] } | null;
+  /** Operation Uplink's state (docs/uplink.md), null outside a mission match: the stage, the alert
+   * level, the redeploys left, the timers and the core as the HUD shows them, plus whether the
+   * player carries the core and where it hovers when nobody does. */
+  getMissionDebug(): (MissionView & {
+    won: boolean; kills: number; damageTaken: number; carrying: boolean; corePosition: { x: number; y: number; z: number };
+  }) | null;
+  /** Operation Uplink: finishes the current stage as if its rule had been met (the hack done, the
+   * core plugged in, the upload done, the extraction reached). */
+  completeMissionStage(): void;
+  /** Operation Uplink: runs the operation's own clock `seconds` forward with the player where they
+   * stand, so its timers and waves fire without waiting for them in a slow test run. */
+  advanceMission(seconds: number): void;
+  /** King of the Hill, null in every other mode and on a guest before the host's first state: the
+   * hill, the crown and who holds it, as this client shows them. */
+  getKothDebug(): {
+    hill: { x: number; z: number }; next: { x: number; z: number }; radius: number; moveIn: number;
+    hold: 'empty' | 'held' | 'contested'; holder: number | null; crown: number | null; crownAt: { x: number; z: number } | null;
+    push: boolean; teams: boolean;
+  } | null;
+  /** Showdown (the solo Director mode), null in every other mode: the act, the stage, the score and
+   * its multiplier, the redeploys left, and how many enemies are alive. */
+  getShowdownDebug(): {
+    act: number; totalActs: number; stage: 'act' | 'breather' | 'finale' | 'won' | 'lost'; phase: string;
+    score: number; multiplier: number; bestMultiplier: number; kills: number; redeploysLeft: number; alive: number;
+    /** Supply crates on the field. */
+    crates: { id: string; x: number; y: number; z: number }[];
+    /** Whether a Warden is alive. */
+    warden: boolean;
+  } | null;
+  /** Showdown, test-only: jumps to the start of act `act` (1 to 5). */
+  setShowdownAct(act: number): void;
+  /** A Director or Showdown match, test-only: ends the current build-up with its peak at once. */
+  forceDirectorPeak(): void;
+  /** Test-only, like damageEnemy: kills every live enemy through takeDamage, as the player's kills. */
+  killEnemies(): void;
+  /** King of the Hill, on the host: stops (or restarts) the hill's clock, so a slow test run can
+   * finish its checks on one hill. */
+  holdKothHill(held: boolean): void;
+  /** Goose Horde, null in every other mode: the wave panel's numbers as this client shows them, every
+   * live horde goose, the supply crates on the field, and this player's own state. */
+  getHordeDebug(): {
+    wave: number; totalWaves: number; phase: 'active' | 'intermission' | 'cleared'; nextIn: number; left: number;
+    meter: number; need: number; boss: { id: string; hp: number; max: number } | null;
+    kills: { slot: number; kills: number }[];
+    geese: { id: string; x: number; y: number; z: number; flavor: string }[];
+    crates: { id: string; x: number; y: number; z: number }[];
+    /** 'up', 'down' (a teammate can revive) or 'out' (until the next wave); solo is always 'up'. */
+    own: 'up' | 'down' | 'out';
+    /** Slots this client holds to be down or out. */
+    fallen: number[];
+    /** Solo: the Second Winds left. */
+    secondWinds: number;
+  } | null;
+  /** Goose Horde, on the authoritative side (solo or the host): skips to wave `wave` (1 based), with
+   * nothing left of the current one, for tests of the late waves and the bosses. */
+  setHordeWave(wave: number): void;
+  /** Goose Horde, on the authoritative side: kills every live horde goose as this player's own. */
+  killHordeGeese(): void;
+  /** Goose Horde, on the authoritative side: while held, a wave that has run out of geese does not
+   * end, so a slow test run can finish its checks inside one wave. */
+  holdHordeWave(held: boolean): void;
   /** The torch (render/Flashlight.ts): whether this match has one, whether it is on, the match's
    * weather and whether it is on the Facility. */
   getTorchDebug(): { available: boolean; on: boolean; weather: 'day' | 'night' | 'fog'; facility: boolean };
@@ -177,6 +245,28 @@ export interface GameDebugApi {
   };
   /** Like setValleyDoor, for the tower at `index`. */
   setTowerDoor(index: number, open: boolean): boolean;
+  /** The windows' glass (docs/glass.md), null off the Valley: how many panes are streamed in, the
+   * store's revision, what the view draws, and every streamed-in pane within `radius` metres of the
+   * player (all of them when omitted) with its place, size and state. */
+  getGlassDebug(radius?: number): {
+    streamed: number; revision: number; drawn: { panes: number; airborne: number; lying: number };
+    panes: { id: number; x: number; y: number; z: number; ux: number; uz: number; nx: number; nz: number; halfWidth: number; halfHeight: number; damage: number; broken: boolean; holes: number[] }[];
+  } | null;
+  /** Test-only: hits pane `id` at (u, v) with `power` exactly like this player's own round (state,
+   * look, sound and, in multiplayer, the glassHit send). False when there is no such pane or it is
+   * already broken. */
+  hitGlass(id: number, u: number, v: number, power: number): boolean;
+  /** Test-only, Valley only: unloads the terrain chunk holding (x, z) with everything streamed with
+   * it (its houses, their doors, lamps and glass); the game loads it again within a few ticks. False
+   * when that chunk is not loaded. */
+  restreamChunkAt(x: number, z: number): boolean;
+  /** The sound engine's counters (docs/sound.md): voices opened, skipped as inaudible or over the
+   * cap, the most alive at once, the occlusion probe's ray casts, and where the listener stands. */
+  getSoundDebug(): {
+    voices: { opened: number; inaudible: number; overCap: number; peakLive: number };
+    probe: { probes: number; casts: number; clear: number; bent: number; blocked: number };
+    space: string;
+  };
   /** The houses' lamps: how many are streamed in, lit and shot out, and the light pool. */
   getHouseLights(): { lamps: number; lit: number; dead: number; lights: { x: number; y: number; z: number; on: boolean }[] } | null;
   /** Test-only: shoots out lamp `index` exactly like a hit (light, effect, sound and, in multiplayer,
@@ -214,6 +304,11 @@ export interface GameDebugApi {
   /** Multiplayer only: every opponent's smoothed position, by slot (ascending), for a 3 to 4
    * player e2e test. Empty outside a multiplayer match. */
   getOpponentPositions(): { slot: number; x: number; y: number; z: number }[];
+  /** Multiplayer only: the weapon and skin each opponent is seen holding, by slot (ascending); null
+   * until their first snapshot names one. Empty outside a multiplayer match. */
+  getOpponentWeapons(): { slot: number; weaponId: string | null; skinId: string | null }[];
+  /** The held weapon's id and the skin it wears. */
+  getHeldWeapon(): { weaponId: string; skinId: string };
   /** Multiplayer only: the scoreboard's rows as the HUD shows them (multiplayerHud.ts's
    * scoreboardRows), highest score first. Empty outside a multiplayer match. */
   getScoreboardRows(): { slot: number; name: string; score: number; isYou: boolean }[];

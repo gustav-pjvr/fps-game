@@ -4,34 +4,44 @@ import type { GrenadeSurface } from './GrenadeSystem.ts';
 
 /** Particle pools, shared by every frag at once: a burst past these reuses the oldest particles, so
  * four or five frags together cost the same as the caps. */
-export const FRAG_MAX_PUFFS = 96;
-export const FRAG_MAX_SPARKS = 96;
-export const FRAG_MAX_DEBRIS = 48;
+export const FRAG_MAX_PUFFS = 168;
+export const FRAG_MAX_SPARKS = 160;
+export const FRAG_MAX_DEBRIS = 96;
 export const FRAG_MAX_SCORCHES = 8;
-/** Per frag. */
-const FIRE_PUFFS = 8;
-const DUST_PUFFS = 12;
-const SPARKS = 22;
-const DEBRIS = 10;
+/** Per frag: 42 puffs in all (the core, the fireball, the smoke column, the dirt fountain and the
+ * dust ring), so four frags at once fit the pool. */
+const FIRE_PUFFS = 6;
+const SMOKE_PUFFS = 10;
+const DIRT_PUFFS = 9;
+const DUST_PUFFS = 16;
+const SPARKS = 38;
+const DEBRIS = 22;
 
 const GRAVITY = 9.8;
-/** The white-orange flash at the core: under a tenth of a second. */
-const CORE_SECONDS = 0.085;
-const CORE_SIZE = [1.1, 2.8] as const;
-const CORE_COLOR = new THREE.Color(6.5, 4.4, 2.3);
-/** The fireball: hot for this long, then it cools to smoke that rises and thins out. */
-const FIRE_HOT_SECONDS = 0.3;
+/** The white-orange flash at the core: under a tenth of a second, and wider than the fireball. */
+const CORE_SECONDS = 0.09;
+const CORE_SIZE = [1.8, 5] as const;
+const CORE_COLOR = new THREE.Color(7.5, 5.2, 2.8);
+/** The fireball: a frag is high explosive, not fuel, so it is hot for a moment only and then it is
+ * smoke. */
+const FIRE_HOT_SECONDS = 0.2;
 const FIRE_HOT = new THREE.Color(2.4, 0.85, 0.19);
 const FIRE_EMBER = new THREE.Color(0.95, 0.27, 0.05);
 const SMOKE = new THREE.Color(0.075, 0.07, 0.065);
+/** The column thins to this paler grey as it spreads. */
+const SMOKE_THIN = new THREE.Color(0.2, 0.195, 0.19);
 const SMOKE_RISE = 1.4;
 const DUST = new THREE.Color(0.155, 0.13, 0.098);
+/** The dirt thrown up out of the ground: darker and browner than the dust that hangs after it. */
+const DIRT = new THREE.Color(0.085, 0.066, 0.046);
+/** The dirt fountain falls back at this rate (m/s2): heavier than smoke, lighter than a stone. */
+const DIRT_FALL = 13;
 /** Dust puffs ride this share of their size above the surface, so the ground does not cut them. */
 const DUST_LIFT = 0.28;
 /** Spark colour above 1 so it blooms, as the Facility's lamp sparks (lampBreakEffect.ts). */
 const SPARK = new THREE.Color(5, 2.6, 0.9);
 /** The scorch: this wide, fully dark for SCORCH_SECONDS less the fade, then fading. */
-const SCORCH_SIZE = 3.2;
+const SCORCH_SIZE = 3.8;
 const SCORCH_SECONDS = 25;
 const SCORCH_FADE_SECONDS = 6;
 /** Off the surface, so the scorch never fights the floor for depth. */
@@ -151,7 +161,7 @@ const scorchFragment = /* glsl */ `
   }
 `;
 
-type PuffKind = 'core' | 'fire' | 'dust';
+type PuffKind = 'core' | 'fire' | 'smoke' | 'dirt' | 'dust';
 
 interface Puff {
   kind: PuffKind;
@@ -203,10 +213,13 @@ const smooth = (edge0: number, edge1: number, x: number): number => {
 };
 
 /**
- * The frag's explosion (docs/grenades.md): a white-orange flash core under a tenth of a second, a
- * fireball of soft billboard puffs that cool from orange to dark grey smoke and rise, a dust ring
- * spreading along the surface, sparks and small debris flung out under gravity, and a scorch on
- * the surface that fades after a while. GrenadeSystem lights it with its one blast light.
+ * The frag's explosion (docs/grenades.md), in the order the eye gets it: a white-orange flash wider
+ * than the fireball, for under a tenth of a second; a short fireball that is smoke within a fifth
+ * of a second; a fountain of dirt thrown up out of the ground and falling back; a ring of dust
+ * racing out along the surface to about the blast's lethal radius and hanging there; hot fragments
+ * streaking out and clods of earth tumbling down; a column of dark smoke that rises and thins over
+ * four or five seconds; and a scorch on the surface that fades after a while. GrenadeSystem lights
+ * it with its one blast light.
  *
  * Everything is made up front and kept in the scene from the first frame (empty draws), so a frag
  * never compiles a shader or adds a light mid-match; the pools have fixed caps and reuse their
@@ -331,20 +344,37 @@ export class FragExplosion {
     for (let i = 0; i < FIRE_PUFFS; i++) {
       // Out over the hemisphere above the surface (the whole sphere in the air), mostly sideways and up.
       const direction = this.hemisphere(normal, surface ? 0.25 : -1);
-      const speed = 3.5 + Math.random() * 3.5;
-      const start = this.w.copy(center).addScaledVector(direction, 0.15 + Math.random() * 0.2);
-      this.addPuff('fire', start, direction.multiplyScalar(speed), 1.9 + Math.random() * 1.1, 0.55 + Math.random() * 0.25, 1.5 + Math.random() * 0.8, 5);
+      const speed = 5 + Math.random() * 4;
+      const start = this.w.copy(center).addScaledVector(direction, 0.15 + Math.random() * 0.25);
+      this.addPuff('fire', start, direction.multiplyScalar(speed), 1.5 + Math.random() * 0.8, 0.8 + Math.random() * 0.3, 2 + Math.random() * 0.8, 6);
+    }
+    // The smoke column: thrown out and up, then carried up by its own heat as it spreads.
+    for (let i = 0; i < SMOKE_PUFFS; i++) {
+      const direction = this.hemisphere(normal, surface ? 0.35 : -1);
+      const speed = 3 + Math.random() * 4.5;
+      const start = this.w.copy(center).addScaledVector(direction, 0.2 + Math.random() * 0.4);
+      this.addPuff('smoke', start, direction.multiplyScalar(speed), 3.4 + Math.random() * 1.6, 1 + Math.random() * 0.4, 3 + Math.random() * 1.2, 2.6);
     }
     if (ground) {
       const tangent = new THREE.Vector3().crossVectors(normal, Math.abs(normal.y) < 0.95 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize();
       const bitangent = new THREE.Vector3().crossVectors(normal, tangent);
+      // The dirt fountain: jets straight out of the ground in a narrow cone, falling back.
+      for (let i = 0; i < DIRT_PUFFS; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const lean = Math.random() * 0.45;
+        const out = this.v.copy(tangent).multiplyScalar(Math.cos(angle) * lean).addScaledVector(bitangent, Math.sin(angle) * lean).add(normal).normalize();
+        const start = this.w.copy(ground).addScaledVector(normal, 0.25);
+        this.addPuff('dirt', start, out.multiplyScalar(8 + Math.random() * 7), 0.9 + Math.random() * 0.6, 0.5 + Math.random() * 0.2, 1.4 + Math.random() * 0.7, 1.6);
+      }
+      // The dust ring: out along the surface fast, slowing to a stop about three metres out, so
+      // with its own growth it marks the ground out to the blast's lethal radius.
       for (let i = 0; i < DUST_PUFFS; i++) {
-        const angle = (i / DUST_PUFFS + Math.random() * 0.06) * Math.PI * 2;
+        const angle = (i / DUST_PUFFS + Math.random() * 0.05) * Math.PI * 2;
         const out = this.v.copy(tangent).multiplyScalar(Math.cos(angle)).addScaledVector(bitangent, Math.sin(angle));
-        const start = this.w.copy(ground).addScaledVector(normal, 0.18).addScaledVector(out, 0.3);
-        const speed = 7 + Math.random() * 4;
-        out.multiplyScalar(speed).addScaledVector(normal, 0.5 + Math.random() * 0.6);
-        this.addPuff('dust', start, out, 1.2 + Math.random() * 0.6, 0.4 + Math.random() * 0.2, 1.3 + Math.random() * 0.5, 4.5);
+        const start = this.w.copy(ground).addScaledVector(normal, 0.2).addScaledVector(out, 0.4);
+        const speed = 13 + Math.random() * 5;
+        out.multiplyScalar(speed).addScaledVector(normal, 0.6 + Math.random() * 0.8);
+        this.addPuff('dust', start, out, 1.9 + Math.random() * 1.1, 0.7 + Math.random() * 0.3, 2.2 + Math.random() * 0.8, 5);
       }
       const scorch = this.nextScorch;
       this.nextScorch = (this.nextScorch + 1) % FRAG_MAX_SCORCHES;
@@ -358,16 +388,16 @@ export class FragExplosion {
     for (let i = 0; i < SPARKS; i++) {
       const bit = this.sparks[this.nextSpark]!;
       this.nextSpark = (this.nextSpark + 1) % FRAG_MAX_SPARKS;
-      this.launch(bit, center, normal, ground, 7 + Math.random() * 9, surface ? 0.15 : -1);
-      bit.life = 0.35 + Math.random() * 0.5;
-      bit.size = 0.018 + Math.random() * 0.014;
+      this.launch(bit, center, normal, ground, 14 + Math.random() * 16, surface ? 0.08 : -1);
+      bit.life = 0.3 + Math.random() * 0.45;
+      bit.size = 0.026 + Math.random() * 0.02;
     }
     for (let i = 0; i < DEBRIS; i++) {
       const bit = this.debris[this.nextDebris]!;
       this.nextDebris = (this.nextDebris + 1) % FRAG_MAX_DEBRIS;
-      this.launch(bit, center, normal, ground, 3 + Math.random() * 5, surface ? 0.35 : -1);
-      bit.life = 1.8 + Math.random() * 1.2;
-      bit.size = 0.022 + Math.random() * 0.03;
+      this.launch(bit, center, normal, ground, 5 + Math.random() * 7, surface ? 0.4 : -1);
+      bit.life = 2 + Math.random() * 1.4;
+      bit.size = 0.03 + Math.random() * 0.055;
       bit.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
       bit.spin.set((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20);
     }
@@ -461,7 +491,8 @@ export class FragExplosion {
       puff.age += step;
       if (puff.age >= puff.life) continue;
       puff.velocity.multiplyScalar(Math.exp(-puff.drag * step));
-      if (puff.kind === 'fire') puff.velocity.y += SMOKE_RISE * smooth(0.1, 0.6, puff.age) * step;
+      if (puff.kind === 'fire' || puff.kind === 'smoke') puff.velocity.y += SMOKE_RISE * smooth(0.1, 0.6, puff.age) * step;
+      else if (puff.kind === 'dirt') puff.velocity.y -= DIRT_FALL * step;
       puff.position.addScaledVector(puff.velocity, step);
       this.depth[i] = puff.position.distanceToSquared(eye);
       order.push(i);
@@ -483,11 +514,24 @@ export class FragExplosion {
         size = puff.size0 + (puff.size1 - puff.size0) * (1 - Math.exp(-age * 5)) + age * 0.3;
         this.color.copy(FIRE_EMBER).lerp(FIRE_HOT, heat * heat).lerp(SMOKE, smooth(0.12, 0.65, age));
         alpha = Math.min(1, 0.85 + heat) * (1 - smooth(0.45, 1, t));
-        additive = 1 - smooth(0.06, 0.4, age);
+        additive = 1 - smooth(0.04, 0.28, age);
+      } else if (puff.kind === 'smoke') {
+        size = puff.size0 + (puff.size1 - puff.size0) * (1 - Math.exp(-age * 2.2)) + age * 0.35;
+        // Lit orange from inside while the fireball lasts, then dark, then paler as it thins.
+        this.color.copy(SMOKE).lerp(FIRE_EMBER, 0.6 * Math.max(0, 1 - age / FIRE_HOT_SECONDS)).lerp(SMOKE_THIN, smooth(0.25, 1, t));
+        alpha = 0.82 * smooth(0, 0.08, age) * (1 - smooth(0.4, 1, t));
+        additive = 0;
+        low = 0.5;
+      } else if (puff.kind === 'dirt') {
+        size = puff.size0 + (puff.size1 - puff.size0) * (1 - Math.exp(-age * 5));
+        this.color.copy(DIRT);
+        alpha = 0.9 * smooth(0, 0.04, age) * (1 - smooth(0.55, 1, t));
+        additive = 0;
+        low = 0.4;
       } else {
         size = puff.size0 + (puff.size1 - puff.size0) * (1 - Math.exp(-age * 4)) + age * 0.25;
         this.color.copy(DUST);
-        alpha = 0.7 * smooth(0, 0.05, age) * (1 - smooth(0.3, 1, t));
+        alpha = 0.62 * smooth(0, 0.05, age) * (1 - smooth(0.3, 1, t));
         additive = 0;
         low = 1;
         lift = size * DUST_LIFT;

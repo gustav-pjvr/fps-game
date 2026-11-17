@@ -6,6 +6,7 @@ import { gamepadBack, gamepadFocus, menuControls } from '../ui/gamepadFocus.ts';
 
 const MOUSE_BUTTON_ACTIONS: Record<number, Action> = {
   0: 'fire',
+  1: 'ping',
   2: 'aim',
 };
 

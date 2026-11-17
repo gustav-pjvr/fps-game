@@ -9,7 +9,7 @@ import type { SoundEngine } from '../../audio/SoundEngine.ts';
 import type { Entity } from '../../entities/Entity.ts';
 import type { NetworkMessage, PlayerSlot } from '../../network/protocol.ts';
 import { GrenadeSystem, type GrenadeHandState, type GrenadeOpponent, type GrenadeTargets } from './GrenadeSystem.ts';
-import { FRAG_MAX_DAMAGE, GRENADE_FUSE, GRENADE_ORPHAN_GRACE_SECONDS, GRENADE_MAX_COUNT, GRENADE_START_COUNT, type GrenadeKind } from './grenadeTuning.ts';
+import { FRAG_LAMP_RADIUS, FRAG_MAX_DAMAGE, GRENADE_FUSE, GRENADE_ORPHAN_GRACE_SECONDS, GRENADE_MAX_COUNT, GRENADE_START_COUNT, type GrenadeKind } from './grenadeTuning.ts';
 
 // GrenadeSystem against a real Rapier world: a floor slab, a player capsule, and optionally a wall.
 
@@ -254,7 +254,7 @@ describe('GrenadeSystem frag', () => {
     expect(r.sent.map((m) => m.type)).toEqual(['grenadeThrown', 'damageEvent', 'grenadeDetonated']);
     expect(r.targets.applyBlast).toHaveBeenCalledTimes(1);
     expect(r.targets.notifyGunshot).toHaveBeenCalledWith(expect.anything(), 'frag');
-    expect(r.lamps).toHaveBeenCalledWith(expect.anything(), 4);
+    expect(r.lamps).toHaveBeenCalledWith(expect.anything(), FRAG_LAMP_RADIUS);
     expect(r.system.cameraShake).toBeGreaterThan(0);
   });
 
@@ -292,6 +292,34 @@ describe('GrenadeSystem frag', () => {
     r.step(GRENADE_FUSE.frag + DT);
     expect(r.sent.filter((m) => m.type === 'damageEvent')).toHaveLength(0);
   });
+
+  it('a low wall takes the share of the fragments that the body hides behind it', async () => {
+    const damageAt4m = async (lowWall: boolean): Promise<number> => {
+      const r = await rig({ network: true });
+      // A wall 0.9 m high just in front of the target: it hides the legs, not the chest or head.
+      // (The same wall close to the blast would shadow the whole body.)
+      if (lowWall) fixedCuboid(r.physics, 0, 0.45, -3.5, 10, 0.45, 0.1);
+      r.physics.world.step();
+      r.opponents.push({ slot: 1, position: new THREE.Vector3(0, PLAYER_HEIGHT / 2, -4), entity: {}, isDead: false });
+      r.system.debugThrow({ x: 0, y: -1, z: 0 });
+      r.step(GRENADE_FUSE.frag + DT);
+      const [event] = r.sent.filter((m) => m.type === 'damageEvent');
+      return event && event.type === 'damageEvent' ? event.amount : 0;
+    };
+    const open = await damageAt4m(false);
+    const covered = await damageAt4m(true);
+    expect(open).toBeGreaterThan(60);
+    expect(open).toBeLessThan(FRAG_MAX_DAMAGE);
+    expect(covered).toBeCloseTo(open * 0.75, 0);
+  });
+
+  it('judges the distance to the nearest part of a body: a frag at the feet deals full damage', async () => {
+    const r = await rig();
+    r.system.debugThrow({ x: 0, y: -1, z: 0 });
+    r.step(GRENADE_FUSE.frag + DT);
+    // The thrower stands over it: the body centre is 0.9 m up, the feet are right there.
+    expect(r.player.takeDamage.mock.calls[0]![0]).toBeCloseTo(FRAG_MAX_DAMAGE, 0);
+  });
 });
 
 describe('GrenadeSystem flash', () => {
@@ -303,7 +331,8 @@ describe('GrenadeSystem flash', () => {
     r.camera.lookAt(grenade!.position.x, grenade!.position.y, grenade!.position.z);
     r.step(0.1 + DT);
     expect(r.system.liveGrenades()).toHaveLength(0);
-    expect(r.system.blindLevel).toBeGreaterThan(0.5);
+    // Skipped off the floor it is some 15 m out by now: well inside the flash's reach, past its full range.
+    expect(r.system.blindLevel).toBeGreaterThan(0.3);
     expect(r.targets.applyFlash).toHaveBeenCalledTimes(1);
     expect(r.player.takeDamage).not.toHaveBeenCalled();
   });

@@ -77,8 +77,8 @@ Without them a guest's snapshot reaches another guest in two hops through the ho
 `PeerConnection.connectionQuality` reads `RTCPeerConnection.getStats` (`readConnectionQuality` in
 `src/network/connectionStats.ts`) every `MULTIPLAYER_CONNECTION_POLL_INTERVAL` (2 s, from
 `Game.updateMultiplayer`). The host shares its measured round trips as `linkQuality`; a guest adds them to
-reach a guest it has no direct link to (`combineRelayedQuality`). The result drives the HUD ping and each
-`RemotePlayer`'s lead time (`setLeadSeconds`).
+reach a guest it has no direct link to (`combineRelayedQuality`). The result drives
+the HUD ping (remote motion no longer uses it, see below).
 
 ## 2. Messages
 
@@ -94,11 +94,12 @@ All messages are one discriminated union, `NetworkMessage` in `src/network/proto
 | Scoreboard and end | `matchEnded`, `scoreboardSync`, `kothScoreTick` | `matchEnded` and `scoreboardSync` host-authored. Tick is carrier self-reported and relayed. |
 | Membership and rejoin | `playerJoinedMatch`, `playerLeft`, `rosterSync`, `hostLeftRoom`, `welcome.activeMatch` | Host-authored. |
 | Wandering geese | `gooseSpawned`, `gooseSnapshot`, `gooseExploded`, `gooseSyncRequest`, `gooseHitEvent`, `goosePickedUp`, `gooseThrown`, `gooseThrowExploded` | The first three are host-authored (host simulates every goose). `gooseHitEvent` and `gooseSyncRequest` are guest to host. The last three are Goose Toss and launcher events, thrower-authoritative and relayed. |
-| King of the Hill | `goldenGoosePickedUp`, `goldenGooseDropped`, `goldenGooseState`, `kothScoreTick` | Claims and drops relayed and self-reported; `goldenGooseState` is the host's catch-up. |
-| Goose Horde | `hordeGoose*`, `hordeWaveStarted`, `hordeCleared`, `hordeReset`, `hordeAmmoDrop*`, `hordePlayerEliminated`, `hordeSyncRequest`, `hordeSyncState` | Host simulates the flock and waves. `hordePlayerEliminated` and `hordeAmmoDropPickedUp` are self-reported and relayed. |
+| King of the Hill | `kothState`, `kothCrownClaim` | The host owns the hill, the crown and every score and sends the whole state as `kothState`; a guest asks for the crown with `kothCrownClaim` (guest to host only). The older `goldenGoose*` and `kothScoreTick` types are retired but stay in the protocol (docs/king-of-the-hill.md). |
+| Goose Horde | `hordeGoose*`, `hordeWaveStarted`, `hordeCleared`, `hordeState`, `hordeAmmoDrop*`, `hordePlayerEliminated`, `hordeSyncRequest`, `hordeSyncState` | Host simulates the flock, the waves, the kill count and the supply meter, and sends the panel's numbers as `hordeState`. `hordePlayerEliminated` ("this slot is down") and `hordeAmmoDropPickedUp` are self-reported and relayed (docs/goose-horde.md). |
+| Co-op layer | `reviveEvent`, `ping` | Self-reported and relayed: a finished revive of a fallen teammate (only the target acts on it), and a marker for the sender's own side (docs/coop.md). |
 | Bonus goose | `bonusGooseSpawned`, `bonusGooseSnapshot`, `bonusGooseHitEvent`, `bonusGooseKilled` | Host-authoritative. The guest reports its hit; the host credits the killer. |
 | Grenades | `grenadeThrown`, `grenadeDetonated` | Thrower-authoritative, relayed. Frag damage travels as `damageEvent` with `weaponId: 'frag'`. |
-| World objects | `worldInteract`, `worldObjectState`, `lampDestroyed`, `lampSync` | Doors and breakers are host-authoritative (guest asks, host checks reach and broadcasts the whole state). The Valley's watch tower doors ride the same two messages (see "Underground" in section 4). Lamps are self-reported and relayed. |
+| World objects | `worldInteract`, `worldObjectState`, `lampDestroyed`, `lampSync`, `glassHit`, `glassSync` | Doors and breakers are host-authoritative (guest asks, host checks reach and broadcasts the whole state). The Valley's watch tower doors ride the same two messages (see "Underground" in section 4). Lamps are self-reported and relayed. The windows' glass follows the lamps: a hit is self-reported and relayed (`glassHit`), and each client re-broadcasts its whole set of hit panes (`glassSync`), which is also how a late joiner is told (`docs/glass.md`). |
 | Pickups | `pickupClaim`, `pickupTaken`, `pickupRespawned`, `pickupSyncRequest`, `pickupState` | Host-authoritative, never relayed (`src/pickups/PickupSystem.ts`, `docs/pickups.md`). |
 | Direct links | `meshHello`, `meshStatus`, `linkQuality` | Connection layer only. `meshStatus` is consumed in `PeerConnection` and never routed. |
 | Briefing | `modeExplanationReady` | Self-reported, relayed; every client dismisses the briefing when all slots are ready. |
@@ -133,7 +134,7 @@ All messages are one discriminated union, `NetworkMessage` in `src/network/proto
 | Hit detection and damage amount (headshot included) | Shooter | `RemotePlayer.takeDamage` sends `damageEvent` |
 | Health, death, kill credit | Victim | `applyNetworkDamage` queues damage; the death path sends `playerDied` with the last damager inside `MULTIPLAYER_KILL_CREDIT_WINDOW_MS` (8 s) |
 | Match end by kills or points | Host decides, then sends `matchEnded` | `Game.updateMultiplayer`, `MultiplayerMatchState.findWinner` |
-| Goose Horde end | Every client, from host-authoritative wave state and the relayed eliminated set | `Game.update`, `Game.checkHordeAllEliminated` |
+| Goose Horde end | Every client, from host-authoritative wave state and the relayed set of fallen slots | `Game.update`, `Game.checkHordeAllEliminated` |
 | Wandering, horde and bonus geese | Host simulates; guests mirror | `GooseManager`, `HordeGooseManager`, `BonusGooseManager` in `src/entities/` |
 | Pickups, doors, breakers | Host, with a reach check on the claimant | `PickupSystem.handleMessage`, `FacilityInteraction.receiveInteract` in `src/core/facilityInteraction.ts` |
 | Grenades and thrown geese | Thrower flies and detonates; others fly a visual copy | `src/combat/grenades/GrenadeSystem.ts`, `src/combat/grenades/grenadeNetwork.ts`, `ThrownGoose` |
@@ -179,11 +180,11 @@ switch. It takes a `MatchMessageContext` that `Game.create()` builds (`routerCon
    `MULTIPLAYER_SETTLE_MS` (30 s) is dropped after `MULTIPLAYER_CONNECTION_TIMEOUT_MS` (8 s) of silence. A player
    with no snapshot yet, a recent first snapshot, or who is dead gets `MULTIPLAYER_LOADING_TIMEOUT_MS` (120 s).
    Only a `playerSnapshot` starts the "playing" clock. A dropped player is marked disconnected in `HostRoster`,
-   its connection is closed (`disconnectGuest`), and `playerLeft` is broadcast. Eliminated Goose Horde players
-   are exempt. `restartOpponentForRejoin` resets an opponent entry when a rejoin takes over its slot.
+   its connection is closed (`disconnectGuest`), and `playerLeft` is broadcast. Fallen Goose Horde players
+   (who send no snapshots while down) are exempt. `restartOpponentForRejoin` resets an opponent entry when a rejoin takes over its slot.
 7. **Death and respawn.** A dead client waits `MULTIPLAYER_RESPAWN_DELAY` (3 s), then `Game.multiplayerRespawn`
-   picks a ring point (`pickRandomRespawnPoint`) and sends `respawnEvent`. In Goose Horde a player has
-   `HORDE_MAX_RESPAWNS` (2) and is then eliminated.
+   picks a ring point (`pickRandomRespawnPoint`) and sends `respawnEvent`. In Goose Horde a fallen player
+   does not respawn on a timer: it is down until a teammate revives it or the next wave starts (docs/coop.md).
 8. **Mid-match join and rejoin.** A `hello` during a match reaches `onHostHello` in `Game.create`. The host adds the
    `RemotePlayer`, broadcasts `playerJoinedMatch`, and answers `welcome` with `activeMatch` (seed, settings,
    scoreboard, a spawn point, dead lamps, doors). `JoinRoomScreen` then starts the match directly with
@@ -219,8 +220,8 @@ builds at most one controller per match.
 | Gun Game (`gunGame`) | One random weapon from `GUN_GAME_POOL` (no knife); each credited kill swaps to a different random one; the kill that would reach the limit must be made with the Goose Launcher | `GunGameController` (finisher grant), router `playerDied` case (upgrade), `creditsKill` (rule) | Kill limit |
 | Knife Only (`knifeOnly`) | Knife only, no grenades | `FIXED_LOADOUTS` | Kill limit |
 | Goose Toss (`gooseToss`) | Placeholder `unarmed` weapon; E picks up a wandering goose, fire throws it; the thrower detonates and sends `damageEvent`s | `GooseTossController`, `ThrownGoose` | Kill limit |
-| King of the Hill (`kingOfTheHill`) | Own loadout, grenades on; one golden goose at map centre (0, 0); carrying it scores 1 point per `KOTH_POINT_INTERVAL_SECONDS` | `KingOfTheHillController`, `GoldenGooseManager` | `KOTH_POINTS_TO_WIN` (90) points |
-| Goose Horde, co-op (`gooseHorde`) | Own loadout, grenades on with no friendly fire; nobody scores; 15 waves (`HORDE_WAVE_TABLE_MULTIPLAYER`) | `HordeGooseManager`, `AmmoDropManager` | Survive all waves; loss when everyone is eliminated |
+| King of the Hill (`kingOfTheHill`) | Own loadout, grenades on; a hill that moves every minute, 1 point a second to a side alone on it, the golden goose as a crown that doubles it; four players play two against two; kills score nothing | `KingOfTheHillController`, `hillState`, `HillView` | `KOTH_POINTS_TO_WIN` (120) points |
+| Goose Horde, co-op (`gooseHorde`) | Own loadout, grenades on with no friendly fire; the scoreboard is each player's kills; 12 waves sized to the squad with brutes and two bosses (`HORDE_WAVE_TABLE`, `hordeRules`); supply drops earned by kills; a fallen player is down and can be revived | `HordeGooseManager`, `AmmoDropManager`, `SquadController` | Survive all waves; loss when the whole squad is down at once |
 
 Details that are easy to miss:
 
@@ -273,7 +274,7 @@ Details that are easy to miss:
     remote beam light at Dusk (`remoteTorchesAvailable`).
 - **Single-player modes** (`SinglePlayerMode`, chosen in `PlaySetupModal`, mutually exclusive): elimination (default
   enemies and targets), Director (`PacingDirector` in `src/entities/enemies/director/pacingDirector.ts` runs the
-  enemy pacing), Mission (`src/core/mission/missionState.ts`: three uplinks then an extraction, on the Director),
+  enemy pacing), Mission (`src/core/mission/missionState.ts`: Operation Uplink's four stages, on the Director; docs/uplink.md),
   and Horde (`HordeGooseManager`, 10 waves). All four work on both maps. They have no network code; `Game.create`
   only builds `ActiveMultiplayer` when a `MultiplayerSession` is passed, and multiplayer never spawns the enemy roster.
 
@@ -281,20 +282,21 @@ Details that are easy to miss:
 
 - **RemotePlayer** (`src/entities/RemotePlayer.ts`) is a character model with a head and a body collider that is never
   simulated locally. It implements `Damageable`, but `takeDamage` only calls `onHit`, which `Game.addMultiplayerOpponent`
-  wires to send `damageEvent`. `applySnapshot` damps toward the latest position; `src/entities/remoteMotion.ts`
-  (`RemoteMotion`) extrapolates from recent speed, capped at `MAX_LEAD_SECONDS` (0.12 s) and stopped after
-  `STALE_MS` (250 ms). A snapshot that jumps further than `MAX_PREDICT_SPEED` allows, or the first one after a death,
-  snaps with `teleportTo`. `setTorch` shows the Facility torch lens; `setLeadSeconds` takes the ping-based lead.
-- **Positional audio** (`src/core/positionalAudio.ts`): `computeStereoPan` (horizontal only) and distance falloff
-  functions (`multiplayerGunshotVolume`, `knifeSwingVolume`, `lampBreakVolume`, `facilityObjectVolume`,
-  `grenadeBounceVolume`) driven by constants in `config.ts` (`MULTIPLAYER_GUNSHOT_*`, `KNIFE_SWING_*`,
-  `FACILITY_OBJECT_*`). Remote gunshots never go fully silent. The router's `fireEvent` and `footstepEvent` cases
-  call them with the listener's `facingYaw`.
-- **Muffled sound across the surface.** `undergroundMuffleFactor(listenerBelowGround, sourceBelowGround)` in
-  `positionalAudio.ts` is 0.35 when one side is below ground and the other is not, else 1. The router multiplies it
-  into remote `fireEvent` shots, `footstepEvent` and `gooseThrowExploded` blasts, and `Game` and `GrenadeSystem` do the
-  same for enemy shots, goose and horde blasts and frag and flash grenades. Two players in the same lab hear each other
-  at full volume; one in the lab and one outside hear 35 percent of it.
+  wires to send `damageEvent`. `applySnapshot` feeds `src/entities/remoteMotion.ts`
+  (`RemoteMotion`), a buffered interpolator: it draws the player at `now - delay` (delay about the p90 of recent arrival
+  gaps plus 20 ms, clamped to 50..150 ms, changed at most 5% of real time), interpolating between buffered snapshots, and
+  past the newest one extrapolates for at most 100 ms, then holds; each dry spell over 100 ms counts one render stall
+  (`renderStalls`, reported as `renderStallsPerMin` in the match-end beacon). A snapshot that jumps further than
+  `MAX_PREDICT_SPEED` allows, or the first one after a death, snaps with `teleportTo`. `RemotePlayer.update` adds only a
+  light damp. `setTorch` shows the Facility torch lens. Details: `docs/multiplayer.md`, "Smooth remote motion".
+- **Positional audio** (`docs/sound.md`): the router's `fireEvent`, `footstepEvent` and `gooseThrowExploded` cases
+  pass the source's world position to the sound engine, which works out loudness, direction and what lies between.
+  Remote gunshots never go fully silent. A remote shot is also heard landing and, when its path passes within 3 m of
+  the listener's head, going by (`shotPassed`). A remote footstep's surface is read at its position on the receiving
+  side (`stepSurfaceAt`).
+- **Muffled sound across the surface.** No special case: the ground between a source and the listener occludes like
+  any wall, only more (`src/world/soundProbe.ts`). Two players in the same lab hear each other clearly; one in the lab
+  and one outside hear a dull thud.
 - **HUD and minimap.** `src/ui/multiplayerHud.ts` (rows from the roster, scoreboard, ping) and `src/ui/minimap.ts`
   (one dot per opponent, pickups, King of the Hill marker). `Minimap.update` takes `MinimapPlayerDot`s
   (`{ x, z, underground }`, kept in a reused map by `Game.updateMultiplayer`): a player below ground is a hollow ring
@@ -320,10 +322,11 @@ Details that are easy to miss:
 | Give a late joiner more state | Add a part to `MatchSyncSource` and `buildMatchSync` (`matchSync.ts`), fill it in `sendFullSync` (router), and keep every message an ordinary idempotent type the joiner already handles. |
 | Change a mode's weapons or grenades | `FIXED_LOADOUTS`, `GUN_GAME_POOL`, `UNRESTRICTED_GAME_MODES`, `GRENADES_ENABLED` in `gameModes.ts`; custom loadout storage in `src/core/loadout.ts`. |
 | Change TURN or ICE setup | `DEFAULT_ICE_SERVERS`, `buildIceServers` in `PeerConnection.ts`; `functions/api/turn-credentials.ts`; the env vars live in the Cloudflare Pages project. |
-| Change audio falloff | `positionalAudio.ts` and the matching constants in `config.ts`. For the surface boundary, `undergroundMuffleFactor` there; every new world sound that should be muffled multiplies it into its volume, as the `fireEvent` case does. |
+| Change audio falloff | `LOUDNESS` in `src/audio/spatial.ts` (how each kind of sound carries) and `src/audio/occlusion.ts` (what a wall, a pane or the ground does). A new world sound only passes its position: distance, walls and the surface boundary apply by themselves. |
 | Add a rule that changes below ground (a mode or a pickup) | Use `isBelowGround` (`world/underground.ts`), keep the rule in the pure controller or state class and pass the flag in (`KingOfTheHillController`, `MissionInput.underground`, `DirectorSignals.allPlayersUnderground`). A host check on a guest's claim must compare height as well as x and z, as `PickupSystem.handleMessage` does. |
 | Add another world object that shares the Valley door messages | Give it an id range above `TOWER_DOOR_BASE + WATCH_TOWER_COUNT` in `valleyHouseIds.ts` with its own `fooIndexFromId`, resolve it in `ValleyDoors.plane`, and make `state.has` reject every other id. The wire bounds in `protocol.ts` do not know about ranges. |
-| Change the Goose Horde waves | `HORDE_WAVE_TABLE_MULTIPLAYER`, `HORDE_MAX_RESPAWNS` in `config.ts`; `HordeGooseManager`. |
+| Change the Goose Horde waves | `HORDE_WAVE_TABLE` in `config.ts`, the goose kinds and the scaling in `entities/hordeRules.ts`; `HordeGooseManager` (docs/goose-horde.md). |
+| Change pings or down and revive | `core/modeControllers/reviveRules.ts`, `SquadController.ts` (docs/coop.md). |
 
 ### Checklist: every place a new message must be added
 
@@ -367,9 +370,8 @@ Details that are easy to miss:
   1e300 cannot poison sums.
 - **The first `matchStart` never reaches the router.** The room screen consumes it. Any `matchStart` the router sees
   is a rematch.
-- **King of the Hill kills also score.** `applyMatchDeath` only skips Goose Horde, so in King of the Hill a kill adds a
-  point to the killer's scoreboard entry besides the carry points, and the briefing does not say so. Read from the
-  code, not run; check with Gustav before relying on it.
+- **King of the Hill kills score nothing.** `applyMatchDeath` skips King of the Hill as well as Goose Horde: the
+  scoreboard is the host's points for the hill (and in Goose Horde the host's kill count), not kills.
 - **Tower door ids are huge.** `2^32 + index` is still a safe integer and passes `worldInteract` and
   `valleyDoors` bounds, but it is not a house id: `parseHouseObjectId` rejects it, which is why `ValleyDoors.plane`
   falls through to `towerDoorPlane`. A spec or tool that builds ids by hand must use `towerDoorId`.

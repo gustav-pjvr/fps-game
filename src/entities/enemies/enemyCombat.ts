@@ -22,6 +22,10 @@ export interface EnemyCombatHooks {
   onCallout?: (event: IntentEvent) => void;
   /** Enemy AI v2 step 5: a visual cue - a glint before a long shot, or a stagger. */
   onCue?: (event: IntentEvent) => void;
+  /** A boot lands (docs/sound.md): where, and whether the enemy is moving at more than a walk. */
+  onFootstep?: (position: THREE.Vector3, running: boolean) => void;
+  /** A melee swing starts at `origin`, hit or miss. */
+  onMeleeSwing?: (origin: THREE.Vector3) => void;
 }
 
 /** Per-enemy firing state, moved out of Enemy.ts by the enemy AI v2 split (commit 0). */

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { ENEMY_HEIGHT, PLAYER_HEIGHT } from '../core/config.ts';
-import { createHitColliders, ENEMY_HIT_SHAPE, PLAYER_HIT_SHAPE, yawRotation, type CharacterHitColliders, type CharacterHitShape } from './characterHitbox.ts';
+import { createHitColliders, ENEMY_HIT_SHAPE, PLAYER_HIT_SHAPE, yawRotation, type CharacterHitColliders, type CharacterHitShape, scaledHitShape } from './characterHitbox.ts';
 
 // Real Rapier rays against the fitted hit shapes: a shot has to touch the character it is aimed
 // at, and a near miss beside it (inside the old 0.45 m enemy and 0.4 m player capsules) has to
@@ -76,4 +76,16 @@ describe.each([
     expect(shoot(s, shape.headHeight, { x: shape.headForward, z: 5 }, { x: 0, z: -1 })).toBe('head');
     expect(shoot(s, shape.headHeight, { x: -shape.headForward, z: 5 }, { x: 0, z: -1 })).toBeNull();
   });
+});
+
+it('a scaled shape grows up from the same feet: the head of an elite 1.22 times as big is 1.22 times as high', () => {
+  const scaled = scaledHitShape(ENEMY_HIT_SHAPE, 1.22);
+  // The rigid body does not move, so the height it is centred on stays.
+  expect(scaled.height).toBe(ENEMY_HIT_SHAPE.height);
+  expect(scaled.headHeight).toBeCloseTo(ENEMY_HIT_SHAPE.headHeight * 1.22);
+  expect(scaled.headRadius).toBeCloseTo(ENEMY_HIT_SHAPE.headRadius * 1.22);
+  expect(scaled.bodyTop).toBeCloseTo(ENEMY_HIT_SHAPE.bodyTop * 1.22);
+  // No gap at the neck, as on the original: the head ball still reaches down to the capsule's top.
+  expect(scaled.headHeight - scaled.headRadius).toBeLessThanOrEqual(scaled.bodyTop);
+  expect(scaledHitShape(ENEMY_HIT_SHAPE, 1)).toEqual(ENEMY_HIT_SHAPE);
 });

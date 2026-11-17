@@ -33,6 +33,9 @@ export interface EnemyArchetype {
   /** Relative weight for createArchetypePicker's weighted-random spawn assignment - not a
    * probability itself, just compared against the sum of all archetypes' weights. */
   readonly spawnWeight: number;
+  /** How an elite stands out from the rank and file (applyArchetypeLook): its size against a
+   * rifleman's, and the colour its kit is tinted. The ordinary archetypes have none. */
+  readonly look?: { readonly scale: number; readonly tint: number };
 }
 
 /**
@@ -148,10 +151,43 @@ export function createArchetypePicker(seed: number): () => EnemyArchetype {
   };
 }
 
+/**
+ * The Warden (docs/uplink.md): the elite that leads the last wave of Operation Uplink's upload, and
+ * Showdown's finale. Four times a Straggler's health, a head taller and in amber kit, slower than a
+ * walking player so it can be kited, and it fires six-round bursts where a Straggler fires three.
+ * detectionRange stays under ENEMY_RING_BASE_RADIUS like every other archetype's.
+ */
+export const WARDEN: EnemyArchetype = {
+  name: 'The Warden',
+  flavor: 'Holds the relay. Has never once been asked to hold anything else.',
+  health: 240,
+  moveSpeed: 1.9,
+  detectionRange: 22,
+  leashRange: 36,
+  rangedRange: 22,
+  rangedDamage: 7,
+  burstCount: 6,
+  fireInterval: 0.28,
+  burstPause: 1.7,
+  aimErrorMaxDeg: 8,
+  aimErrorMinDeg: 2,
+  aimSettleTime: 2.5,
+  meleeDamage: 20,
+  movementStyle: 'direct',
+  kiteTriggerRange: 0,
+  kiteStopRange: 0,
+  // Never drawn at random: ELITE_ARCHETYPES is not in the picker's pool.
+  spawnWeight: 0,
+  look: { scale: 1.22, tint: 0xffa040 },
+};
+
+/** Archetypes a mode spawns by name and the seeded picker never returns. */
+export const ELITE_ARCHETYPES: readonly EnemyArchetype[] = [WARDEN];
+
 /** The archetype with this name: the pacing director (enemy AI v2 step 6) asks for Rush Jobs and
- * Ridge Walkers by name. */
+ * Ridge Walkers by name, the mission and Showdown for the Warden. */
 export function archetypeNamed(name: string): EnemyArchetype {
-  const archetype = ENEMY_ARCHETYPES.find((candidate) => candidate.name === name);
+  const archetype = [...ENEMY_ARCHETYPES, ...ELITE_ARCHETYPES].find((candidate) => candidate.name === name);
   if (!archetype) throw new Error(`No enemy archetype named "${name}"`);
   return archetype;
 }

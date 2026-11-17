@@ -6,14 +6,15 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld.ts';
 import { HEADSHOT_MULTIPLIER, PLAYER_HEIGHT } from '../core/config.ts';
 import { createHitColliders, PLAYER_HIT_SHAPE, yawRotation } from './characterHitbox.ts';
 import { instantiateCharacter, PLAYER_CHARACTER } from './characterModels.ts';
+import { HeldWeapon } from './heldWeapon.ts';
 import { loadGLTF } from '../core/AssetLoader.ts';
 import { RemoteMotion } from './remoteMotion.ts';
 
-/** Dead reckoning uses recent horizontal speed to damp toward where the opponent likely is now.
- * Capped lead limits overshoot when movement changes, and stale snapshots stop prediction.
- * Vertical movement still follows the last received height to avoid predicting jumps or falls. */
-const POSITION_DAMP_RATE = 25;
-const VERTICAL_DAMP_RATE = 18;
+/** RemoteMotion interpolates a short buffer of snapshots a little in the past, so the position
+ * already moves smoothly: this damp only rounds off the odd corner (a hold ending, a new delay),
+ * about 17 ms of lag at most. Rotation still damps on its own, harder. */
+const POSITION_DAMP_RATE = 60;
+const VERTICAL_DAMP_RATE = 40;
 const ROTATION_DAMP_RATE = 18;
 /** The torch lens (docs/facility-map.md, section 7): chest high, a little to the right of the
  * model's own forward (+Z), where the first-person torch sits on the gun. */
@@ -63,6 +64,8 @@ export class RemotePlayer implements Entity, Damageable {
    * setTorch, so the Valley never builds a lens. */
   private torchLens: THREE.Mesh<THREE.CircleGeometry, THREE.MeshStandardMaterial> | null = null;
   private torchLit = false;
+  /** The weapon they are holding, in its skin, as their snapshots report it. */
+  private readonly heldWeapon: HeldWeapon;
 
   private constructor(
     private readonly physics: PhysicsWorld,
@@ -76,6 +79,7 @@ export class RemotePlayer implements Entity, Damageable {
   ) {
     this.mesh = new THREE.Group();
     this.mesh.add(model);
+    this.heldWeapon = new HeldWeapon(model);
     this.mesh.position.copy(initialPosition);
     scene.add(this.mesh);
 
@@ -116,8 +120,9 @@ export class RemotePlayer implements Entity, Damageable {
   ): Promise<RemotePlayer> {
     const gltf = await loadGLTF(PLAYER_CHARACTER.path);
     const { model, mixer, actions } = instantiateCharacter(gltf, PLAYER_CHARACTER, PLAYER_HEIGHT);
-    // A moving player is nearly always at a run (walk and sprint are 5 m/s and up).
-    return new RemotePlayer(physics, scene, initialPosition, model, mixer, actions.idle, actions.run, onHit);
+    // A moving player is nearly always at a run (walk and sprint are 5 m/s and up). Standing, they
+    // hold their weapon up and forward, so it reads at a glance what they carry and where they face.
+    return new RemotePlayer(physics, scene, initialPosition, model, mixer, actions.aim ?? actions.idle, actions.run, onHit);
   }
 
   /** Always false from this client's perspective - it has no authority over the opponent's health
@@ -198,8 +203,23 @@ export class RemotePlayer implements Entity, Damageable {
     this.rigidBody.setNextKinematicTranslation({ x, y, z });
   }
 
-  setLeadSeconds(seconds: number): void {
-    this.motion.setLeadSeconds(seconds);
+  /** Shows the weapon, skin and attachments from their snapshot in their hand (entities/heldWeapon.ts). Unknown
+   * or missing ids show nothing. Cheap when nothing changed. */
+  setHeldWeapon(weaponId: string | undefined, skinId: string | undefined, attachments?: string): void {
+    this.heldWeapon.set(weaponId, skinId, attachments);
+  }
+
+  get heldWeaponId(): string | null {
+    return this.heldWeapon.shownWeaponId;
+  }
+
+  get heldSkinId(): string | null {
+    return this.heldWeapon.shownSkinId;
+  }
+
+  /** Times the snapshot buffer ran dry for over 100 ms (see RemoteMotion.renderStalls). */
+  get renderStalls(): number {
+    return this.motion.renderStalls;
   }
 
   update(dt: number): void {

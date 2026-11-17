@@ -11,6 +11,8 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new 
   'fireEvent',
   'lampDestroyed',
   'lampSync',
+  'glassHit',
+  'glassSync',
   'grenadeThrown',
   'grenadeDetonated',
   'damageEvent',
@@ -20,10 +22,9 @@ export const RELAYABLE_MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new 
   'goosePickedUp',
   'gooseThrown',
   'gooseThrowExploded',
-  'goldenGoosePickedUp',
-  'goldenGooseDropped',
-  'kothScoreTick',
   'hordePlayerEliminated',
+  'reviveEvent',
+  'ping',
   'hordeAmmoDropPickedUp',
   'modeExplanationReady',
 ]);
@@ -38,6 +39,7 @@ export const GUEST_TO_HOST_TYPES: ReadonlySet<NetworkMessage['type']> = new Set(
   'worldInteract',
   'pickupClaim',
   'pickupSyncRequest',
+  'kothCrownClaim',
 ]);
 
 export const HOST_BROADCAST_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
@@ -53,7 +55,6 @@ export const HOST_BROADCAST_TYPES: ReadonlySet<NetworkMessage['type']> = new Set
   'gooseSpawned',
   'gooseSnapshot',
   'gooseExploded',
-  'goldenGooseState',
   'hordeGooseSpawned',
   'hordeGooseSnapshot',
   'hordeGooseExploded',
@@ -70,6 +71,8 @@ export const HOST_BROADCAST_TYPES: ReadonlySet<NetworkMessage['type']> = new Set
   'pickupTaken',
   'pickupRespawned',
   'pickupState',
+  'kothState',
+  'hordeState',
 ]);
 
 export const SERVER_HANDLED_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
@@ -82,6 +85,11 @@ export const DROPPED_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
   'meshHello',
   'meshStatus',
   'linkQuality',
+  // Retired with the v5.0.0 King of the Hill: kept in the protocol for older builds, read by no one.
+  'kothScoreTick',
+  'goldenGoosePickedUp',
+  'goldenGooseDropped',
+  'goldenGooseState',
 ]);
 
 export type RouteClass = 'R' | 'H' | 'B' | 'S' | 'D';

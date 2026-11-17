@@ -60,7 +60,7 @@ export class Hud {
     this.container.appendChild(crosshair);
 
     this.objectivePanel = document.createElement('div');
-    this.objectivePanel.style.cssText = 'position:absolute; top:32px; left:32px; max-width:calc(50% - 208px);';
+    this.objectivePanel.style.cssText = 'position:absolute; top:32px; left:32px; max-width:max(150px, calc(50% - 208px));';
     this.objectiveLabel = document.createElement('div');
     this.objectiveLabel.style.cssText = LABEL_CSS;
     this.objectiveText = document.createElement('div');

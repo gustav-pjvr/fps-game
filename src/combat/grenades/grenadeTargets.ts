@@ -10,9 +10,9 @@ export interface GrenadeBlastTarget {
 export function withBlastTargets(targets: GrenadeTargets, extra: GrenadeBlastTarget | null): GrenadeTargets {
   if (!extra) return targets;
   return {
-    applyBlast: (position, damageAt, reaches) => {
-      targets.applyBlast(position, damageAt, reaches);
-      extra.applyBlast(position, damageAt, reaches);
+    applyBlast: (position, damageFor) => {
+      targets.applyBlast(position, damageFor);
+      extra.applyBlast(position, damageFor);
     },
     applyFlash: (judge) => targets.applyFlash(judge),
     notifyGunshot: (origin, weaponId) => targets.notifyGunshot(origin, weaponId),

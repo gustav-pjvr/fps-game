@@ -36,17 +36,36 @@ test('solo Goose Horde on the Facility starts a wave inside the walls, flyers un
   }
 });
 
-test('solo Uplink mission on the Facility puts four objectives inside it, marked on the map', async ({ page }) => {
-  test.setTimeout(120000);
-  await startFacilityMode(page, /Uplink mission/);
+test('solo Operation Uplink on the Facility puts its four sites inside it, marked on the map stage by stage', async ({ page }) => {
+  test.setTimeout(180000);
+  await startFacilityMode(page, /Operation Uplink/);
   const mission = (await page.evaluate(() => window.__gameDebug!.getMissionDebug()))!;
-  expect(mission.phase).toBe('uplinks');
-  const points = [...mission.uplinks, mission.extraction];
-  expect(points).toHaveLength(4);
+  expect(mission.phase).toBe('breach');
+  const points = [mission.sites.breach, mission.sites.core, mission.sites.relay, mission.sites.extraction];
   expect(new Set(points.map((p) => `${p.x},${p.z}`)).size).toBe(4);
   for (const point of points) {
     expect(Math.abs(point.x)).toBeLessThan(HALF_EXTENT);
     expect(Math.abs(point.z)).toBeLessThan(HALF_EXTENT);
   }
-  for (const label of ['A', 'B', 'C']) await expect(page.getByTestId(`minimap-marker-uplink-${label}`)).toBeAttached();
+  // Indoors the core rests on a console in a far room, not underground, under the room's ceiling.
+  expect(mission.core.underground).toBe(false);
+  expect(mission.corePosition.y).toBeGreaterThan(1);
+  expect(mission.corePosition.y).toBeLessThan(3.2);
+
+  // The map marks where each stage sends the player: the terminal, then the core and the relay,
+  // then the relay alone, then the extraction.
+  const marker = (id: string) => page.getByTestId(`minimap-marker-${id}`);
+  const nextStage = () => page.evaluate(() => window.__gameDebug!.completeMissionStage());
+  await expect(marker('terminal')).toBeAttached();
+  await expect(marker('relay')).not.toBeAttached();
+  await nextStage();
+  await expect(marker('core')).toBeAttached();
+  await expect(marker('relay')).toBeAttached();
+  await expect(marker('terminal')).not.toBeAttached();
+  await nextStage();
+  await expect(marker('relay')).toBeAttached();
+  await expect(marker('core')).not.toBeAttached();
+  await nextStage();
+  await expect(marker('extract')).toBeAttached();
+  await expect(marker('relay')).not.toBeAttached();
 });

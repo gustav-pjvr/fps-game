@@ -51,6 +51,22 @@ export const PLAYER_HIT_SHAPE: CharacterHitShape = {
   headForward: 0.12,
 };
 
+/** `shape` for a character whose model is `scale` times as big and still stands on the same
+ * ground (an elite enemy, enemies/archetypeLook.ts): everything measured up from the feet and out
+ * from the centre line grows with it. `height` stays, because it only says where the rigid body
+ * sits, and that does not move. */
+export function scaledHitShape(shape: CharacterHitShape, scale: number): CharacterHitShape {
+  return {
+    height: shape.height,
+    bodyRadius: shape.bodyRadius * scale,
+    bodyTop: shape.bodyTop * scale,
+    bodyForward: shape.bodyForward * scale,
+    headRadius: shape.headRadius * scale,
+    headHeight: shape.headHeight * scale,
+    headForward: shape.headForward * scale,
+  };
+}
+
 export interface CharacterHitColliders {
   readonly body: RAPIER.Collider;
   readonly head: RAPIER.Collider;

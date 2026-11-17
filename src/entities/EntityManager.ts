@@ -54,6 +54,7 @@ import {
   ENEMY_TERRAIN_HEIGHT_CACHE_MAX,
   ENEMY_TERRAIN_HEIGHT_CACHE_QUANTUM,
   EYE_OFFSET,
+  ENEMY_HEIGHT,
 } from '../core/config.ts';
 import { getWorldSeed } from '../core/worldSeed.ts';
 import { mulberry32 } from '../utils/rng.ts';
@@ -293,18 +294,17 @@ export class EntityManager {
     }
   }
 
-  /** A frag grenade (combat/grenades/GrenadeSystem.ts): `damageAt(distance)` to every live entity
-   * the blast `reaches` past the walls (the caller's chest and head rays; `entity` and `exclude`
-   * let those rays count the target's own colliders as reaching it). */
+  /** A frag grenade (combat/grenades/GrenadeSystem.ts): every live entity takes what `damageFor`
+   * gives its body (its centre and height; the caller weighs distance and cover, and `entity` and
+   * `exclude` let its rays count the target's own colliders as reaching it). */
   applyBlast(
     position: THREE.Vector3,
-    damageAt: (distance: number) => number,
-    reaches: (center: THREE.Vector3, entity: object, exclude?: RAPIER.RigidBody) => boolean,
+    damageFor: (center: THREE.Vector3, height: number, entity: object, exclude?: RAPIER.RigidBody) => number,
   ): void {
     for (const entity of this.entities) {
       if (entity.isDead || !entity.takeDamage) continue;
-      const amount = damageAt(entity.mesh.position.distanceTo(position));
-      if (amount > 0 && reaches(entity.mesh.position, entity, entity.excludeRigidBody)) entity.takeDamage(amount, -1, position);
+      const amount = damageFor(entity.mesh.position, ENEMY_HEIGHT, entity, entity.excludeRigidBody);
+      if (amount > 0) entity.takeDamage(amount, -1, position);
     }
   }
 

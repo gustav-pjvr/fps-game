@@ -1,8 +1,20 @@
 import { test } from '@playwright/test';
 import { lockPointer, SHIPPED_GRAPHICS } from './helpers.ts';
 
-// Frame times are only meaningful at the quality players run by default.
-test.use({ storageState: SHIPPED_GRAPHICS });
+// Frame times are only meaningful at the quality players run by default. PERF_GRAPHICS=low (or
+// high) measures another preset, for a before and after comparison on more than one tier.
+const perfGraphics = process.env.PERF_GRAPHICS;
+test.use({
+  storageState: perfGraphics
+    ? {
+      cookies: [],
+      origins: [{
+        origin: `http://localhost:${Number(process.env.E2E_PORT ?? 5173)}`,
+        localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: perfGraphics }) }],
+      }],
+    }
+    : SHIPPED_GRAPHICS,
+});
 
 /**
  * Enemy AI v2 performance log run (docs/enemy-ai-v2.md, task 3) - NOT part of the smoke suite.

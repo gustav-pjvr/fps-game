@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MATCH_MAPS } from '../core/config.ts';
-import { routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
+import { RELAYABLE_MESSAGE_TYPES, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import {
-  ALL_MESSAGE_TYPES, PLAYER_SLOT_COUNT, CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
+  ALL_MESSAGE_TYPES, PLAYER_SLOT_COUNT, CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_ATTACHMENTS_LENGTH, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
   type MatchStartMessage, type WelcomeMessage,
 } from './protocol.ts';
 
@@ -215,6 +215,26 @@ describe('squad message validation', () => {
     expect(accepts({ type: 'linkQuality', links: [{ slot: 9, rttMs: 40, relay: false }] })).toBe(false);
   });
 
+  it('kothState needs every part of the hill inside what the mode can produce', () => {
+    const state = { type: 'kothState', hill: [0, 0], next: [40, 0], radius: 8, moveIn: 30, hold: 'held', holder: 1, crown: 1, crownAt: null, push: false, teams: false, scores: [{ slot: 0, score: 4 }, { slot: 1, score: 9 }] };
+    expect(accepts(state)).toBe(true);
+    expect(accepts({ ...state, crown: null, crownAt: [3, -4], hold: 'contested', holder: null })).toBe(true);
+    expect(accepts({ ...state, hill: [1e9, 0] })).toBe(false);
+    expect(accepts({ ...state, next: [0] })).toBe(false);
+    expect(accepts({ ...state, radius: 0 })).toBe(false);
+    expect(accepts({ ...state, radius: 500 })).toBe(false);
+    expect(accepts({ ...state, moveIn: -1 })).toBe(false);
+    expect(accepts({ ...state, hold: 'mine' })).toBe(false);
+    expect(accepts({ ...state, holder: 7 })).toBe(false);
+    expect(accepts({ ...state, crown: 4 })).toBe(false);
+    expect(accepts({ ...state, crownAt: [Number.NaN, 0] })).toBe(false);
+    expect(accepts({ ...state, push: 'yes' })).toBe(false);
+    expect(accepts({ ...state, scores: [{ slot: 0, score: 1e9 }] })).toBe(false);
+    expect(accepts({ ...state, scores: [{ slot: 0, score: 1.5 }] })).toBe(false);
+    expect(accepts({ ...state, scores: Array.from({ length: 5 }, () => ({ slot: 0, score: 1 })) })).toBe(false);
+    expect(accepts({ type: 'kothCrownClaim' })).toBe(true);
+  });
+
   it('goldenGooseState needs a carrier slot or null and three numbers', () => {
     expect(accepts({ type: 'goldenGooseState', carrierSlot: 2, x: 1, y: 2, z: 3 })).toBe(true);
     expect(accepts({ type: 'goldenGooseState', carrierSlot: null, x: 1, y: 2, z: 3 })).toBe(true);
@@ -279,6 +299,20 @@ describe('self-reported numbers and hello fields', () => {
     expect(raw({ ...snapshot, yaw: Number.POSITIVE_INFINITY })).toBe(false);
     expect(ok({ ...snapshot, health: -5 })).toBe(false);
     expect(ok({ ...snapshot, t: 'late' })).toBe(false);
+    // The held weapon and its skin are short optional ids: an older build sends neither.
+    expect(ok({ ...snapshot, w: 'battleRifle', k: 'whiteout' })).toBe(true);
+    expect(ok({ ...snapshot, w: 'x'.repeat(25) })).toBe(false);
+    expect(ok({ ...snapshot, k: 7 })).toBe(false);
+    // The fitted attachments are an optional bounded string; unknown ids pass (the receiver drops them).
+    expect(ok({ ...snapshot, w: 'rifle', a: 'laser,torch' })).toBe(true);
+    expect(ok({ ...snapshot, a: 'someFutureThing,laser' })).toBe(true);
+    expect(ok({ ...snapshot, a: '' })).toBe(true);
+    expect(ok({ ...snapshot, a: 'laser,'.repeat(NETWORK_MAX_ATTACHMENTS_LENGTH) })).toBe(false);
+    expect(ok({ ...snapshot, a: 'x'.repeat(NETWORK_MAX_ATTACHMENTS_LENGTH) })).toBe(true);
+    expect(ok({ ...snapshot, a: 'x'.repeat(NETWORK_MAX_ATTACHMENTS_LENGTH + 1) })).toBe(false);
+    expect(ok({ ...snapshot, a: ['laser'] })).toBe(false);
+    expect(ok({ ...snapshot, a: 5 })).toBe(false);
+    expect(ok({ ...snapshot, a: null })).toBe(false);
     expect(ok({ type: 'footstepEvent', senderSlot: 2, x: 1, y: 2, z: 1e9 })).toBe(false);
     expect(ok({ type: 'respawnEvent', senderSlot: 2, x: 1, y: 2 })).toBe(false);
     expect(ok({ type: 'fireEvent', senderSlot: 2, originX: 0, originY: 0, originZ: 0, endX: 1, endY: 1, endZ: 1, weaponId: 'rifle' })).toBe(true);
@@ -325,8 +359,8 @@ describe('self-reported numbers and hello fields', () => {
 });
 
 describe('shared protocol domain', () => {
-  it('exports all 63 known message types', () => {
-    expect(ALL_MESSAGE_TYPES.size).toBe(63);
+  it('exports all 70 known message types', () => {
+    expect(ALL_MESSAGE_TYPES.size).toBe(70);
     expect(ALL_MESSAGE_TYPES.has('hello')).toBe(true);
     expect(ALL_MESSAGE_TYPES.has('scoreboardSync')).toBe(true);
     expect(isNetworkMessage({ type: 'unknown' })).toBe(false);
@@ -346,5 +380,45 @@ describe('shared protocol domain', () => {
     const scores = Array.from({ length: PLAYER_SLOT_COUNT }, (_, slot) => ({ slot, score: 0, deaths: 0 }));
     expect(isNetworkMessage({ type: 'scoreboardSync', scores })).toBe(true);
     expect(isNetworkMessage({ type: 'scoreboardSync', scores: [...scores, scores[0]] })).toBe(false);
+  });
+});
+
+describe('glass messages (docs/glass.md)', () => {
+  const hit = { type: 'glassHit', senderSlot: 1, pane: 42, u: 0.2, v: -0.3, power: 2, side: 1 };
+  const sync = { type: 'glassSync', senderSlot: 1, panes: [{ id: 42, d: 3, b: false, h: [0.1, 0.2] }, { id: 43, d: 6, b: true, h: [] }] };
+
+  it('accepts a well-formed glassHit and glassSync, after a trip through JSON', () => {
+    expect(isNetworkMessage(JSON.parse(JSON.stringify(hit)))).toBe(true);
+    expect(isNetworkMessage(JSON.parse(JSON.stringify({ ...hit, side: -1, power: 6 })))).toBe(true);
+    expect(isNetworkMessage(JSON.parse(JSON.stringify(sync)))).toBe(true);
+    expect(isNetworkMessage({ ...sync, panes: [] })).toBe(true);
+  });
+
+  it('rejects a glassHit with NaN or huge u or v, a bad power, a bad side or a bad pane', () => {
+    for (const bad of [
+      { u: NaN }, { v: NaN }, { u: Infinity }, { u: 1e9 }, { v: -1e9 }, { u: '0.2' }, { u: undefined },
+      { power: 0 }, { power: 7 }, { power: 1.5 }, { power: -1 }, { power: '2' },
+      { side: 2 }, { side: 0 }, { side: '1' },
+      { pane: -1 }, { pane: 1.5 }, { pane: NaN }, { pane: '42' }, { pane: 2 ** 60 }, { pane: undefined },
+    ]) {
+      expect(isNetworkMessage({ ...hit, ...bad }), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('rejects a glassHit with no sender slot or an invalid one', () => {
+    expect(isNetworkMessage({ ...hit, senderSlot: undefined })).toBe(false);
+    expect(isNetworkMessage({ ...hit, senderSlot: 9 })).toBe(false);
+  });
+
+  it('rejects a glassSync whose panes is not an array, or is far too long', () => {
+    for (const panes of [undefined, null, 'x', 5, {}, { length: 1 }]) {
+      expect(isNetworkMessage({ ...sync, panes }), String(panes)).toBe(false);
+    }
+    expect(isNetworkMessage({ ...sync, panes: Array.from({ length: 2049 }, () => ({ id: 1, d: 1, b: false, h: [] })) })).toBe(false);
+  });
+
+  it('is relayed by the host', () => {
+    expect(RELAYABLE_MESSAGE_TYPES.has('glassHit')).toBe(true);
+    expect(RELAYABLE_MESSAGE_TYPES.has('glassSync')).toBe(true);
   });
 });

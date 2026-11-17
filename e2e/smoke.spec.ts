@@ -18,7 +18,7 @@ const SNIPER_LOADOUT: PlayerLoadout = { primary: 'sniper', secondary: 'pistol', 
 const DEFAULT_MATCH_ENTITY_COUNT = 8;
 
 /** Pistol magazine and the rifle's, per weapons/definitions.ts. */
-const PISTOL_MAGAZINE = 12;
+const PISTOL_MAGAZINE = 15;
 const RIFLE_MAGAZINE = 30;
 
 /** Upper bound on trigger pulls fireSemiAutoShot spends on landing one round, see its comment. */

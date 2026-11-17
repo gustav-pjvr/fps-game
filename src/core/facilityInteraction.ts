@@ -14,7 +14,7 @@ import {
   interactPrompt, type WorldObjectChanges, type WorldObjectKind, type WorldObjectWire,
 } from '../world/facility/facilityObjectState.ts';
 import { ENEMY_RADIUS, FACILITY_INTERACT_REACH, GOOSE_RADIUS, PLAYER_RADIUS } from './config.ts';
-import { computeStereoPan, facilityObjectVolume } from './positionalAudio.ts';
+import { LOUDNESS } from '../audio/spatial.ts';
 
 /** The host checks a guest's reach against where it sees that guest, which trails the guest's own
  * view by the network delay, so it allows this much more (m). */
@@ -212,11 +212,11 @@ export class FacilityInteraction {
     const play = (kind: WorldObjectKind, id: number): void => {
       const at = objects.position(kind, id);
       if (!at) return;
-      const volume = facilityObjectVolume(at.distanceTo(player.position));
-      if (volume <= 0) return;
-      const pan = computeStereoPan(player.position, player.facingYaw, at), active = objects.state.isActive(kind, id);
-      if (kind === 'door') sound.playDoorSlide(!active, volume, pan);
-      else sound.playBreakerSwitch(active, volume, pan);
+      // Out of earshot: nothing to place. Nearer, the engine places it and muffles it by walls.
+      if (at.distanceTo(player.position) >= LOUDNESS.world.maxDistance) return;
+      const active = objects.state.isActive(kind, id);
+      if (kind === 'door') sound.playDoorSlide(!active, at);
+      else sound.playBreakerSwitch(active, at);
     };
     for (const id of changes.doors) play('door', id);
     for (const id of changes.breakers) play('breaker', id);
