@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { HOST_SLOT, type NetworkMessage, type PlayerSlot } from '../src/network/protocol.ts';
 import { SERVER_CLOSE, SERVER_FRAME_MAX_BYTES } from '../src/network/serverEnvelope.ts';
-import { DEFAULT_ROOM_TIMING, type Room, type RoomMembership } from './Room.ts';
+import { DEFAULT_ROOM_TIMING, keptFrameBytes, type Room, type RoomMembership } from './Room.ts';
 import {
   createRoom,
   FakeSocket,
@@ -196,6 +196,30 @@ describe('resume: acknowledgements and the buffer bounds', () => {
     // Each numbered shot is about 140 characters: the window ended well before 50.
     expect(sent).toBeLessThan(10);
     expect(hosted.host.ops('memberLeft')).toEqual([{ op: 'memberLeft', slot: 1 }]);
+  });
+
+  it('counts kept frames in bytes, so characters outside ASCII cannot double what an away member holds', () => {
+    expect(keptFrameBytes('abc')).toBe(3);
+    // UTF-8: three bytes each.
+    expect(keptFrameBytes('€€')).toBe(6);
+    // One character outside Latin-1 and V8 keeps the whole string at two bytes a character.
+    expect(keptFrameBytes('ā' + 'a'.repeat(9))).toBe(20);
+    const padded = (pad: string): NetworkMessage => ({ ...shot(1), pad }) as unknown as NetworkMessage;
+    const awayGuest = (): { harness: Harness; hosted: HostedRoom } => {
+      const harness = makeHarness({}, { limits: { resumeBufferBytes: 2000 } });
+      const hosted = createRoom(harness);
+      joinGuest(harness, hosted, 'Bob').member.disconnected(true);
+      return { harness, hosted };
+    };
+    // The welcome and two frames of 600 ASCII letters fit in 2000 bytes...
+    const ascii = awayGuest();
+    for (let i = 0; i < 2; i++) send(ascii.hosted.hostMember, { m: padded('a'.repeat(600)) });
+    expect(ascii.hosted.host.ops('memberLeft')).toEqual([]);
+    expect(roomOf(ascii.harness, ascii.hosted.code).keptFrames(1)).toBe(3);
+    // ...the same frames with one two-byte character each take twice that, and end the window.
+    const wide = awayGuest();
+    for (let i = 0; i < 2; i++) send(wide.hosted.hostMember, { m: padded('ā' + 'a'.repeat(599)) });
+    expect(wide.hosted.host.ops('memberLeft')).toEqual([{ op: 'memberLeft', slot: 1 }]);
   });
 
   it('a live member that never acknowledges keeps only the newest frames, and cannot resume from before them', () => {

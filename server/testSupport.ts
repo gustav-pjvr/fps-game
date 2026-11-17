@@ -18,9 +18,12 @@ export class FakeSocket implements MemberSocket {
   throwOnSend = false;
   /** How often the room asked this socket to prove it is alive (a resume came for its member). */
   probes = 0;
+  /** The per-IP key rooms are counted by; undefined, no per-IP room cap (most tests). */
+  readonly ipKey: string | undefined;
 
-  constructor(name: string) {
+  constructor(name: string, ipKey?: string) {
     this.name = name;
+    this.ipKey = ipKey;
   }
 
   send(text: string): void {

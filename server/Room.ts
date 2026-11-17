@@ -48,6 +48,8 @@ export interface MemberSocket {
   send(text: string): void;
   close(code: number, reason: string): void;
   readonly bufferedAmount: number;
+  /** The per-IP key (clientIp.ts) the registry counts this socket's rooms by; absent, no per-IP room cap. */
+  readonly ipKey?: string;
   /** Check that the socket is still alive and end it soon if not (a resume came for its member while
    * the server still counted it as connected: a half-open TCP connection after a network change). */
   probe?(): void;
@@ -91,9 +93,9 @@ export interface RoomLimits {
   /** Above this many bytes buffered to a member, superseded state frames (playerSnapshot and the
    * goose snapshots) to it are skipped. */
   snapshotSkipBytes: number;
-  /** Above this many bytes buffered, the member is closed (4009). */
+  /** Above this many bytes buffered, the member is closed (4009) and its socket cut soon after. */
   slowCloseBytes: number;
-  /** Unacknowledged reliable frames kept per member, by count and by characters of frame text: past
+  /** Unacknowledged reliable frames kept per member, by count and by bytes (keptFrameBytes): past
    * either the oldest is dropped, and for an away member that ends its resume window. */
   resumeBufferFrames: number;
   resumeBufferBytes: number;
@@ -112,7 +114,7 @@ export const DEFAULT_ROOM_LIMITS: RoomLimits = {
   guestRate: GUEST_RATE_LIMIT,
   hostRate: HOST_RATE_LIMIT,
   snapshotSkipBytes: 64 * 1024,
-  slowCloseBytes: 4 * 1024 * 1024,
+  slowCloseBytes: 1024 * 1024,
   resumeBufferFrames: RESUME_BUFFER_MAX_FRAMES,
   resumeBufferBytes: RESUME_BUFFER_MAX_BYTES,
 };
@@ -159,6 +161,17 @@ export interface RoomOptions {
 interface Numbered {
   readonly seq: number;
   readonly text: string;
+  /** keptFrameBytes(text), counted against resumeBufferBytes. */
+  readonly bytes: number;
+}
+
+/** What keeping one frame costs, in bytes: its UTF-8 size (what it takes on the wire and in a send
+ * buffer), or, when it holds any character outside ASCII, two bytes a character if that is more (V8
+ * then keeps the whole string at two bytes a character). Unknown fields pass the relay unchanged, so
+ * a frame of two-byte characters must not count at half its size. */
+export function keptFrameBytes(text: string): number {
+  const utf8 = Buffer.byteLength(text, 'utf8');
+  return utf8 === text.length ? utf8 : Math.max(utf8, 2 * text.length);
 }
 
 interface Member {
@@ -184,7 +197,7 @@ interface Member {
    * frames after it, in order. */
   ackedSeq: number;
   outbox: Numbered[];
-  outboxChars: number;
+  outboxBytes: number;
   /** When its socket dropped, while it is away. */
   awaySince: number | null;
 }
@@ -619,7 +632,7 @@ export class Room {
 
   /** Send to one member. A reliable frame is numbered and kept for a resume first (an away member
    * gets nothing else); then, minding a slow consumer (section 7.4): above slowCloseBytes buffered it
-   * is closed (4009); above snapshotSkipBytes a superseded state frame is not sent. */
+   * is closed (4009, and the shell cuts the socket soon after rather than wait for its backlog); above snapshotSkipBytes a superseded state frame is not sent. */
   private deliver(member: Member, text: string, kind: FrameKind, now: number): void {
     if (member.ended) return;
     if (kind === 'reliable') {
@@ -645,12 +658,13 @@ export class Room {
     member.outSeq += 1;
     // Every encoded frame is a JSON object with at least one key, so `{` opens it.
     const numbered = `{"s":${member.outSeq},${text.slice(1)}`;
-    member.outbox.push({ seq: member.outSeq, text: numbered });
-    member.outboxChars += numbered.length;
+    const bytes = keptFrameBytes(numbered);
+    member.outbox.push({ seq: member.outSeq, text: numbered, bytes });
+    member.outboxBytes += bytes;
     let dropped = false;
-    while (member.outbox.length > 0 && (member.outbox.length > this.limits.resumeBufferFrames || member.outboxChars > this.limits.resumeBufferBytes)) {
+    while (member.outbox.length > 0 && (member.outbox.length > this.limits.resumeBufferFrames || member.outboxBytes > this.limits.resumeBufferBytes)) {
       const oldest = member.outbox.shift() as Numbered;
-      member.outboxChars -= oldest.text.length;
+      member.outboxBytes -= oldest.bytes;
       member.ackedSeq = oldest.seq;
       dropped = true;
     }
@@ -667,7 +681,7 @@ export class Room {
     if (seq <= member.ackedSeq) return true;
     let count = 0;
     while (count < member.outbox.length && (member.outbox[count] as Numbered).seq <= seq) {
-      member.outboxChars -= (member.outbox[count] as Numbered).text.length;
+      member.outboxBytes -= (member.outbox[count] as Numbered).bytes;
       count++;
     }
     member.outbox.splice(0, count);
@@ -722,7 +736,7 @@ export class Room {
       outSeq: 0,
       ackedSeq: 0,
       outbox: [],
-      outboxChars: 0,
+      outboxBytes: 0,
       awaySince: null,
     };
   }

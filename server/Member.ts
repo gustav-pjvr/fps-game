@@ -28,6 +28,10 @@ import type { RoomRegistry } from './RoomRegistry.ts';
  * every refusal closes with the one code `resumeRefused`, except a right token whose member still
  * counts as connected (`resumeLater`). A socket that closes without a close the client or this shell
  * chose is reported to the room as abnormal, so its member may resume. Tokens are never logged.
+ *
+ * Per-IP failures (section 7.4): wrong access codes, unknown resume tokens and joins with a room code
+ * that names no open room are each counted under their own key, and for IPv6 under the /48 as well
+ * as the /64; a key over its limit is refused before anything is compared or looked up.
  */
 
 /** RFC 6455 close codes the shell uses beside SERVER_CLOSE. */
@@ -41,16 +45,28 @@ const CLIENT_CHOSEN_CLOSES: ReadonlySet<number> = new Set([1000, 1001, 1005]);
 /** Failed resumes are counted per IP under this key, beside the access code's own count. */
 export const resumeFailureKey = (ipKey: string): string => `${ipKey}#resume`;
 
+/** Joins with a code that names no open room are counted per IP under this key, in their own limiter
+ * (JOIN_FAILURE_POLICY), so walking room codes never blocks the access code. */
+export const joinFailureKey = (ipKey: string): string => `${ipKey}#join`;
+
+/** How long a slow consumer's socket (closed 4009) gets to flush its close frame before it is cut:
+ * its backlog of up to slowCloseBytes must not wait for the heartbeat or ws's 30 s close timeout. */
+export const SLOW_CONSUMER_CUT_MS = 1000;
+
 export interface MemberContext {
   readonly registry: RoomRegistry;
   readonly access: AccessCodes;
   readonly failures: AccessFailureLimiter;
+  /** Joins with an unknown room code (JOIN_FAILURE_POLICY). */
+  readonly joinFailures: AccessFailureLimiter;
   readonly log: Logger;
   readonly clock: () => number;
   readonly helloDeadlineMs: number;
   readonly heartbeatTimeoutMs: number;
   /** A probed socket (a resume came for its member) with no pong for this long is ended. */
   readonly probeTimeoutMs: number;
+  /** A socket closed 4009 is cut this long after its close frame was queued (SLOW_CONSUMER_CUT_MS). */
+  readonly slowConsumerCutMs: number;
   /** Called once, when the socket has closed. */
   onEnded(member: Member): void;
 }
@@ -66,6 +82,8 @@ const textOf = (data: RawData): string =>
 export class Member implements MemberSocket {
   /** The client's address group (clientIp.ts), the key of the per-IP limits. */
   readonly ipKey: string;
+  /** For IPv6, the /48 around ipKey: failed attempts are counted under both (clientIp.ts, ipWideGroup). */
+  readonly ipWideKey: string | null;
   private readonly socket: WebSocket;
   private readonly ctx: MemberContext;
   private phase: Phase = 'hello';
@@ -73,6 +91,7 @@ export class Member implements MemberSocket {
   private lobbyLimiter: MemberRateLimiter | null = null;
   private helloTimer: ReturnType<typeof setTimeout> | null;
   private probeTimer: ReturnType<typeof setTimeout> | null = null;
+  private cutTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPongAt: number;
   private pongs = 0;
   /** The token `ready` gave this socket, until a create or join hands it to the room. */
@@ -81,9 +100,10 @@ export class Member implements MemberSocket {
   private closedOnPurpose = false;
   private ended = false;
 
-  constructor(socket: WebSocket, ipKey: string, ctx: MemberContext) {
+  constructor(socket: WebSocket, ipKey: string, ctx: MemberContext, ipWideKey: string | null = null) {
     this.socket = socket;
     this.ipKey = ipKey;
+    this.ipWideKey = ipWideKey;
     this.ctx = ctx;
     this.lastPongAt = ctx.clock();
     socket.on('message', (data, isBinary) => this.handleFrame(data, isBinary));
@@ -123,6 +143,16 @@ export class Member implements MemberSocket {
       this.socket.close(code, reason);
     } catch {
       this.socket.terminate();
+      return;
+    }
+    // A slow consumer's close frame sits behind its backlog, which stays in memory until the close
+    // handshake ends. Give the frame a moment to get through (the client treats 4009 as final), then
+    // cut the connection, which frees the backlog at once.
+    if (code === SERVER_CLOSE.slowConsumer) {
+      this.cutTimer = setTimeout(() => {
+        this.cutTimer = null;
+        if (!this.ended) this.socket.terminate();
+      }, this.ctx.slowConsumerCutMs);
     }
   }
 
@@ -216,13 +246,13 @@ export class Member implements MemberSocket {
       return;
     }
     const now = this.ctx.clock();
-    if (this.ctx.failures.isBlocked(this.ipKey, now)) {
+    if (this.isBlocked(this.ctx.failures, (key) => key, now)) {
       this.ctx.log.warn('handshake', { ip: this.ipKey, result: 'blocked' });
       this.close(SERVER_CLOSE.accessDenied, 'access denied');
       return;
     }
     if (!this.ctx.access.check(fields.access)) {
-      this.ctx.failures.recordFailure(this.ipKey, now);
+      this.recordFailure(this.ctx.failures, (key) => key, now);
       this.ctx.log.warn('handshake', { ip: this.ipKey, result: 'accessDenied' });
       this.close(SERVER_CLOSE.accessDenied, 'access denied');
       return;
@@ -244,8 +274,7 @@ export class Member implements MemberSocket {
   /** Section 5.6: take back a member on this socket. A blocked IP is refused before any token is
    * compared; an unknown token counts as a failure; every refusal but `notAway` closes the same way. */
   private handleResume(op: ResumeOp, now: number): void {
-    const key = resumeFailureKey(this.ipKey);
-    if (this.ctx.failures.isBlocked(key, now)) {
+    if (this.isBlocked(this.ctx.failures, resumeFailureKey, now)) {
       this.ctx.log.warn('resume', { ip: this.ipKey, result: 'blocked' });
       this.close(SERVER_CLOSE.resumeRefused, 'resume refused');
       return;
@@ -258,7 +287,7 @@ export class Member implements MemberSocket {
       this.ctx.log.info('resume', { ip: this.ipKey, result: 'ok', slot: result.slot });
       return;
     }
-    if (result === 'unknown') this.ctx.failures.recordFailure(key, now);
+    if (result === 'unknown') this.recordFailure(this.ctx.failures, resumeFailureKey, now);
     this.ctx.log.info('resume', { ip: this.ipKey, result });
     if (result === 'notAway') this.close(SERVER_CLOSE.resumeLater, 'resume later');
     else this.close(SERVER_CLOSE.resumeRefused, 'resume refused');
@@ -279,6 +308,7 @@ export class Member implements MemberSocket {
     switch (frame.op) {
       case 'create':
       case 'join': {
+        if (frame.op === 'join' && !this.admitJoin(frame.code, now)) return;
         // The phase moves first: the registry may answer and close this socket before it returns.
         this.phase = 'room';
         const token = this.sessionToken;
@@ -307,6 +337,34 @@ export class Member implements MemberSocket {
     }
   }
 
+  /** Section 4.2: a join whose code names no open room is counted per IP (joinFailureKey); past the
+   * policy, every join from that IP is answered notFound without the code being looked up, so the
+   * answer says nothing about which codes exist. False when it was refused here. */
+  private admitJoin(code: string, now: number): boolean {
+    if (this.isBlocked(this.ctx.joinFailures, joinFailureKey, now)) {
+      this.ctx.log.warn('join', { ip: this.ipKey, result: 'blocked' });
+      this.send(encodeServerFrame({ op: 'rejected', reason: 'notFound' }));
+      this.close(SERVER_CLOSE.normal, 'notFound');
+      return false;
+    }
+    if (!this.ctx.registry.isOpen(code)) this.recordFailure(this.ctx.joinFailures, joinFailureKey, now);
+    return true;
+  }
+
+  /** The keys failed attempts of one kind are counted under: the IP group's, and for IPv6 its /48's. */
+  private failureKeys(keyOf: (ipKey: string) => string): string[] {
+    return this.ipWideKey === null ? [keyOf(this.ipKey)] : [keyOf(this.ipKey), keyOf(this.ipWideKey)];
+  }
+
+  /** Blocked when either key is over the limit. */
+  private isBlocked(limiter: AccessFailureLimiter, keyOf: (ipKey: string) => string, now: number): boolean {
+    return this.failureKeys(keyOf).some((key) => limiter.isBlocked(key, now));
+  }
+
+  private recordFailure(limiter: AccessFailureLimiter, keyOf: (ipKey: string) => string, now: number): void {
+    for (const key of this.failureKeys(keyOf)) limiter.recordFailure(key, now);
+  }
+
   private helloExpired(): void {
     this.helloTimer = null;
     if (this.phase !== 'hello') return;
@@ -321,6 +379,8 @@ export class Member implements MemberSocket {
     this.clearHelloTimer();
     if (this.probeTimer !== null) clearTimeout(this.probeTimer);
     this.probeTimer = null;
+    if (this.cutTimer !== null) clearTimeout(this.cutTimer);
+    this.cutTimer = null;
     this.sessionToken = null;
     const abnormal = !this.closedOnPurpose && !CLIENT_CHOSEN_CLOSES.has(code);
     try {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RELAYABLE_MESSAGE_TYPES } from './MatchMessageRouter.ts';
 import { DIRECT_MESSAGE_TYPES } from './directLinks.ts';
 import type { NetworkMessage } from './protocol.ts';
-import { acceptsFromSender, HOST_AUTHORED_MESSAGE_TYPES, serverAccepts } from './senderAuthority.ts';
+import { acceptsFromSender, HOST_AUTHORED_MESSAGE_TYPES, SENDER_SLOT_MESSAGE_TYPES, serverAccepts } from './senderAuthority.ts';
 
 const hostOnly: NetworkMessage[] = [
   { type: 'matchStart', seed: 1, killLimit: 10, gooseDifficulty: 'normal', gameMode: 'default', weather: 'day', spawns: [], roster: [] },
@@ -115,5 +115,28 @@ describe('serverAccepts', () => {
       expect(serverAccepts({ type: 'playerDied', senderSlot: slot === 0 ? 1 : 0, victimSlot: slot === 0 ? 1 : 0, killerSlot: null }, slot)).toBe(false);
       expect(serverAccepts({ type: 'pickupClaim', id: 1 }, slot)).toBe(true);
     }
+  });
+
+  it('drops a message of any type that declares senderSlot when it leaves the field out or names another slot', () => {
+    // The list is checked against protocol.ts by the compiler (senderAuthority.ts); 27 types today.
+    expect(SENDER_SLOT_MESSAGE_TYPES.size).toBe(27);
+    for (const type of SENDER_SLOT_MESSAGE_TYPES) {
+      expect(HOST_AUTHORED_MESSAGE_TYPES.has(type), type).toBe(false);
+      for (const slot of [0, 1, 2, 3] as const) {
+        expect(serverAccepts({ type } as NetworkMessage, slot), `${type} with no senderSlot from ${slot}`).toBe(false);
+        expect(serverAccepts({ type, senderSlot: undefined } as unknown as NetworkMessage, slot), `${type} with senderSlot undefined`).toBe(false);
+        expect(serverAccepts({ type, senderSlot: slot === 3 ? 2 : 3 } as unknown as NetworkMessage, slot), `${type} naming another slot`).toBe(false);
+      }
+    }
+    // The two the audit named, now and with the field.
+    expect(serverAccepts({ type: 'damageEvent', targetSlot: 2, amount: 100 } as unknown as NetworkMessage, 1)).toBe(false);
+    expect(serverAccepts({ type: 'hordeGooseHitEvent', id: 'h1', damage: 999 } as unknown as NetworkMessage, 1)).toBe(false);
+    expect(serverAccepts({ type: 'damageEvent', senderSlot: 1, targetSlot: 2, amount: 100 }, 1)).toBe(true);
+    expect(serverAccepts({ type: 'hordeGooseHitEvent', senderSlot: 1, id: 'h1' }, 1)).toBe(true);
+  });
+
+  it('leaves the peer-to-peer check as it was: a P2P host still decides on senderSlot only when present', () => {
+    expect(acceptsFromSender({ type: 'damageEvent', targetSlot: 2, amount: 100 } as unknown as NetworkMessage, 1, 'host')).toBe(true);
+    expect(acceptsFromSender({ type: 'damageEvent', senderSlot: 2, targetSlot: 2, amount: 100 }, 1, 'host')).toBe(false);
   });
 });

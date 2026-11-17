@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { HOST_SLOT, type NetworkMessage } from '../src/network/protocol.ts';
 import { ROOM_CODE_ALPHABET, SERVER_CLOSE } from '../src/network/serverEnvelope.ts';
-import { DEFAULT_ROOM_TIMING } from './Room.ts';
+import { DEFAULT_ROOM_LIMITS, DEFAULT_ROOM_TIMING } from './Room.ts';
 import { TOMBSTONE_MS } from './RoomRegistry.ts';
 import { createRoom, FakeSocket, fireEvent, joinGuest, makeHarness, requestJoin, send, snapshot, welcomeFor, wireLog, type Harness, type HostedRoom } from './testSupport.ts';
 
@@ -409,6 +409,17 @@ describe('Room: routing and sender checks', () => {
     expect(roomOf(h, room.code).dropCount('notAllowed')).toBe(4);
   });
 
+  it('a guest cannot leave senderSlot out of a type that declares it', () => {
+    send(bob.member, { m: { type: 'damageEvent', targetSlot: 2, amount: 500 } });
+    send(bob.member, { m: { type: 'hordeGooseHitEvent', id: 'h1', damage: 999 } });
+    send(bob.member, { m: { type: 'fireEvent', originX: 0, originY: 1, originZ: 0, endX: 5, endY: 1, endZ: 5, weaponId: 'rifle', t: 11 } });
+    expect(room.host.games()).toEqual([]);
+    expect(cara.socket.games()).toEqual([]);
+    expect(roomOf(h, room.code).dropCount('notAllowed')).toBe(3);
+    send(bob.member, { m: { type: 'damageEvent', senderSlot: 1, targetSlot: 2, amount: 50 } });
+    expect(room.host.games()).toHaveLength(1);
+  });
+
   it('a guest cannot use to', () => {
     send(bob.member, { m: snapshot(1), to: 2 });
     send(bob.member, { m: { type: 'pickupClaim', id: 1 }, to: 0 });
@@ -510,15 +521,19 @@ describe('Room: slow consumers', () => {
     expect(roomOf(h, room.code).dropCount('snapshotSkipped')).toBe(1);
   });
 
-  it('closes a member above 4 MiB buffered with 4009; a slow host closes the room', () => {
+  it('closes a member above 1 MiB buffered with 4009; a slow host closes the room', () => {
+    expect(DEFAULT_ROOM_LIMITS.slowCloseBytes).toBe(1024 * 1024);
     const bob = joinGuest(h, room, 'Bob');
     const cara = joinGuest(h, room, 'Cara');
-    cara.socket.bufferedAmount = 4 * 1024 * 1024 + 1;
+    cara.socket.bufferedAmount = 1024 * 1024;
+    send(bob.member, { m: fireEvent(1) });
+    expect(cara.socket.closed).toBeNull();
+    cara.socket.bufferedAmount = 1024 * 1024 + 1;
     send(bob.member, { m: fireEvent(1) });
     expect(cara.socket.closed?.code).toBe(SERVER_CLOSE.slowConsumer);
     expect(room.host.ops('memberLeft')).toEqual([{ op: 'memberLeft', slot: 2 }]);
 
-    room.host.bufferedAmount = 4 * 1024 * 1024 + 1;
+    room.host.bufferedAmount = 1024 * 1024 + 1;
     send(bob.member, { m: fireEvent(1) });
     expect(room.host.closed?.code).toBe(SERVER_CLOSE.slowConsumer);
     expect(bob.socket.ops('roomClosed')).toEqual([{ op: 'roomClosed', reason: 'hostLeft' }]);

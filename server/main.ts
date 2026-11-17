@@ -6,11 +6,11 @@ import { pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { GAME_VERSION } from '../src/core/version.ts';
 import { HOST_FRAME_MAX_BYTES } from '../src/network/serverEnvelope.ts';
-import { clientIp, ipGroup } from './clientIp.ts';
+import { clientIp, ipGroup, ipWideGroup, isDirectLocalRequest } from './clientIp.ts';
 import { ConfigError, isOriginAllowed, loadConfig, type ServerConfig } from './config.ts';
-import { ACCESS_FAILURE_POLICY, AccessFailureLimiter, ConnectionCounter, MAX_CONNECTIONS_PER_IP, type AccessFailurePolicy } from './limits.ts';
+import { ACCESS_FAILURE_POLICY, AccessFailureLimiter, ConnectionCounter, JOIN_FAILURE_POLICY, MAX_CONNECTIONS_PER_IP, type AccessFailurePolicy } from './limits.ts';
 import { createLogger, type Logger } from './log.ts';
-import { Member } from './Member.ts';
+import { Member, SLOW_CONSUMER_CUT_MS } from './Member.ts';
 import { RoomRegistry } from './RoomRegistry.ts';
 
 /**
@@ -31,6 +31,10 @@ export interface RelayOptions {
   probeTimeoutMs?: number;
   maxConnectionsPerIp?: number;
   failurePolicy?: AccessFailurePolicy;
+  /** Joins with an unknown room code per IP (JOIN_FAILURE_POLICY by default). */
+  joinFailurePolicy?: AccessFailurePolicy;
+  /** A socket closed as a slow consumer (4009) is cut this long after (SLOW_CONSUMER_CUT_MS). */
+  slowConsumerCutMs?: number;
   /** Where log lines go; stdout by default. */
   logSink?: (line: string) => void;
 }
@@ -83,6 +87,7 @@ export async function startRelay(config: ServerConfig, options: RelayOptions = {
   );
   const connections = new ConnectionCounter(options.maxConnectionsPerIp ?? MAX_CONNECTIONS_PER_IP);
   const failures = new AccessFailureLimiter(options.failurePolicy ?? ACCESS_FAILURE_POLICY);
+  const joinFailures = new AccessFailureLimiter(options.joinFailurePolicy ?? JOIN_FAILURE_POLICY);
   const members = new Set<Member>();
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
   let shuttingDown: Promise<void> | null = null;
@@ -95,19 +100,27 @@ export async function startRelay(config: ServerConfig, options: RelayOptions = {
     registry,
     access: config.access,
     failures,
+    joinFailures,
     log,
     clock,
     helloDeadlineMs: options.helloDeadlineMs ?? HELLO_DEADLINE_MS,
     heartbeatTimeoutMs,
     probeTimeoutMs: options.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
+    slowConsumerCutMs: options.slowConsumerCutMs ?? SLOW_CONSUMER_CUT_MS,
     onEnded: (member: Member) => {
       members.delete(member);
     },
   };
 
+  // /healthz: through Caddy (the internet, an uptime check) only whether the relay is up; the version,
+  // uptime and how many rooms and members it holds only to a request made on this machine, straight to
+  // 127.0.0.1 (deploy.sh, status.sh), so outsiders cannot watch when people play.
   const health = (request: IncomingMessage, response: ServerResponse): void => {
     if ((request.method === 'GET' || request.method === 'HEAD') && pathOf(request.url) === '/healthz') {
-      const body = JSON.stringify({ ok: shuttingDown === null, version: GAME_VERSION, uptimeS: Math.floor((clock() - startedAt) / 1000), rooms: registry.roomCount(), members: registry.memberCount() });
+      const ok = shuttingDown === null;
+      const body = isDirectLocalRequest(request.socket.remoteAddress, request.headers)
+        ? JSON.stringify({ ok, version: GAME_VERSION, uptimeS: Math.floor((clock() - startedAt) / 1000), rooms: registry.roomCount(), members: registry.memberCount() })
+        : JSON.stringify({ ok });
       response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       response.end(request.method === 'HEAD' ? undefined : body);
       return;
@@ -148,7 +161,7 @@ export async function startRelay(config: ServerConfig, options: RelayOptions = {
         ws.terminate();
         return;
       }
-      const member = new Member(ws, ipKey, memberContext);
+      const member = new Member(ws, ipKey, memberContext, ipWideGroup(ip));
       members.add(member);
       log.info('connect', { ip: ipKey });
     });
@@ -158,7 +171,10 @@ export async function startRelay(config: ServerConfig, options: RelayOptions = {
     const now = clock();
     for (const member of Array.from(members)) member.heartbeat(now);
   }, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
-  const failureSweep = setInterval(() => failures.sweep(clock()), FAILURE_SWEEP_MS);
+  const failureSweep = setInterval(() => {
+    failures.sweep(clock());
+    joinFailures.sweep(clock());
+  }, FAILURE_SWEEP_MS);
   failureSweep.unref();
 
   await new Promise<void>((done, fail) => {

@@ -27,6 +27,9 @@ export const DEFAULT_PORT = 8080;
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_MAX_ROOMS = 50;
 export const DEFAULT_MAX_PLAYERS_PER_ROOM = 4;
+/** The shortest access code the relay starts with: 16 characters from setup.sh's generator (base64
+ * without `/`, `+` and `=`) are about 95 bits, far beyond guessing at 5 tries a minute per IP. */
+export const ACCESS_CODE_MIN_LENGTH = 16;
 /** Upper bounds that only turn away typos; the registry clamps capacity to the protocol's slots. */
 const MAX_ROOMS_CEILING = 100_000;
 const MAX_PLAYERS_CEILING = 255;
@@ -80,6 +83,7 @@ export function loadConfig(env: Env): ServerConfig {
   const codes = parseAccessCodes(env.HNG_ACCESS_CODES);
   if (codes.length === 0) throw new ConfigError('HNG_ACCESS_CODES is required: one or more access codes, comma separated (docs/server-relay-design.md, section 5.3)');
   if (codes.some((code) => code.length > ACCESS_CODE_MAX_LENGTH)) throw new ConfigError(`HNG_ACCESS_CODES: every code must be at most ${ACCESS_CODE_MAX_LENGTH} characters, or no client could send it`);
+  if (codes.some((code) => code.length < ACCESS_CODE_MIN_LENGTH)) throw new ConfigError(`HNG_ACCESS_CODES: every code must be at least ${ACCESS_CODE_MIN_LENGTH} characters, or it could be guessed (server/deploy/setup.sh can generate one)`);
 
   const host = env.HNG_HOST?.trim() || DEFAULT_HOST;
   if (host !== 'localhost' && isIP(host) === 0) throw new ConfigError(`HNG_HOST must be an IP address or localhost, got "${host}"`);

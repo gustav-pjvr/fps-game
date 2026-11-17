@@ -213,7 +213,11 @@ export function serverAccepts(message: NetworkMessage, fromSlot: PlayerSlot): bo
 
 That gives the server today's host rules for free: host-authored types refused from guests, `senderSlot`
 equal to the member's slot, `SELF_SLOT_MESSAGE_TYPES` naming the sender, `playerDied.victimSlot` equal to
-`senderSlot`. Handshake fields reuse the `hello` limits (`HELLO_USERNAME_MAX_LENGTH` and friends in
+`senderSlot`. As built (audit fix L2, 2026-11-17), `serverAccepts` is stricter than the peer-to-peer check:
+for every type whose interface declares `senderSlot` (`SENDER_SLOT_MESSAGE_TYPES`, a list the compiler
+checks against `protocol.ts`), the field must be present and equal to the sender's slot, so a guest cannot
+send an anonymous `damageEvent` or `hordeGooseHitEvent`. `acceptsFromSender` (peer to peer) still checks
+`senderSlot` only when present. Handshake fields reuse the `hello` limits (`HELLO_USERNAME_MAX_LENGTH` and friends in
 `protocol.ts`); a `joinAnswer` welcome must pass `isWelcomeFor` (`serverEnvelope.ts`): `isNetworkMessage`,
 `yourSlot` equal to the assigned slot, a boolean `isRejoin`, a string `hostUsername` and an array `roster`.
 
@@ -241,7 +245,10 @@ answers `rejected { reason: 'busy' }`. 31^6 is about 887 million codes, so clash
 1. Guest sends `join { code, username, rejoinToken, features }` (the token is today's per-code UUID from
    `getOrCreateRejoinToken`, unchanged; the client uppercases the code, the server matches it exactly).
    Unknown or tombstoned code: `rejected { reason: 'notFound' }`,
-   shown as today's "No room found with that code." (asserted by `e2e/multiplayer.spec.ts`).
+   shown as today's "No room found with that code." (asserted by `e2e/multiplayer.spec.ts`). Each such
+   join counts against the IP under its own key (`<ip>#join`, `JOIN_FAILURE_POLICY`: 20 a minute, then 10
+   minutes in which every join from that IP is answered `notFound` without the code being looked up), so
+   room codes cannot be walked; the access code's count is separate.
 2. The server runs `HostRoster.handleHello(...)`; `full` gives `rejected { reason: 'full' }`. Otherwise the
    slot is held and the member is **pending**: it gets no game frames and no `quality`, and its own game
    frames are dropped; it does get `pong` (so a long wait for the host's answer does not read as a lost
@@ -311,7 +318,9 @@ the server has it.) Each manager would need a "promote followers to authority" p
 - Empty room (no live or pending members): closed at once. Idle rooms: closed once the host has been
   alone (no live or pending guest) and no `matchStart` was relayed for 2 hours (measured from the later
   of the two). Any room older than 12 hours: closed. All three send `roomClosed` first.
-- `HNG_MAX_ROOMS` (default 50): above it `create` gets `rejected { reason: 'busy' }`.
+- `HNG_MAX_ROOMS` (default 50): above it `create` gets `rejected { reason: 'busy' }`. One client IP key
+  (the per-IP limits' key, section 7.4) may hold at most 3 open rooms (`MAX_ROOMS_PER_IP`); its next
+  `create` gets `busy` too, so one person cannot take every room.
 
 ## 5. Wire protocol
 
@@ -374,7 +383,10 @@ access block (4001; the code is not compared while blocked), the code (4001, cou
 **Recommended: a shared access code**, typed once per player in the Multiplayer menu, kept in
 `localStorage`, sent as `hello.access` (the client trims it; the server trims each configured code too). The server compares SHA-256 hashes with `crypto.timingSafeEqual`
 against `HNG_ACCESS_CODES`, a comma-separated list in `/etc/hng-relay.env` (root, mode 600), so Gustav
-rotates by adding a code, telling friends, then removing the old one. No database; never in the repo or
+rotates by adding a code, telling friends, then removing the old one. Every code is at least 16 characters:
+`loadConfig` refuses to start with a shorter one (the message names the rule, never the code), and
+`setup.sh` offers to generate one (`openssl rand -base64 18` without `/`, `+` and `=`: about 95 bits) and
+shows it once on the terminal. No database; never in the repo or
 bundle (both public). Around it: the room code is a second secret; the `Origin` header must match
 `HNG_ALLOWED_ORIGINS` (the Pages site, its previews, `http://localhost:5173` in dev), which stops other
 websites but is no security boundary (comma separated exact origins; `https://*.hunter-n-goose.pages.dev`
@@ -418,8 +430,10 @@ would fill the buffer in about ten seconds. `pong`, `quality` and the other one-
 either. The client acknowledges with `ack { seq }` after every 64 numbered frames and once a second when
 anything new arrived; an ack beyond the last frame sent is dropped and counted (`badAck`).
 
-**Bounds.** At most **1536 frames or 768 KiB** of frame text kept per member (`RESUME_BUFFER_MAX_FRAMES`,
-`RESUME_BUFFER_MAX_BYTES` in `serverEnvelope.ts`; about 30 s at 50 reliable frames a second). Past either,
+**Bounds.** At most **1536 frames or 768 KiB** kept per member (`RESUME_BUFFER_MAX_FRAMES`,
+`RESUME_BUFFER_MAX_BYTES` in `serverEnvelope.ts`; about 30 s at 50 reliable frames a second). Bytes, not
+characters (`keptFrameBytes` in `Room.ts`): a frame's UTF-8 size, or two bytes a character when it holds
+anything outside ASCII and that is more, since V8 then keeps the whole string at two bytes a character. Past either,
 the oldest kept frames go. For a live member that only limits how far back a resume can reach (one from
 before the kept frames is refused); for an away member it **ends the resume window** at once.
 
@@ -579,7 +593,7 @@ connections, or mobile and Wi-Fi players report stutter the TCP path explains. T
 | `server/RoomRegistry.ts` | Codes, create, lookup, tombstones, cleanup timer. |
 | `server/Room.ts` | Members, `HostRoster`, admission flow, routing (`routing.ts`), `serverAccepts`, quality broadcast. Talks to members through a `MemberSocket` interface `{ send(text), close(code, reason), bufferedAmount }`. |
 | `server/Member.ts` | Wraps a `ws` socket: handshake (hello deadline, version, access block and code), one room per socket, the guest frame cap, lobby rate limit, protocol ping and pong. |
-| `server/clientIp.ts` | The client address: the socket's, or the last `X-Forwarded-For` entry only when the peer is 127.0.0.1 (Caddy); IPv6 grouped by /64 for the per-IP limits. |
+| `server/clientIp.ts` | The client address: the socket's, or the last `X-Forwarded-For` entry only when the peer is 127.0.0.1 (Caddy); IPv6 grouped by /64 for the per-IP limits, and failed attempts also counted by /48. Whether an http request came straight from 127.0.0.1 (the full `/healthz`). |
 | `server/limits.ts` | Token buckets, per-IP counters. |
 | `server/log.ts` | JSON lines to stdout. |
 | `server/*.test.ts` | Vitest, Node environment. |
@@ -590,7 +604,9 @@ JSON lines on stdout into journald (`SystemMaxUse=200M`): connect (IP), handshak
 close (code, reason, lifetime), join, admit, reject, leave, kick, rate-limit drops (per minute), slow-consumer
 closes, errors. Never payloads or the access code: `log.ts` takes only flat fields, redacts keys that
 would carry a payload or a secret (`access`, `token`, `m`, `payload`, `welcome` and the like) and cuts every
-string at 120 characters; `server/log.test.ts` and `server/main.test.ts` check it. `/healthz` returns `{ ok, version, uptimeS, rooms, members }`.
+string at 120 characters; `server/log.test.ts` and `server/main.test.ts` check it. `/healthz` returns `{ ok, version, uptimeS, rooms, members }` only to a request made straight to 127.0.0.1 with
+no proxy header (`deploy.sh`, `status.sh`); through Caddy (`X-Forwarded-For` set) it returns only `{ ok }`,
+so nobody outside can watch when people play.
 
 ### 7.4 Limits per connection
 
@@ -601,22 +617,39 @@ string at 120 characters; `server/log.test.ts` and `server/main.test.ts` check i
 | Guest rate | 150 frames/s sustained, burst 300; 64 KB/s | 30 snapshots, about 10 shots, footsteps, events. |
 | Host rate | 800 frames/s sustained, burst 1600; 512 KB/s | Goose and horde snapshots per live goose, sync bursts (`sendFullSync`). |
 | Over the rate | drop and count; over for 10 s in a row: close 4008 | "10 s in a row" means 10 consecutive whole seconds (counted from the member's start), each with at least one dropped frame. Byte buckets hold 2 s of the byte rate as their burst. "KB" in this table is read as KiB. Release 1 enforces generous caps and logs any member above 50 percent, to tighten after real matches. |
-| Slow consumer | skip snapshots above 64 KiB buffered; close 4009 above 4 MiB | Snapshots here are the superseded state types of section 5.6. |
-| Resume buffer | 1536 frames or 768 KiB of frame text per member, unacknowledged reliable frames only | Section 5.6. Overflow while away ends the 30 s window. A reconnecting client queues within the same bounds. |
+| Slow consumer | skip snapshots above 64 KiB buffered; close 4009 above 1 MiB, and cut the socket 1 s later (`SLOW_CONSUMER_CUT_MS`) | Snapshots here are the superseded state types of section 5.6. The cut frees the backlog instead of waiting for the heartbeat (15 s) or `ws`'s close timeout (30 s); the close frame goes out first, and a client that never sees it gets 4012 on its resume (one failed resume for its IP), also final. |
+| Resume buffer | 1536 frames or 768 KiB per member, counted in bytes (`keptFrameBytes`), unacknowledged reliable frames only | Section 5.6. Overflow while away ends the 30 s window. A reconnecting client queues within the same bounds. |
 | Failed resumes per IP | the access-failure policy below, counted under its own key | A right access code does not clear them. |
+| Joins with an unknown room code per IP | 20 a minute, then 10 minutes of `notFound` for every join | Under its own key (section 4.2); the access code is not blocked by it. |
 | Connections per IP | 8 | A household behind one address. |
-| Access failures per IP | 5 a minute, then 10 minute block | |
-| Rooms | `HNG_MAX_ROOMS`, default 50 | |
+| Access failures per IP | 5 a minute, then 10 minute block | For IPv6 every failure (access, resume, join) counts under the /64 and under its /48, and either one over the limit blocks. At most 50,000 keys counting and 50,000 blocked: a full table forgets the key that failed longest ago, never a live block first, and never refuses a key for want of room. Stale entries are pruned from the front of each table as calls come in, never by a walk over the whole table. |
+| Rooms | `HNG_MAX_ROOMS`, default 50; 3 open rooms per IP key | A fourth `create` from the same IP key gets `busy`. |
 
 ### 7.5 Memory per room
 
-Per room: at most `capacity` members, a `HostRoster` (hundreds of bytes), limiter and RTT state, and socket
-buffers (normally a few KB, capped at 4 MiB). Well under 100 KB per room plus Node's baseline of about 50 MB;
-even Oracle's 1 GB AMD micro instance would do. `MemoryMax=512M` in systemd guards against a leak.
-Resume (5.6) adds each member's unacknowledged reliable frames: about a second's worth while connected
-(acknowledged every second or 64 frames), at most 768 KiB of frame text while away or when a client never
-acknowledges. JSON frames are ASCII, which V8 keeps one byte a character, so the worst case is about 3 MB
-per 4-player room and 150 MB at 50 rooms, all members away at once; inside `MemoryMax`.
+Normal play: at most `capacity` members, a `HostRoster` (hundreds of bytes), limiter and RTT state, socket
+buffers of a few KB, and about a second of unacknowledged reliable frames per member. Well under 100 KB per
+room plus Node's baseline of about 50 MB; even Oracle's 1 GB AMD micro instance would do.
+
+**Worst case, as built after the audit fixes (2026-11-17)**, for a code holder who sets out to fill memory.
+Per member at most:
+
+| What | Bound | Where it lives |
+|---|---|---|
+| Resume buffer | 768 KiB counted in bytes (`keptFrameBytes`), plus about 80 bytes of bookkeeping a frame (1536 frames: about 120 KiB) | V8 heap |
+| `ws` send buffer | 1 MiB (`slowCloseBytes`) plus the one frame that crosses it (up to 128 KiB), for at most 1 s before the cut | outside the heap (Buffers) |
+| A frame being received | 128 KiB (`maxPayload`) | outside the heap |
+| Kernel send buffer to Caddy | Linux grows it up to `net.ipv4.tcp_wmem`'s maximum (4 MiB by default, UNVERIFIED on the VM); cgroup v2 charges it to the service | kernel, counted in `MemoryMax` |
+
+That is about **2.1 MiB a member** in the process (about 0.9 MiB heap, 1.25 MiB outside it), and up to about
+**6 MiB** with a full kernel buffer. One IP holds at most 8 sockets: about 17 MiB in the process, 49 MiB with
+the kernel's share. The whole relay at its ceiling (50 rooms, 4 members each, 200 members, which takes at
+least 17 IP keys for the rooms and 25 for the sockets) is about 420 MiB in the process plus Node's 50 MB: the
+heap part (about 180 MiB) stays under `--max-old-space-size=384`, the total just inside `MemoryMax=512M`
+before kernel buffers. With every kernel buffer full as well it is over `MemoryMax`: an attack needs
+about ten addresses with the access code, and ends every room when it lands (a restart, section 7.6).
+Before these fixes one member could hold 1.5 MiB of two-byte resume frames plus 4 MiB of send buffer for up
+to 30 s, and one person could open all 50 rooms.
 
 ### 7.6 Crash and restart
 
@@ -638,7 +671,14 @@ ends the match, the host's too (a small new branch: the host ignored `onError` b
 | Cloudflare quick tunnel (`trycloudflare.com`) | free | nothing | No: random URL per start, not for production. |
 
 Caddyfile in full: `hng-relay.duckdns.org { reverse_proxy 127.0.0.1:8080 }` (certificate via HTTP-01 on 80
-or TLS-ALPN on 443; WebSocket upgrades pass through). The relay URL is a committed constant `RELAY_URL` in
+or TLS-ALPN on 443; WebSocket upgrades pass through).
+
+**If the relay is ever put behind Cloudflare's proxy** (the recommended option above, orange cloud), every
+connection reaches Caddy from a Cloudflare address. Caddy must then trust Cloudflare's ranges
+(`servers { trusted_proxies static <the ranges from cloudflare.com/ips> }` in the global options) and send
+`header_up X-Forwarded-For {client_ip}` instead of `{remote_host}`, or the relay's per-IP limits
+(connections, rooms, failed codes and joins) count every player as one address and block everyone at once.
+The shipped kit (DuckDNS, no proxy) sends `{remote_host}`, which is right without a proxy. The relay URL is a committed constant `RELAY_URL` in
 `src/core/config.ts`: `npm run deploy` builds locally, so Pages dashboard variables never reach the bundle
 (they feed Functions only). A `?relay=` override works only in dev builds, so no link can redirect players.
 
@@ -655,21 +695,29 @@ or TLS-ALPN on 443; WebSocket upgrades pass through). The relay URL is a committ
 4. Install Node (official arm64 build or NodeSource), Caddy (its apt repository), `unattended-upgrades`.
 5. User `hng` without login. `/opt/hng-relay` holds a sparse checkout of the public repo (`server/`,
    `src/network/`, `src/core/config.ts`, `src/core/version.ts`, `src/combat/grenades/grenadeTuning.ts`);
-   `npm ci --omit=dev` in `server/`.
+   `npm ci --omit=dev --ignore-scripts` in `server/` (no package install script runs as root).
 6. `/etc/hng-relay.env` (root, mode 600): `HNG_ACCESS_CODES`, `HNG_ALLOWED_ORIGINS`, `HNG_PORT=8080`,
    `HNG_HOST=127.0.0.1` (the default; Caddy is in front), `HNG_MAX_ROOMS`, `HNG_MAX_PLAYERS_PER_ROOM=4`,
    `HNG_LOG_LEVEL`. `server/config.ts` fails fast with a message naming any malformed variable.
 7. systemd `hng-relay.service`: `User=hng`, `EnvironmentFile=/etc/hng-relay.env`, `ExecStart=/usr/bin/node
-   /opt/hng-relay/server/main.ts`, `Restart=always`, `RestartSec=1`, `MemoryMax=512M`, plus `NoNewPrivileges`,
-   `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`.
+   --max-old-space-size=384 /opt/hng-relay/server/main.ts`, `Restart=always`, `RestartSec=1`, `MemoryMax=512M`,
+   plus `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`,
+   `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `IPAddressDeny=any` with `IPAddressAllow=localhost`
+   (only Caddy talks to it, and it opens no connection out), `ProtectKernelTunables`, `ProtectKernelModules`,
+   `ProtectControlGroups`, `RestrictNamespaces`, `LockPersonality`, `RestrictSUIDSGID`,
+   `SystemCallFilter=@system-service`, `ProtectProc=invisible`, `UMask=0077`. Caddy's admin API listens on
+   the unix socket `/run/caddy/admin.sock` (mode 0220, root and `caddy` only), not on TCP `localhost:2019`;
+   the drop-in `caddy-hng.conf` creates `/run/caddy` and points `systemctl reload caddy` at the socket.
 8. DuckDNS: root cron every 5 minutes calls the update URL with the token from a root-only file.
 9. All of it lives in `server/deploy/` (`setup.sh`, unit, Caddyfile, `deploy.sh`), so a lost VM is rebuilt
    from a fresh instance in about half an hour.
 
 ### 8.3 Updates
 
-`server/deploy/deploy.sh` (run from Gustav's machine over SSH): pull, `npm ci --omit=dev`, wait until
-`/healthz` shows `rooms: 0` (or `--force`), `systemctl restart hng-relay`, check `/healthz`. OS security
+`server/deploy/deploy.sh` (run from Gustav's machine over SSH): fetch, and go on only if the branch tip is
+the commit Gustav has checked out (`git rev-parse HEAD`, or `--commit SHA`), so the VM never runs as root a
+commit he has not seen; `npm ci --omit=dev --ignore-scripts`, wait until `/healthz` (straight on
+127.0.0.1:8080) shows `rooms: 0` (or `--force`), `systemctl restart hng-relay`, check `/healthz`. OS security
 updates install unattended; automatic reboots at 04:00 SAST.
 
 ### 8.4 Idle reclamation (honest status)
