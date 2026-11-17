@@ -31,6 +31,23 @@ describe('relaySettings', () => {
     expect(settings.serverAvailable()).toBe(false);
   });
 
+  it('uses an access code typed on the Join screen for the very next join, without a blur', async () => {
+    const settings = await import('./relaySettings.ts');
+    expect(settings.joinTransport('')).toBe('p2p');
+    // The field holds a value that never fired `change`: the join attempt must still see it.
+    expect(settings.joinTransport('  typed-not-blurred  ')).toBe('server');
+    expect(settings.loadAccessCode()).toBe('typed-not-blurred');
+    // Clearing the field then joining falls back to P2P.
+    expect(settings.joinTransport('')).toBe('p2p');
+  });
+
+  it('keeps the stored code when the Join screen has no access field (none shown)', async () => {
+    const settings = await import('./relaySettings.ts');
+    settings.saveAccessCode('test-only-value');
+    expect(settings.joinTransport(null)).toBe('server');
+    expect(settings.loadAccessCode()).toBe('test-only-value');
+  });
+
   it('persists both transport choices and rejects unrecognized stored values', async () => {
     const settings = await import('./relaySettings.ts');
     settings.savePreferredTransport('server');

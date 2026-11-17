@@ -1,10 +1,11 @@
 import { MONO_FONT, LABEL_CSS, SURFACE_RAISED } from '../theme.ts';
 import { NETWORK_BLOCKED_MESSAGE, joinRoom, type Transport, type TransportKind } from '../../network/transport.ts';
-import { loadAccessCode, relayUrl, serverAvailable } from '../../network/relaySettings.ts';
+import { joinTransport, loadAccessCode, relayUrl, saveAccessCode } from '../../network/relaySettings.ts';
+import { ACCESS_CODE_MAX_LENGTH } from '../../network/serverEnvelope.ts';
 import type { MultiplayerMatchStartParams } from '../../network/MultiplayerSession.ts';
 import type { PlayerSlot, RosterEntry } from '../../network/protocol.ts';
 import { loadStoredUsername, normalizeUsername, saveUsername } from '../../core/username.ts';
-import { getOrCreateRejoinToken } from '../../core/multiplayerRejoin.ts';
+import { getOrCreateRejoinToken, resolveJoinOptions, type JoinRoomOptions } from '../../core/multiplayerRejoin.ts';
 import { DEFAULT_MATCH_MAP, MULTIPLAYER_MAX_PLAYERS } from '../../core/config.ts';
 import { createPlayerRow } from './CreateRoomScreen.ts';
 import { ACCENT, TEXT, HAIRLINE, BG_RAISED, attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
@@ -29,6 +30,10 @@ export class JoinRoomScreen {
   private readonly panel: HTMLDivElement;
   private readonly usernameInput: HTMLInputElement;
   private readonly codeInput: HTMLInputElement;
+  /** Null when no game server is configured (relayUrl() is empty), same as the Multiplayer menu's field. */
+  private readonly accessInput: HTMLInputElement | null = null;
+  /** The access field's label, input and hint: hidden with the code entry once connected. */
+  private accessGroup: HTMLElement[] = [];
   private readonly joinButton: HTMLButtonElement;
   private readonly statusText: HTMLDivElement;
   private readonly lobbyView: HTMLDivElement;
@@ -120,6 +125,29 @@ export class JoinRoomScreen {
     });
     panel.appendChild(this.codeInput);
 
+    if (relayUrl()) {
+      const accessLabel = document.createElement('label');
+      accessLabel.textContent = 'Access code';
+      accessLabel.htmlFor = 'join-room-access-code';
+      accessLabel.style.cssText = `${LABEL_CSS} margin-bottom:8px;`;
+      const accessInput = createTextInput('From the person who invited you…', ACCESS_CODE_MAX_LENGTH);
+      accessInput.id = 'join-room-access-code';
+      accessInput.name = 'accessCode';
+      accessInput.type = 'password';
+      accessInput.autocomplete = 'off';
+      accessInput.spellcheck = false;
+      accessInput.setAttribute('aria-describedby', 'join-room-access-code-hint');
+      accessInput.value = loadAccessCode();
+      accessInput.addEventListener('change', () => saveAccessCode(accessInput.value));
+      const accessHint = document.createElement('div');
+      accessHint.id = 'join-room-access-code-hint';
+      accessHint.textContent = 'Only needed if the host used the game server.';
+      accessHint.style.cssText = 'font-size:0.8rem; opacity:0.7; margin-top:6px; margin-bottom:14px;';
+      this.accessInput = accessInput;
+      this.accessGroup = [accessLabel, accessInput, accessHint];
+      panel.append(accessLabel, accessInput, accessHint);
+    }
+
     this.joinButton = createButton('Join', 'primary');
     this.joinButton.style.width = '100%';
     this.joinButton.addEventListener('click', () => this.attemptJoin());
@@ -179,12 +207,15 @@ export class JoinRoomScreen {
     document.addEventListener('keydown', this.onKeyDown);
   }
 
-  show(): void {
+  /** `options.prefillCode` fills the room code in; with `autoJoin` the join starts at once (a guest
+   * rejoining the room they just lost). If the room is gone, the usual join messages explain it. */
+  show(options?: JoinRoomOptions): void {
+    const { code, autoJoin } = resolveJoinOptions(options);
     this.overlay.style.display = 'flex';
     attachScanSweep(this.panel);
-    this.codeInput.value = '';
-    this.codeInput.style.display = 'block';
-    this.joinButton.style.display = 'block';
+    this.codeInput.value = code;
+    if (this.accessInput) this.accessInput.value = loadAccessCode();
+    this.setEntryVisible(true);
     this.lobbyView.style.display = 'none';
     this.ownSlot = null;
     this.ownReady = false;
@@ -192,6 +223,15 @@ export class JoinRoomScreen {
     this.refreshReadyButton();
     this.setStatus('');
     this.codeInput.focus();
+    if (autoJoin) this.attemptJoin();
+  }
+
+  /** The code-entry step (access field, room code, Join) versus the lobby view shown once connected. */
+  private setEntryVisible(visible: boolean): void {
+    const display = visible ? 'block' : 'none';
+    this.codeInput.style.display = display;
+    this.joinButton.style.display = display;
+    for (const element of this.accessGroup) element.style.display = display;
   }
 
   private renderPlayerRows(roster: RosterEntry[]): void {
@@ -214,11 +254,14 @@ export class JoinRoomScreen {
 
   /** `serverRefusal`: on the P2P fallback after the game server refused this player (a wrong or old
    * access code, an outdated page), the server's reason, shown if P2P has no such room either. */
-  private attemptJoin(transport: TransportKind = serverAvailable() ? 'server' : 'p2p', code = this.codeInput.value.trim(), serverRefusal: string | null = null): void {
+  private attemptJoin(requestedTransport?: TransportKind, code = this.codeInput.value.trim(), serverRefusal: string | null = null): void {
     if (code.length === 0) {
       this.setStatus('Enter a room code first.');
       return;
     }
+    // Read the access field's live value (it may not have blurred, so no `change` yet) before
+    // deciding the transport, and again by loadAccessCode() in the join call below.
+    const transport = requestedTransport ?? joinTransport(this.accessInput ? this.accessInput.value : null);
 
     // A stale in-flight attempt (e.g. the player edited the code and hit Join again before the
     // first attempt resolved) shouldn't leave two connections racing to attach.
@@ -276,8 +319,7 @@ export class JoinRoomScreen {
         }
         if (transport !== 'server' || !this.joinFailureShown) this.setStatus('The host disconnected.');
         this.joinButton.disabled = false;
-        this.codeInput.style.display = 'block';
-        this.joinButton.style.display = 'block';
+        this.setEntryVisible(true);
         this.lobbyView.style.display = 'none';
       },
       onError: (message, kind) => {
@@ -353,8 +395,7 @@ export class JoinRoomScreen {
             });
             return;
           }
-          this.codeInput.style.display = 'none';
-          this.joinButton.style.display = 'none';
+          this.setEntryVisible(false);
           this.lobbyView.style.display = 'block';
           this.renderPlayerRows(message.roster);
           this.setStatus(message.isRejoin ? 'Reconnected. Waiting for the host…' : 'Connected. Waiting for the host…');
