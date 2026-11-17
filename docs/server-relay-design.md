@@ -622,7 +622,7 @@ so nobody outside can watch when people play.
 | Failed resumes per IP | the access-failure policy below, counted under its own key | A right access code does not clear them. |
 | Joins with an unknown room code per IP | 20 a minute, then 10 minutes of `notFound` for every join | Under its own key (section 4.2); the access code is not blocked by it. |
 | Connections per IP | 8 | A household behind one address. |
-| Access failures per IP | 5 a minute, then 10 minute block | For IPv6 every failure (access, resume, join) counts under the /64 and under its /48, and either one over the limit blocks. At most 50,000 keys counting and 50,000 blocked: a full table forgets the key that failed longest ago, never a live block first, and never refuses a key for want of room. Stale entries are pruned from the front of each table as calls come in, never by a walk over the whole table. |
+| Access failures per IP | 5 a minute, then 10 minute block | For IPv6 every failure (access, resume, join) counts under the /64 and under its /48, the /48 at five times the limit (one ISP can put many unrelated subscribers in a /48), and either one over its limit blocks. Open rooms are capped at 3 per /64 and per /48 alike. At most 50,000 keys counting and 50,000 blocked: a full table forgets the key that failed longest ago, never a live block first, and never refuses a key for want of room. Stale entries are pruned from the front of each table as calls come in, never by a walk over the whole table. |
 | Rooms | `HNG_MAX_ROOMS`, default 50; 3 open rooms per IP key | A fourth `create` from the same IP key gets `busy`. |
 
 ### 7.5 Memory per room

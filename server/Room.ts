@@ -50,6 +50,8 @@ export interface MemberSocket {
   readonly bufferedAmount: number;
   /** The per-IP key (clientIp.ts) the registry counts this socket's rooms by; absent, no per-IP room cap. */
   readonly ipKey?: string;
+  /** For IPv6, the /48 around ipKey (clientIp.ts ipWideGroup): rooms are capped per /48 as well. */
+  readonly ipWideKey?: string | null;
   /** Check that the socket is still alive and end it soon if not (a resume came for its member while
    * the server still counted it as connected: a half-open TCP connection after a network change). */
   probe?(): void;

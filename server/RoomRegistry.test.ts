@@ -99,6 +99,23 @@ describe('RoomRegistry: rooms per IP', () => {
     expect(create(harness, '198.51.100.1').member).toBeNull();
   });
 
+  it('caps rooms per IPv6 /48 as well: one person holding a /48 cannot take more rooms through other /64s', () => {
+    const harness = makeHarness();
+    const createFrom = (key: string, wide: string | null) => {
+      const socket = new FakeSocket('host', key, wide);
+      return { socket, member: harness.registry.create(socket, { op: 'create', username: 'h', maxPlayers: 4 }) };
+    };
+    const opened = [1, 2, 3].map((i) => createFrom(`2001:db8:1:${i}::/64`, '2001:db8:1::/48'));
+    for (const room of opened) expect(room.member).not.toBeNull();
+    const fourth = createFrom('2001:db8:1:9::/64', '2001:db8:1::/48');
+    expect(fourth.member).toBeNull();
+    expect(fourth.socket.ops('rejected')).toEqual([{ op: 'rejected', reason: 'busy' }]);
+    // Another /48 is not affected, and a closed room gives its place back to the /48.
+    expect(createFrom('2001:db8:2:1::/64', '2001:db8:2::/48').member).not.toBeNull();
+    opened[0]!.member?.disconnected(false);
+    expect(createFrom('2001:db8:1:9::/64', '2001:db8:1::/48').member).not.toBeNull();
+  });
+
   it('isOpen is true only for a room that is open now', () => {
     const harness = makeHarness();
     const room = createRoom(harness);

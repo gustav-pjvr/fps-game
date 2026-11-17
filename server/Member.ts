@@ -11,7 +11,7 @@ import {
   type ResumeOp,
 } from '../src/network/serverEnvelope.ts';
 import type { AccessCodes } from './access.ts';
-import { GUEST_RATE_LIMIT, MemberRateLimiter, type AccessFailureLimiter } from './limits.ts';
+import { GUEST_RATE_LIMIT, MemberRateLimiter, WIDE_KEY_FAILURE_SCALE, type AccessFailureLimiter } from './limits.ts';
 import type { Logger } from './log.ts';
 import type { MemberSocket, RoomMembership } from './Room.ts';
 import type { RoomRegistry } from './RoomRegistry.ts';
@@ -361,8 +361,10 @@ export class Member implements MemberSocket {
     return this.failureKeys(keyOf).some((key) => limiter.isBlocked(key, now));
   }
 
+  /** The /48 key counts toward a looser limit (WIDE_KEY_FAILURE_SCALE) than the address group's. */
   private recordFailure(limiter: AccessFailureLimiter, keyOf: (ipKey: string) => string, now: number): void {
-    for (const key of this.failureKeys(keyOf)) limiter.recordFailure(key, now);
+    limiter.recordFailure(keyOf(this.ipKey), now);
+    if (this.ipWideKey !== null) limiter.recordFailure(keyOf(this.ipWideKey), now, WIDE_KEY_FAILURE_SCALE);
   }
 
   private helloExpired(): void {

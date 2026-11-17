@@ -63,9 +63,9 @@ export class RoomRegistry {
   private readonly limits: RoomLimits;
   private readonly log: RoomLog | undefined;
   private readonly maxRoomsPerIp: number;
-  /** Open rooms per creator IP key, and which key each room was created from. */
+  /** Open rooms per creator IP key (and IPv6 /48), and which keys each room was created from. */
   private readonly roomsPerIp = new Map<string, number>();
-  private readonly creatorIp = new Map<Room, string>();
+  private readonly creatorIp = new Map<Room, readonly string[]>();
   private timer: { api: TimerApi; handle: unknown } | null = null;
 
   constructor(config: RegistryConfig, options: RegistryOptions) {
@@ -96,9 +96,11 @@ export class RoomRegistry {
   create(socket: MemberSocket, op: CreateOp, sessionToken: string | null = null): RoomMembership | null {
     this.sweepTombstones();
     if (this.rooms.size >= this.config.maxRooms) return this.refuse(socket, 'busy');
-    const ipKey = socket.ipKey;
-    if (ipKey !== undefined && (this.roomsPerIp.get(ipKey) ?? 0) >= this.maxRoomsPerIp) {
-      this.log?.('roomsPerIpLimit', { ip: ipKey });
+    // Counted per IP key and, for IPv6, per /48 too: one person can hold a whole /48.
+    const ipKeys = [socket.ipKey, socket.ipWideKey].filter((key): key is string => typeof key === 'string');
+    const full = ipKeys.find((key) => (this.roomsPerIp.get(key) ?? 0) >= this.maxRoomsPerIp);
+    if (full !== undefined) {
+      this.log?.('roomsPerIpLimit', { ip: full });
       return this.refuse(socket, 'busy');
     }
     const code = this.freshCode();
@@ -116,9 +118,9 @@ export class RoomRegistry {
       newSessionToken: this.drawToken,
     });
     this.rooms.set(code, room);
-    if (ipKey !== undefined) {
-      this.creatorIp.set(room, ipKey);
-      this.roomsPerIp.set(ipKey, (this.roomsPerIp.get(ipKey) ?? 0) + 1);
+    if (ipKeys.length > 0) {
+      this.creatorIp.set(room, ipKeys);
+      for (const key of ipKeys) this.roomsPerIp.set(key, (this.roomsPerIp.get(key) ?? 0) + 1);
     }
     socket.send(encodeServerFrame({ op: 'created', code, slot: 0 }));
     this.log?.('roomOpen', { code, capacity: room.capacity });
@@ -216,12 +218,14 @@ export class RoomRegistry {
   private handleClosed(room: Room, reason: RoomClosedReason): void {
     if (this.rooms.get(room.code) !== room) return;
     this.rooms.delete(room.code);
-    const ipKey = this.creatorIp.get(room);
-    if (ipKey !== undefined) {
+    const ipKeys = this.creatorIp.get(room);
+    if (ipKeys !== undefined) {
       this.creatorIp.delete(room);
-      const open = (this.roomsPerIp.get(ipKey) ?? 1) - 1;
-      if (open > 0) this.roomsPerIp.set(ipKey, open);
-      else this.roomsPerIp.delete(ipKey);
+      for (const key of ipKeys) {
+        const open = (this.roomsPerIp.get(key) ?? 1) - 1;
+        if (open > 0) this.roomsPerIp.set(key, open);
+        else this.roomsPerIp.delete(key);
+      }
     }
     this.tombstones.delete(room.code);
     this.tombstones.set(room.code, this.clock() + TOMBSTONE_MS);

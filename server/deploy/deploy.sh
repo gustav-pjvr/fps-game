@@ -67,6 +67,16 @@ main() {
   # field NAME < json: prints one field of the /healthz JSON.
   field() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[process.argv[1]])}catch{console.log("?")}})' "$1"; }
 
+  # The relay refuses to start with a missing access code or one under 16 characters. Check this
+  # first, without showing a code, before anything on the VM changes: otherwise new code would sit on
+  # disk beside a code it rejects, and the next reboot or crash would leave the relay down. Quoted
+  # and unquoted values are both read.
+  if ! sudo awk '/^HNG_ACCESS_CODES=/ { found = 1; v = substr($0, index($0, "=") + 1); gsub(/"/, "", v); n = split(v, codes, ","); kept = 0; for (i = 1; i <= n; i++) { c = codes[i]; gsub(/^[ \t]+|[ \t]+$/, "", c); if (c == "") continue; kept++; if (length(c) < 16) short = 1 } if (kept == 0) short = 1 } END { exit (short || !found) }' /etc/hng-relay.env; then
+    say "/etc/hng-relay.env has no access code, or one shorter than 16 characters, which the relay does not accept."
+    say "Run setup.sh --reconfigure on the VM first (it can generate a code). Nothing on the VM changed."
+    return 5
+  fi
+
   branch=$(sudo git -C "$app" rev-parse --abbrev-ref HEAD)
   before=$(sudo git -C "$app" rev-parse --short HEAD)
 
@@ -90,14 +100,6 @@ main() {
 
   say "Installing dependencies (no install scripts)"
   (cd "$app/server" && sudo npm ci --omit=dev --ignore-scripts --no-audit --no-fund) || return 1
-
-  # The relay refuses to start with an access code under 16 characters. Check the lengths here,
-  # without showing a code, so a restart never takes it down for that.
-  if ! sudo awk -F'"' '/^HNG_ACCESS_CODES=/ { n = split($2, codes, ","); for (i = 1; i <= n; i++) { c = codes[i]; gsub(/^ +| +$/, "", c); if (c != "" && length(c) < 16) short = 1 } } END { exit short }' /etc/hng-relay.env; then
-    say "An access code in /etc/hng-relay.env is shorter than 16 characters, which the relay no longer accepts."
-    say "Run setup.sh --reconfigure on the VM first (it can generate a code). Not restarting."
-    return 5
-  fi
 
   if ! sudo cmp -s "$app/server/deploy/hng-relay.service" /etc/systemd/system/hng-relay.service; then
     say "Service unit changed: installing it"

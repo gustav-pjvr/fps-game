@@ -248,15 +248,23 @@ describe('relay shell: the handshake', () => {
     for (const secret of [CODE, 'guess-one', 'guess-two']) expect(logs.join('\n')).not.toContain(secret);
   });
 
-  it('IPv6 failures count per /48 as well as per /64: stepping through the /64s of one site gains nothing', async () => {
+  it('IPv6 failures count per /48 as well as per /64, the /48 at a looser limit: neighbours keep playing, stepping through /64s gains nothing', async () => {
     await start({ failurePolicy: { maxFailures: 3, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 } });
-    for (const address of ['2001:db8:1:1::1', '2001:db8:1:2::1', '2001:db8:1:3::1']) {
+    const guess = async (address: string): Promise<void> => {
       const client = await connect({ headers: { 'x-forwarded-for': address } });
       client.send(hello('guess-v6'));
       expect((await client.closed).code).toBe(SERVER_CLOSE.accessDenied);
-    }
-    // A fourth /64 of the same /48 is blocked, even with the right code.
-    const sameSite = await connect({ headers: { 'x-forwarded-for': '2001:db8:1:4::1' } });
+    };
+    // Three strangers in one /48 each mistype once: their neighbour in a fourth /64 still gets in.
+    for (const address of ['2001:db8:1:1::1', '2001:db8:1:2::1', '2001:db8:1:3::1']) await guess(address);
+    const neighbour = await connect({ headers: { 'x-forwarded-for': '2001:db8:1:4::1' } });
+    neighbour.send(hello());
+    await neighbour.op('ready');
+    // One person stepping through /64s: the /48 blocks at WIDE_KEY_FAILURE_SCALE (5) times the limit,
+    // 15 failures here, three already counted above.
+    for (let i = 0; i < 12; i++) await guess(`2001:db8:1:${(10 + i).toString(16)}::1`);
+    // A further /64 of the same /48 is blocked, even with the right code.
+    const sameSite = await connect({ headers: { 'x-forwarded-for': '2001:db8:1:ff::1' } });
     sameSite.send(hello());
     expect((await sameSite.closed).code).toBe(SERVER_CLOSE.accessDenied);
     expect(sameSite.frames).toEqual([]);

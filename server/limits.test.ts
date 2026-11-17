@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  WIDE_KEY_FAILURE_SCALE,
   AccessFailureLimiter,
   ConnectionCounter,
   GUEST_RATE_LIMIT,
@@ -112,6 +113,20 @@ describe('ConnectionCounter', () => {
     counter.release('never');
     expect(counter.trackedIps()).toBe(0);
     expect(counter.countFor('a')).toBe(0);
+  });
+});
+
+describe('AccessFailureLimiter: scaled keys', () => {
+  it('a key recorded with a scale blocks only at scale times the limit', () => {
+    expect(WIDE_KEY_FAILURE_SCALE).toBe(5);
+    const limiter = new AccessFailureLimiter({ maxFailures: 3, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 });
+    for (let i = 0; i < 14; i++) limiter.recordFailure('wide', i, WIDE_KEY_FAILURE_SCALE);
+    expect(limiter.isBlocked('wide', 20)).toBe(false);
+    limiter.recordFailure('wide', 21, WIDE_KEY_FAILURE_SCALE);
+    expect(limiter.isBlocked('wide', 22)).toBe(true);
+    // An unscaled key still blocks at the policy's own limit.
+    for (let i = 0; i < 3; i++) limiter.recordFailure('narrow', i);
+    expect(limiter.isBlocked('narrow', 5)).toBe(true);
   });
 });
 

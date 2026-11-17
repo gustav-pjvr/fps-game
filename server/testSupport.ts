@@ -20,10 +20,13 @@ export class FakeSocket implements MemberSocket {
   probes = 0;
   /** The per-IP key rooms are counted by; undefined, no per-IP room cap (most tests). */
   readonly ipKey: string | undefined;
+  /** For an IPv6 key, the /48 it is also counted under (null or undefined for IPv4). */
+  readonly ipWideKey: string | null | undefined;
 
-  constructor(name: string, ipKey?: string) {
+  constructor(name: string, ipKey?: string, ipWideKey?: string | null) {
     this.name = name;
     this.ipKey = ipKey;
+    this.ipWideKey = ipWideKey;
   }
 
   send(text: string): void {

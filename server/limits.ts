@@ -135,8 +135,14 @@ export class ConnectionCounter {
   }
 }
 
-/** Rooms one client IP may hold open at once (its creates), so one person cannot take every room. */
+/** Rooms one client IP may hold open at once (its creates), so one person cannot take every room.
+ * For IPv6 the same cap applies to the /48 as well, which one person can hold whole. */
 export const MAX_ROOMS_PER_IP = 3;
+
+/** How many times looser the failure limits are for an IPv6 /48 than for its /64: residential ISPs
+ * and mobile carriers put many unrelated subscribers in one /48, so its own threshold must not lock
+ * them all out for one stranger's typos, while a person stepping through /64s still meets it. */
+export const WIDE_KEY_FAILURE_SCALE = 5;
 
 export interface AccessFailurePolicy {
   maxFailures: number;
@@ -183,13 +189,15 @@ export class AccessFailureLimiter {
     return until !== undefined && now < until;
   }
 
-  recordFailure(key: string, now: number): void {
+  /** `scale` multiplies the policy's maxFailures for this key: WIDE_KEY_FAILURE_SCALE for an IPv6 /48,
+   * which many unrelated subscribers of one ISP can share. */
+  recordFailure(key: string, now: number, scale = 1): void {
     if (this.isBlocked(key, now)) return;
     const failures = (this.counting.get(key) ?? []).filter((at) => now - at < this.policy.windowMs);
     // Taken out and put back at the end: the most recently failed key.
     this.counting.delete(key);
     failures.push(now);
-    if (failures.length >= this.policy.maxFailures) {
+    if (failures.length >= this.policy.maxFailures * scale) {
       this.blocked.delete(key);
       if (this.blocked.size >= this.policy.maxTrackedIps) this.dropOldest(this.blocked);
       this.blocked.set(key, now + this.policy.blockMs);

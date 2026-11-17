@@ -30,7 +30,7 @@ CapabilityBoundingSet=
 ReadOnlyPaths=/opt/hng-relay
 # Only Caddy on this machine talks to the relay, and the relay never opens a connection out.
 IPAddressDeny=any
-IPAddressAllow=localhost
+IPAddressAllow=127.0.0.1
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
