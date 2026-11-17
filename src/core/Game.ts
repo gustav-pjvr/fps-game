@@ -199,7 +199,7 @@ import { summarizeConnection } from '../network/connectionStats.ts';
 import { createSendClock } from '../network/stateOrder.ts';
 import type { ActiveMultiplayer, RemoteOpponent } from '../network/multiplayerMatchTypes.ts';
 import { routeMatchMessage, type MatchMessageContext } from '../network/MatchMessageRouter.ts';
-import { MatchTelemetryAccumulator, buildMultiplayerTelemetryExtras, type MatchTelemetryExtras } from '../network/matchTelemetry.ts';
+import { MatchTelemetryAccumulator, buildMultiplayerTelemetryExtras, renderStallsPerMinute, type MatchTelemetryExtras } from '../network/matchTelemetry.ts';
 import { isHordeAllEliminated, MultiplayerMatchState } from '../network/MultiplayerMatchState.ts';
 import { GooseTossController } from './modeControllers/GooseTossController.ts';
 import { KingOfTheHillController } from './modeControllers/KingOfTheHillController.ts';
@@ -380,6 +380,8 @@ export class Game {
   /** Multiplayer only in practice: the HUD ping samples and snapshot gaps of this match, summarised
    * into the match-end beacon (see sendMatchTelemetry and network/matchTelemetry.ts). Bounded memory. */
   private readonly matchTelemetry = new MatchTelemetryAccumulator();
+  /** Render stalls of opponents who already left this match (the live ones are read at match end). */
+  private departedRenderStalls = 0;
   /** Bumped by resetPlay/dispose to cancel any in-flight spawnEncountersAsync loop - its batches
    * yield to requestAnimationFrame, so without this a second rapid reset kept both loops spawning
    * (entity count overshooting the configured match size), and returning to the lobby mid-spawn
@@ -3692,7 +3694,7 @@ export class Game {
         : undefined,
     );
 
-    // Ping comes from the browser's own connection stats; lead lets RemotePlayer draw opponents where they are now.
+    // Ping comes from the browser's own connection stats.
     this.connectionPollAccumulator += dt;
     if (this.connectionPollAccumulator >= MULTIPLAYER_CONNECTION_POLL_INTERVAL) {
       this.connectionPollAccumulator = 0;
@@ -3704,9 +3706,6 @@ export class Game {
           this.multiplayer.multiplayerHud.setConnection(summary.perOpponent);
           // One sample per opponent per poll, the same round trips the HUD just showed.
           for (const quality of summary.perOpponent.values()) this.matchTelemetry.recordPing(quality.rttMs);
-          for (const [slot, opponent] of this.multiplayer.opponents) {
-            opponent.remotePlayer.setLeadSeconds(summary.leadSeconds.get(slot) ?? 0);
-          }
         }).catch(() => {}).finally(() => {
           this.connectionPollInFlight = false;
         });
@@ -3811,7 +3810,12 @@ export class Game {
 
     this.multiplayer.snapshotAccumulator += dt;
     if (this.multiplayer.snapshotAccumulator >= PLAYER_SNAPSHOT_SEND_INTERVAL) {
-      this.multiplayer.snapshotAccumulator = 0;
+      // Keep the remainder so send times stay even at low frame rates; the cap makes a long frame
+      // send once, not a burst.
+      this.multiplayer.snapshotAccumulator = Math.min(
+        this.multiplayer.snapshotAccumulator - PLAYER_SNAPSHOT_SEND_INTERVAL,
+        PLAYER_SNAPSHOT_SEND_INTERVAL,
+      );
       const p = this.player.position;
       this.multiplayer.session.connection.send({
         type: 'playerSnapshot',
@@ -4292,6 +4296,7 @@ export class Game {
     this.glassSync.forget(slot);
     this.facilityInteraction?.forget(slot);
     this.grenades?.forgetOpponent(slot);
+    this.departedRenderStalls += opponent.remotePlayer.renderStalls;
     opponent.remotePlayer.dispose(this.renderer.scene);
     this.multiplayer.opponents.delete(slot);
     this.multiplayer.minimap.removeDot(slot);
@@ -4437,7 +4442,9 @@ export class Game {
       : this.multiplayerMatchState.scoreboard.get(ownSlot) ?? 0;
     const durationMs = performance.now() - this.matchStartedAt;
     // Roster size = this client plus whoever is still connected at match end.
-    const extras = buildMultiplayerTelemetryExtras(this.matchTelemetry.summary(durationMs), this.multiplayer.opponents.size + 1, this.multiplayer.session.joinMs);
+    let renderStalls = this.departedRenderStalls;
+    for (const opponent of this.multiplayer.opponents.values()) renderStalls += opponent.remotePlayer.renderStalls;
+    const extras = buildMultiplayerTelemetryExtras(this.matchTelemetry.summary(durationMs), this.multiplayer.opponents.size + 1, this.multiplayer.session.joinMs, renderStallsPerMinute(renderStalls, durationMs));
     this.sendMatchTelemetry(this.multiplayer.gameMode, waveOrKills, durationMs, extras);
     this.onMultiplayerMatchEnd?.({
       reason,

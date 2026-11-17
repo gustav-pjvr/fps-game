@@ -20,19 +20,22 @@ describe('telemetry function', () => {
   });
 
   it('stores the optional connection fields when well-formed', async () => {
-    const full = { ...BASE, transport: 'p2p', players: 3, pingP50: 42, pingP95: 118, snapshotGapP95: 96, stallsPerMin: 1.5, joinMs: 830 };
+    const full = { ...BASE, transport: 'p2p', players: 3, pingP50: 42, pingP95: 118, snapshotGapP95: 96, stallsPerMin: 1.5, renderStallsPerMin: 0.75, joinMs: 830 };
     expect((await post(full)).stored).toEqual([full]);
   });
 
   it('clamps numbers to 0..60000 and players to 1..16', async () => {
-    const { stored } = await post({ ...BASE, players: 99, pingP50: -4, pingP95: 1e9, snapshotGapP95: 70000, stallsPerMin: -1, joinMs: 61000 });
-    expect(stored[0]).toMatchObject({ players: 16, pingP50: 0, pingP95: 60000, snapshotGapP95: 60000, stallsPerMin: 0, joinMs: 60000 });
+    const { stored } = await post({ ...BASE, players: 99, pingP50: -4, pingP95: 1e9, snapshotGapP95: 70000, stallsPerMin: -1, renderStallsPerMin: -2, joinMs: 61000 });
+    expect(stored[0]).toMatchObject({ players: 16, pingP50: 0, pingP95: 60000, snapshotGapP95: 60000, stallsPerMin: 0, renderStallsPerMin: 0, joinMs: 60000 });
+    expect((await post({ ...BASE, renderStallsPerMin: 1e9 })).stored[0]?.renderStallsPerMin).toBe(60000);
     expect((await post({ ...BASE, players: 0 })).stored[0]?.players).toBe(1);
   });
 
   it('drops a malformed optional field on its own without losing the record', async () => {
     const { stored } = await post({ ...BASE, transport: 'x'.repeat(17), players: 'three', pingP50: '40', pingP95: null, snapshotGapP95: Number.POSITIVE_INFINITY, stallsPerMin: 2, joinMs: {} });
     expect(stored).toEqual([{ ...BASE, stallsPerMin: 2 }]);
+    expect((await post({ ...BASE, renderStallsPerMin: '3' })).stored).toEqual([BASE]);
+    expect((await post({ ...BASE, renderStallsPerMin: Number.POSITIVE_INFINITY })).stored).toEqual([BASE]);
     expect((await post({ ...BASE, transport: '' })).stored).toEqual([BASE]);
     expect((await post({ ...BASE, transport: 'server' })).stored[0]?.transport).toBe('server');
   });

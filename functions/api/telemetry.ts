@@ -48,11 +48,12 @@ interface TelemetryPayload {
   pingP95?: number;
   snapshotGapP95?: number;
   stallsPerMin?: number;
+  renderStallsPerMin?: number;
   joinMs?: number;
 }
 
 /** The optional numeric fields, and the ceiling each is clamped to (floor is always 0). */
-const OPTIONAL_NUMBER_FIELDS = ['pingP50', 'pingP95', 'snapshotGapP95', 'stallsPerMin', 'joinMs'] as const;
+const OPTIONAL_NUMBER_FIELDS = ['pingP50', 'pingP95', 'snapshotGapP95', 'stallsPerMin', 'renderStallsPerMin', 'joinMs'] as const;
 const OPTIONAL_NUMBER_MAX = 60000;
 const PLAYERS_MAX = 16;
 

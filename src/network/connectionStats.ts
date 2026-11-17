@@ -48,7 +48,7 @@ export function combineRelayedQuality(hostLink: ConnectionQuality, hostToGuest: 
   return { rttMs, route };
 }
 
-/** What the HUD shows and how far ahead each opponent is predicted (RemotePlayer.setLeadSeconds),
+/** What the HUD shows and the half round trip per opponent (no longer used for drawing, which buffers snapshots instead),
  * from one round of measurements (PeerConnection.connectionQuality: one entry per opponent, over
  * the path their snapshots actually take). */
 export interface ConnectionSummary<Slot extends number = number> {

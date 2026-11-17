@@ -349,7 +349,7 @@ favours unheard tracks and keeps its state in `localStorage` (`hunter-n-goose.lo
 - `functions/api/telemetry.ts` (`onRequestPost`) accepts the beacon from `Game.sendMatchTelemetry` (`mode`, `waveOrKills`,
   `durationMs`, `version`), stores it only if a KV namespace `MATCH_TELEMETRY` is bound, and always answers 204. Since v4.7.1 a
   multiplayer match also sends optional connection numbers (`transport`, `players`, `pingP50`, `pingP95`, `snapshotGapP95`,
-  `stallsPerMin`, `joinMs` for a guest), summarised by `src/network/matchTelemetry.ts`; a malformed one is dropped on its own.
+  `stallsPerMin`, `renderStallsPerMin`, `joinMs` for a guest), summarised by `src/network/matchTelemetry.ts`; a malformed one is dropped on its own.
   `MATCH_TELEMETRY` is bound to the Pages project (production and preview) since 2026-11-05. It is the before-and-after
   baseline for the relay server (`docs/server-relay-design.md`).
 
