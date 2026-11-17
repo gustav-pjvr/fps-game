@@ -53,6 +53,12 @@ export interface TransportCallbacks {
   onHostHello?: (request: HostHelloRequest) => HostHelloResult | Promise<HostHelloResult>;
   /** Server only: the reserved slot is available again. */
   onReservationExpired?: (slot: PlayerSlot) => void;
+  /** Server only (resume, docs/server-relay-design.md section 5.6): that player's connection dropped
+   * and the server holds its slot while it reconnects (up to 30 s). Nothing of it arrives meanwhile;
+   * it is not a disconnect. `onPeerBack` when it returned; if it never does, the usual
+   * onPeerDisconnected (or, for the host, the room closing) follows instead. */
+  onPeerAway?: (slot: PlayerSlot) => void;
+  onPeerBack?: (slot: PlayerSlot) => void;
 }
 
 export const NETWORK_BLOCKED_MESSAGE =
@@ -74,6 +80,9 @@ export interface Transport {
   dispose(): void;
   fastChannelReadyCount(): number;
   directLinksReady(): number;
+  /** Server only: this client's own connection dropped and it is reconnecting to resume (section 5.6).
+   * Nothing from the others arrives meanwhile, which is not their silence. */
+  isReconnecting?(): boolean;
 }
 
 export interface HostRoomOptions {

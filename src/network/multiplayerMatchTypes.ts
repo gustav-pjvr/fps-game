@@ -97,4 +97,7 @@ export interface ActiveMultiplayer {
    * currently-connected roster slot, the whole co-op run ends in a loss (every client decides this
    * identically, same "converge on the same relayed events" pattern used for other win conditions). */
   hordeEliminatedSlots: Set<PlayerSlot>;
+  /** Server mode: slots whose connection dropped and that the server holds while they reconnect
+   * (onPeerAway until onPeerBack or their disconnect). The host's staleness sweep skips them. */
+  awaySlots: Set<PlayerSlot>;
 }

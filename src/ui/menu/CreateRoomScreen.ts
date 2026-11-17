@@ -473,6 +473,15 @@ export class CreateRoomScreen {
         if (generation !== this.showGeneration || !this.hostRoster) return;
         this.setStatus(this.hostRoster.currentRoster().length > 1 ? 'Everyone is connected. Start when ready.' : 'Waiting for players…');
       },
+      // Game server resume: the guest's connection dropped and the server holds its slot meanwhile.
+      onPeerAway: (slot) => {
+        if (generation !== this.showGeneration || !this.hostRoster) return;
+        this.setStatus(`${this.hostRoster.currentRoster().find((entry) => entry.slot === slot)?.username ?? 'A player'} reconnecting…`);
+      },
+      onPeerBack: (slot) => {
+        if (generation !== this.showGeneration || !this.hostRoster) return;
+        this.setStatus(`${this.hostRoster.currentRoster().find((entry) => entry.slot === slot)?.username ?? 'A player'} is back`);
+      },
       onMessage: (message) => {
         if (generation !== this.showGeneration || message.type !== 'playerReady' || !this.hostRoster) return;
         // Self-reported - the sender's own message.slot, not a transport-level identity (the lobby

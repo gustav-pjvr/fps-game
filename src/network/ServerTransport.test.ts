@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GAME_VERSION } from '../core/version.ts';
 import { CLIENT_FEATURES, type NetworkMessage, type PlayerSlot, type WelcomeMessage } from './protocol.ts';
-import { HOST_FRAME_MAX_BYTES, SERVER_CLOSE, SERVER_FRAME_MAX_BYTES, SERVER_PROTOCOL_VERSION } from './serverEnvelope.ts';
+import { HOST_FRAME_MAX_BYTES, RESUME_BUFFER_MAX_FRAMES, RESUME_WINDOW_MS, SERVER_CLOSE, SERVER_FRAME_MAX_BYTES, SERVER_PROTOCOL_VERSION } from './serverEnvelope.ts';
 import {
   ACCESS_DENIED_MESSAGE,
+  ACK_EVERY_FRAMES,
   CONNECT_ATTEMPT_TIMEOUT_MS,
   connectRetryDelay,
   parseServerFrame,
+  RESUME_ABANDON_CLOSE,
+  resumeRetryDelay,
   ROOM_NOT_FOUND_MESSAGE,
   RttEstimator,
   SERVER_BUSY_MESSAGE,
@@ -23,8 +26,8 @@ import type { HostHelloRequest, HostHelloResult, TransportCallbacks } from './tr
 /**
  * ServerTransport against a fake WebSocket on a fake clock: the handshake, every server op and close
  * code turned into TransportCallbacks (design sections 4.2, 5.2 and 5.6), the inbound checks, the
- * connect retries and the silence rule, ping and quality (section 6.1), the callback handoff and
- * dispose. The real relay end to end is in ServerTransport.relay.test.ts.
+ * connect retries and the silence rule, ping and quality (section 6.1), resume (section 5.6), the
+ * callback handoff and dispose. The real relay end to end is in ServerTransport.relay.test.ts.
  */
 
 type Frame = Record<string, unknown>;
@@ -94,6 +97,8 @@ function recorder(log: string[], hello?: (request: HostHelloRequest) => HostHell
     onError: (message, kind) => log.push(`error:${kind}:${message}`),
     onMessage: (message, slot) => log.push(`message:${slot}:${message.type}${message.type === 'roomFull' && message.reason ? `:${message.reason}` : ''}`),
     onReservationExpired: (slot) => log.push(`expired:${slot}`),
+    onPeerAway: (slot) => log.push(`away:${slot}`),
+    onPeerBack: (slot) => log.push(`back:${slot}`),
     onHostHello: (request) => {
       hellos.push(request);
       return hello ? hello(request) : welcomeFor(request.assigned && 'slot' in request.assigned ? request.assigned.slot : 1);
@@ -686,6 +691,282 @@ describe('ServerTransport: ping and quality (section 6.1)', () => {
   });
 });
 
+describe('ServerTransport: resume (section 5.6)', () => {
+  const TOKEN = 'A'.repeat(21) + '1';
+  const NEXT_TOKEN = 'B'.repeat(21) + '2';
+  const rosterUpdate = { type: 'rosterUpdate', roster: [{ slot: 0, username: 'Host' }] };
+  const readyUpdate = { type: 'lobbyReadyUpdate', readySlots: [0] };
+  const shot = { type: 'fireEvent', senderSlot: 0, originX: 0, originY: 1, originZ: 0, endX: 5, endY: 1, endZ: 5, weaponId: 'rifle', t: 9 } as NetworkMessage;
+
+  /** A guest in a room, with a session token: its welcome is numbered frame 1. */
+  function resumableGuest(slot: PlayerSlot = 1) {
+    const transport = ServerTransport.joinRoom('ABC234', 'Bob', 'tok-bob', options(), recorder(log));
+    const socket = last();
+    socket.open();
+    socket.receive({ ...ready, sessionToken: TOKEN });
+    socket.receive({ s: 1, f: 0, m: welcomeFor(slot) });
+    log.length = 0;
+    return { transport, socket };
+  }
+
+  async function resumableHost() {
+    const pending = ServerTransport.hostRoom('Host', 4, options(), recorder(log));
+    const socket = last();
+    socket.open();
+    socket.receive({ ...ready, sessionToken: TOKEN });
+    socket.receive({ op: 'created', code: 'ABC234', slot: 0 });
+    return { transport: await pending, socket };
+  }
+
+  /** The newest attempt opens and the server answers its hello. */
+  function openAttempt(): FakeSocket {
+    const socket = last();
+    socket.open();
+    socket.receive({ ...ready, sessionToken: 'C'.repeat(22) });
+    return socket;
+  }
+
+  it('resumeRetryDelay: 250 ms doubling to 4 s; jitter only shortens a wait, by at most 30 percent', () => {
+    expect([0, 1, 2, 3, 4, 5, 12].map((attempt) => resumeRetryDelay(attempt, () => 0))).toEqual([250, 500, 1000, 2000, 4000, 4000, 4000]);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const base = Math.min(4000, 250 * 2 ** attempt);
+      const jittered = resumeRetryDelay(attempt, () => 0.999999);
+      expect(jittered).toBeGreaterThanOrEqual(base * 0.7);
+      expect(jittered).toBeLessThan(base);
+    }
+    expect(resumeRetryDelay(0, () => 5)).toBe(175);
+    expect(resumeRetryDelay(0, () => -1)).toBe(250);
+  });
+
+  it('a guest whose socket drops mid-room resumes: 250 ms later hello, then resume with its token and last frame; the game hears nothing', () => {
+    const { transport, socket } = resumableGuest();
+    socket.receive({ s: 2, f: 0, m: rosterUpdate });
+    log.length = 0;
+    socket.drop(1006);
+    expect(log).toEqual([]);
+    expect(transport.isReconnecting()).toBe(true);
+    // The game keeps counting the host as connected (Game.start checks it).
+    expect(transport.isConnectedTo(0)).toBe(true);
+    vi.advanceTimersByTime(249);
+    expect(sockets).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(2);
+    const attempt = openAttempt();
+    expect(attempt.sent).toEqual([
+      { op: 'hello', proto: SERVER_PROTOCOL_VERSION, build: GAME_VERSION, access: 'the-code', features: [...CLIENT_FEATURES] },
+      { op: 'resume', sessionToken: TOKEN, lastSeq: 2 },
+    ]);
+    attempt.receive({ op: 'resumed', sessionToken: NEXT_TOKEN });
+    expect(transport.isReconnecting()).toBe(false);
+    attempt.receive({ s: 3, f: 0, m: readyUpdate });
+    expect(log).toEqual(['message:0:lobbyReadyUpdate']);
+
+    // The next drop comes back with the rotated token.
+    attempt.drop(1006);
+    vi.advanceTimersByTime(250);
+    expect(openAttempt().ops('resume')).toEqual([{ op: 'resume', sessionToken: NEXT_TOKEN, lastSeq: 3 }]);
+    expect(log).toEqual(['message:0:lobbyReadyUpdate']);
+  });
+
+  it('failed attempts back off 250 ms doubling to 4 s, and jitter keeps each wait inside its bounds', () => {
+    const { socket } = resumableGuest();
+    const startedAt = Date.now();
+    socket.drop(1006);
+    const attemptsAt: number[] = [];
+    for (let attempt = 1; attempt <= 7; attempt++) {
+      while (sockets.length <= attempt) vi.advanceTimersByTime(1);
+      attemptsAt.push(Date.now() - startedAt);
+      last().drop(1006);
+    }
+    expect(attemptsAt).toEqual([250, 750, 1750, 3750, 7750, 11750, 15750]);
+    expect(log).toEqual([]);
+
+    random = 0.999999;
+    const second = resumableGuest();
+    second.socket.drop(1006);
+    const count = sockets.length;
+    // The fake clock runs a fractional delay at its whole millisecond (175.00008 at 175).
+    vi.advanceTimersByTime(174);
+    expect(sockets).toHaveLength(count);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(count + 1);
+    last().drop(1006);
+    vi.advanceTimersByTime(349);
+    expect(sockets).toHaveLength(count + 1);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(count + 2);
+  });
+
+  it('silence mid-room starts a resume, the silence rule is off while reconnecting, and only after 30 s is the server lost', () => {
+    const { socket, transport } = resumableGuest();
+    vi.advanceTimersByTime(6000);
+    expect(log).toEqual([]);
+    expect(socket.closedWith).toBe(RESUME_ABANDON_CLOSE);
+    expect(transport.isReconnecting()).toBe(true);
+    // Attempts that never open time out and are retried; nothing is reported meanwhile.
+    vi.advanceTimersByTime(RESUME_WINDOW_MS - 1);
+    expect(log).toEqual([]);
+    expect(sockets.length).toBeGreaterThan(4);
+    vi.advanceTimersByTime(1);
+    expect(log).toEqual([`error:serverLost:${SERVER_LOST_MESSAGE}`]);
+    const count = sockets.length;
+    vi.advanceTimersByTime(60_000);
+    expect(sockets).toHaveLength(count);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a host gives up at 30 s with serverLost too, even when its attempts open but are never answered', async () => {
+    const { socket } = await resumableHost();
+    socket.drop(1006);
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < RESUME_WINDOW_MS - 1) {
+      const count = sockets.length;
+      vi.advanceTimersByTime(1);
+      if (sockets.length > count) last().open();
+    }
+    expect(log).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(log).toEqual([`error:serverLost:${SERVER_LOST_MESSAGE}`]);
+    // Every attempt sent its hello and was let go after its own 4 s.
+    expect(sockets.slice(1).every((attempt) => attempt.ops('hello').length === 1)).toBe(true);
+  });
+
+  it('drops numbered frames it already processed, live and in a replay; unnumbered frames are never duplicates', () => {
+    const { socket } = resumableGuest();
+    socket.receive({ s: 2, f: 0, m: rosterUpdate });
+    socket.receive({ s: 2, f: 0, m: rosterUpdate });
+    socket.receive({ s: 1, f: 0, m: rosterUpdate });
+    expect(log).toEqual(['message:0:rosterUpdate']);
+    socket.drop(1006);
+    vi.advanceTimersByTime(250);
+    const attempt = openAttempt();
+    expect(attempt.ops('resume')[0]).toMatchObject({ lastSeq: 2 });
+    attempt.receive({ op: 'resumed', sessionToken: NEXT_TOKEN });
+    for (const s of [2, 3, 3, 4]) attempt.receive({ s, f: 0, m: readyUpdate });
+    expect(log).toEqual(['message:0:rosterUpdate', 'message:0:lobbyReadyUpdate', 'message:0:lobbyReadyUpdate']);
+    attempt.receive({ f: 2, m: snapshot(2) });
+    attempt.receive({ f: 2, m: snapshot(2) });
+    expect(log.filter((entry) => entry === 'message:2:playerSnapshot')).toHaveLength(2);
+  });
+
+  it('acknowledges every 64 numbered frames, and once a second when anything new arrived', () => {
+    const { socket } = resumableGuest();
+    for (let s = 2; s < ACK_EVERY_FRAMES; s++) socket.receive({ s, f: 0, m: readyUpdate });
+    expect(socket.ops('ack')).toEqual([]);
+    socket.receive({ s: ACK_EVERY_FRAMES, f: 0, m: readyUpdate });
+    expect(socket.ops('ack')).toEqual([{ op: 'ack', seq: ACK_EVERY_FRAMES }]);
+    socket.receive({ s: ACK_EVERY_FRAMES + 1, f: 0, m: readyUpdate });
+    vi.advanceTimersByTime(1000);
+    expect(socket.ops('ack')).toEqual([{ op: 'ack', seq: ACK_EVERY_FRAMES }, { op: 'ack', seq: ACK_EVERY_FRAMES + 1 }]);
+    vi.advanceTimersByTime(1000);
+    expect(socket.ops('ack')).toHaveLength(2);
+  });
+
+  it.each([
+    [SERVER_CLOSE.normal, `error:serverLost:${SERVER_LOST_MESSAGE}`],
+    [SERVER_CLOSE.accessDenied, `error:accessDenied:${ACCESS_DENIED_MESSAGE}`],
+    [SERVER_CLOSE.versionMismatch, `error:versionMismatch:${VERSION_MISMATCH_MESSAGE}`],
+    [SERVER_CLOSE.roomClosed, 'disconnected:0'],
+    [SERVER_CLOSE.rateLimited, `error:serverLost:${SERVER_LOST_MESSAGE}`],
+    [SERVER_CLOSE.kicked, 'disconnected:0'],
+    [SERVER_CLOSE.replaced, 'disconnected:0'],
+    [SERVER_CLOSE.resumeRefused, `error:serverLost:${SERVER_LOST_MESSAGE}`],
+  ])('a final close (%i) never starts a resume and reports %s', (code, expected) => {
+    const { socket } = resumableGuest();
+    socket.drop(code);
+    vi.advanceTimersByTime(10_000);
+    expect(sockets).toHaveLength(1);
+    expect(log).toEqual([expected]);
+  });
+
+  it('a host before created, or a guest before its welcome, has no room to resume', async () => {
+    ServerTransport.joinRoom('ABC234', 'Bob', 'tok-bob', options(), recorder(log));
+    last().open();
+    last().receive({ ...ready, sessionToken: TOKEN });
+    last().drop(1006);
+    expect(log).toEqual([`error:serverLost:${SERVER_LOST_MESSAGE}`]);
+    log.length = 0;
+    const pending = ServerTransport.hostRoom('Host', 4, options(), recorder(log));
+    last().open();
+    last().receive({ ...ready, sessionToken: TOKEN });
+    last().drop(1006);
+    await pending;
+    vi.advanceTimersByTime(10_000);
+    expect(sockets).toHaveLength(2);
+    expect(log).toEqual([`error:serverLost:${SERVER_LOST_MESSAGE}`]);
+  });
+
+  it('a refused resume (4012) gives up at once; resumeLater (4013) tries again', () => {
+    const { socket } = resumableGuest();
+    socket.drop(1006);
+    vi.advanceTimersByTime(250);
+    openAttempt().drop(SERVER_CLOSE.resumeLater);
+    expect(log).toEqual([]);
+    vi.advanceTimersByTime(500);
+    expect(sockets).toHaveLength(3);
+    openAttempt().drop(SERVER_CLOSE.resumeRefused);
+    expect(log).toEqual([`error:serverLost:${SERVER_LOST_MESSAGE}`]);
+    vi.advanceTimersByTime(60_000);
+    expect(sockets).toHaveLength(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('frames sent while reconnecting are queued (superseded state is not) and go out in order after resumed', async () => {
+    const { transport, socket } = await resumableHost();
+    socket.receive({ s: 1, op: 'admitted', slot: 1 });
+    log.length = 0;
+    socket.drop(1006);
+    expect(transport.isReconnecting()).toBe(true);
+    transport.send(shot);
+    transport.send(snapshot(0));
+    transport.send({ type: 'gooseSnapshot', id: 'g1', x: 0, y: 0, z: 0 } as NetworkMessage);
+    transport.sendTo(1, rosterUpdate as NetworkMessage);
+    transport.disconnectGuest(1);
+    vi.advanceTimersByTime(250);
+    const attempt = openAttempt();
+    expect(attempt.sent.map((frame) => frame.op)).toEqual(['hello', 'resume']);
+    attempt.receive({ op: 'resumed', sessionToken: NEXT_TOKEN });
+    expect(attempt.sent.slice(2)).toEqual([{ m: shot }, { m: rosterUpdate, to: 1 }, { op: 'kick', slot: 1 }]);
+    // Pings, and with them the silence rule, run again.
+    vi.advanceTimersByTime(1000);
+    expect(attempt.ops('ping')).toHaveLength(1);
+    expect(log).toEqual([]);
+  });
+
+  it('a queue past the resume buffer\'s bound gives up, as the server would', async () => {
+    const { transport, socket } = await resumableHost();
+    socket.drop(1006);
+    for (let i = 0; i <= RESUME_BUFFER_MAX_FRAMES; i++) transport.send(shot);
+    expect(log).toEqual([]);
+    vi.advanceTimersByTime(0);
+    expect(log).toEqual([`error:serverLost:${SERVER_LOST_MESSAGE}`]);
+  });
+
+  it('away and back reach onPeerAway and onPeerBack, the host\'s own slot never', async () => {
+    const { socket } = await resumableHost();
+    socket.receive({ s: 1, op: 'away', slot: 2 });
+    socket.receive({ s: 2, op: 'back', slot: 2 });
+    socket.receive({ s: 3, op: 'away', slot: 0 });
+    expect(log).toEqual(['away:2', 'back:2']);
+    log.length = 0;
+    const guestSide = resumableGuest();
+    guestSide.socket.receive({ s: 2, op: 'away', slot: 0 });
+    guestSide.socket.receive({ s: 3, op: 'back', slot: 0 });
+    expect(log).toEqual(['away:0', 'back:0']);
+  });
+
+  it('dispose while reconnecting: no further attempt, no report, no timers', () => {
+    const { socket, transport } = resumableGuest();
+    socket.drop(1006);
+    transport.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(sockets).toHaveLength(1);
+    expect(log).toEqual([]);
+    expect(transport.isConnectedTo(0)).toBe(false);
+  });
+});
+
 describe('ServerTransport: setCallbacks and dispose', () => {
   it('setCallbacks is a full handoff: the old callbacks hear nothing more', async () => {
     const { socket, transport } = await host();
@@ -766,5 +1047,26 @@ describe('parseServerFrame', () => {
       expect(parseServerFrame(JSON.stringify(bad)), JSON.stringify(bad)).toBeNull();
     }
     expect(parseServerFrame(42)).toBeNull();
+  });
+
+  it('reads the resume additions: a token in ready, resumed, away and back, and a sequence number', () => {
+    const token = 'abcDEF012_-'.repeat(2);
+    expect(parseServerFrame(JSON.stringify({ ...ready, sessionToken: token }))).toEqual({ ...ready, sessionToken: token });
+    expect(parseServerFrame(JSON.stringify({ op: 'resumed', sessionToken: token }))).toEqual({ op: 'resumed', sessionToken: token });
+    expect(parseServerFrame(JSON.stringify({ s: 7, op: 'away', slot: 0 }))).toEqual({ s: 7, op: 'away', slot: 0 });
+    expect(parseServerFrame(JSON.stringify({ s: 8, op: 'back', slot: 3 }))).toEqual({ s: 8, op: 'back', slot: 3 });
+    expect(parseServerFrame(JSON.stringify({ s: 9, f: 0, m: snapshot(0) }))).toEqual({ s: 9, f: 0, m: snapshot(0) });
+    for (const bad of [
+      { ...ready, sessionToken: 'short' },
+      { ...ready, sessionToken: token.slice(0, 21) + '=' },
+      { op: 'resumed', sessionToken: null },
+      { op: 'away', slot: 4 },
+      { op: 'back' },
+      { s: 0, f: 0, m: snapshot(0) },
+      { s: 1.5, op: 'away', slot: 1 },
+      { s: '2', op: 'away', slot: 1 },
+    ]) {
+      expect(parseServerFrame(JSON.stringify(bad)), JSON.stringify(bad)).toBeNull();
+    }
   });
 });

@@ -1,10 +1,11 @@
 import { HOST_SLOT, type NetworkMessage, type PlayerSlot, type WelcomeMessage } from '../src/network/protocol.ts';
-import { encodeClientFrame, type ClientFrame, type ServerFrame, type ServerOp } from '../src/network/serverEnvelope.ts';
-import type { MemberSocket, RoomMembership } from './Room.ts';
+import { encodeClientFrame, type ClientFrame, type NumberedServerFrame, type ServerFrame, type ServerOp } from '../src/network/serverEnvelope.ts';
+import type { MemberSocket, ResumeRefusal, RoomMembership } from './Room.ts';
 import { RoomRegistry, type RegistryConfig, type RegistryOptions } from './RoomRegistry.ts';
 
 /** Shared fakes for the relay core's unit tests: a recording MemberSocket, a registry on a manual
- * clock, and helpers that walk a guest through join and admission. Not a test file itself. */
+ * clock with predictable session tokens, and helpers that walk a guest through join and admission.
+ * Not a test file itself. */
 
 /** Every send and close across all fake sockets, in order, so a test can check cross-socket order. */
 export const wireLog: string[] = [];
@@ -15,6 +16,8 @@ export class FakeSocket implements MemberSocket {
   closed: { code: number; reason: string } | null = null;
   bufferedAmount = 0;
   throwOnSend = false;
+  /** How often the room asked this socket to prove it is alive (a resume came for its member). */
+  probes = 0;
 
   constructor(name: string) {
     this.name = name;
@@ -32,8 +35,21 @@ export class FakeSocket implements MemberSocket {
     wireLog.push(`${this.name}:close:${code}`);
   }
 
+  probe(): void {
+    this.probes++;
+  }
+
+  /** Every frame as sent, the sequence number `s` of a reliable frame included (section 5.6). */
+  numbered(): NumberedServerFrame[] {
+    return this.sent.map((text) => JSON.parse(text) as NumberedServerFrame);
+  }
+
+  /** Every frame without its sequence number, as the game reads it; numbered() keeps it. */
   frames(): ServerFrame[] {
-    return this.sent.map((text) => JSON.parse(text) as ServerFrame);
+    return this.numbered().map((frame) => {
+      const { s: _seq, ...rest } = frame;
+      return rest as ServerFrame;
+    });
   }
 
   ops<K extends ServerOp['op']>(op: K): Extract<ServerOp, { op: K }>[] {
@@ -60,9 +76,10 @@ export interface Harness {
 export function makeHarness(config: Partial<RegistryConfig> = {}, options: Partial<RegistryOptions> = {}): Harness {
   let now = 1_000_000;
   let draws = 0;
+  let tokens = 0;
   const registry = new RoomRegistry(
     { maxRooms: 50, maxPlayersPerRoom: 4, ...config },
-    { clock: () => now, randomInt: (max) => (draws++ * 7) % max, ...options },
+    { clock: () => now, randomInt: (max) => (draws++ * 7) % max, sessionToken: () => sessionTokenFor(++tokens), ...options },
   );
   return {
     registry,
@@ -81,19 +98,25 @@ export function makeHarness(config: Partial<RegistryConfig> = {}, options: Parti
 
 export const send = (membership: RoomMembership, frame: ClientFrame | Record<string, unknown>): void => membership.receive(encodeClientFrame(frame as ClientFrame));
 
+/** A predictable 22-character session token, in the base64url alphabet resume accepts. */
+export const sessionTokenFor = (n: number): string => String(n).padStart(22, 'T');
+
 export interface HostedRoom {
   code: string;
   host: FakeSocket;
   hostMember: RoomMembership;
+  /** The session token its `ready` would have carried. */
+  token: string;
 }
 
 export function createRoom(harness: Harness, maxPlayers = 4, username = 'Host'): HostedRoom {
   const host = new FakeSocket('host');
-  const hostMember = harness.registry.create(host, { op: 'create', username, maxPlayers });
+  const token = harness.registry.newSessionToken();
+  const hostMember = harness.registry.create(host, { op: 'create', username, maxPlayers }, token);
   if (!hostMember) throw new Error('create refused: ' + host.sent.join());
   const created = host.ops('created')[0];
   if (!created) throw new Error('no created op');
-  return { code: created.code, host, hostMember };
+  return { code: created.code, host, hostMember, token };
 }
 
 export function welcomeFor(slot: PlayerSlot, isRejoin = false): WelcomeMessage {
@@ -104,14 +127,16 @@ export interface JoinedGuest {
   socket: FakeSocket;
   member: RoomMembership;
   slot: PlayerSlot;
+  token: string;
 }
 
 /** Join without an answer: the guest is pending. */
 export function requestJoin(harness: Harness, room: HostedRoom, name: string, rejoinToken: string | null = null): JoinedGuest {
   const socket = new FakeSocket(name);
-  const member = harness.registry.join(socket, { op: 'join', code: room.code, username: name, rejoinToken, features: ['facility'] });
+  const token = harness.registry.newSessionToken();
+  const member = harness.registry.join(socket, { op: 'join', code: room.code, username: name, rejoinToken, features: ['facility'] }, token);
   if (!member) throw new Error('join refused: ' + socket.sent.join());
-  return { socket, member, slot: member.slot };
+  return { socket, member, slot: member.slot, token };
 }
 
 /** Join and admit with a well-formed welcome. */
@@ -127,4 +152,10 @@ export function snapshot(senderSlot: PlayerSlot): NetworkMessage {
 
 export function fireEvent(senderSlot: PlayerSlot): NetworkMessage {
   return { type: 'fireEvent', senderSlot, originX: 0, originY: 1, originZ: 0, endX: 5, endY: 1, endZ: 5, weaponId: 'rifle', t: 11 };
+}
+
+/** A resume on a fresh socket (the shell's part, the hello and the close codes, is in main.test.ts). */
+export function resumeOn(harness: Harness, name: string, token: string, lastSeq: number): { socket: FakeSocket; result: RoomMembership | ResumeRefusal } {
+  const socket = new FakeSocket(name);
+  return { socket, result: harness.registry.resume(socket, { op: 'resume', sessionToken: token, lastSeq }) };
 }

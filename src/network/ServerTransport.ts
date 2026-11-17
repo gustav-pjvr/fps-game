@@ -19,13 +19,19 @@ import {
   HOST_FRAME_MAX_BYTES,
   isGuestSlot,
   isServerSlot,
+  isSessionToken,
   QUALITY_RTT_MAX_MS,
+  RESUME_BUFFER_MAX_BYTES,
+  RESUME_BUFFER_MAX_FRAMES,
+  RESUME_WINDOW_MS,
   ROOM_CODE_INPUT_MAX_LENGTH,
   SERVER_CLOSE,
   SERVER_FRAME_MAX_BYTES,
   SERVER_PROTOCOL_VERSION,
+  SUPERSEDED_STATE_TYPES,
   type ClientFrame,
   type JoinOutcomeKind,
+  type NumberedServerFrame,
   type RejectReason,
   type RoomClosedReason,
   type ServerFrame,
@@ -44,8 +50,13 @@ import type { HostHelloResult, MultiplayerRole, Transport, TransportCallbacks, T
  * depth: the server ran serverAccepts already). No DOM beyond the WebSocket global and a guarded
  * document.visibilityState, so the class also runs in Node (the tests).
  *
- * A socket lost mid-room is final in release 1 (section 5.6). Resume (F1) will hang off `ready`
- * (a session token) and the close handling below; nothing here assumes it cannot come.
+ * Resume (section 5.6): once in a room (the host after `created`, a guest after its welcome), a
+ * socket that closes with a code that is not final, or goes silent, is replaced without telling the
+ * game: new sockets with backoff for up to RESUME_WINDOW_MS, each sending `hello` then `resume` with
+ * the session token and the highest frame number processed; the server answers `resumed` (the next
+ * token) and replays what was missed. Numbered frames already processed are dropped. Game frames sent
+ * meanwhile are queued and go out after `resumed`. Only when the window runs out, or the server
+ * refuses, does the game hear what a lost socket always meant.
  */
 
 /** Used when the caller names no URL. The menus pass relayUrl() from relaySettings.ts. */
@@ -66,6 +77,33 @@ export const PING_INTERVAL_MS = 1000;
 export const RTT_SMOOTHING = 0.2;
 /** Pings still waiting for their pong; older ones are forgotten. */
 const OUTSTANDING_PINGS = 8;
+/** Waits between resume attempts (section 5.6): 250 ms doubling to 4 s, each shortened by up to
+ * RESUME_RETRY_JITTER so clients that dropped together do not come back in step. */
+export const RESUME_RETRY_BASE_MS = 250;
+export const RESUME_RETRY_MAX_MS = 4000;
+export const RESUME_RETRY_JITTER = 0.3;
+/** Acknowledge after this many numbered frames, besides once a second. */
+export const ACK_EVERY_FRAMES = 64;
+/** The code this client closes a socket with when it gives up on it to resume: not one the server
+ * reads as a chosen close, so the member stays held for the resume. */
+export const RESUME_ABANDON_CLOSE = 4000;
+/** Closes after which there is nothing to resume: the server ended the member, or refused this client. */
+export const RESUME_FINAL_CLOSE_CODES: ReadonlySet<number> = new Set([
+  SERVER_CLOSE.normal,
+  1003,
+  1008,
+  1009,
+  SERVER_CLOSE.accessDenied,
+  SERVER_CLOSE.versionMismatch,
+  SERVER_CLOSE.roomClosed,
+  SERVER_CLOSE.rateLimited,
+  SERVER_CLOSE.slowConsumer,
+  SERVER_CLOSE.kicked,
+  SERVER_CLOSE.replaced,
+  SERVER_CLOSE.resumeRefused,
+]);
+/** What a close without a frame reports (the network went, or the resume window ran out). */
+const CLOSE_ABNORMAL = 1006;
 
 export const SERVER_UNREACHABLE_MESSAGE = "Couldn't reach the game server.";
 export const SERVER_LOST_MESSAGE = 'Lost the game server. Create or join the room again.';
@@ -133,8 +171,9 @@ const ROOM_CLOSED_REASONS: ReadonlySet<unknown> = new Set<RoomClosedReason>(['ho
 
 /** Parse one text frame from the relay into the exact shape this class reads, or null. The server
  * is ours, but its frames still cross the network, so every field read is checked; extra fields
- * are ignored (a newer server may add some) and an unknown op is null. */
-export function parseServerFrame(text: unknown): ServerFrame | null {
+ * are ignored (a newer server may add some) and an unknown op is null. A reliable frame keeps its
+ * sequence number `s` (a whole number from 1). */
+export function parseServerFrame(text: unknown): NumberedServerFrame | null {
   if (typeof text !== 'string') return null;
   let value: unknown;
   try {
@@ -144,13 +183,26 @@ export function parseServerFrame(text: unknown): ServerFrame | null {
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const fields = value as Record<string, unknown>;
+  const frame = parseFields(fields);
+  if (frame === null || fields.s === undefined) return frame;
+  return Number.isSafeInteger(fields.s) && (fields.s as number) >= 1 ? { ...frame, s: fields.s as number } : null;
+}
+
+function parseFields(fields: Record<string, unknown>): ServerFrame | null {
   if (!('op' in fields)) {
     if (!isServerSlot(fields.f) || !isNetworkMessage(fields.m)) return null;
     return { f: fields.f, m: fields.m };
   }
   switch (fields.op) {
     case 'ready':
-      return Number.isSafeInteger(fields.proto) && isFiniteNumber(fields.serverTime) ? { op: 'ready', proto: fields.proto as number, serverTime: fields.serverTime } : null;
+      if (!Number.isSafeInteger(fields.proto) || !isFiniteNumber(fields.serverTime)) return null;
+      if (fields.sessionToken !== undefined && !isSessionToken(fields.sessionToken)) return null;
+      return { op: 'ready', proto: fields.proto as number, serverTime: fields.serverTime, ...(fields.sessionToken === undefined ? {} : { sessionToken: fields.sessionToken }) };
+    case 'resumed':
+      return isSessionToken(fields.sessionToken) ? { op: 'resumed', sessionToken: fields.sessionToken } : null;
+    case 'away':
+    case 'back':
+      return isServerSlot(fields.slot) ? { op: fields.op, slot: fields.slot } : null;
     case 'created':
       return typeof fields.code === 'string' && fields.code.length > 0 && fields.code.length <= ROOM_CODE_INPUT_MAX_LENGTH ? { op: 'created', code: fields.code, slot: 0 } : null;
     case 'joinRequest': {
@@ -226,6 +278,18 @@ export function connectRetryDelay(retry: number, random: () => number): number {
   return base * (1 + CONNECT_RETRY_JITTER * Math.min(1, Math.max(0, random())));
 }
 
+/** Wait before resume attempt `attempt` (0 for the first): 250 ms doubling to 4 s, less up to 30
+ * percent, so never above 4 s. */
+export function resumeRetryDelay(attempt: number, random: () => number): number {
+  const base = Math.min(RESUME_RETRY_MAX_MS, RESUME_RETRY_BASE_MS * 2 ** Math.max(0, attempt));
+  return base * (1 - RESUME_RETRY_JITTER * Math.min(1, Math.max(0, random())));
+}
+
+/** A frame worth queueing while this client reconnects: game frames but superseded state, and the
+ * host's answers (joinAnswer, kick). Handshake, ping, ack and leave belong to one socket. */
+const isQueueable = (frame: ClientFrame): boolean =>
+  'm' in frame ? !SUPERSEDED_STATE_TYPES.has(frame.m.type) : frame.op === 'joinAnswer' || frame.op === 'kick';
+
 export class ServerTransport implements Transport {
   readonly kind = 'server';
   private readonly url: string;
@@ -266,6 +330,20 @@ export class ServerTransport implements Transport {
   private readonly hellosInFlight = new Map<PlayerSlot, HelloInFlight>();
   /** Host: settles the hostRoom promise (on `created`, or when the attempt ended without one). */
   private settleHost: (() => void) | null = null;
+  /** Resume (section 5.6): the token from `ready`, then from each `resumed`; never logged. */
+  private sessionToken: string | null = null;
+  /** The highest frame number processed, and the highest acknowledged to the server. */
+  private lastSeq = 0;
+  private ackedSeq = 0;
+  /** Reconnecting to resume; the current socket (if any) is an attempt not yet `resumed`. */
+  private resuming = false;
+  private resumeAttempt = 0;
+  /** This attempt's socket has sent its `resume`. */
+  private resumeSent = false;
+  private resumeDeadline: ReturnType<typeof setTimeout> | null = null;
+  /** Frames sent while reconnecting, encoded, for after `resumed`. */
+  private readonly queued: string[] = [];
+  private queuedChars = 0;
 
   private constructor(start: Start, options: ServerConnectOptions, callbacks: TransportCallbacks) {
     this.start = start;
@@ -319,7 +397,8 @@ export class ServerTransport implements Transport {
     try {
       socket = this.createSocket(this.url);
     } catch {
-      this.attemptFailed(null);
+      if (this.resuming) this.resumeAttemptFailed(null);
+      else this.attemptFailed(null);
       return;
     }
     this.socket = socket;
@@ -336,9 +415,12 @@ export class ServerTransport implements Transport {
     socket.onerror = () => {
       // A close event always follows; it carries what there is to know.
     };
+    // A resume attempt has this long to reach `resumed`, not just to open.
     this.attemptTimer = setTimeout(() => {
       this.attemptTimer = null;
-      if (socket === this.socket && !this.opened) this.attemptFailed(socket);
+      if (socket !== this.socket) return;
+      if (this.resuming) this.resumeAttemptFailed(null);
+      else if (!this.opened) this.attemptFailed(socket);
     }, CONNECT_ATTEMPT_TIMEOUT_MS);
   }
 
@@ -368,16 +450,19 @@ export class ServerTransport implements Transport {
   }
 
   private handleOpen(): void {
-    this.clearAttemptTimer();
     this.opened = true;
     this.lastHeardAt = this.now();
     this.hiddenSeen = false;
     this.sendFrame({ op: 'hello', proto: SERVER_PROTOCOL_VERSION, build: GAME_VERSION, access: this.accessCode, features: [...CLIENT_FEATURES] });
+    // A resume attempt pings and counts silence only once `resumed` arrived; its attempt timer runs on.
+    if (this.resuming) return;
+    this.clearAttemptTimer();
     this.tickTimer = setInterval(() => this.tick(), PING_INTERVAL_MS);
   }
 
   /** Once a second: the silence rule, counted only while the page is visible (a hidden tab's timers
-   * are throttled and it may hear nothing for a while), then a ping. */
+   * are throttled and it may hear nothing for a while), then a ping and any acknowledgement due.
+   * Silence in a room starts a resume rather than ending the session. */
   private tick(): void {
     if (this.ended) return;
     const now = this.now();
@@ -387,10 +472,13 @@ export class ServerTransport implements Transport {
       this.hiddenSeen = false;
       this.lastHeardAt = now;
     } else if (now - this.lastHeardAt >= SERVER_SILENCE_LIMIT_MS) {
-      this.lose(SERVER_LOST_MESSAGE);
+      if (this.canResume()) this.beginResume();
+      else this.lose(SERVER_LOST_MESSAGE);
       return;
     }
-    if (this.handshakeDone) this.sendPing(now);
+    if (!this.handshakeDone) return;
+    this.sendPing(now);
+    if (this.lastSeq > this.ackedSeq) this.sendAck();
   }
 
   private sendPing(now: number): void {
@@ -407,20 +495,44 @@ export class ServerTransport implements Transport {
     this.lastHeardAt = this.now();
     const frame = parseServerFrame(data);
     if (frame === null) return;
+    if (frame.s !== undefined) {
+      // Already processed before the socket dropped: the replay after a resume sends it again.
+      if (frame.s <= this.lastSeq) return;
+      this.lastSeq = frame.s;
+    }
+    this.dispatch(frame);
+    if (!this.ended && !this.resuming && this.lastSeq - this.ackedSeq >= ACK_EVERY_FRAMES) this.sendAck();
+  }
+
+  private dispatch(frame: ServerFrame): void {
     if ('m' in frame) {
       this.handleGameFrame(frame.f, frame.m);
       return;
     }
     switch (frame.op) {
       case 'ready':
+        if (this.resuming) {
+          this.handleResumeReady(frame.proto);
+          return;
+        }
         if (this.handshakeDone) return;
         if (frame.proto !== SERVER_PROTOCOL_VERSION) {
           this.lose(VERSION_MISMATCH_MESSAGE, 'versionMismatch');
           return;
         }
         this.handshakeDone = true;
+        this.sessionToken = frame.sessionToken ?? null;
         if (this.start.role === 'host') this.sendFrame({ op: 'create', username: this.start.username, maxPlayers: this.start.maxPlayers });
         else this.sendFrame({ op: 'join', code: this.start.code, username: this.start.username, rejoinToken: this.start.rejoinToken, features: [...CLIENT_FEATURES] });
+        return;
+      case 'resumed':
+        if (this.resuming && this.resumeSent) this.finishResume(frame.sessionToken);
+        return;
+      case 'away':
+      case 'back':
+        if (frame.slot === this.ownSlotValue && (this.role === 'host' || this.welcomed)) return;
+        if (frame.op === 'away') this.callbacks.onPeerAway?.(frame.slot);
+        else this.callbacks.onPeerBack?.(frame.slot);
         return;
       case 'created':
         if (this.role !== 'host' || this.code !== '') return;
@@ -571,9 +683,17 @@ export class ServerTransport implements Transport {
   }
 
   private handleClose(code: number): void {
+    if (this.resuming) {
+      this.resumeAttemptFailed(code);
+      return;
+    }
     this.clearTimers();
     if (!this.opened && !this.ended) {
       this.attemptFailed(this.socket);
+      return;
+    }
+    if (this.canResume() && !RESUME_FINAL_CLOSE_CODES.has(code)) {
+      this.beginResume();
       return;
     }
     this.socket = null;
@@ -584,6 +704,11 @@ export class ServerTransport implements Transport {
       this.callbacks.onPeerDisconnected(HOST_SLOT);
       return;
     }
+    this.reportClose(code);
+  }
+
+  /** What a lost socket means to the game, by its close code. */
+  private reportClose(code: number): void {
     if (code === SERVER_CLOSE.accessDenied) {
       this.callbacks.onError(ACCESS_DENIED_MESSAGE, 'accessDenied');
     } else if (code === SERVER_CLOSE.versionMismatch) {
@@ -598,13 +723,145 @@ export class ServerTransport implements Transport {
     }
   }
 
+  // ---- Resume (section 5.6) ------------------------------------------------------------------
+
+  /** In a room the server holds for this client, with a token to come back with. */
+  private canResume(): boolean {
+    return !this.ended && this.sessionToken !== null && (this.role === 'host' ? this.code !== '' : this.welcomed);
+  }
+
+  /** The socket dropped or went silent mid-room: let it go (with a code the server does not read as a
+   * chosen close) and start reconnecting, for at most RESUME_WINDOW_MS. */
+  private beginResume(): void {
+    this.clearTimers();
+    const old = this.socket;
+    this.socket = null;
+    if (old) {
+      this.detach(old);
+      try {
+        old.close(RESUME_ABANDON_CLOSE);
+      } catch {
+        // Already gone.
+      }
+    }
+    this.resuming = true;
+    this.resumeAttempt = 0;
+    this.pingsSent.clear();
+    this.resumeDeadline = setTimeout(() => {
+      this.resumeDeadline = null;
+      this.giveUpResume(null);
+    }, RESUME_WINDOW_MS);
+    this.scheduleResumeAttempt();
+  }
+
+  private scheduleResumeAttempt(): void {
+    const delay = resumeRetryDelay(this.resumeAttempt, this.random);
+    this.resumeAttempt++;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.resumeSent = false;
+      this.connect();
+    }, delay);
+  }
+
+  /** The attempt's `ready`: ask for the member back. */
+  private handleResumeReady(proto: number): void {
+    if (this.resumeSent || this.sessionToken === null) return;
+    if (proto !== SERVER_PROTOCOL_VERSION) {
+      this.giveUpResume(SERVER_CLOSE.versionMismatch);
+      return;
+    }
+    this.resumeSent = true;
+    this.sendFrame({ op: 'resume', sessionToken: this.sessionToken, lastSeq: this.lastSeq });
+  }
+
+  /** Back: the new token, the usual ticks, then whatever the game sent meanwhile. The replay follows
+   * from the server. */
+  private finishResume(sessionToken: string): void {
+    this.sessionToken = sessionToken;
+    this.resuming = false;
+    this.resumeSent = false;
+    this.resumeAttempt = 0;
+    this.clearResumeDeadline();
+    this.clearAttemptTimer();
+    // The server forgot everything up to the lastSeq this resume carried.
+    this.ackedSeq = this.lastSeq;
+    this.lastHeardAt = this.now();
+    this.hiddenSeen = false;
+    this.tickTimer = setInterval(() => this.tick(), PING_INTERVAL_MS);
+    const socket = this.socket;
+    const queued = this.queued.splice(0);
+    this.queuedChars = 0;
+    for (const text of queued) {
+      try {
+        socket?.send(text);
+      } catch {
+        // The close event reports a dead socket.
+      }
+    }
+  }
+
+  /** This attempt failed: try again after the next wait, unless the server said there is nothing to
+   * resume. The window's deadline ends the retries. */
+  private resumeAttemptFailed(code: number | null): void {
+    this.clearTimers();
+    const socket = this.socket;
+    this.socket = null;
+    if (socket) {
+      this.detach(socket);
+      try {
+        socket.close(RESUME_ABANDON_CLOSE);
+      } catch {
+        // Already gone.
+      }
+    }
+    if (this.ended) return;
+    if (code !== null && RESUME_FINAL_CLOSE_CODES.has(code)) {
+      this.giveUpResume(code);
+      return;
+    }
+    this.scheduleResumeAttempt();
+  }
+
+  /** No resume: the window ran out (`code` null), the server refused, or the queue overflowed. The
+   * game hears what the lost socket would have meant without resume. */
+  private giveUpResume(code: number | null): void {
+    if (this.ended) return;
+    const socket = this.socket;
+    this.socket = null;
+    if (socket) {
+      this.detach(socket);
+      try {
+        socket.close(SERVER_CLOSE.normal);
+      } catch {
+        // Already gone.
+      }
+    }
+    this.end('silent');
+    this.reportClose(code ?? CLOSE_ABNORMAL);
+  }
+
+  private clearResumeDeadline(): void {
+    if (this.resumeDeadline !== null) clearTimeout(this.resumeDeadline);
+    this.resumeDeadline = null;
+  }
+
+  private sendAck(): void {
+    this.ackedSeq = this.lastSeq;
+    this.sendFrame({ op: 'ack', seq: this.lastSeq });
+  }
+
   // ---- Ending --------------------------------------------------------------------------------
 
   /** The session is over; `outcome` is what the socket's close may still report. */
   private end(outcome: CloseOutcome): void {
     if (!this.ended) this.closeOutcome = outcome;
     this.ended = true;
+    this.resuming = false;
     this.clearTimers();
+    this.clearResumeDeadline();
+    this.queued.length = 0;
+    this.queuedChars = 0;
     this.hellosInFlight.clear();
     this.settleHost?.();
   }
@@ -655,10 +912,13 @@ export class ServerTransport implements Transport {
   // ---- Outbound ------------------------------------------------------------------------------
 
   /** One frame, if the socket is open. A frame over this client's cap (the host's is larger, for
-   * the mid-match welcome) is dropped here rather than have the server close the socket (1009). */
+   * the mid-match welcome) is dropped here rather than have the server close the socket (1009).
+   * While reconnecting, a frame worth keeping is queued for after `resumed` instead; a queue past the
+   * resume buffer's bounds ends the resume, as it does on the server. */
   private sendFrame(frame: ClientFrame): void {
     const socket = this.socket;
-    if (!socket || socket.readyState !== SOCKET_OPEN) return;
+    const queue = this.resuming && isQueueable(frame);
+    if (!queue && (!socket || socket.readyState !== SOCKET_OPEN)) return;
     let text: string;
     try {
       text = encodeClientFrame(frame);
@@ -668,11 +928,29 @@ export class ServerTransport implements Transport {
     const cap = this.role === 'host' ? HOST_FRAME_MAX_BYTES : SERVER_FRAME_MAX_BYTES;
     // UTF-8 is at most three bytes per UTF-16 unit, so only a long frame needs counting.
     if (text.length * 3 > cap && new TextEncoder().encode(text).length > cap) return;
+    if (queue) {
+      this.enqueue(text);
+      return;
+    }
     try {
-      socket.send(text);
+      socket?.send(text);
     } catch {
       // The close event reports a dead socket.
     }
+  }
+
+  private enqueue(text: string): void {
+    if (this.queued.length >= RESUME_BUFFER_MAX_FRAMES || this.queuedChars + text.length > RESUME_BUFFER_MAX_BYTES) {
+      // Given up from a timer, not inside the game's own send call.
+      this.clearResumeDeadline();
+      this.resumeDeadline = setTimeout(() => {
+        this.resumeDeadline = null;
+        this.giveUpResume(null);
+      }, 0);
+      return;
+    }
+    this.queued.push(text);
+    this.queuedChars += text.length;
   }
 
   /** Host: to every guest (the server fans out by type). Guest: into the room, where the server
@@ -721,9 +999,14 @@ export class ServerTransport implements Transport {
     return { rttMs: this.rtt.rttMs, jitterMs: this.rtt.jitterMs };
   }
 
+  /** Reconnecting counts as connected: the server holds the slot and the game must not see a drop. */
   isConnectedTo(slot: PlayerSlot): boolean {
-    if (this.ended || this.socket?.readyState !== SOCKET_OPEN) return false;
+    if (this.ended || (!this.resuming && this.socket?.readyState !== SOCKET_OPEN)) return false;
     return this.role === 'host' ? this.liveSlots.has(slot) : this.welcomed && slot === HOST_SLOT;
+  }
+
+  isReconnecting(): boolean {
+    return this.resuming;
   }
 
   ownRole(): MultiplayerRole {

@@ -43,7 +43,10 @@ export const QUALITY_RTT_MAX_MS = 5000;
 /** A create may ask for any count up to this; the server clamps it to its own capacity. */
 export const CREATE_MAX_PLAYERS_INPUT = 255;
 
-/** Close codes (section 5.2). `normal` (1000) closes a socket after a `rejected` or a `leave`. */
+/** Close codes (section 5.2). `normal` (1000) closes a socket after a `rejected` or a `leave`.
+ * `resumeRefused` is the one answer to any resume that cannot go on (unknown, stale or reused token,
+ * or a gap in the frames): it says nothing about whether the room or slot exists. `resumeLater`
+ * answers a right token whose member the server still counts as connected (section 5.6). */
 export const SERVER_CLOSE = {
   normal: 1000,
   accessDenied: 4001,
@@ -54,7 +57,33 @@ export const SERVER_CLOSE = {
   slowConsumer: 4009,
   kicked: 4010,
   replaced: 4011,
+  resumeRefused: 4012,
+  resumeLater: 4013,
 } as const;
+
+/** Resume (section 5.6): how long the server holds the slot of a member whose socket dropped, and
+ * how long its client keeps trying to come back. */
+export const RESUME_WINDOW_MS = 30_000;
+/** The most reliable frames, and characters of frame text, the server keeps per member for a resume
+ * (about 30 s of reliable traffic at 50 a second); a reconnecting client queues at most as much. */
+export const RESUME_BUFFER_MAX_FRAMES = 1536;
+export const RESUME_BUFFER_MAX_BYTES = 768 * 1024;
+/** A session token is 128 random bits in base64url without padding: 22 characters. */
+export const SESSION_TOKEN_LENGTH = 22;
+const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22}$/;
+
+export const isSessionToken = (value: unknown): value is string => typeof value === 'string' && SESSION_TOKEN_PATTERN.test(value);
+
+/** Game messages that carry a whole periodic state, where the next copy replaces this one: the server
+ * does not number them or keep them for a resume, skips them for a slow consumer, and a reconnecting
+ * client does not queue them (section 5.6). The goose snapshots are here as well as playerSnapshot:
+ * up to 24 horde geese at 6 a second would fill a resume buffer in about ten seconds. */
+export const SUPERSEDED_STATE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set([
+  'playerSnapshot',
+  'gooseSnapshot',
+  'hordeGooseSnapshot',
+  'bonusGooseSnapshot',
+]);
 
 export type RejectReason = 'notFound' | 'full' | 'outdated' | 'busy';
 export type RoomClosedReason = 'hostLeft' | 'idle' | 'expired' | 'shutdown';
@@ -71,14 +100,22 @@ export type JoinAnswerOp =
 export interface KickOp { op: 'kick'; slot: PlayerSlot }
 export interface PingOp { op: 'ping'; n: number; t: number; rtt: number | null }
 export interface LeaveOp { op: 'leave' }
-export type ClientOp = HelloOp | CreateOp | JoinOp | JoinAnswerOp | KickOp | PingOp | LeaveOp;
+/** Section 5.6: in place of create or join, take back the member this token belongs to; `lastSeq` is
+ * the highest sequence number the client processed. */
+export interface ResumeOp { op: 'resume'; sessionToken: string; lastSeq: number }
+/** Every reliable frame up to `seq` arrived; the server forgets them. */
+export interface AckOp { op: 'ack'; seq: number }
+export type ClientOp = HelloOp | CreateOp | JoinOp | JoinAnswerOp | KickOp | PingOp | LeaveOp | ResumeOp | AckOp;
 
 export interface ClientGameFrame { m: NetworkMessage; to?: PlayerSlot }
 export type ClientFrame = ClientOp | ClientGameFrame;
 
 // ---- Server to client ------------------------------------------------------------------------
 
-export interface ReadyOp { op: 'ready'; proto: number; serverTime: number }
+/** `sessionToken` authorises a resume of whatever this socket goes on to create or join, and nothing
+ * else. This server always sends it; the type leaves it optional because a client simply cannot
+ * resume without one. */
+export interface ReadyOp { op: 'ready'; proto: number; serverTime: number; sessionToken?: string }
 export interface CreatedOp { op: 'created'; code: string; slot: 0 }
 export interface JoinRequestOp {
   op: 'joinRequest';
@@ -96,10 +133,17 @@ export interface ExpiredOp { op: 'expired'; slot: PlayerSlot }
 export interface PongOp { op: 'pong'; n: number; t: number }
 export interface QualityOp { op: 'quality'; members: { slot: PlayerSlot; rttMs: number | null }[] }
 export interface RoomClosedOp { op: 'roomClosed'; reason: RoomClosedReason }
-export type ServerOp = ReadyOp | CreatedOp | JoinRequestOp | AdmittedOp | RejectedOp | MemberLeftOp | ExpiredOp | PongOp | QualityOp | RoomClosedOp;
+/** The resume worked: the next token (the old one is dead), then the frames after `lastSeq`. */
+export interface ResumedOp { op: 'resumed'; sessionToken: string }
+/** That member's socket dropped and the server holds its slot for a resume; `back` when it returned. */
+export interface AwayOp { op: 'away'; slot: PlayerSlot }
+export interface BackOp { op: 'back'; slot: PlayerSlot }
+export type ServerOp = ReadyOp | CreatedOp | JoinRequestOp | AdmittedOp | RejectedOp | MemberLeftOp | ExpiredOp | PongOp | QualityOp | RoomClosedOp | ResumedOp | AwayOp | BackOp;
 
 export interface ServerGameFrame { f: PlayerSlot; m: NetworkMessage }
 export type ServerFrame = ServerOp | ServerGameFrame;
+/** A reliable frame as sent: the server numbers each one per member in `s`, from 1 (section 5.6). */
+export type NumberedServerFrame = ServerFrame & { s?: number };
 
 // ---- Validation helpers ----------------------------------------------------------------------
 
@@ -169,6 +213,13 @@ function parseOp(value: Fields): ClientOp | null {
     case 'leave':
       if (!hasOnlyKeys(value, ['op'])) return null;
       return { op: 'leave' };
+    case 'resume':
+      if (!hasOnlyKeys(value, ['op', 'sessionToken', 'lastSeq']) || !isSessionToken(value.sessionToken)) return null;
+      if (!Number.isSafeInteger(value.lastSeq) || (value.lastSeq as number) < 0) return null;
+      return { op: 'resume', sessionToken: value.sessionToken, lastSeq: value.lastSeq as number };
+    case 'ack':
+      if (!hasOnlyKeys(value, ['op', 'seq']) || !Number.isSafeInteger(value.seq) || (value.seq as number) < 0) return null;
+      return { op: 'ack', seq: value.seq as number };
     default:
       return null;
   }

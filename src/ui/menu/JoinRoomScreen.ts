@@ -311,6 +311,16 @@ export class JoinRoomScreen {
             : message);
         this.joinButton.disabled = false;
       },
+      // Game server resume: that player's connection (the host's included) dropped and the server
+      // holds its slot meanwhile.
+      onPeerAway: (slot) => {
+        if (generation !== this.joinGeneration) return;
+        this.setStatus(`${this.lastRoster.find((entry) => entry.slot === slot)?.username ?? 'A player'} reconnecting…`);
+      },
+      onPeerBack: (slot) => {
+        if (generation !== this.joinGeneration) return;
+        this.setStatus(`${this.lastRoster.find((entry) => entry.slot === slot)?.username ?? 'A player'} is back`);
+      },
       onMessage: (message) => {
         if (generation !== this.joinGeneration) return;
         if (message.type === 'welcome') {
