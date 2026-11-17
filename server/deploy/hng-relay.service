@@ -1,0 +1,31 @@
+[Unit]
+Description=Hunter n Goose multiplayer relay
+Documentation=https://github.com/gustav-pjvr/fps-game/blob/master/docs/server-relay-design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hng
+# Secrets and site settings live in /etc/hng-relay.env (root, mode 600); systemd reads it as root.
+EnvironmentFile=/etc/hng-relay.env
+ExecStart=/usr/bin/node /opt/hng-relay/server/main.ts
+Restart=always
+RestartSec=1
+# SIGTERM makes the relay close every room with "shutdown" and exit 0 within about 2 seconds.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+MemoryMax=512M
+
+# Hardening: the relay only listens on a local TCP port and reads its own code.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ReadOnlyPaths=/opt/hng-relay
+
+[Install]
+WantedBy=multi-user.target
