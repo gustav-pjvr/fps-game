@@ -352,6 +352,20 @@ favours unheard tracks and keeps its state in `localStorage` (`hunter-n-goose.lo
   `stallsPerMin`, `renderStallsPerMin`, `joinMs` for a guest), summarised by `src/network/matchTelemetry.ts`; a malformed one is dropped on its own.
   `MATCH_TELEMETRY` is bound to the Pages project (production and preview) since 2026-11-05. It is the before-and-after
   baseline for the relay server (`docs/server-relay-design.md`).
+- `functions/api/errors.ts` (`onRequestPost`) takes anonymous crash and freeze reports from `src/core/errorReporter.ts`, installed
+  once in `src/main.ts` before the App is created (it does nothing when `import.meta.env.DEV`). A batch is a JSON array (or
+  `{ reports }`) of up to 10 reports, body at most 16 KB (a bigger one is dropped whole); each report is `kind`
+  (`error` | `rejection` | `freeze` | `webgl`), `message` (300), `stack` (2000, optional), `version` (32), `where` (40: `menu` |
+  `solo` | `multiplayer`, from `App.reportingWhere`), `graphics` (16, the preset), `ua` (40, family and major version such as
+  `Chrome 142`, derived on the client, never the raw user agent) and, for a freeze, `freezeMs` (clamped 0 to 60000). A malformed
+  report is dropped on its own. Each is stored in `MATCH_TELEMETRY` as `error:<ms>:<uuid>` with a 30 day `expirationTtl`, only if
+  bound, and the answer is always 204. Client side: `window` `error` and `unhandledrejection`, `webglcontextlost` (a capture
+  listener on the document, ignoring the canvas `Renderer.dispose` removes on purpose), and a freeze is a gap of more than 1 s
+  between animation frames with the page visible throughout (its own rAF chain, so the menus are covered too). URLs lose their
+  query and fragment; the same kind and message counts once per session; at most 20 reports per session, sent in batches at most
+  every 10 s and on `pagehide` (sendBeacon, else keepalive fetch). The game state comes in through a getter, so the reporter
+  imports no game module. Read the data with `node scripts/telemetry-report.mjs [--days 7]` (namespace id from `--namespace-id` or
+  `MATCH_TELEMETRY_NAMESPACE_ID`): matches by mode and version, multiplayer medians, errors grouped by kind, message and version.
 
 `npm run deploy` builds locally and uploads `dist/`, so what ships is the working folder, music included. Live site:
 `hunter-n-goose.pages.dev` (`README.md`).
