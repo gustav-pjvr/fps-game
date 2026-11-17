@@ -40,7 +40,7 @@ Where things live on the VM:
 
    ```
    scp -i ~/.ssh/hng_relay_ed25519 server/deploy/setup.sh ubuntu@<vm-ip>:
-   ssh -t -i ~/.ssh/hng_relay_ed25519 ubuntu@<vm-ip> sudo ./setup.sh --subdomain <name>
+   ssh -t -i ~/.ssh/hng_relay_ed25519 ubuntu@<vm-ip> sudo bash setup.sh --subdomain <name>
    ```
 
    Options: `--origins LIST` (default: the Pages site and its previews), `--branch BRANCH` (default
@@ -72,7 +72,7 @@ hng-relay` afterwards).
 The list is comma separated, so add the new code first, tell your friends, then drop the old one.
 
 ```
-ssh -t -i ~/.ssh/hng_relay_ed25519 ubuntu@<vm-ip> sudo ./setup.sh --reconfigure
+ssh -t -i ~/.ssh/hng_relay_ed25519 ubuntu@<vm-ip> sudo bash setup.sh --reconfigure
 ```
 
 Enter the full new list (old and new, or only the new one) when asked, press Enter at the token prompt

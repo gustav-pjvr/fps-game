@@ -2,7 +2,7 @@
 # First-time (and repeatable) setup of the Hunter n Goose relay on a fresh Ubuntu 24.04 VM.
 # Run as root. Safe to run again: every step checks before it changes anything.
 #
-#   sudo ./setup.sh [--subdomain NAME] [--origins LIST] [--branch BRANCH] [--reconfigure]
+#   sudo bash setup.sh [--subdomain NAME] [--origins LIST] [--branch BRANCH] [--reconfigure]
 #
 #   --subdomain NAME  the DuckDNS name without ".duckdns.org" (asked for when missing and not yet set)
 #   --origins LIST    comma separated allowed origins
@@ -15,7 +15,7 @@
 #
 # Secrets are never taken as arguments (they would land in shell history and `ps`). The access codes
 # (comma separated, asked twice) and the DuckDNS token are typed at a silent prompt, so run this in a
-# terminal: ssh -t <vm> sudo ./setup.sh
+# terminal: ssh -t <vm> sudo bash setup.sh
 set -euo pipefail
 umask 022
 set +x
@@ -59,7 +59,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ "$(id -u)" -eq 0 ] || die "run as root (sudo ./setup.sh)"
+[ "$(id -u)" -eq 0 ] || die "run as root (sudo bash setup.sh)"
 command -v apt-get > /dev/null || die "this script is for Ubuntu or Debian (apt)"
 [[ $BRANCH =~ ^[A-Za-z0-9._/-]+$ ]] || die "branch name has characters I do not accept"
 
