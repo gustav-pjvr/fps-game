@@ -1,0 +1,36 @@
+{
+  // The relay's own check (docs/server-relay-design.md, section 3.3): Node only, no DOM, so a DOM
+  // type reaching a shared file fails here. Node runs these files by stripping types, hence
+  // erasableSyntaxOnly and verbatimModuleSyntax (a type imported without `type` would be a missing
+  // export at run time).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": [
+    "./**/*.ts",
+    "../src/network/protocol.ts",
+    "../src/network/senderAuthority.ts",
+    "../src/network/routing.ts",
+    "../src/network/serverEnvelope.ts",
+    "../src/network/HostRoster.ts",
+    "../src/core/config.ts",
+    "../src/core/version.ts",
+    "../src/combat/grenades/grenadeTuning.ts"
+  ],
+  "exclude": ["./node_modules", "./deploy"]
+}

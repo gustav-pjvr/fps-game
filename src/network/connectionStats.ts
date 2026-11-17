@@ -1,7 +1,8 @@
 /** How a data channel's traffic travels: straight between the two browsers, or through the TURN
  * relay (functions/api/turn-credentials.ts), which adds a hop and is used only when a network
- * blocks the direct path. */
-export type ConnectionRoute = 'direct' | 'relay';
+ * blocks the direct path. 'server': through the game's relay server (ServerTransport), the normal
+ * path in that mode, so the HUD gives it no suffix. */
+export type ConnectionRoute = 'direct' | 'relay' | 'server';
 
 export interface ConnectionQuality {
   /** Round trip in milliseconds over the pair of addresses the connection actually uses, measured
@@ -41,7 +42,8 @@ export function readConnectionQuality(report: Pick<RTCStatsReport, 'forEach' | '
 
 /** A guest's round trip to another guest it has no direct link to: its own link to the host plus
  * the host's measured link to that guest (LinkQualityMessage), unknown until both are known. Their
- * updates cross both links, so the sum is what they actually travel. */
+ * updates cross both links, so the sum is what they actually travel. Server mode uses it the same
+ * way: this client's link to the server plus that player's (ServerTransport.connectionQuality). */
 export function combineRelayedQuality(hostLink: ConnectionQuality, hostToGuest: { rttMs: number | null; relay: boolean }): ConnectionQuality {
   const rttMs = hostLink.rttMs !== null && hostToGuest.rttMs !== null ? hostLink.rttMs + hostToGuest.rttMs : null;
   const route: ConnectionRoute | null = hostLink.route === 'relay' || hostToGuest.relay ? 'relay' : hostLink.route;
@@ -69,7 +71,8 @@ export function summarizeConnection<Slot extends number>(measured: ReadonlyMap<n
   return { perOpponent, leadSeconds };
 }
 
-/** The HUD line: "Ping 42 ms", "Ping 120 ms, relay", or "Ping --" before the first measurement. */
+/** The HUD line: "Ping 42 ms", "Ping 120 ms, relay", or "Ping --" before the first measurement.
+ * Only the TURN relay gets a suffix; 'direct' and 'server' read the same. */
 export function formatConnection(quality: ConnectionQuality): string {
   const ping = quality.rttMs === null ? 'Ping --' : `Ping ${quality.rttMs} ms`;
   return quality.route === 'relay' ? `${ping}, relay` : ping;

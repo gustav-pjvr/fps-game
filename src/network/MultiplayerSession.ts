@@ -1,4 +1,4 @@
-import type { PeerConnection, MultiplayerRole } from './PeerConnection.ts';
+import type { Transport, MultiplayerRole } from './transport.ts';
 import type { HostRoster } from './HostRoster.ts';
 import type { SpawnPoint } from '../core/multiplayerSpawn.ts';
 import type { PlayerSlot, RosterEntry } from './protocol.ts';
@@ -12,7 +12,7 @@ export type { MultiplayerRole };
  * client (the host generates/picks them once and sends them across, see the MatchStartMessage
  * comment in protocol.ts), never independently randomized per client. */
 export interface MultiplayerSession {
-  connection: PeerConnection;
+  connection: Transport;
   role: MultiplayerRole;
   ownSlot: PlayerSlot;
   seed: number;

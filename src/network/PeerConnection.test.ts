@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NETWORK_BLOCKED_MESSAGE, PeerConnection, classifyPeerError, type PeerConnectionCallbacks } from './PeerConnection.ts';
+import { PeerConnection, classifyPeerError } from './PeerConnection.ts';
+import { NETWORK_BLOCKED_MESSAGE, hostRoom, joinRoom, type TransportCallbacks } from './transport.ts';
+import type { MultiplayerSession } from './MultiplayerSession.ts';
 import type { NetworkMessage, WelcomeMessage } from './protocol.ts';
 
 /** Stand-ins for PeerJS's Peer and DataConnection: only the events and calls PeerConnection uses. */
@@ -93,7 +95,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function callbacks(overrides: Partial<PeerConnectionCallbacks> = {}) {
+function callbacks(overrides: Partial<TransportCallbacks> = {}) {
   return {
     onConnected: vi.fn(),
     onPeerDisconnected: vi.fn(),
@@ -109,12 +111,92 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const webrtcError = (message: string) => Object.assign(new Error(message), { type: 'webrtc' });
 
 /** A host with one inbound guest connection that has not said hello yet. */
-async function hostWithGuest(cb: PeerConnectionCallbacks) {
+async function hostWithGuest(cb: TransportCallbacks) {
   await PeerConnection.hostRoom('ABCDEF', cb);
   const guest = fakes.makeConnection!('guest-peer');
   lastPeer().emit('connection', guest);
   return { guest };
 }
+
+describe('transport factories', () => {
+  it('hosts through the session transport and fully replaces callbacks at handoff', async () => {
+    const lobby = callbacks({ onHostHello: vi.fn(() => welcome(1)) });
+    const connection: MultiplayerSession['connection'] = await hostRoom('p2p', { code: 'ABCDEF' }, lobby);
+    expect(connection.kind).toBe('p2p');
+    expect(connection.roomCode).toBe('ABCDEF');
+    expect(connection.ownRole()).toBe('host');
+    expect(connection.ownSlot()).toBe(0);
+    expect(connection.fastChannelReadyCount()).toBe(0);
+    expect(connection.directLinksReady()).toBe(0);
+
+    const match = callbacks({ onHostHello: vi.fn(() => welcome(2)) });
+    connection.setCallbacks(match);
+    const guest = fakes.makeConnection!('guest-peer');
+    lastPeer().emit('connection', guest);
+    guest.emit('data', hello);
+    await flush();
+    expect(lobby.onHostHello).not.toHaveBeenCalled();
+    expect(lobby.onConnected).not.toHaveBeenCalled();
+    expect(match.onConnected).toHaveBeenCalledWith(2);
+    expect(guest.sent).toEqual([welcome(2)]);
+    expect(connection.isConnectedTo(2)).toBe(true);
+    connection.sendTo(2, { type: 'hostLeftRoom' });
+    expect(guest.sent.at(-1)).toEqual({ type: 'hostLeftRoom' });
+    connection.dispose();
+  });
+
+  it('joins with the same hello and waits for a welcome before connecting', async () => {
+    const cb = callbacks();
+    const connection = await joinRoom('ABCDEF', { username: 'Bo', rejoinToken: 'returning-token' }, cb);
+    expect(connection.kind).toBe('p2p');
+    expect(connection.roomCode).toBe('ABCDEF');
+    expect(connection.ownRole()).toBe('guest');
+    const peer = lastPeer();
+    peer.emit('open');
+    const host = peer.dialed[0]!;
+    expect(host.peer).toBe('fpsgame-ABCDEF');
+    host.emit('open');
+    expect(host.sent).toEqual([{ ...hello, rejoinToken: 'returning-token' }]);
+    expect(cb.onConnected).not.toHaveBeenCalled();
+    host.emit('data', welcome(2));
+    expect(cb.onConnected).toHaveBeenCalledWith(2);
+    expect(connection.ownSlot()).toBe(2);
+    connection.send({ type: 'playerReady', slot: 2, ready: true });
+    expect(host.sent.at(-1)).toEqual({ type: 'playerReady', slot: 2, ready: true });
+    connection.dispose();
+  });
+
+  it('never takes the server kind to PeerJS: without server settings it rejects before constructing a peer or fetching ICE servers', async () => {
+    const peerCount = fakes.peers.length;
+    await expect(hostRoom('server', { code: 'ABCDEF' }, callbacks())).rejects.toThrow('needs the server settings');
+    await expect(joinRoom('ABCDEF', { kind: 'server', username: 'Bo', rejoinToken: null }, callbacks())).rejects.toThrow('needs the server settings');
+    expect(fakes.peers).toHaveLength(peerCount);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps live mesh counts and relay decisions available through the transport', async () => {
+    const cb = callbacks({ onHostHello: ({ username }) => welcome(username === 'Bo' ? 1 : 2) });
+    const connection = await hostRoom('p2p', { code: 'ABCDEF' }, cb);
+    const guests = [fakes.makeConnection!('bo-peer'), fakes.makeConnection!('cy-peer')];
+    for (const [index, guest] of guests.entries()) {
+      lastPeer().emit('connection', guest);
+      guest.emit('data', { ...hello, username: index === 0 ? 'Bo' : 'Cy' });
+    }
+    await flush();
+    const [bo, cy] = guests;
+    bo!.emit('data', { type: 'meshStatus', senderSlot: 1, linked: [2] });
+    expect(connection.directLinksReady()).toBe(0);
+    cy!.emit('data', { type: 'meshStatus', senderSlot: 2, linked: [1] });
+    expect(connection.directLinksReady()).toBe(1);
+    const shot: NetworkMessage = { type: 'footstepEvent', senderSlot: 1, x: 0, y: 0, z: 0 };
+    connection.relay(shot, 1);
+    expect(cy!.sent).toEqual([welcome(2)]);
+    connection.disconnectGuest(1);
+    expect(connection.directLinksReady()).toBe(0);
+    expect(connection.isConnectedTo(1)).toBe(false);
+    connection.dispose();
+  });
+});
 
 describe('PeerConnection host: hellos', () => {
   it('accepts only the first hello on a connection, however many arrive before it resolves', async () => {
@@ -128,6 +210,9 @@ describe('PeerConnection host: hellos', () => {
     resolve(welcome(1));
     await flush();
     expect(onHostHello).toHaveBeenCalledTimes(1);
+    expect(onHostHello).toHaveBeenCalledWith({
+      username: 'Bo', rejoinToken: null, features: ['facility'], peerId: 'guest-peer', assigned: null,
+    });
     expect(cb.onConnected).toHaveBeenCalledTimes(1);
     expect(cb.onConnected).toHaveBeenCalledWith(1);
   });

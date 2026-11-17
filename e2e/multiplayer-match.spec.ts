@@ -78,8 +78,15 @@ test('starting a multiplayer match spawns both players with no AI and syncs move
   // Position snapshots must travel on the unreliable fast channel (network/fastChannel.ts), not
   // just fall back to the reliable one: both browsers confirm it, and the ping line fills in from
   // the browsers' own connection stats (polled every 2 s).
+  // E2E_TRANSPORT=server (playwright.config.ts): the same match through the local relay, which has
+  // no fast channel; the transport itself is what to confirm there.
+  const viaServer = process.env.E2E_TRANSPORT === 'server';
   for (const page of [hostPage, guestPage]) {
-    await expect.poll(() => page.evaluate(() => window.__gameDebug?.getNetworkDebug().fastChannelsReady), { timeout: 20000 }).toBe(1);
+    if (viaServer) {
+      expect(await page.evaluate(() => window.__gameDebug?.getNetworkDebug().transport)).toBe('server');
+    } else {
+      await expect.poll(() => page.evaluate(() => window.__gameDebug?.getNetworkDebug().fastChannelsReady), { timeout: 20000 }).toBe(1);
+    }
     await expect.poll(() => page.evaluate(() => window.__gameDebug?.getNetworkDebug().pingLabel), { timeout: 20000 }).toMatch(/^Ping \d+ ms/);
   }
 

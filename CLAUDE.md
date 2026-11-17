@@ -1,7 +1,7 @@
 # Hunter 'n Goose
 
 A browser first-person shooter (TypeScript, Three.js, Rapier, PeerJS, Vite) deployed to Cloudflare
-Pages at hunter-n-goose.pages.dev. Current version 5.2.0. The owner is Gustav; address them as Gustav.
+Pages at hunter-n-goose.pages.dev. Current version 5.3.0. The owner is Gustav; address them as Gustav.
 
 ## Read first
 

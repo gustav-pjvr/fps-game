@@ -1,4 +1,7 @@
 import { houseToWorld, type HouseLayout } from '../houses/houseLayout.ts';
+import { GLASS_SYNC_MAX_ENTRIES, MAX_PANE_REACH, PANE_STRENGTH } from '../../network/glassWire.ts';
+// The wire checks live in network/glassWire.ts (shared with the relay); re-exported for the world code.
+export { GLASS_SYNC_MAX_ENTRIES, PANE_STRENGTH, isValidGlassHit } from '../../network/glassWire.ts';
 
 /**
  * The glass in the Valley houses' windows (docs/glass.md), pure: where each pane is, its id, what a
@@ -8,8 +11,6 @@ import { houseToWorld, type HouseLayout } from '../houses/houseLayout.ts';
  * GlassView draws it.
  */
 
-/** A pane takes this many points of damage before it breaks. */
-export const PANE_STRENGTH = 6;
 /** A hit of this power breaks any pane at once: a blade, a blast. */
 export const BREAK_POWER = PANE_STRENGTH;
 /** Bullet holes kept (and drawn) per pane. Later hits still count toward breaking. */
@@ -212,10 +213,6 @@ export interface GlassSyncEntry {
   readonly h: readonly number[];
 }
 
-/** At most this many entries of a received list are read. */
-export const GLASS_SYNC_MAX_ENTRIES = 2048;
-/** No real pane is larger than this from its centre, in metres. */
-const MAX_PANE_REACH = 4;
 
 /** The valid entries of a received glassSync list: real panes (`isPane`), sane numbers, each pane
  * once. Anything that is not an array gives none. */
@@ -242,10 +239,3 @@ export function parseGlassSync(value: unknown, isPane: (id: number) => boolean):
   return [...entries.values()];
 }
 
-/** Whether a received glassHit's numbers are sane (the pane itself is checked against the world). */
-export function isValidGlassHit(u: unknown, v: unknown, power: unknown, side: unknown): boolean {
-  return typeof u === 'number' && Number.isFinite(u) && Math.abs(u) <= MAX_PANE_REACH
-    && typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_PANE_REACH
-    && Number.isInteger(power) && (power as number) >= 1 && (power as number) <= PANE_STRENGTH
-    && (side === 1 || side === -1);
-}

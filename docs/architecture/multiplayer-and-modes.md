@@ -345,6 +345,7 @@ Details that are easy to miss:
 7. Tests: `protocol.test.ts` (accepts valid, rejects bad bounds), `senderAuthority.test.ts` (who may send),
    `MatchMessageRouter.test.ts` (the effect and the relay), and `matchSync.test.ts` if synced.
 8. New fields on an existing message stay optional, as `t`, `torch` and `weaponId` do, so an older build keeps working.
+9. classify the type in src/network/routing.ts
 
 ## 7. Gotchas
 

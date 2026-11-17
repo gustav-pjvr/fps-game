@@ -131,19 +131,19 @@ describe('MatchTelemetryAccumulator memory cap', () => {
 });
 
 describe('buildMultiplayerTelemetryExtras', () => {
-  it('carries the stats, the transport and the roster size', () => {
+  it.each(['p2p', 'server'] as const)('carries the stats, the %s transport and the roster size', (transport) => {
     const acc = new MatchTelemetryAccumulator();
     acc.recordPing(40);
     acc.recordSnapshot(1, 0);
     acc.recordSnapshot(1, 200);
-    const extras = buildMultiplayerTelemetryExtras(acc.summary(60000), 3, 812.4);
-    expect(extras).toEqual({ transport: 'p2p', players: 3, pingP50: 40, pingP95: 40, snapshotGapP95: 200, stallsPerMin: 1, joinMs: 812 });
+    const extras = buildMultiplayerTelemetryExtras(acc.summary(60000), 3, 812.4, transport);
+    expect(extras).toEqual({ transport, players: 3, pingP50: 40, pingP95: 40, snapshotGapP95: 200, stallsPerMin: 1, joinMs: 812 });
   });
 
   it('adds the render stalls per minute when given, and leaves them out when not', () => {
     const acc = new MatchTelemetryAccumulator();
-    expect(buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, 1.5)).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0, renderStallsPerMin: 1.5 });
-    expect(buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, Number.NaN)).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0 });
+    expect(buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, 'p2p', 1.5)).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0, renderStallsPerMin: 1.5 });
+    expect(buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, 'p2p', Number.NaN)).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0 });
   });
 
   it('renderStallsPerMinute is stalls over match minutes, 0 without match time', () => {
@@ -155,7 +155,7 @@ describe('buildMultiplayerTelemetryExtras', () => {
 
   it('leaves out what is unknown', () => {
     const acc = new MatchTelemetryAccumulator();
-    const extras = buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined);
+    const extras = buildMultiplayerTelemetryExtras(acc.summary(60000), 2, undefined, 'p2p');
     expect(extras).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0 });
     expect(JSON.parse(JSON.stringify(extras))).toEqual({ transport: 'p2p', players: 2, stallsPerMin: 0 });
   });

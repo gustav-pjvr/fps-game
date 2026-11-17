@@ -14,6 +14,19 @@ const graphics = process.env.E2E_GRAPHICS ?? 'low';
 // server, where a shared 5173 would let one checkout's tests silently reuse the other's server.
 const port = Number(process.env.E2E_PORT ?? 5173);
 const baseURL = `http://localhost:${port}`;
+// E2E_TRANSPORT=server runs the multiplayer specs through a local relay (docs/server-relay-design.md):
+// its own port beside the dev server's, a throwaway access code that only this local relay accepts
+// (not a secret: it binds to 127.0.0.1 and lives for one run), and the browsers told to use it.
+const transport = process.env.E2E_TRANSPORT === 'server' ? 'server' : 'p2p';
+const relayPort = port + 1000;
+const relayAccessCode = `e2e-local-relay-${relayPort}`;
+const relayStorage = transport === 'server'
+  ? [
+    { name: 'fps-game-relay-access-code', value: relayAccessCode },
+    { name: 'fps-game-network-transport', value: 'server' },
+    { name: 'fps-game-dev-relay-url', value: `ws://127.0.0.1:${relayPort}/ws` },
+  ]
+  : [];
 
 export default defineConfig({
   testDir: './e2e',
@@ -32,16 +45,33 @@ export default defineConfig({
     baseURL,
     storageState: {
       cookies: [],
-      origins: [{ origin: baseURL, localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: graphics }) }] }],
+      origins: [{ origin: baseURL, localStorage: [{ name: 'fps-game-settings-v1', value: JSON.stringify({ graphicsQuality: graphics }) }, ...relayStorage] }],
     },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
-    command: `npm run dev -- --port ${port} --strictPort`,
-    url: baseURL,
-    reuseExistingServer: true,
-    timeout: 30000,
-  },
+  webServer: [
+    {
+      command: `npm run dev -- --port ${port} --strictPort`,
+      url: baseURL,
+      reuseExistingServer: true,
+      timeout: 30000,
+    },
+    ...(transport === 'server'
+      ? [{
+        command: 'node server/main.ts',
+        url: `http://127.0.0.1:${relayPort}/healthz`,
+        reuseExistingServer: false,
+        timeout: 30000,
+        env: {
+          HNG_ACCESS_CODES: relayAccessCode,
+          HNG_ALLOWED_ORIGINS: `${baseURL},http://127.0.0.1:${port}`,
+          HNG_HOST: '127.0.0.1',
+          HNG_PORT: String(relayPort),
+          HNG_LOG_LEVEL: 'info',
+        },
+      }]
+      : []),
+  ],
 });

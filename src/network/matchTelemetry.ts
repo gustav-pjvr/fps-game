@@ -140,8 +140,8 @@ export function renderStallsPerMinute(totalStalls: number, matchDurationMs: numb
   return minutes > 0 && Number.isFinite(minutes) && Number.isFinite(totalStalls) ? Math.round((totalStalls / minutes) * 100) / 100 : 0;
 }
 
-export function buildMultiplayerTelemetryExtras(stats: MatchTelemetryStats, players: number, joinMs: number | null | undefined, renderStallsPerMin?: number): MatchTelemetryExtras {
-  const extras: MatchTelemetryExtras = { transport: 'p2p', players, stallsPerMin: stats.stallsPerMin };
+export function buildMultiplayerTelemetryExtras(stats: MatchTelemetryStats, players: number, joinMs: number | null | undefined, transport: 'p2p' | 'server', renderStallsPerMin?: number): MatchTelemetryExtras {
+  const extras: MatchTelemetryExtras = { transport, players, stallsPerMin: stats.stallsPerMin };
   if (renderStallsPerMin !== undefined && Number.isFinite(renderStallsPerMin)) extras.renderStallsPerMin = renderStallsPerMin;
   if (stats.pingP50 !== undefined) extras.pingP50 = stats.pingP50;
   if (stats.pingP95 !== undefined) extras.pingP95 = stats.pingP95;
