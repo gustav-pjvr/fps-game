@@ -21,6 +21,8 @@ export class MultiplayerMenu {
   private readonly onKeyDown: (event: KeyboardEvent) => void;
   private readonly scope = new ModalScope();
   private readonly rejoinButton: HTMLButtonElement;
+  private readonly createPrimary: HTMLButtonElement;
+  private readonly createSecondary: HTMLButtonElement;
   private rejoinCode: string | null = null;
   private accessInput: HTMLInputElement | null = null;
 
@@ -70,13 +72,17 @@ export class MultiplayerMenu {
       if (this.rejoinCode !== null) callbacks.onRejoinRoom(this.rejoinCode);
     });
 
-    const createButtonEl = createButton('Create Room', 'primary');
-    createButtonEl.addEventListener('click', callbacks.onCreateRoom);
+    // One primary action at a time: Create Room, or Rejoin while it shows (then Create steps down to
+    // the secondary style, like Join Room). show() picks which of the two Create buttons is visible.
+    this.createPrimary = createButton('Create Room', 'primary');
+    this.createSecondary = createButton('Create Room');
+    this.createSecondary.style.display = 'none';
+    for (const button of [this.createPrimary, this.createSecondary]) button.addEventListener('click', callbacks.onCreateRoom);
 
     const joinButtonEl = createButton('Join Room');
     joinButtonEl.addEventListener('click', callbacks.onJoinRoom);
 
-    buttonColumn.append(this.rejoinButton, createButtonEl, joinButtonEl);
+    buttonColumn.append(this.rejoinButton, this.createPrimary, this.createSecondary, joinButtonEl);
     panel.appendChild(buttonColumn);
 
     const footer = document.createElement('div');
@@ -107,6 +113,8 @@ export class MultiplayerMenu {
     this.rejoinCode = recentRoom()?.code ?? null;
     this.rejoinButton.style.display = this.rejoinCode === null ? 'none' : 'block';
     if (this.rejoinCode !== null) this.rejoinButton.textContent = `Rejoin ${this.rejoinCode}`;
+    this.createPrimary.style.display = this.rejoinCode === null ? 'block' : 'none';
+    this.createSecondary.style.display = this.rejoinCode === null ? 'none' : 'block';
     // The Join Room screen has its own access field, so this one may be stale.
     if (this.accessInput) this.accessInput.value = loadAccessCode();
     attachScanSweep(this.panel);
