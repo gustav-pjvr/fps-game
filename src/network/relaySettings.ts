@@ -64,3 +64,11 @@ export function relayUrl(): string {
 export function serverAvailable(): boolean {
   return relayUrl().length > 0 && loadAccessCode().length > 0;
 }
+
+/** The transport a join attempt should try first. `typedAccessCode` is the live value of an access
+ * code field on screen (null when that field is not shown): it is saved first, so a code typed
+ * without leaving the field (no blur, so no `change` event yet) still counts for this very attempt. */
+export function joinTransport(typedAccessCode: string | null): TransportKind {
+  if (typedAccessCode !== null) saveAccessCode(typedAccessCode);
+  return serverAvailable() ? 'server' : 'p2p';
+}

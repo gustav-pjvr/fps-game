@@ -1,4 +1,5 @@
 import { loadAccessCode, relayUrl, saveAccessCode } from '../../network/relaySettings.ts';
+import { recentRoom } from '../../core/multiplayerRejoin.ts';
 import { ACCESS_CODE_MAX_LENGTH } from '../../network/serverEnvelope.ts';
 import { attachScanSweep, createButton, closeOnBackdropClick, createOverlay, createPanel, createPanelTitle, createTextInput } from './menuStyles.ts';
 import { ModalScope } from './modalScope.ts';
@@ -6,6 +7,8 @@ import { ModalScope } from './modalScope.ts';
 export interface MultiplayerMenuCallbacks {
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  /** The Rejoin button's click, with the remembered room code. */
+  onRejoinRoom: (code: string) => void;
   onClose: () => void;
 }
 
@@ -17,6 +20,9 @@ export class MultiplayerMenu {
   private readonly panel: HTMLDivElement;
   private readonly onKeyDown: (event: KeyboardEvent) => void;
   private readonly scope = new ModalScope();
+  private readonly rejoinButton: HTMLButtonElement;
+  private rejoinCode: string | null = null;
+  private accessInput: HTMLInputElement | null = null;
 
   constructor(root: HTMLElement, callbacks: MultiplayerMenuCallbacks) {
     this.overlay = createOverlay();
@@ -46,6 +52,7 @@ export class MultiplayerMenu {
       accessInput.setAttribute('aria-describedby', 'multiplayer-access-code-hint');
       accessInput.value = loadAccessCode();
       accessInput.addEventListener('change', () => saveAccessCode(accessInput.value));
+      this.accessInput = accessInput;
       const accessHint = document.createElement('div');
       accessHint.id = 'multiplayer-access-code-hint';
       accessHint.textContent = 'Only needed for the game server.';
@@ -56,13 +63,20 @@ export class MultiplayerMenu {
     const buttonColumn = document.createElement('div');
     buttonColumn.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
 
+    // Shown by show() only while the room a guest just lost can still be rejoined (see recentRoom).
+    this.rejoinButton = createButton('Rejoin', 'primary');
+    this.rejoinButton.style.display = 'none';
+    this.rejoinButton.addEventListener('click', () => {
+      if (this.rejoinCode !== null) callbacks.onRejoinRoom(this.rejoinCode);
+    });
+
     const createButtonEl = createButton('Create Room', 'primary');
     createButtonEl.addEventListener('click', callbacks.onCreateRoom);
 
     const joinButtonEl = createButton('Join Room');
     joinButtonEl.addEventListener('click', callbacks.onJoinRoom);
 
-    buttonColumn.append(createButtonEl, joinButtonEl);
+    buttonColumn.append(this.rejoinButton, createButtonEl, joinButtonEl);
     panel.appendChild(buttonColumn);
 
     const footer = document.createElement('div');
@@ -90,8 +104,13 @@ export class MultiplayerMenu {
 
   show(): void {
     this.overlay.style.display = 'flex';
+    this.rejoinCode = recentRoom()?.code ?? null;
+    this.rejoinButton.style.display = this.rejoinCode === null ? 'none' : 'block';
+    if (this.rejoinCode !== null) this.rejoinButton.textContent = `Rejoin ${this.rejoinCode}`;
+    // The Join Room screen has its own access field, so this one may be stale.
+    if (this.accessInput) this.accessInput.value = loadAccessCode();
     attachScanSweep(this.panel);
-    this.scope.enter(this.overlay, this.panel.querySelector<HTMLButtonElement>('button'));
+    this.scope.enter(this.overlay, this.rejoinCode !== null ? this.rejoinButton : this.panel.querySelector<HTMLButtonElement>('button'));
   }
 
   hide(): void {

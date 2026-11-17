@@ -89,8 +89,10 @@ export class MatchEndScreen {
   private map: MatchMap = DEFAULT_MATCH_MAP;
   private readonly newMapCheckbox: HTMLInputElement;
   private readonly rematchButton: HTMLButtonElement;
+  private readonly rejoinButton: HTMLButtonElement;
+  private rejoinCode: string | null = null;
 
-  constructor(root: HTMLElement, onRematchClick: (settings: RematchSettings) => void, onReturnToLobbyClick: () => void) {
+  constructor(root: HTMLElement, onRematchClick: (settings: RematchSettings) => void, onReturnToLobbyClick: () => void, onRejoinClick: (code: string) => void) {
     this.element = document.createElement('div');
     this.element.dataset.testid = 'match-end-screen';
     this.element.className = 'menu-surface';
@@ -228,12 +230,24 @@ export class MatchEndScreen {
     const lobbyButton = createButton('Return to Lobby');
     lobbyButton.addEventListener('click', onReturnToLobbyClick);
 
-    buttonRow.append(this.rematchButton, lobbyButton);
+    // Guest only, and only after the connection to the host dropped (see offersRejoin): opens Join
+    // Room with the room code filled in and joins at once.
+    this.rejoinButton = createButton('Rejoin', 'primary');
+    this.rejoinButton.style.display = 'none';
+    this.rejoinButton.addEventListener('click', () => {
+      if (this.rejoinCode !== null) onRejoinClick(this.rejoinCode);
+    });
+
+    buttonRow.append(this.rejoinButton, this.rematchButton, lobbyButton);
     this.element.append(this.titleElement, this.podium, this.hostSettings, buttonRow);
     root.appendChild(this.element);
   }
 
-  show(result: MultiplayerMatchEndResult): void {
+  /** `rejoinCode`: the room this guest can rejoin, or null when Rejoin is not offered (see App). */
+  show(result: MultiplayerMatchEndResult, rejoinCode: string | null = null): void {
+    this.rejoinCode = rejoinCode;
+    this.rejoinButton.style.display = rejoinCode === null ? 'none' : 'inline-block';
+    if (rejoinCode !== null) this.rejoinButton.textContent = `Rejoin Room ${rejoinCode}`;
     this.titleElement.textContent =
       result.reason === 'opponentDisconnected'
         ? 'OPPONENT DISCONNECTED'
