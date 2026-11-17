@@ -59,8 +59,12 @@ units' own and never a skin's. `setTorchLensLit` lights the torch lens: lit in t
 match only while the torch is on.
 
 Storage is `localStorage['fps-game-attachments']`, an object of weapon id to a list of ids, read
-fresh on every weapon build like skins. Attachments are not sent to other players: they see the
-gun bare. That is a known gap, left out to keep the snapshot format unchanged.
+fresh on every weapon build like skins. Other players see them too (decision D33, built 2026-11-17): the
+player snapshot carries an optional `a` field next to the weapon `w` and skin `k`, the held gun's
+fitted ids joined by commas (`"laser,torch"`, at most 48 characters, left out when the gun is bare).
+The receiver keeps only ids it knows and the gun can take (`decodeAttachments` in
+`core/attachments.ts`), and `HeldWeapon.set` (`entities/heldWeapon.ts`) rebuilds the hand model only
+when weapon, skin or fit changes. An older build sends and reads no `a`, so it shows a bare gun.
 
 ## The Workbench
 
@@ -100,5 +104,5 @@ Test ids: the old Skins ids are kept (`skins-screen`, `skins-weapon-<id>`, `skin
   `e2e/ui-qa.spec.ts` guards the page at desktop and phone width.
 - By eye: contact sheets of all nine guns on the rack and in hand, and a match with a laser and a
   torch on the rifle.
-- Not checked: the view other players get (they see no attachments), and a controller on the
+- Not checked by eye: the view other players get (covered by unit tests only), and a controller on the
   Workbench's drag (the stage needs a pointer or the keyboard).

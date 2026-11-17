@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MATCH_MAPS } from '../core/config.ts';
 import { RELAYABLE_MESSAGE_TYPES, routeMatchMessage, type MatchMessageContext } from './MatchMessageRouter.ts';
 import {
-  CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
+  CLIENT_FEATURES, DAMAGE_EVENT_MAX_AMOUNT, HELLO_USERNAME_MAX_LENGTH, KOTH_SCORE_TICK_MAX, NETWORK_MAX_ATTACHMENTS_LENGTH, NETWORK_MAX_COORD, helloSupportsMap, isNetworkMessage,
   type MatchStartMessage, type WelcomeMessage,
 } from './protocol.ts';
 
@@ -303,6 +303,16 @@ describe('self-reported numbers and hello fields', () => {
     expect(ok({ ...snapshot, w: 'battleRifle', k: 'whiteout' })).toBe(true);
     expect(ok({ ...snapshot, w: 'x'.repeat(25) })).toBe(false);
     expect(ok({ ...snapshot, k: 7 })).toBe(false);
+    // The fitted attachments are an optional bounded string; unknown ids pass (the receiver drops them).
+    expect(ok({ ...snapshot, w: 'rifle', a: 'laser,torch' })).toBe(true);
+    expect(ok({ ...snapshot, a: 'someFutureThing,laser' })).toBe(true);
+    expect(ok({ ...snapshot, a: '' })).toBe(true);
+    expect(ok({ ...snapshot, a: 'laser,'.repeat(NETWORK_MAX_ATTACHMENTS_LENGTH) })).toBe(false);
+    expect(ok({ ...snapshot, a: 'x'.repeat(NETWORK_MAX_ATTACHMENTS_LENGTH) })).toBe(true);
+    expect(ok({ ...snapshot, a: 'x'.repeat(NETWORK_MAX_ATTACHMENTS_LENGTH + 1) })).toBe(false);
+    expect(ok({ ...snapshot, a: ['laser'] })).toBe(false);
+    expect(ok({ ...snapshot, a: 5 })).toBe(false);
+    expect(ok({ ...snapshot, a: null })).toBe(false);
     expect(ok({ type: 'footstepEvent', senderSlot: 2, x: 1, y: 2, z: 1e9 })).toBe(false);
     expect(ok({ type: 'respawnEvent', senderSlot: 2, x: 1, y: 2 })).toBe(false);
     expect(ok({ type: 'fireEvent', senderSlot: 2, originX: 0, originY: 0, originZ: 0, endX: 1, endY: 1, endZ: 1, weaponId: 'rifle' })).toBe(true);

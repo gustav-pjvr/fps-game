@@ -203,10 +203,10 @@ export class RemotePlayer implements Entity, Damageable {
     this.rigidBody.setNextKinematicTranslation({ x, y, z });
   }
 
-  /** Shows the weapon and skin from their snapshot in their hand (entities/heldWeapon.ts). Unknown
+  /** Shows the weapon, skin and attachments from their snapshot in their hand (entities/heldWeapon.ts). Unknown
    * or missing ids show nothing. Cheap when nothing changed. */
-  setHeldWeapon(weaponId: string | undefined, skinId: string | undefined): void {
-    this.heldWeapon.set(weaponId, skinId);
+  setHeldWeapon(weaponId: string | undefined, skinId: string | undefined, attachments?: string): void {
+    this.heldWeapon.set(weaponId, skinId, attachments);
   }
 
   get heldWeaponId(): string | null {

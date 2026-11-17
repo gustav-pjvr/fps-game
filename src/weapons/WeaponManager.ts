@@ -404,6 +404,11 @@ export class WeaponManager {
     return this.active.skinId;
   }
 
+  /** What is fitted to the held weapon: sent to the other players with the snapshot. */
+  get activeAttachments(): readonly AttachmentId[] {
+    return this.active.attachments;
+  }
+
   /** True while the held weapon is being looked over (G). */
   get isInspecting(): boolean {
     return this.inspectTime >= 0;

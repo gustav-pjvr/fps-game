@@ -53,6 +53,40 @@ describe('HeldWeapon', () => {
     expect(hand.getObjectByName('held-weapon')!.children[0]).not.toBe(first);
   });
 
+  it('fits the attachments a snapshot names and rebuilds only when they change', () => {
+    const { model, hand } = character();
+    const held = new HeldWeapon(model);
+    held.set('rifle', 'service');
+    const holder = hand.getObjectByName('held-weapon')!;
+    const bareMeshes = meshes(holder).length;
+    held.set('rifle', 'service', 'laser,torch');
+    expect(held.shownAttachments).toEqual(['laser', 'torch']);
+    const fitted = holder.children[0];
+    expect(meshes(holder).length).toBeGreaterThan(bareMeshes);
+    held.set('rifle', 'service', 'laser,torch');
+    expect(holder.children[0]).toBe(fitted);
+    held.set('rifle', 'service', 'torch,laser,laser');
+    expect(holder.children[0]).toBe(fitted);
+    held.set('rifle', 'service', 'laser');
+    expect(holder.children[0]).not.toBe(fitted);
+    held.set('rifle', 'service');
+    expect(held.shownAttachments).toEqual([]);
+    expect(meshes(holder).length).toBe(bareMeshes);
+  });
+
+  it('ignores unknown attachments and ones the gun cannot take', () => {
+    const { model, hand } = character();
+    const held = new HeldWeapon(model);
+    const holder = hand.getObjectByName('held-weapon')!;
+    held.set('revolver', 'service', 'laser,torch');
+    expect(held.shownAttachments).toEqual([]);
+    const bare = meshes(holder).length;
+    held.set('revolver', 'service', 'laser,torch');
+    expect(meshes(holder).length).toBe(bare);
+    expect(() => held.set('rifle', 'service', 'bogus,,;')).not.toThrow();
+    expect(held.shownAttachments).toEqual([]);
+  });
+
   it('shows nothing for empty hands, an unknown weapon or a missing id, and the default skin for an unknown skin', () => {
     const { model, hand } = character();
     const held = new HeldWeapon(model);
