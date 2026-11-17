@@ -11,10 +11,14 @@
 #   --reconfigure     ask for the access codes and the DuckDNS token again and rewrite the settings
 #                     (without it, existing /etc/hng-relay.env and /etc/hng-duckdns.token are kept)
 #
+# Access codes are at least 16 characters (the relay refuses to start with a shorter one). The script
+# offers to generate one (openssl rand -base64 18, without / + and =) and shows it once on the terminal
+# for you to share; or type your own list.
+#
 # Environment (optional): HNG_REPO_URL overrides the repo to clone.
 #
-# Secrets are never taken as arguments (they would land in shell history and `ps`). The access codes
-# (comma separated, asked twice) and the DuckDNS token are typed at a silent prompt, so run this in a
+# Secrets are never taken as arguments (they would land in shell history and `ps`). Typed access codes
+# (comma separated, asked twice) and the DuckDNS token are read at a silent prompt, so run this in a
 # terminal: ssh -t <vm> sudo bash setup.sh
 set -euo pipefail
 umask 022
@@ -27,6 +31,7 @@ RELAY_ENV=/etc/hng-relay.env
 CADDY_ENV=/etc/hng-caddy.env
 TOKEN_FILE=/etc/hng-duckdns.token
 DUCKDNS_BIN=/usr/local/sbin/hng-duckdns-update
+ACCESS_CODE_MIN=16
 DEFAULT_ORIGINS='https://hunter-n-goose.pages.dev,https://*.hunter-n-goose.pages.dev'
 NODE_MAJOR=24
 SPARSE_PATHS=(
@@ -126,17 +131,33 @@ if [ "$NEED_RELAY_ENV" -eq 1 ]; then
     [[ $origin =~ ^https?://(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*(:[0-9]{1,5})?$ ]] || die "not an origin like https://example.com or https://*.example.com: $origin"
   done
 
-  printf 'Access codes: one or more, comma separated, letters digits and . _ ~ + = : @ %% ^ ! * - only.\n' >&2
-  read_secret ACCESS_CODES "Access code(s) (hidden)"
-  read_secret again "Access code(s) again (hidden)"
-  [ "$ACCESS_CODES" = "$again" ] || die "the two entries differ"
-  unset again
+  generate=''
+  read -r -p "Generate a new random access code? Answer n to type your own list instead [Y/n]: " generate || die "no answer to the access code question"
+  if [[ ${generate,,} =~ ^(y|yes)?$ ]]; then
+    if command -v openssl > /dev/null; then
+      ACCESS_CODES=$(openssl rand -base64 18 | tr -d '/+=\n')
+    else
+      ACCESS_CODES=$(head -c 18 /dev/urandom | base64 | tr -d '/+=\n')
+    fi
+    [ ${#ACCESS_CODES} -ge "$ACCESS_CODE_MIN" ] || die "the generated code came out too short; run again"
+    # Shown once, on the terminal (stderr, like the prompts), so it can be shared now.
+    printf '\nThe new access code, shown only this once (it is stored only on this VM):\n\n    %s\n\n' "$ACCESS_CODES" >&2
+    printf 'Copy it now and share it with your friends. It replaces every earlier code.\n' >&2
+  else
+    printf 'Access codes: one or more, comma separated, each at least %s characters, letters digits and . _ ~ + = : @ %% ^ ! * - only.\n' "$ACCESS_CODE_MIN" >&2
+    read_secret ACCESS_CODES "Access code(s) (hidden)"
+    read_secret again "Access code(s) again (hidden)"
+    [ "$ACCESS_CODES" = "$again" ] || die "the two entries differ"
+    unset again
+  fi
+  unset generate
   [ -n "$ACCESS_CODES" ] || die "at least one access code is required"
   codes_re='^[A-Za-z0-9._~+=:@%^!*-]+(,[A-Za-z0-9._~+=:@%^!*-]+)*$'
   [[ $ACCESS_CODES =~ $codes_re ]] || die "the access codes contain a character I do not accept, or an empty entry"
   IFS=',' read -r -a code_list <<< "$ACCESS_CODES"
   for code in "${code_list[@]}"; do
     [ ${#code} -le 128 ] || die "each access code must be at most 128 characters"
+    [ ${#code} -ge "$ACCESS_CODE_MIN" ] || die "each access code must be at least $ACCESS_CODE_MIN characters (answer y at the first question to generate one)"
   done
   unset code_list code
 fi
@@ -230,12 +251,13 @@ git -C "$APP_DIR" checkout -f -B "$BRANCH" FETCH_HEAD
 # Root owns the code; the service user only reads it.
 chown -R root:root "$APP_DIR"
 note "at $(git -C "$APP_DIR" rev-parse --short HEAD) on branch $BRANCH"
-for needed in server/main.ts server/package-lock.json server/deploy/hng-relay.service server/deploy/Caddyfile server/deploy/duckdns-update.sh; do
+for needed in server/main.ts server/package-lock.json server/deploy/hng-relay.service server/deploy/Caddyfile server/deploy/caddy-hng.conf server/deploy/duckdns-update.sh; do
   [ -f "$APP_DIR/$needed" ] || die "$needed is missing from branch $BRANCH (is the deploy kit merged into it?)"
 done
 
-step "Dependencies (npm ci --omit=dev)"
-(cd "$APP_DIR/server" && npm ci --omit=dev --no-audit --no-fund)
+step "Dependencies (npm ci --omit=dev --ignore-scripts)"
+# --ignore-scripts: no install script from a package runs as root.
+(cd "$APP_DIR/server" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
 
 # ---------------------------------------------------------------- 5. configuration and secrets
 step "Configuration"
@@ -266,13 +288,12 @@ else
   chmod 600 "$TOKEN_FILE"
 fi
 
-# The domain is not a secret. Caddy gets it as an environment variable through a systemd drop-in.
+# The domain is not a secret. Caddy gets it as an environment variable through a systemd drop-in
+# (server/deploy/caddy-hng.conf, which reads $CADDY_ENV), which also gives Caddy /run/caddy for its
+# admin socket and points `systemctl reload caddy` at it.
 printf 'HNG_DOMAIN=%s\n' "$DOMAIN" | write_file "$CADDY_ENV" 644
 install -d -m 755 /etc/systemd/system/caddy.service.d
-write_file /etc/systemd/system/caddy.service.d/hng.conf 644 << EOF
-[Service]
-EnvironmentFile=$CADDY_ENV
-EOF
+install -m 644 -o root -g root "$APP_DIR/server/deploy/caddy-hng.conf" /etc/systemd/system/caddy.service.d/hng.conf
 
 # Keep the journal (where the relay logs) to 200 MB.
 install -d -m 755 /etc/systemd/journald.conf.d

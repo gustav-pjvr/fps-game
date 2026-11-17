@@ -56,3 +56,22 @@ export function ipGroup(ip: string): string {
   if (groups === null) return bare;
   return `${groups.slice(0, 4).map((group) => group.toString(16)).join(':')}::/64`;
 }
+
+/** The wider key failed attempts are also counted by: an IPv6 address's /48 (a site, which can hand
+ * out 65,536 /64s, so stepping through them gains nothing). Null for IPv4, whose key is already the
+ * single address. */
+export function ipWideGroup(ip: string): string | null {
+  const bare = ip.split('%')[0] ?? ip;
+  if (/^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(bare) || isIP(bare) !== 6) return null;
+  const groups = ipv6Groups(bare);
+  if (groups === null) return null;
+  return `${groups.slice(0, 3).map((group) => group.toString(16)).join(':')}::/48`;
+}
+
+/** Whether an http request reached the relay straight from this machine, not through Caddy: the peer
+ * is 127.0.0.1 and no proxy header is present (Caddy always sets X-Forwarded-For). Only such a
+ * request sees the full /healthz (deploy.sh and status.sh use it over SSH). */
+export function isDirectLocalRequest(remoteAddress: string | undefined, headers: Readonly<Record<string, string | string[] | undefined>>): boolean {
+  if (remoteAddress === undefined || !LOOPBACK.has(remoteAddress)) return false;
+  return headers['x-forwarded-for'] === undefined && headers['x-forwarded-proto'] === undefined && headers.forwarded === undefined && headers.via === undefined;
+}

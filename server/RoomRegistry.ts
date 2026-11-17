@@ -11,6 +11,7 @@ import {
   type ResumeOp,
   type RoomClosedReason,
 } from '../src/network/serverEnvelope.ts';
+import { MAX_ROOMS_PER_IP } from './limits.ts';
 import { DEFAULT_ROOM_LIMITS, DEFAULT_ROOM_TIMING, Room, type MemberSocket, type ResumeRefusal, type RoomLimits, type RoomLog, type RoomMembership, type RoomTiming } from './Room.ts';
 
 /**
@@ -39,6 +40,8 @@ export interface RegistryOptions {
   timing?: Partial<RoomTiming>;
   limits?: Partial<RoomLimits>;
   log?: RoomLog;
+  /** Open rooms one creator's IP key may hold (MemberSocket.ipKey); default MAX_ROOMS_PER_IP. */
+  maxRoomsPerIp?: number;
 }
 
 /** A closed room's code stays reserved this long (section 4.5). */
@@ -59,6 +62,10 @@ export class RoomRegistry {
   private readonly timing: RoomTiming;
   private readonly limits: RoomLimits;
   private readonly log: RoomLog | undefined;
+  private readonly maxRoomsPerIp: number;
+  /** Open rooms per creator IP key (and IPv6 /48), and which keys each room was created from. */
+  private readonly roomsPerIp = new Map<string, number>();
+  private readonly creatorIp = new Map<Room, readonly string[]>();
   private timer: { api: TimerApi; handle: unknown } | null = null;
 
   constructor(config: RegistryConfig, options: RegistryOptions) {
@@ -69,6 +76,7 @@ export class RoomRegistry {
     this.timing = { ...DEFAULT_ROOM_TIMING, ...options.timing };
     this.limits = { ...DEFAULT_ROOM_LIMITS, ...options.limits };
     this.log = options.log;
+    this.maxRoomsPerIp = options.maxRoomsPerIp ?? MAX_ROOMS_PER_IP;
   }
 
   /** The capacity a create gets: what it asked for, within the config and the protocol's slots. */
@@ -83,10 +91,18 @@ export class RoomRegistry {
   }
 
   /** `create` (section 4.1): a new room with the sender in slot 0, answered `created`.
-   * `sessionToken` is the one the socket's `ready` carried (null: the host cannot resume). */
+   * `sessionToken` is the one the socket's `ready` carried (null: the host cannot resume). Past
+   * HNG_MAX_ROOMS, or past maxRoomsPerIp rooms open from the socket's IP key, it is refused busy. */
   create(socket: MemberSocket, op: CreateOp, sessionToken: string | null = null): RoomMembership | null {
     this.sweepTombstones();
     if (this.rooms.size >= this.config.maxRooms) return this.refuse(socket, 'busy');
+    // Counted per IP key and, for IPv6, per /48 too: one person can hold a whole /48.
+    const ipKeys = [socket.ipKey, socket.ipWideKey].filter((key): key is string => typeof key === 'string');
+    const full = ipKeys.find((key) => (this.roomsPerIp.get(key) ?? 0) >= this.maxRoomsPerIp);
+    if (full !== undefined) {
+      this.log?.('roomsPerIpLimit', { ip: full });
+      return this.refuse(socket, 'busy');
+    }
     const code = this.freshCode();
     if (code === null) return this.refuse(socket, 'busy');
     const room = new Room(socket, {
@@ -102,9 +118,19 @@ export class RoomRegistry {
       newSessionToken: this.drawToken,
     });
     this.rooms.set(code, room);
+    if (ipKeys.length > 0) {
+      this.creatorIp.set(room, ipKeys);
+      for (const key of ipKeys) this.roomsPerIp.set(key, (this.roomsPerIp.get(key) ?? 0) + 1);
+    }
     socket.send(encodeServerFrame({ op: 'created', code, slot: 0 }));
     this.log?.('roomOpen', { code, capacity: room.capacity });
     return room.hostMembership;
+  }
+
+  /** Whether `code` names an open room: what a join is answered notFound for when it does not (the
+   * shell counts those per IP, section 4.2). */
+  isOpen(code: string): boolean {
+    return this.rooms.get(code)?.closed === false;
   }
 
   /** `join` (section 4.2): an unknown or tombstoned code is notFound, a full room full. */
@@ -192,6 +218,15 @@ export class RoomRegistry {
   private handleClosed(room: Room, reason: RoomClosedReason): void {
     if (this.rooms.get(room.code) !== room) return;
     this.rooms.delete(room.code);
+    const ipKeys = this.creatorIp.get(room);
+    if (ipKeys !== undefined) {
+      this.creatorIp.delete(room);
+      for (const key of ipKeys) {
+        const open = (this.roomsPerIp.get(key) ?? 1) - 1;
+        if (open > 0) this.roomsPerIp.set(key, open);
+        else this.roomsPerIp.delete(key);
+      }
+    }
     this.tombstones.delete(room.code);
     this.tombstones.set(room.code, this.clock() + TOMBSTONE_MS);
     while (this.tombstones.size > TOMBSTONE_MAX) {

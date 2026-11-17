@@ -32,6 +32,7 @@ main() {
       "$(systemctl show "$unit" --property=ActiveEnterTimestamp --value)"
   done
   printf '\n==> Relay /healthz\n'
+  # Straight to the relay, not through Caddy: only a local request sees version, uptime and counts.
   curl -sS --max-time 5 http://127.0.0.1:8080/healthz || printf 'no answer\n'
   printf '\n\n==> Last 50 log lines (hng-relay)\n'
   sudo journalctl -u hng-relay -n 50 --no-pager || true

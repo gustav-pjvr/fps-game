@@ -135,73 +135,103 @@ export class ConnectionCounter {
   }
 }
 
+/** Rooms one client IP may hold open at once (its creates), so one person cannot take every room.
+ * For IPv6 the same cap applies to the /48 as well, which one person can hold whole. */
+export const MAX_ROOMS_PER_IP = 3;
+
+/** How many times looser the failure limits are for an IPv6 /48 than for its /64: residential ISPs
+ * and mobile carriers put many unrelated subscribers in one /48, so its own threshold must not lock
+ * them all out for one stranger's typos, while a person stepping through /64s still meets it. */
+export const WIDE_KEY_FAILURE_SCALE = 5;
+
 export interface AccessFailurePolicy {
   maxFailures: number;
   windowMs: number;
   blockMs: number;
-  /** Most IPs tracked at once; when full after a sweep, an unknown IP counts as blocked. */
+  /** Most keys kept at once, in the counting table and again in the blocked table. A full table
+   * forgets its oldest entry; an unknown key is never refused for want of room. */
   maxTrackedIps: number;
 }
 
 /** Section 5.3: 5 failures a minute, then a 10 minute block. */
 export const ACCESS_FAILURE_POLICY: AccessFailurePolicy = { maxFailures: 5, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 50_000 };
 
-interface FailureState {
-  failures: number[];
-  blockedUntil: number;
-}
+/** Joins with a room code that names no open room (section 4.2): 20 a minute, then a 10 minute block
+ * of joins, so room codes cannot be walked. A real player mistypes a code a few times, not 20. */
+export const JOIN_FAILURE_POLICY: AccessFailurePolicy = { maxFailures: 20, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 50_000 };
 
-/** Failed access codes per IP. The shell asks isBlocked before it even compares a code, so a
- * blocked IP learns nothing from guessing. */
+/**
+ * Failed attempts per key (an IP group, or one with a suffix such as `#resume`). The shell asks
+ * isBlocked before it compares anything, so a blocked key learns nothing from guessing.
+ *
+ * Memory stays bounded without ever refusing an unknown key. Keys still counting live in one table in
+ * the order they last failed; when it is full the one that failed longest ago is forgotten. Blocked
+ * keys live in a second table in the order they were blocked, which is the order their blocks end
+ * (blockMs is fixed), so a flood of new keys never pushes a live block out; only when that table is
+ * full as well does the block nearest its end go early. Stale entries are pruned from the front of
+ * each table on every call, stopping at the first live one: a few steps at a time, never a walk over
+ * the whole table.
+ */
 export class AccessFailureLimiter {
-  private readonly states = new Map<string, FailureState>();
+  /** Failure times inside the window, per key, least recently failed first. */
+  private readonly counting = new Map<string, number[]>();
+  /** When each block ends, per key, soonest first. */
+  private readonly blocked = new Map<string, number>();
   private readonly policy: AccessFailurePolicy;
 
   constructor(policy: AccessFailurePolicy = ACCESS_FAILURE_POLICY) {
     this.policy = policy;
   }
 
-  isBlocked(ip: string, now: number): boolean {
-    const state = this.states.get(ip);
-    if (state) return now < state.blockedUntil;
-    // An attacker spreading guesses over many addresses must not grow the map without bound.
-    if (this.states.size >= this.policy.maxTrackedIps) {
-      this.sweep(now);
-      return this.states.size >= this.policy.maxTrackedIps;
-    }
-    return false;
+  isBlocked(key: string, now: number): boolean {
+    this.sweep(now);
+    const until = this.blocked.get(key);
+    return until !== undefined && now < until;
   }
 
-  recordFailure(ip: string, now: number): void {
-    let state = this.states.get(ip);
-    if (!state) {
-      if (this.states.size >= this.policy.maxTrackedIps) this.sweep(now);
-      if (this.states.size >= this.policy.maxTrackedIps) return;
-      state = { failures: [], blockedUntil: 0 };
-      this.states.set(ip, state);
+  /** `scale` multiplies the policy's maxFailures for this key: WIDE_KEY_FAILURE_SCALE for an IPv6 /48,
+   * which many unrelated subscribers of one ISP can share. */
+  recordFailure(key: string, now: number, scale = 1): void {
+    if (this.isBlocked(key, now)) return;
+    const failures = (this.counting.get(key) ?? []).filter((at) => now - at < this.policy.windowMs);
+    // Taken out and put back at the end: the most recently failed key.
+    this.counting.delete(key);
+    failures.push(now);
+    if (failures.length >= this.policy.maxFailures * scale) {
+      this.blocked.delete(key);
+      if (this.blocked.size >= this.policy.maxTrackedIps) this.dropOldest(this.blocked);
+      this.blocked.set(key, now + this.policy.blockMs);
+      return;
     }
-    state.failures = state.failures.filter((at) => now - at < this.policy.windowMs);
-    state.failures.push(now);
-    if (state.failures.length >= this.policy.maxFailures) {
-      state.blockedUntil = now + this.policy.blockMs;
-      state.failures = [];
-    }
+    if (this.counting.size >= this.policy.maxTrackedIps) this.dropOldest(this.counting);
+    this.counting.set(key, failures);
   }
 
-  /** A right code clears the IP's failures (never a live block: the shell checks isBlocked first). */
-  recordSuccess(ip: string, now: number): void {
-    const state = this.states.get(ip);
-    if (state && now >= state.blockedUntil) this.states.delete(ip);
+  /** A right code clears the key's failures (never a live block: the shell checks isBlocked first). */
+  recordSuccess(key: string, now: number): void {
+    if (!this.isBlocked(key, now)) this.counting.delete(key);
   }
 
-  /** Forget IPs with no live block and no failure inside the window. */
+  /** Forget ended blocks and keys with no failure inside the window, from the front of each table
+   * up to the first entry that is still live (both tables are kept in time order). */
   sweep(now: number): void {
-    for (const [ip, state] of this.states) {
-      if (now >= state.blockedUntil && state.failures.every((at) => now - at >= this.policy.windowMs)) this.states.delete(ip);
+    for (const [key, until] of this.blocked) {
+      if (now < until) break;
+      this.blocked.delete(key);
+    }
+    for (const [key, failures] of this.counting) {
+      const last = failures[failures.length - 1] ?? Number.NEGATIVE_INFINITY;
+      if (now - last < this.policy.windowMs) break;
+      this.counting.delete(key);
     }
   }
 
   trackedIps(): number {
-    return this.states.size;
+    return this.counting.size + this.blocked.size;
+  }
+
+  private dropOldest(table: Map<string, unknown>): void {
+    const oldest = table.keys().next();
+    if (!oldest.done) table.delete(oldest.value);
   }
 }

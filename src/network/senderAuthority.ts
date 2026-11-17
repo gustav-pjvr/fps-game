@@ -72,9 +72,52 @@ export function acceptsFromSender(message: NetworkMessage, transportSlot: Player
   return true;
 }
 
-/** Server side: may the member in `fromSlot` send this? The host may author host-authored types;
- *  everything else must name its own slot, exactly as today's host checked its guests. */
+/** The message types whose interface declares `senderSlot`, required or optional. */
+type SenderSlotMessageType = NetworkMessage extends infer M ? (M extends NetworkMessage ? ('senderSlot' extends keyof M ? M['type'] : never) : never) : never;
+
+/** Every type that declares `senderSlot`, checked by the compiler: a Record over the type above, so a
+ * new message with a `senderSlot` fails the typecheck until it is listed here, and so does a listed
+ * one that loses it. */
+const SENDER_SLOT_TYPE_LIST: Record<SenderSlotMessageType, true> = {
+  playerSnapshot: true,
+  fireEvent: true,
+  lampDestroyed: true,
+  lampSync: true,
+  glassHit: true,
+  glassSync: true,
+  damageEvent: true,
+  grenadeThrown: true,
+  grenadeDetonated: true,
+  playerDied: true,
+  respawnEvent: true,
+  footstepEvent: true,
+  gooseHitEvent: true,
+  gooseSyncRequest: true,
+  goosePickedUp: true,
+  gooseThrown: true,
+  goldenGoosePickedUp: true,
+  goldenGooseDropped: true,
+  kothScoreTick: true,
+  hordeGooseHitEvent: true,
+  reviveEvent: true,
+  ping: true,
+  hordeAmmoDropPickedUp: true,
+  bonusGooseHitEvent: true,
+  hordeSyncRequest: true,
+  pickupSyncRequest: true,
+  meshStatus: true,
+};
+
+/** Messages that name their sender in `senderSlot`. The relay owns sender identity, so it requires
+ * the field on every one of them (serverAccepts); a peer-to-peer host checks it only when present. */
+export const SENDER_SLOT_MESSAGE_TYPES: ReadonlySet<NetworkMessage['type']> = new Set(Object.keys(SENDER_SLOT_TYPE_LIST) as SenderSlotMessageType[]);
+
+/** Server side: may the member in `fromSlot` send this? A type that declares `senderSlot` must carry
+ * the sender's own slot there, never leave it out (docs/server-relay-design.md, section 3.4). The
+ * host may author host-authored types; everything else must name its own slot, exactly as today's
+ * host checked its guests. */
 export function serverAccepts(message: NetworkMessage, fromSlot: PlayerSlot): boolean {
+  if (SENDER_SLOT_MESSAGE_TYPES.has(message.type) && (message as { senderSlot?: unknown }).senderSlot !== fromSlot) return false;
   if (fromSlot === HOST_SLOT && HOST_AUTHORED_MESSAGE_TYPES.has(message.type)) return true;
   return acceptsFromSender(message, fromSlot, 'host');
 }

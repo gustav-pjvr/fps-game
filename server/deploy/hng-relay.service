@@ -9,7 +9,9 @@ Type=simple
 User=hng
 # Secrets and site settings live in /etc/hng-relay.env (root, mode 600); systemd reads it as root.
 EnvironmentFile=/etc/hng-relay.env
-ExecStart=/usr/bin/node /opt/hng-relay/server/main.ts
+# The JavaScript heap stops at 384 MB, inside MemoryMax below, so a runaway heap ends the process
+# with a clear "heap out of memory" in the journal instead of the kernel's OOM killer.
+ExecStart=/usr/bin/node --max-old-space-size=384 /opt/hng-relay/server/main.ts
 Restart=always
 RestartSec=1
 # SIGTERM makes the relay close every room with "shutdown" and exit 0 within about 2 seconds.
@@ -26,6 +28,18 @@ PrivateDevices=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
 ReadOnlyPaths=/opt/hng-relay
+# Only Caddy on this machine talks to the relay, and the relay never opens a connection out.
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+SystemCallFilter=@system-service
+ProtectProc=invisible
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

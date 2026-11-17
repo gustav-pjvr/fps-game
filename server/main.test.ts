@@ -166,6 +166,18 @@ describe('relay shell: http', () => {
     expect((await health('/')).status).toBe(404);
     expect((await health('/ws')).status).toBe(404);
   });
+
+  it('GET /healthz through the proxy (X-Forwarded-For set) answers only ok, so outsiders cannot watch activity', async () => {
+    await start();
+    await createRoom();
+    for (const headers of [{ 'x-forwarded-for': '203.0.113.9' }, { 'x-forwarded-proto': 'https' }]) {
+      const response = await fetch(`http://127.0.0.1:${relay.port}/healthz`, { headers });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('{"ok":true}');
+    }
+    // Straight from this machine (deploy.sh, status.sh) the details are still there.
+    expect((await health()).body).toMatchObject({ ok: true, version: GAME_VERSION, rooms: 1, members: 1 });
+  });
 });
 
 describe('relay shell: the upgrade', () => {
@@ -234,6 +246,32 @@ describe('relay shell: the handshake', () => {
     expect(logs.some((line) => line.includes('"result":"blocked"'))).toBe(true);
     // Neither the code nor the guesses reach the log.
     for (const secret of [CODE, 'guess-one', 'guess-two']) expect(logs.join('\n')).not.toContain(secret);
+  });
+
+  it('IPv6 failures count per /48 as well as per /64, the /48 at a looser limit: neighbours keep playing, stepping through /64s gains nothing', async () => {
+    await start({ failurePolicy: { maxFailures: 3, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 } });
+    const guess = async (address: string): Promise<void> => {
+      const client = await connect({ headers: { 'x-forwarded-for': address } });
+      client.send(hello('guess-v6'));
+      expect((await client.closed).code).toBe(SERVER_CLOSE.accessDenied);
+    };
+    // Three strangers in one /48 each mistype once: their neighbour in a fourth /64 still gets in.
+    for (const address of ['2001:db8:1:1::1', '2001:db8:1:2::1', '2001:db8:1:3::1']) await guess(address);
+    const neighbour = await connect({ headers: { 'x-forwarded-for': '2001:db8:1:4::1' } });
+    neighbour.send(hello());
+    await neighbour.op('ready');
+    // One person stepping through /64s: the /48 blocks at WIDE_KEY_FAILURE_SCALE (5) times the limit,
+    // 15 failures here, three already counted above.
+    for (let i = 0; i < 12; i++) await guess(`2001:db8:1:${(10 + i).toString(16)}::1`);
+    // A further /64 of the same /48 is blocked, even with the right code.
+    const sameSite = await connect({ headers: { 'x-forwarded-for': '2001:db8:1:ff::1' } });
+    sameSite.send(hello());
+    expect((await sameSite.closed).code).toBe(SERVER_CLOSE.accessDenied);
+    expect(sameSite.frames).toEqual([]);
+    // Another /48 is not.
+    const otherSite = await connect({ headers: { 'x-forwarded-for': '2001:db8:2:1::1' } });
+    otherSite.send(hello());
+    await otherSite.op('ready');
   });
 
   it('a different protocol version closes 4002 before the code is looked at', async () => {
@@ -311,6 +349,42 @@ describe('relay shell: rooms through real sockets', () => {
     guest.send({ op: 'join', code: 'ZZZZZZ', username: 'Bob', rejoinToken: null });
     expect(await guest.op('rejected')).toEqual({ op: 'rejected', reason: 'notFound' });
     expect((await guest.closed).code).toBe(1000);
+  });
+
+  it('joins with unknown room codes are counted per IP: past the limit every join is answered notFound, the access code still works', async () => {
+    await start({ joinFailurePolicy: { maxFailures: 3, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 } });
+    const room = await createRoom();
+    for (const code of ['ZZZZZZ', 'YYYYYY', 'XXXXXX']) {
+      const guest = await ready();
+      guest.send({ op: 'join', code, username: 'Eve', rejoinToken: null });
+      expect(await guest.op('rejected')).toEqual({ op: 'rejected', reason: 'notFound' });
+      await guest.closed;
+    }
+    // Blocked: even the right code is answered notFound without being looked up; the host hears nothing.
+    const late = await ready();
+    late.send({ op: 'join', code: room.code, username: 'Eve', rejoinToken: null });
+    expect(await late.op('rejected')).toEqual({ op: 'rejected', reason: 'notFound' });
+    expect((await late.closed).code).toBe(SERVER_CLOSE.normal);
+    expect(room.host.frames.filter((frame) => frame.op === 'joinRequest')).toHaveLength(0);
+    expect(logs.some((line) => line.includes('"event":"join"') && line.includes('"result":"blocked"'))).toBe(true);
+    // The access code is a separate count: a hello from the same IP still gets ready.
+    await ready();
+    // Another IP joins as usual.
+    const other = await ready({ headers: { 'x-forwarded-for': '198.51.100.9' } });
+    other.send({ op: 'join', code: room.code, username: 'Fay', rejoinToken: null });
+    expect(await room.host.op('joinRequest')).toMatchObject({ username: 'Fay' });
+  });
+
+  it('one IP holds at most 3 open rooms: its next create is refused busy, another IP still creates', async () => {
+    await start();
+    for (let i = 0; i < 3; i++) await createRoom();
+    const fourth = await ready();
+    fourth.send({ op: 'create', username: 'Host', maxPlayers: 4 });
+    expect(await fourth.op('rejected')).toEqual({ op: 'rejected', reason: 'busy' });
+    expect(relay.registry.roomCount()).toBe(3);
+    const elsewhere = await ready({ headers: { 'x-forwarded-for': '198.51.100.20' } });
+    elsewhere.send({ op: 'create', username: 'Host', maxPlayers: 4 });
+    await elsewhere.op('created');
   });
 
   it('a guest frame above 64 KiB is refused (1009) although ws would carry 128 KiB', async () => {

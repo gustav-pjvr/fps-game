@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  WIDE_KEY_FAILURE_SCALE,
   AccessFailureLimiter,
   ConnectionCounter,
   GUEST_RATE_LIMIT,
   HOST_RATE_LIMIT,
+  JOIN_FAILURE_POLICY,
   MAX_CONNECTIONS_PER_IP,
   MemberRateLimiter,
   RATE_OVER_CLOSE_SECONDS,
@@ -114,6 +116,20 @@ describe('ConnectionCounter', () => {
   });
 });
 
+describe('AccessFailureLimiter: scaled keys', () => {
+  it('a key recorded with a scale blocks only at scale times the limit', () => {
+    expect(WIDE_KEY_FAILURE_SCALE).toBe(5);
+    const limiter = new AccessFailureLimiter({ maxFailures: 3, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 });
+    for (let i = 0; i < 14; i++) limiter.recordFailure('wide', i, WIDE_KEY_FAILURE_SCALE);
+    expect(limiter.isBlocked('wide', 20)).toBe(false);
+    limiter.recordFailure('wide', 21, WIDE_KEY_FAILURE_SCALE);
+    expect(limiter.isBlocked('wide', 22)).toBe(true);
+    // An unscaled key still blocks at the policy's own limit.
+    for (let i = 0; i < 3; i++) limiter.recordFailure('narrow', i);
+    expect(limiter.isBlocked('narrow', 5)).toBe(true);
+  });
+});
+
 describe('AccessFailureLimiter', () => {
   it('blocks an IP for 10 minutes after 5 failures in a minute', () => {
     const limiter = new AccessFailureLimiter();
@@ -147,11 +163,62 @@ describe('AccessFailureLimiter', () => {
     const limiter = new AccessFailureLimiter({ maxFailures: 5, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 3 });
     for (const ip of ['a', 'b', 'c', 'd']) limiter.recordFailure(ip, 0);
     expect(limiter.trackedIps()).toBe(3);
-    // While full of live entries an unknown address is refused rather than tracked.
-    expect(limiter.isBlocked('e', 1000)).toBe(true);
     // Once the window passes, the sweep frees room again.
-    expect(limiter.isBlocked('e', 60_000)).toBe(false);
     limiter.sweep(60_000);
     expect(limiter.trackedIps()).toBe(0);
+  });
+
+  it('when full it forgets the key that failed longest ago and never refuses an unknown key', () => {
+    const limiter = new AccessFailureLimiter({ maxFailures: 3, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 3 });
+    for (const ip of ['a', 'b', 'c']) limiter.recordFailure(ip, 0);
+    // a fails again, so b is now the one that failed longest ago.
+    limiter.recordFailure('a', 1);
+    for (const ip of ['new-1', 'new-2', 'new-3']) expect(limiter.isBlocked(ip, 2)).toBe(false);
+    limiter.recordFailure('d', 2);
+    expect(limiter.trackedIps()).toBe(3);
+    // b was forgotten; a kept its two failures and blocks on the third.
+    limiter.recordFailure('a', 3);
+    expect(limiter.isBlocked('a', 3)).toBe(true);
+    limiter.recordFailure('b', 3);
+    limiter.recordFailure('b', 3);
+    expect(limiter.isBlocked('b', 3)).toBe(false);
+  });
+
+  it('keeps every live block while a flood of new addresses fills the table', () => {
+    const limiter = new AccessFailureLimiter({ maxFailures: 2, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 });
+    for (const ip of ['x', 'y']) {
+      limiter.recordFailure(ip, 0);
+      limiter.recordFailure(ip, 0);
+    }
+    for (let i = 0; i < 10_000; i++) limiter.recordFailure(`flood-${i}`, 1000);
+    expect(limiter.isBlocked('x', 1000)).toBe(true);
+    expect(limiter.isBlocked('y', 1000)).toBe(true);
+    expect(limiter.isBlocked('someone-new', 1000)).toBe(false);
+    // At most the counting table plus the blocked table.
+    expect(limiter.trackedIps()).toBeLessThanOrEqual(200);
+    expect(limiter.isBlocked('x', 600_000)).toBe(false);
+  });
+
+  it('a check on a full table does not walk the whole table', () => {
+    // The old limiter swept all 50,000 entries on every check while full: 50,000 checks took minutes.
+    const limiter = new AccessFailureLimiter();
+    for (let i = 0; i < 50_000; i++) limiter.recordFailure(`ip-${i}`, 0);
+    const started = performance.now();
+    for (let i = 0; i < 50_000; i++) {
+      expect(limiter.isBlocked(`other-${i}`, 1000)).toBe(false);
+      limiter.recordFailure(`other-${i}`, 1000);
+    }
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(limiter.trackedIps()).toBe(50_000);
+  });
+
+  it('joins with an unknown room code are allowed 20 a minute, then blocked for 10 minutes', () => {
+    expect(JOIN_FAILURE_POLICY).toMatchObject({ maxFailures: 20, windowMs: 60_000, blockMs: 600_000 });
+    const limiter = new AccessFailureLimiter(JOIN_FAILURE_POLICY);
+    for (let i = 0; i < 19; i++) limiter.recordFailure('ip#join', i * 1000);
+    expect(limiter.isBlocked('ip#join', 19_000)).toBe(false);
+    limiter.recordFailure('ip#join', 19_000);
+    expect(limiter.isBlocked('ip#join', 19_000)).toBe(true);
+    expect(limiter.isBlocked('ip', 19_000)).toBe(false);
   });
 });

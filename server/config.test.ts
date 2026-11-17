@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, DEFAULT_ALLOWED_ORIGINS, isOriginAllowed, loadConfig, parseAllowedOrigins } from './config.ts';
+import { ACCESS_CODE_MIN_LENGTH, ConfigError, DEFAULT_ALLOWED_ORIGINS, isOriginAllowed, loadConfig, parseAllowedOrigins } from './config.ts';
 
 const CODE = 'correct-horse-battery';
 
@@ -22,10 +22,10 @@ describe('config: HNG_ACCESS_CODES', () => {
   });
 
   it('keeps the codes only as digests: the config never prints them', () => {
-    const config = loadConfig({ HNG_ACCESS_CODES: `${CODE}, second-code ` });
+    const config = loadConfig({ HNG_ACCESS_CODES: `${CODE}, second-code-for-friends ` });
     expect(config.access.count).toBe(2);
     expect(config.access.check(CODE)).toBe(true);
-    expect(config.access.check('second-code')).toBe(true);
+    expect(config.access.check('second-code-for-friends')).toBe(true);
     expect(JSON.stringify(config)).not.toContain(CODE);
     expect(String(config.access)).not.toContain(CODE);
   });
@@ -35,6 +35,19 @@ describe('config: HNG_ACCESS_CODES', () => {
     const error = thrownBy(() => loadConfig({ HNG_ACCESS_CODES: long }));
     expect(error).toBeInstanceOf(ConfigError);
     expect(error.message).not.toContain(long);
+  });
+
+  it('refuses any code under 16 characters, naming the rule and never the code', () => {
+    expect(ACCESS_CODE_MIN_LENGTH).toBe(16);
+    for (const weak of ['goose', 'k'.repeat(15), '123456']) {
+      for (const raw of [weak, `${CODE},${weak}`, `${weak} , ${CODE}`]) {
+        const error = thrownBy(() => loadConfig({ HNG_ACCESS_CODES: raw }));
+        expect(error, raw).toBeInstanceOf(ConfigError);
+        expect(error.message).toContain('at least 16 characters');
+        expect(error.message).not.toContain(weak);
+      }
+    }
+    expect(loadConfig({ HNG_ACCESS_CODES: 'k'.repeat(16) }).access.count).toBe(1);
   });
 });
 
