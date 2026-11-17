@@ -2,6 +2,7 @@ import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
 import { sanitizeAttachments, toggleAttachment, type AttachmentId } from '../weapons/models/attachments.ts';
 
 const STORAGE_KEY = 'fps-game-attachments';
+const ATTACHMENT_SEPARATOR = ',';
 
 /** The attachments the player has fitted to each gun, by weapon id (docs/attachments.md). A gun
  * with no entry carries none, so the stored object only holds what the player fitted. */
@@ -40,6 +41,19 @@ export function saveAttachments(fitted: FittedAttachments): void {
 
 export function fittedAttachments(fitted: FittedAttachments, weaponId: string): readonly AttachmentId[] {
   return fitted[weaponId] ?? [];
+}
+
+/** The wire form of a gun's fitted attachments (the snapshot's `a`): ids joined by commas, or
+ * undefined when the gun is bare so the field is left out. */
+export function encodeAttachments(ids: readonly AttachmentId[]): string | undefined {
+  return ids.length > 0 ? ids.join(ATTACHMENT_SEPARATOR) : undefined;
+}
+
+/** What a snapshot's `a` fits to `weaponId`: unknown ids, ids the gun cannot take and anything that
+ * is not a string are dropped, never thrown on (an older or newer build may send anything). */
+export function decodeAttachments(weaponId: string, encoded: unknown): AttachmentId[] {
+  if (typeof encoded !== 'string') return [];
+  return sanitizeAttachments(weaponId, encoded.split(ATTACHMENT_SEPARATOR));
 }
 
 /** `fitted` with `id` fitted to or taken off `weaponId`. A gun that cannot take it changes nothing;

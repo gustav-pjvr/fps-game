@@ -46,7 +46,7 @@ import { Enemy, setEnemyDoorGate, setEnemyEntrance, setEnemyFloor, setEnemyNavig
 import { crossesClosedDoor, facilityBlocksThrow, facilityCeilingAt, facilityFloorPoints, facilityGoosePlacement, facilityHordeSite } from '../world/facility/facilityModes.ts';
 import { WeaponManager } from '../weapons/WeaponManager.ts';
 import { WEAPON_DEFINITIONS } from '../weapons/definitions.ts';
-import { loadStoredAttachments } from './attachments.ts';
+import { encodeAttachments, loadStoredAttachments } from './attachments.ts';
 import { loadStoredSkins } from './skins.ts';
 import { ImpactMarkers } from '../combat/ImpactMarkers.ts';
 import { LaserDot } from '../combat/LaserDot.ts';
@@ -3813,6 +3813,7 @@ export class Game {
     if (this.multiplayer.snapshotAccumulator >= PLAYER_SNAPSHOT_SEND_INTERVAL) {
       this.multiplayer.snapshotAccumulator = 0;
       const p = this.player.position;
+      const attachments = encodeAttachments(this.weaponManager.activeAttachments);
       this.multiplayer.session.connection.send({
         type: 'playerSnapshot',
         senderSlot: this.multiplayer.session.ownSlot,
@@ -3826,6 +3827,7 @@ export class Game {
         ...(this.torch ? { torch: this.torch.isOn } : {}),
         w: this.weaponManager.activeWeaponId,
         k: this.weaponManager.activeSkinId,
+        ...(attachments ? { a: attachments } : {}),
       });
     }
   }
