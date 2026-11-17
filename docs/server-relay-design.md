@@ -292,7 +292,9 @@ the host connection closes (`onPeerDisconnected` in `Game.create`, `opponentDisc
 
 **Recommended policy: the room closes when the host leaves.** The server sends every guest
 `roomClosed { reason: 'hostLeft' }` and closes their sockets; the guest transport fires
-`onPeerDisconnected(HOST_SLOT)`, so Game.ts and the room screens behave exactly as today. The runner-up,
+`onPeerDisconnected(HOST_SLOT)`, so Game.ts and the room screens behave exactly as today. As built, a host
+whose socket drops abnormally is first held for 30 s and closes the room only if it does not resume
+(section 5.6). The runner-up,
 promoting another client to simulator, wins only once a host drop mid-match becomes the most common
 complaint after the server is live, and is best folded into Phase B, because a promoted guest would be
 missing: every wandering goose's authoritative state (ids, hit counts, wander targets; guests hold
@@ -332,7 +334,7 @@ changes (unused: the silence sweep is host only). Update the "two sender slots" 
 | Op | Direction | Fields | Effect |
 |---|---|---|---|
 | `hello` | C to S, first frame | `proto`, `build`, `access`, `features` | Within 5 s of connect, else close 4003. |
-| `ready` | S to C | `proto`, `serverTime` | Handshake accepted. |
+| `ready` | S to C | `proto`, `serverTime`, `sessionToken` | Handshake accepted. The token (section 5.6) is for whatever this socket creates or joins. |
 | `create` | C to S | `username`, `maxPlayers` | New room, sender is slot 0. |
 | `created` | S to C | `code`, `slot: 0` | |
 | `join` | C to S | `code`, `username`, `rejoinToken`, `features` | Section 4.2. |
@@ -347,11 +349,22 @@ changes (unused: the silence sweep is host only). Update the "two sender slots" 
 | `pong` | S to C | `n`, `t` | Client RTT = now minus `t`. |
 | `quality` | S to C, every 2 s | `members: [{ slot, rttMs }]` | Section 6. |
 | `roomClosed` | S to C | `reason`: `hostLeft`, `idle`, `expired`, `shutdown` | Then close 4004. |
-| `leave` | C to S | | Graceful leave (the socket close does the same). |
+| `leave` | C to S | | Graceful leave (a close the client chooses, 1000, 1001 or no code, does the same). |
+| `resume` | C to S, in place of `create` or `join` | `sessionToken`, `lastSeq` | Take back an away member (section 5.6). |
+| `resumed` | S to C | `sessionToken` | The resume worked: the next token, then the replay. |
+| `ack` | C to S | `seq` | Every reliable frame up to `seq` arrived; the server forgets them. |
+| `away` | S to C | `slot` | That member's socket dropped; the server holds its slot for a resume. |
+| `back` | S to C | `slot` | It resumed (or a rejoin took its slot over). |
+
+Reliable frames from the server carry `s`, their number for that member from 1, as the first key: every
+game frame except the superseded state types (`playerSnapshot`, `gooseSnapshot`, `hordeGooseSnapshot`,
+`bonusGooseSnapshot`), and every op except the ones bound to one socket (`ready`, `created`, `rejected`,
+`pong`, `quality`, `roomClosed`, `resumed`).
 
 Close codes: 4001 access denied, 4002 version mismatch, 4003 handshake timeout, 4004 room closed,
-4008 rate limited, 4009 slow consumer, 4010 kicked, 4011 replaced by a rejoin; 1000 after `rejected` or a
-`leave`. The shell (`Member.ts`) also uses the standard ones: 1001 server shutting down (sockets not in a
+4008 rate limited, 4009 slow consumer, 4010 kicked, 4011 replaced by a rejoin, 4012 resume refused (one
+code for every refusal), 4013 resume later (the right token, but the member still counts as connected); 1000
+after `rejected` or a `leave`. The client closes a socket it gives up on to resume with 4000. The shell (`Member.ts`) also uses the standard ones: 1001 server shutting down (sockets not in a
 room), 1003 a binary frame, 1008 a first frame that is not a hello, or a malformed hello, 1009 a frame
 over the sender's size cap (7.4). A hello is checked in this order: protocol version (4002), the IP's
 access block (4001; the code is not compared while blocked), the code (4001, counted as a failure).
@@ -382,21 +395,81 @@ Refresh the page." `hello.build` (`GAME_VERSION`) is for logs. Compatibility ins
   Browsers answer protocol pings below JavaScript, so a backgrounded tab is not dropped by this; game-level
   silence stays the host's job (`isOpponentSilent`), as today.
 - **Client side:** application `ping` every 1 s for RTT; no frame at all for 6 s while visible means
-  `serverLost`.
+  `serverLost` before the client is in a room, and starts a resume once it is (5.6).
 
-### 5.6 Reconnection
+### 5.6 Reconnection and resume (F1, as built 2026-11-17)
 
-Release 1: the initial connect retries 3 times (0.5 s, 1 s, 2 s, each plus up to 30 percent jitter), then
-the room screens say "Couldn't reach the game server". A socket lost mid-room is final: a guest uses
-today's rejoin path (Join with the same code: same token, same slot, `welcome.activeMatch`); the host's
-loss closes the room (4.4).
+The initial connect retries 3 times (0.5 s, 1 s, 2 s, each plus up to 30 percent jitter), then the room
+screens say "Couldn't reach the game server". Once in a room, a dropped socket is **resumed** within
+**30 s**, for the host and for guests (section 1.1), and the game on every side never sees a disconnect. A
+member that cannot resume still has today's rejoin path (Join with the same code: same rejoin token, same
+slot, `welcome.activeMatch`).
 
-Follow-up F1, recommended as the second release: transparent **resume** within 10 s. `ready` carries a
-`sessionToken`; the server numbers reliable frames per member and keeps the last 512 (or 256 KB) while it
-is away; the client reconnects with backoff (250 ms doubling to 4 s) and sends `resume { sessionToken,
-lastSeq }`; the server replays the rest (snapshots skipped) and the game never sees a disconnect. This is
-what lets a host survive a Wi-Fi blip. Deferred because sequence and replay rules need their own tests and
-audit, and release 1 must first prove the basic relay.
+**Session token.** `ready.sessionToken` is 16 bytes of `crypto.randomBytes` in base64url (22 characters),
+one per socket. A `create` or `join` hands it to the room's member and the shell keeps no copy. It
+authorises a resume of that member and nothing else. The server compares it with `timingSafeEqual` on
+equal-length buffers (the token's 22 bytes) against each admitted member, never logs it, and replaces it on
+every successful resume (`resumed.sessionToken`): the old one is dead at once.
+
+**Numbering and keeping.** The server numbers each member's reliable frames (`s`, from 1; section 5.2) and
+keeps each one until the member acknowledges it. Superseded state (`playerSnapshot` and the three goose
+snapshots) is neither numbered nor kept: the next copy replaces it, and up to 24 horde geese at 6 a second
+would fill the buffer in about ten seconds. `pong`, `quality` and the other one-socket ops are not kept
+either. The client acknowledges with `ack { seq }` after every 64 numbered frames and once a second when
+anything new arrived; an ack beyond the last frame sent is dropped and counted (`badAck`).
+
+**Bounds.** At most **1536 frames or 768 KiB** of frame text kept per member (`RESUME_BUFFER_MAX_FRAMES`,
+`RESUME_BUFFER_MAX_BYTES` in `serverEnvelope.ts`; about 30 s at 50 reliable frames a second). Past either,
+the oldest kept frames go. For a live member that only limits how far back a resume can reach (one from
+before the kept frames is refused); for an away member it **ends the resume window** at once.
+
+**Away.** A live member with a token whose socket closes abnormally is away: no close frame (1006: a
+dropped network, a missed heartbeat, a failed probe), or a client close code other than 1000, 1001 or none
+(1005), and not a close the server chose (kick 4010, replacement 4011, rate limit, slow consumer, a frame
+too big). It keeps its slot, role, token and kept frames; frames for it are kept, not sent; the others get
+`away { slot }`. A `leave`, a kick, a replacement, a chosen close and a pending member leave as before.
+After 30 s away a guest leaves as before (`memberLeft`, then the 90 s reservation and `expired`), and the
+host leaving closes the room (`roomClosed hostLeft`, section 4.4). While the host is away the room stays
+open: guests get `away { slot: 0 }` and play on (their world stands still, which Gustav accepted), the
+guests still reach each other, and their frames for the host are kept for it.
+
+**The resume.** A new socket sends `hello` (version, IP block and access code checked as for any socket),
+then `resume { sessionToken, lastSeq }` in place of `create` or `join`, `lastSeq` being the highest frame
+number it processed. The server answers `resumed { sessionToken }` with the next token, then the kept
+frames after `lastSeq` in order, and tells the others `back { slot }`. The member keeps its slot, role,
+room and rate limiter (reconnecting does not refill it); the guest 64 KiB and host 128 KiB frame caps apply
+by slot as before, and the new socket counts against the per-IP connection limit and the lobby rate limit.
+
+**Refusals.** An unknown, stale or reused token is refused with **4012**, which says nothing about whether
+the room or slot exists, and counts as a failure for the IP under the access-failure policy (5 a minute,
+then a 10 minute block) under its own key, so a right access code does not wipe failed resumes; a blocked
+IP is refused 4012 before any token is compared. A right token whose `lastSeq` is before the kept frames
+or beyond the last one sent ends the member (`memberLeft`) and is refused 4012, not counted. A right token
+whose member still counts as connected (a half-open connection after a network change that the server has
+not noticed yet) is refused **4013**, and the old socket is probed: a protocol ping, and no pong within 2 s
+ends it as abnormal, so the client's next attempt succeeds. Two resumes racing for one slot: the first
+replaces the token, so the second is an unknown token. A pending member's token resumes nothing.
+
+**Client.** Once in a room (the host after `created`, a guest after its welcome) with a token, a socket
+closed with a code that is not final, or 6 s of silence, starts a resume: the old socket is closed with
+4000 and attempts follow after 250 ms doubling to 4 s, each shortened by up to 30 percent jitter, each with
+4 s to reach `resumed`. Final codes never start one and are reported as before: 1000, 1003, 1008, 1009,
+4001, 4002, 4004, 4008, 4009, 4010, 4011 and 4012 (an attempt closed with one gives up at once); 4013 and
+anything else is retried. While reconnecting the silence rule and pings are off, `isConnectedTo` stays true
+and `isReconnecting()` is true; game frames (superseded state aside) and the host's `joinAnswer` and `kick`
+are queued within the same bounds (past them the resume ends) and sent after `resumed`. Numbered frames at
+or below `lastSeq` are dropped as duplicates. After 30 s without success, or on a final refusal, the game
+hears what a lost socket meant before: `onError(serverLost)` for the host, and for a guest too (the guest
+cannot tell its own network from the host's; a `roomClosed` it receives still reads as the host leaving).
+
+**Game.** `onPeerAway` and `onPeerBack` show "<name> reconnecting…" and "<name> is back" in the kill feed
+and in the lobby screens' status line. The host's silence sweep skips away slots, and every slot while its
+own transport reconnects, restarting their clock each sweep so the moment they are back counts from then.
+
+**Known gap.** Client to server is not numbered: what a client wrote into a socket that was already dead
+(until it noticed: at once on a close event, up to 6 s on silence) is lost; what it sends while
+reconnecting is queued. Numbering the client's frames the same way (the server acknowledging, `resumed`
+carrying the server's own last number) would close it, for the WP 11 audit to weigh.
 
 ### 5.7 JSON now, binary later: bandwidth
 
@@ -528,7 +601,9 @@ string at 120 characters; `server/log.test.ts` and `server/main.test.ts` check i
 | Guest rate | 150 frames/s sustained, burst 300; 64 KB/s | 30 snapshots, about 10 shots, footsteps, events. |
 | Host rate | 800 frames/s sustained, burst 1600; 512 KB/s | Goose and horde snapshots per live goose, sync bursts (`sendFullSync`). |
 | Over the rate | drop and count; over for 10 s in a row: close 4008 | "10 s in a row" means 10 consecutive whole seconds (counted from the member's start), each with at least one dropped frame. Byte buckets hold 2 s of the byte rate as their burst. "KB" in this table is read as KiB. Release 1 enforces generous caps and logs any member above 50 percent, to tighten after real matches. |
-| Slow consumer | skip snapshots above 64 KiB buffered; close 4009 above 4 MiB | |
+| Slow consumer | skip snapshots above 64 KiB buffered; close 4009 above 4 MiB | Snapshots here are the superseded state types of section 5.6. |
+| Resume buffer | 1536 frames or 768 KiB of frame text per member, unacknowledged reliable frames only | Section 5.6. Overflow while away ends the 30 s window. A reconnecting client queues within the same bounds. |
+| Failed resumes per IP | the access-failure policy below, counted under its own key | A right access code does not clear them. |
 | Connections per IP | 8 | A household behind one address. |
 | Access failures per IP | 5 a minute, then 10 minute block | |
 | Rooms | `HNG_MAX_ROOMS`, default 50 | |
@@ -538,13 +613,17 @@ string at 120 characters; `server/log.test.ts` and `server/main.test.ts` check i
 Per room: at most `capacity` members, a `HostRoster` (hundreds of bytes), limiter and RTT state, and socket
 buffers (normally a few KB, capped at 4 MiB). Well under 100 KB per room plus Node's baseline of about 50 MB;
 even Oracle's 1 GB AMD micro instance would do. `MemoryMax=512M` in systemd guards against a leak.
+Resume (5.6) adds each member's unacknowledged reliable frames: about a second's worth while connected
+(acknowledged every second or 64 frames), at most 768 KiB of frame text while away or when a client never
+acknowledges. JSON frames are ASCII, which V8 keeps one byte a character, so the worst case is about 3 MB
+per 4-player room and 150 MB at 50 rooms, all members away at once; inside `MemoryMax`.
 
 ### 7.6 Crash and restart
 
-systemd restarts within 1 s; in-memory rooms are lost. Every socket closes: guests fire
-`onPeerDisconnected(HOST_SLOT)` and end as if the host left; the host transport fires
-`onError(..., 'serverLost')` and Game.ts ends the host's match too (a small new branch: the host ignores
-`onError` today); lobbies say "Lost the game server. Create or join the room again." A new
+systemd restarts within 1 s; in-memory rooms are lost. Every socket closes, without a close frame, so
+clients in a room try to resume (5.6): the restarted relay refuses their tokens (4012) and they give up at
+once, or after 30 s if it stays down. Then every transport fires `onError(..., 'serverLost')` and Game.ts
+ends the match, the host's too (a small new branch: the host ignored `onError` before); lobbies say "Lost the game server. Create or join the room again." A new
 `MultiplayerMatchEndReason` `'serverLost'` words the podium. Deploys wait for zero rooms (8.3).
 
 ## 8. Deployment on the Oracle free VM
@@ -799,7 +878,7 @@ its score, and the HUD shows a ping. Needs WP 1 to 4 and 6 to 8 (only what that 
 measured need (L, Opus); F3 sender rounding then binary and batched snapshots (S then M); F4 host promotion,
 better done inside Phase B (L). (F1 moved into release 1 with a 30 s window: section 1.1.)
 
-### 13.1 Build status (as built, 2026-11-10)
+### 13.1 Build status (as built, 2026-11-17)
 
 **Milestone 1 reached on 2026-11-05** (branch `feature/server-relay`, not merged or deployed). WP 1 to 8 are
 built and committed, plus the part of WP 9 Milestone 1 needs. Evidence: `node scripts/relay-harness.mjs
@@ -822,10 +901,29 @@ passed (P2P control passed too); `node scripts/relay-menu-qa.mjs` 15 of 15 in a 
   (4010) or replaced (4011) guest reports the host as disconnected, as on P2P.
 - E2E: `E2E_TRANSPORT=server` starts a relay on `E2E_PORT + 1000` with a throwaway local access code.
 
+**F1 resume built on 2026-11-17** (branch `feature/relay-resume`, from `feature/server-relay`); section 5.6
+describes it as built. Evidence: unit tests only, `server/resume.test.ts`, the resume cases in
+`server/main.test.ts` (real sockets: a dropped guest, wrong tokens counted and blocked, the probe),
+`src/network/ServerTransport.test.ts`, and `src/network/ServerTransport.relay.test.ts` (a guest's and the
+host's socket cut mid-match against the real relay, nobody seeing a disconnect). Not yet run in a browser or
+e2e. Differences from the F1 plan and its brief:
+- `resumed` comes before the replay, not after it: a second drop during a long replay then still finds the
+  client holding the current token.
+- The goose snapshots are not kept either (the plan named snapshots in general, the brief `playerSnapshot`):
+  a horde would overflow the buffer in about ten seconds. They are skipped for a slow consumer too.
+- A resume while the server still counts the member as connected is refused with its own code (4013) and
+  the old socket is probed (2 s), so a half-open connection after a network change resumes in seconds
+  rather than after the 15 s heartbeat. Only a right token gets 4013; every other refusal is 4012.
+- A guest that gives up after 30 s reports `serverLost`, as a dropped guest socket always did, rather than
+  `onPeerDisconnected(HOST_SLOT)`: it cannot tell its own network from the host's.
+- A client close with no code (1005) counts as chosen, like 1000 and 1001; the client abandons a socket
+  with 4000. The reconnecting client queues its own frames (the plan said nothing of that direction).
+
 **Found in testing, open:**
 - Rejoin after the host leaves fails: release 1 closes the room when the host goes (section 4.4), and there is
-  no visible "Rejoin" control. Plan: F1 (host resume within 30 s) plus a Rejoin button on the disconnect screen
-  and the Multiplayer menu, and the access code field on Join Room too (Gustav, 2026-11-05: low priority).
+  no visible "Rejoin" control. F1 (host resume within 30 s) is built (5.6); still planned: a Rejoin button on
+  the disconnect screen and the Multiplayer menu, and the access code field on Join Room too (Gustav,
+  2026-11-05: low priority).
 - Server-mode e2e: 2 of 4 runs stopped at `lockPointer(guestPage)` before any network check, on a slow
   machine. Check in WP 9.
 - The server-mode HUD ping is an application ping, so it includes the page's frame time; P2P reads RTCStats.
@@ -833,8 +931,9 @@ passed (P2P control passed too); `node scripts/relay-menu-qa.mjs` 15 of 15 in a 
 - `joinAnswer` is keyed by slot only; the client answers only the newest request. Echoing `peerId` would close
   the gap (a server change, for the WP 11 audit to weigh).
 
-**Still to do:** F1 resume, WP 9 (rest), WP 10 deploy kit (DuckDNS, Oracle VM in Johannesburg, Gustav's
-sign-up), WP 11 audit, WP 13 release.
+**Still to do:** F1 resume in a real browser (an e2e run that cuts a socket mid-match, and Gustav switching
+networks mid-match); WP 9 (rest); WP 10 deploy kit (DuckDNS, Oracle VM in Johannesburg, Gustav's sign-up);
+WP 11 audit, including resume (token handling, refusals, the client-to-server gap in 5.6); WP 13 release.
 
 ## 14. Phase B outline and rooms larger than 4
 

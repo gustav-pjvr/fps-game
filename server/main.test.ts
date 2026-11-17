@@ -122,8 +122,8 @@ async function createRoom(): Promise<Room> {
 }
 
 /** Join and have the host admit with `welcome`; resolves with the guest once it holds the welcome. */
-async function joinAndAdmit(room: Room, name: string, welcome?: (slot: PlayerSlot) => WelcomeMessage): Promise<{ guest: Client; slot: PlayerSlot }> {
-  const guest = await ready();
+async function joinAndAdmit(room: Room, name: string, welcome?: (slot: PlayerSlot) => WelcomeMessage, options?: Parameters<typeof connect>[0]): Promise<{ guest: Client; slot: PlayerSlot }> {
+  const guest = await ready(options);
   const before = room.host.frames.filter((frame) => frame.op === 'joinRequest').length;
   guest.send({ op: 'join', code: room.code, username: name, rejoinToken: `tok-${name}`, features: ['facility'] });
   const request = await room.host.next((frame) => frame.op === 'joinRequest' && frame.username === name);
@@ -324,7 +324,7 @@ describe('relay shell: rooms through real sockets', () => {
     expect((await bob.guest.closed).code).toBe(1009);
     expect(room.host.frames.some((frame) => 'm' in frame && (frame.m as NetworkMessage).type === 'playerSnapshot')).toBe(false);
     // The room goes on: the host heard the guest leave.
-    expect(await room.host.op('memberLeft')).toEqual({ op: 'memberLeft', slot: bob.slot });
+    expect(await room.host.op('memberLeft')).toMatchObject({ op: 'memberLeft', slot: bob.slot });
   });
 
   it('a socket not yet in a room is held to 64 KiB too', async () => {
@@ -368,6 +368,152 @@ describe('relay shell: rooms through real sockets', () => {
     const late = await ready();
     late.send({ op: 'join', code: room.code, username: 'Late', rejoinToken: null });
     expect(await late.op('rejected')).toEqual({ op: 'rejected', reason: 'notFound' });
+  });
+});
+
+describe('relay shell: resume (section 5.6)', () => {
+  const TOKEN_PATTERN = /^[A-Za-z0-9_-]{22}$/;
+  const tokenOf = (client: Client): string => client.frames.find((frame) => frame.op === 'ready')?.sessionToken as string;
+  const shot = (senderSlot: PlayerSlot, t: number): NetworkMessage =>
+    ({ type: 'fireEvent', senderSlot, originX: 0, originY: 1, originZ: 0, endX: 5, endY: 1, endZ: 5, weaponId: 'rifle', t }) as NetworkMessage;
+  const isOp = (name: string, slot: PlayerSlot) => (frame: Frame) => frame.op === name && frame.slot === slot;
+
+  async function resumeWith(token: string, lastSeq: number, options?: Parameters<typeof connect>[0]): Promise<Client> {
+    const client = await ready(options);
+    client.send({ op: 'resume', sessionToken: token, lastSeq });
+    return client;
+  }
+
+  it('ready carries a fresh 22-character base64url session token per socket', async () => {
+    await start();
+    const first = tokenOf(await ready());
+    const second = tokenOf(await ready());
+    expect(first).toMatch(TOKEN_PATTERN);
+    expect(second).toMatch(TOKEN_PATTERN);
+    expect(first).not.toBe(second);
+  });
+
+  it('a guest whose connection drops resumes on a new socket: away and back for the host, resumed then the replay for the guest', async () => {
+    await start();
+    const room = await createRoom();
+    const bob = await joinAndAdmit(room, 'Bob');
+    const token = tokenOf(bob.guest);
+    // No close frame at all, as when the network goes: the server sees 1006.
+    bob.guest.ws.terminate();
+    await room.host.next(isOp('away', bob.slot));
+    room.host.send({ m: shot(0, 41) });
+    room.host.send({ m: snapshot(0) });
+    room.host.send({ m: shot(0, 42) });
+
+    // The new socket's hello is checked like any other, and a resume is no first frame.
+    const denied = await connect();
+    denied.send(hello('wrong-code'));
+    expect((await denied.closed).code).toBe(SERVER_CLOSE.accessDenied);
+    const early = await connect();
+    early.send({ op: 'resume', sessionToken: token, lastSeq: 1 });
+    expect((await early.closed).code).toBe(1008);
+
+    const again = await resumeWith(token, 1);
+    await again.next((frame) => frame.s === 3);
+    const next = (await again.op('resumed')).sessionToken as string;
+    expect(next).toMatch(TOKEN_PATTERN);
+    expect(next).not.toBe(token);
+    expect(again.frames.map((frame) => frame.op ?? 'game')).toEqual(['ready', 'resumed', 'game', 'game']);
+    expect(again.frames.slice(2)).toEqual([{ s: 2, f: 0, m: shot(0, 41) }, { s: 3, f: 0, m: shot(0, 42) }]);
+    await room.host.next(isOp('back', bob.slot));
+
+    // Same slot, same room: its frames reach the host with its true sender.
+    again.send({ m: snapshot(1, 'AFTER-RESUME') });
+    expect(await room.host.next((frame) => 'm' in frame && (frame.m as Record<string, unknown>).marker === 'AFTER-RESUME')).toEqual({ f: 1, m: snapshot(1, 'AFTER-RESUME') });
+    expect(logs.some((line) => line.includes('"event":"resume"') && line.includes('"result":"ok"'))).toBe(true);
+    // Never logged.
+    expect(logs.join('\n')).not.toContain(token);
+    expect(logs.join('\n')).not.toContain(next);
+  });
+
+  it('a wrong token is refused 4012 and counted per IP: past the limit even the right token is refused, though hellos still work', async () => {
+    await start({ failurePolicy: { maxFailures: 2, windowMs: 60_000, blockMs: 600_000, maxTrackedIps: 100 } });
+    const room = await createRoom();
+    const bob = await joinAndAdmit(room, 'Bob');
+    const token = tokenOf(bob.guest);
+    bob.guest.ws.terminate();
+    await room.host.next(isOp('away', bob.slot));
+    for (const wrong of ['W'.repeat(22), token.slice(0, 21) + (token.endsWith('A') ? 'B' : 'A')]) {
+      const attempt = await resumeWith(wrong, 1);
+      expect((await attempt.closed).code).toBe(SERVER_CLOSE.resumeRefused);
+      expect(attempt.frames.map((frame) => frame.op)).toEqual(['ready']);
+    }
+    // Blocked: the right token gets the same answer, and the member is still away.
+    const blocked = await resumeWith(token, 1);
+    expect((await blocked.closed).code).toBe(SERVER_CLOSE.resumeRefused);
+    expect(blocked.frames.map((frame) => frame.op)).toEqual(['ready']);
+    // The access code's own count is apart: a right code still gets ready, and does not lift the block.
+    await ready();
+    const stillBlocked = await resumeWith(token, 1);
+    expect((await stillBlocked.closed).code).toBe(SERVER_CLOSE.resumeRefused);
+    expect(room.host.frames.some((frame) => frame.op === 'back' || frame.op === 'memberLeft')).toBe(false);
+    expect(logs.some((line) => line.includes('"event":"resume"') && line.includes('"result":"blocked"'))).toBe(true);
+    expect(logs.join('\n')).not.toContain(token);
+  });
+
+  it('a resume while the old socket still counts as connected is told 4013; the dead socket fails its probe, so the next try resumes', async () => {
+    await start({ probeTimeoutMs: 150 });
+    const room = await createRoom();
+    // A half-open connection: the old socket is there but answers no ping.
+    const bob = await joinAndAdmit(room, 'Bob', undefined, { autoPong: false });
+    const token = tokenOf(bob.guest);
+    const early = await resumeWith(token, 1);
+    expect((await early.closed).code).toBe(SERVER_CLOSE.resumeLater);
+    await room.host.next(isOp('away', bob.slot));
+    expect((await bob.guest.closed).code).toBe(1006);
+    const again = await resumeWith(token, 1);
+    await again.op('resumed');
+    await room.host.next(isOp('back', bob.slot));
+  });
+
+  it('a socket that answers the probe stays, and the early resume changes nothing', async () => {
+    await start({ probeTimeoutMs: 100 });
+    const room = await createRoom();
+    const bob = await joinAndAdmit(room, 'Bob');
+    const early = await resumeWith(tokenOf(bob.guest), 1);
+    expect((await early.closed).code).toBe(SERVER_CLOSE.resumeLater);
+    await new Promise((done) => setTimeout(done, 300));
+    expect(bob.guest.ws.readyState).toBe(WebSocket.OPEN);
+    expect(room.host.frames.some((frame) => frame.op === 'away')).toBe(false);
+    room.host.send({ m: shot(0, 7) });
+    await bob.guest.next((frame) => 'm' in frame && (frame.m as NetworkMessage).type === 'fireEvent');
+  });
+
+  it('a resumed guest is still held to the 64 KiB guest frame cap', async () => {
+    await start();
+    const room = await createRoom();
+    const bob = await joinAndAdmit(room, 'Bob');
+    const token = tokenOf(bob.guest);
+    bob.guest.ws.terminate();
+    await room.host.next(isOp('away', bob.slot));
+    const again = await resumeWith(token, 1);
+    await again.op('resumed');
+    again.send(JSON.stringify({ m: { ...snapshot(1), pad: 'x'.repeat(SERVER_FRAME_MAX_BYTES) } }));
+    expect((await again.closed).code).toBe(1009);
+    expect(await room.host.next(isOp('memberLeft', bob.slot))).toMatchObject({ op: 'memberLeft' });
+  });
+
+  it('leave, a kick and a chosen close (1000) never leave a member away: its token is refused', async () => {
+    await start();
+    const room = await createRoom();
+    const bob = await joinAndAdmit(room, 'Bob');
+    const cara = await joinAndAdmit(room, 'Cara');
+    const dan = await joinAndAdmit(room, 'Dan');
+    bob.guest.send({ op: 'leave' });
+    room.host.send({ op: 'kick', slot: cara.slot });
+    expect((await cara.guest.closed).code).toBe(SERVER_CLOSE.kicked);
+    dan.guest.ws.close(1000);
+    for (const guest of [bob, cara, dan]) await room.host.next(isOp('memberLeft', guest.slot));
+    for (const guest of [bob, cara, dan]) {
+      const attempt = await resumeWith(tokenOf(guest.guest), 1);
+      expect((await attempt.closed).code).toBe(SERVER_CLOSE.resumeRefused);
+    }
+    expect(room.host.frames.some((frame) => frame.op === 'away')).toBe(false);
   });
 });
 

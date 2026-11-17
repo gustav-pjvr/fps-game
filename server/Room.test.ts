@@ -47,7 +47,8 @@ describe('Room: join and admission', () => {
     send(room.hostMember, { op: 'joinAnswer', slot: 1, welcome: welcomeFor(1) });
     expect(guest.socket.games()).toEqual([{ f: 0, m: welcomeFor(1) }]);
     expect(wireLog[0]?.startsWith('Bob:')).toBe(true);
-    expect(wireLog[1]).toBe('host:' + JSON.stringify({ op: 'admitted', slot: 1 }));
+    // The host's second reliable frame, after the joinRequest (section 5.6).
+    expect(wireLog[1]).toBe('host:' + JSON.stringify({ s: 2, op: 'admitted', slot: 1 }));
     expect(roomOf(h, room.code).liveSlots()).toEqual([0, 1]);
     // CreateRoomScreen's onConnected broadcast must reach the new guest.
     send(room.hostMember, { m: { type: 'lobbyReadyUpdate', readySlots: [0] } });

@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { PLAYER_SLOT_COUNT } from '../src/network/protocol.ts';
 import {
   encodeServerFrame,
@@ -8,9 +8,10 @@ import {
   type CreateOp,
   type JoinOp,
   type RejectReason,
+  type ResumeOp,
   type RoomClosedReason,
 } from '../src/network/serverEnvelope.ts';
-import { DEFAULT_ROOM_LIMITS, DEFAULT_ROOM_TIMING, Room, type MemberSocket, type RoomLimits, type RoomLog, type RoomMembership, type RoomTiming } from './Room.ts';
+import { DEFAULT_ROOM_LIMITS, DEFAULT_ROOM_TIMING, Room, type MemberSocket, type ResumeRefusal, type RoomLimits, type RoomLog, type RoomMembership, type RoomTiming } from './Room.ts';
 
 /**
  * Every room on the relay (docs/server-relay-design.md, section 4): codes, create, lookup,
@@ -32,6 +33,9 @@ export interface RegistryOptions {
   clock: () => number;
   /** A uniform integer in [0, max). Defaults to crypto.randomInt: a room code is a join secret. */
   randomInt?: (max: number) => number;
+  /** A new session token (section 5.6). Defaults to 16 bytes of crypto.randomBytes in base64url:
+   * 22 characters, the format parseClientFrame accepts in a resume. */
+  sessionToken?: () => string;
   timing?: Partial<RoomTiming>;
   limits?: Partial<RoomLimits>;
   log?: RoomLog;
@@ -51,6 +55,7 @@ export class RoomRegistry {
   private readonly config: RegistryConfig;
   private readonly clock: () => number;
   private readonly draw: (max: number) => number;
+  private readonly drawToken: () => string;
   private readonly timing: RoomTiming;
   private readonly limits: RoomLimits;
   private readonly log: RoomLog | undefined;
@@ -60,6 +65,7 @@ export class RoomRegistry {
     this.config = config;
     this.clock = options.clock;
     this.draw = options.randomInt ?? ((max) => randomInt(max));
+    this.drawToken = options.sessionToken ?? (() => randomBytes(16).toString('base64url'));
     this.timing = { ...DEFAULT_ROOM_TIMING, ...options.timing };
     this.limits = { ...DEFAULT_ROOM_LIMITS, ...options.limits };
     this.log = options.log;
@@ -71,8 +77,14 @@ export class RoomRegistry {
     return Math.max(1, Math.min(Math.floor(requested), ceiling));
   }
 
-  /** `create` (section 4.1): a new room with the sender in slot 0, answered `created`. */
-  create(socket: MemberSocket, op: CreateOp): RoomMembership | null {
+  /** A session token for a socket's `ready` (section 5.6). */
+  newSessionToken(): string {
+    return this.drawToken();
+  }
+
+  /** `create` (section 4.1): a new room with the sender in slot 0, answered `created`.
+   * `sessionToken` is the one the socket's `ready` carried (null: the host cannot resume). */
+  create(socket: MemberSocket, op: CreateOp, sessionToken: string | null = null): RoomMembership | null {
     this.sweepTombstones();
     if (this.rooms.size >= this.config.maxRooms) return this.refuse(socket, 'busy');
     const code = this.freshCode();
@@ -86,6 +98,8 @@ export class RoomRegistry {
       limits: this.limits,
       onClosed: (closed, reason) => this.handleClosed(closed, reason),
       log: this.log,
+      hostSessionToken: sessionToken,
+      newSessionToken: this.drawToken,
     });
     this.rooms.set(code, room);
     socket.send(encodeServerFrame({ op: 'created', code, slot: 0 }));
@@ -94,11 +108,23 @@ export class RoomRegistry {
   }
 
   /** `join` (section 4.2): an unknown or tombstoned code is notFound, a full room full. */
-  join(socket: MemberSocket, op: JoinOp): RoomMembership | null {
+  join(socket: MemberSocket, op: JoinOp, sessionToken: string | null = null): RoomMembership | null {
     const room = this.rooms.get(op.code);
     if (!room || room.closed) return this.refuse(socket, 'notFound');
-    const result = room.join(socket, op);
+    const result = room.join(socket, op, sessionToken);
     return typeof result === 'string' ? this.refuse(socket, result) : result;
+  }
+
+  /** `resume` (section 5.6): the member holding this token, in whichever room, back on `socket`.
+   * Nothing is sent or closed here on a refusal: the shell answers every one with the same close
+   * code, so the answer says nothing about which rooms or slots exist. */
+  resume(socket: MemberSocket, op: ResumeOp): RoomMembership | ResumeRefusal {
+    const presented = Buffer.from(op.sessionToken, 'utf8');
+    for (const room of Array.from(this.rooms.values())) {
+      const result = room.resume(socket, presented, op.lastSeq);
+      if (result !== null) return result;
+    }
+    return 'unknown';
   }
 
   /** Drive every room's timers and forget old tombstones; start() calls it once a second. */

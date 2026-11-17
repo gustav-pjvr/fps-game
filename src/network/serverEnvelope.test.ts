@@ -50,6 +50,10 @@ describe('parseClientFrame: valid frames', () => {
       { op: 'ping', n: 0, t: 12.5, rtt: null },
       { op: 'ping', n: 3, t: 12.5, rtt: 40 },
       { op: 'leave' },
+      { op: 'resume', sessionToken: 'abcDEF012_-'.repeat(2), lastSeq: 0 },
+      { op: 'resume', sessionToken: 'Z'.repeat(22), lastSeq: 1536 },
+      { op: 'ack', seq: 0 },
+      { op: 'ack', seq: 64 },
     ];
     for (const op of ops) expect(parse(op)).toEqual(op);
   });
@@ -112,6 +116,19 @@ describe('parseClientFrame: refusals', () => {
       { op: 'ping', n: 1, t: 'now', rtt: null },
       { op: 'ping', n: 1, t: 0, rtt: '40' },
       { op: 'ping', n: 1, t: 0 },
+      // A session token is exactly 22 base64url characters (section 5.6).
+      { op: 'resume', sessionToken: 'Z'.repeat(21), lastSeq: 0 },
+      { op: 'resume', sessionToken: 'Z'.repeat(23), lastSeq: 0 },
+      { op: 'resume', sessionToken: 'Z'.repeat(21) + '=', lastSeq: 0 },
+      { op: 'resume', sessionToken: 'Z'.repeat(21) + '+', lastSeq: 0 },
+      { op: 'resume', sessionToken: null, lastSeq: 0 },
+      { op: 'resume', sessionToken: 'Z'.repeat(22), lastSeq: -1 },
+      { op: 'resume', sessionToken: 'Z'.repeat(22), lastSeq: 1.5 },
+      { op: 'resume', sessionToken: 'Z'.repeat(22) },
+      { op: 'resume', sessionToken: 'Z'.repeat(22), lastSeq: 0, slot: 1 },
+      { op: 'ack', seq: -1 },
+      { op: 'ack', seq: '3' },
+      { op: 'ack' },
     ];
     for (const frame of bad) expect(parse(frame), JSON.stringify(frame)).toBeNull();
   });

@@ -27,6 +27,8 @@ export interface RelayOptions {
   /** A protocol ping this often; a socket with no pong for heartbeatTimeoutMs is ended (section 5.5). */
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
+  /** A socket probed because a resume came for its member is ended after this with no pong (section 5.6). */
+  probeTimeoutMs?: number;
   maxConnectionsPerIp?: number;
   failurePolicy?: AccessFailurePolicy;
   /** Where log lines go; stdout by default. */
@@ -46,6 +48,8 @@ export interface Relay {
 export const HELLO_DEADLINE_MS = 5000;
 export const HEARTBEAT_INTERVAL_MS = 5000;
 export const HEARTBEAT_TIMEOUT_MS = 15_000;
+/** A browser answers a protocol ping at once, so two seconds without one means the socket is dead. */
+export const PROBE_TIMEOUT_MS = 2000;
 /** How long a shutdown waits for sockets to finish their close handshake before cutting them. */
 const SHUTDOWN_GRACE_MS = 2000;
 const FAILURE_SWEEP_MS = 60_000;
@@ -95,6 +99,7 @@ export async function startRelay(config: ServerConfig, options: RelayOptions = {
     clock,
     helloDeadlineMs: options.helloDeadlineMs ?? HELLO_DEADLINE_MS,
     heartbeatTimeoutMs,
+    probeTimeoutMs: options.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
     onEnded: (member: Member) => {
       members.delete(member);
     },

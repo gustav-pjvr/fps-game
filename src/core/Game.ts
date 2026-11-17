@@ -1891,6 +1891,7 @@ export class Game {
         lastDamageSourceSlot: null,
         lastDamageSourceAt: 0,
         hordeEliminatedSlots: new Set<PlayerSlot>(),
+        awaySlots: new Set<PlayerSlot>(),
       };
     }
 
@@ -2263,6 +2264,7 @@ export class Game {
             game.endMultiplayerMatch(false, 'opponentDisconnected');
             return;
           }
+          activeMultiplayer.awaySlots.delete(slot);
           activeMultiplayer.hostRoster?.handleDisconnect(slot, performance.now());
           game.removeMultiplayerOpponent(slot);
           activeMultiplayer.session.connection.send({ type: 'playerLeft', slot });
@@ -2285,6 +2287,17 @@ export class Game {
           if (activeMultiplayer.session.role !== 'host') return;
           activeMultiplayer.hostRoster?.release(slot);
           activeMultiplayer.session.connection.send({ type: 'playerLeft', slot });
+        },
+        // Server resume (docs/server-relay-design.md section 5.6): a player's connection dropped and
+        // the server holds its slot while it reconnects. Not a disconnect: a notice, and the host's
+        // staleness sweep leaves the slot alone until it is back.
+        onPeerAway: (slot) => {
+          activeMultiplayer.awaySlots.add(slot);
+          killFeed.show(`${activeMultiplayer.usernames.get(slot) ?? 'A player'} reconnecting…`);
+        },
+        onPeerBack: (slot) => {
+          activeMultiplayer.awaySlots.delete(slot);
+          killFeed.show(`${activeMultiplayer.usernames.get(slot) ?? 'A player'} is back`);
         },
         onMessage: (message, senderSlot) => {
           if (message.type === 'gooseThrowExploded'
@@ -3781,7 +3794,15 @@ export class Game {
         // own (not always reliable - see MULTIPLAYER_CONNECTION_TIMEOUT_MS's own comment) close
         // detection - this is what actually fixes a RemotePlayer standing stuck forever after an
         // abrupt tab close that never fired a clean disconnect event.
+        // Server resume (section 5.6): nothing arrives from a guest the server holds as away, nor from
+        // anyone while this host's own socket reconnects, and that is not their silence. Their clock
+        // restarts each sweep, so the moment they are back counts from now.
+        const reconnecting = this.multiplayer.session.connection.isReconnecting?.() === true;
         for (const opponent of this.multiplayer.opponents.values()) {
+          if (reconnecting || this.multiplayer.awaySlots.has(opponent.slot)) {
+            opponent.lastMessageAt = now;
+            continue;
+          }
           // A permanently-eliminated horde player (see checkHordeAllEliminated) stops sending
           // playerSnapshot forever once dead (updateMultiplayer's own eliminated-branch early
           // return skips the broadcast below) - that silence is expected, not a dropped
